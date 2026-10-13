@@ -9219,6 +9219,38 @@ void MainComponent::savePortableConfiguration(const juce::File& file, bool inclu
                 }
         CrashHandler::note("Portable configuration saved (no MIDI, no audio devices, no machine settings): " + file.getFullPathName());
     }
+    else
+    {
+        // Every configuration, portable or not: no absolute path where a relative
+        // one exists. The pool trees below the library root travel relative to it,
+        // the IRs by their relative paths; a tree outside the root (another disk)
+        // keeps its absolute path - recognisable as such, and tried last on load.
+        if (auto* pool = root->getProperty("sampleTrees").getArray())
+        {
+            juce::Array<juce::var> kept;
+            for (const auto& entryVar : *pool)
+            {
+                juce::String entry = entryVar.toString();
+                const juce::File treeFile(entry);
+                if (libraryRoot != juce::File() && (treeFile == libraryRoot || treeFile.isAChildOf(libraryRoot)))
+                    entry = treeFile == libraryRoot ? juce::String(".") : slashes(treeFile.getRelativePathFrom(libraryRoot));
+                kept.add(entry);
+            }
+            root->setProperty("sampleTrees", kept);
+        }
+        if (auto* array = manuals.getArray())
+            for (auto& itemVar : *array)
+                if (auto* item = itemVar.getDynamicObject())
+                {
+                    if (item->getProperty("folderRelativePath").toString().isNotEmpty()) item->setProperty("folderPath", "");
+                    if (auto* routes = item->getProperty("perspectiveAudio").getArray())
+                        for (auto& routeVar : *routes)
+                            if (auto* routeObject = routeVar.getDynamicObject())
+                                if (routeObject->getProperty("reverbIrLibraryRelative").toString().isNotEmpty()
+                                    || routeObject->getProperty("reverbIrRelative").toString().isNotEmpty())
+                                    routeObject->removeProperty("reverbIr");
+                }
+    }
 
     if (!file.replaceWithText(juce::JSON::toString(configuration, true)))
         juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,

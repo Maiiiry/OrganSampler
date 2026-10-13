@@ -12,6 +12,20 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.55] - 2026-10-13
+
+### Fixed
+- No configuration carries an absolute path where a relative one exists any
+  more - portable or not. The pool of folder trees is stored relative to the
+  library root ("Samply", "003136/pipe/HW"), the IRs by their relative paths,
+  and both are resolved against the configuration file on load (a tree
+  outside the library root, on another disk, keeps its absolute path and is
+  tried last). Before, the pool and the IRs kept the paths of the computer
+  that saved the file; on Linux and macOS those are no paths at all, so a
+  configuration from Windows loaded with an empty pool - the Rural Organ
+  package found no stop. The package and the published configurations are
+  rebuilt.
+
 ## [0.8.53] - 2026-10-13
 
 ### Fixed
