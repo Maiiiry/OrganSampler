@@ -9,7 +9,7 @@
 # what the GitHub Actions workflow and the macOS/Linux builds use. Both compile
 # the same sources with the same defines.
 cmake_minimum_required(VERSION 3.22)
-project(OrganSampler VERSION 0.8.55 LANGUAGES C CXX)
+project(OrganSampler VERSION 0.8.56 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -28,7 +28,7 @@ juce_add_gui_app(OrganSampler
     VERSION ${PROJECT_VERSION}
     BUNDLE_ID "org.organsampler.app"
     ICON_BIG "${ORGAN_SRC}/AppIcon.png"
-    ICON_SMALL "${ORGAN_SRC}/AppIcon.png"
+    ICON_SMALL "${ORGAN_SRC}/Icons/icon-32.png"   # the hand-tuned small icon of the Windows .ico (Tools/make_small_icons.ps1)
     NEEDS_MIDI_INPUT TRUE
     MICROPHONE_PERMISSION_ENABLED FALSE)
 
@@ -45,7 +45,14 @@ juce_add_binary_data(OrganSamplerData SOURCES
     "${ORGAN_SRC}/ProspektSP.png"
     "${ORGAN_SRC}/ProspektSP_2.jpg"
     "${ORGAN_SRC}/_Prospekt3.ico"
-    "${ORGAN_SRC}/AppIcon.png")
+    "${ORGAN_SRC}/AppIcon.png"
+    "${ORGAN_SRC}/Icons/icon-16.png"
+    "${ORGAN_SRC}/Icons/icon-24.png"
+    "${ORGAN_SRC}/Icons/icon-32.png"
+    "${ORGAN_SRC}/Icons/icon-48.png"
+    "${ORGAN_SRC}/Icons/icon-64.png"
+    "${ORGAN_SRC}/Icons/icon-128.png"
+    "${ORGAN_SRC}/Icons/icon-256.png")
 
 target_include_directories(OrganSampler PRIVATE
     "${ORGAN_SRC}"

@@ -4921,8 +4921,9 @@ namespace
         uint64_t mask = 0;
         for (const int channel : channels)
             if (channel >= 0 && channel < 64) mask |= 1ull << channel;
-        // No channels configured must never mean silence: fall back to 1+2.
-        return mask != 0 ? mask : 3ull;
+        // No channel ticked is none: the route is silent (it used to fall back to
+        // channels 1+2, so a division with every channel unticked went on playing).
+        return mask;
     }
 }
 

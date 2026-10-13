@@ -12,6 +12,21 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.56] - 2026-10-13
+
+### Fixed
+- Linux: the JACK device list showed PipeWire's MIDI bridges and MIDI devices
+  ("Midi-Bridge", "BLE MIDI 1") as if they were sound devices - a route moved
+  there ran with a buffer of one frame. Only clients with audio ports are
+  listed.
+- Linux and macOS: the icon in every size is the hand-tuned image of the
+  Windows icon (16-256 px from the .ico, 512 from the original), not a
+  downscale; the menu entry, the dock and the macOS bundle use them.
+- The activity log lists every audio device type with its devices at start.
+- A route with every output channel unticked went on playing through
+  channels 1-2 (the engine fell back to them). No channel is none: the route
+  is silent.
+
 ## [0.8.55] - 2026-10-13
 
 ### Fixed

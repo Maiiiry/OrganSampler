@@ -1095,6 +1095,14 @@ MainComponent::MainComponent()
     // attaches every division's own route to its shared host (or none).
     deviceManager.getAvailableDeviceTypes();
     installPlatformAudioTypes(deviceManager);
+    {
+        // What the audio device lists hold (the log is what a report carries).
+        juce::String types;
+        for (auto* type : deviceManager.getAvailableDeviceTypes())
+            if (type != nullptr)
+                types << (types.isEmpty() ? "" : " | ") << type->getTypeName() << ": " << type->getDeviceNames(false).joinIntoString(", ");
+        CrashHandler::note("Audio device types: " + types);
+    }
     primaryAudioCallback = std::make_unique<DivisionAudioCallback>(*this, 0);
     deviceManager.addAudioCallback(primaryAudioCallback.get());
     audioSettings = std::make_unique<juce::AudioDeviceSelectorComponent>(
@@ -10305,17 +10313,25 @@ void MainComponent::installLinuxDesktopEntry()
    #if JUCE_LINUX
     const auto share = juce::File::getSpecialLocation(juce::File::userHomeDirectory).getChildFile(".local/share");
     const auto exe = juce::File::getSpecialLocation(juce::File::currentExecutableFile);
-    const auto icon = juce::ImageCache::getFromMemory(BinaryData::AppIcon_png, BinaryData::AppIcon_pngSize);
+    // The same icon as on Windows: the hand-tuned image of every size of the
+    // .ico (16-256, made by Tools/make_small_icons.ps1), 512 from the 1024 px original.
+    struct Sized { int size; const char* data; int bytes; };
+    const Sized sized[]{ { 16, BinaryData::icon16_png, BinaryData::icon16_pngSize }, { 24, BinaryData::icon24_png, BinaryData::icon24_pngSize },
+        { 32, BinaryData::icon32_png, BinaryData::icon32_pngSize }, { 48, BinaryData::icon48_png, BinaryData::icon48_pngSize },
+        { 64, BinaryData::icon64_png, BinaryData::icon64_pngSize }, { 128, BinaryData::icon128_png, BinaryData::icon128_pngSize },
+        { 256, BinaryData::icon256_png, BinaryData::icon256_pngSize }, { 512, BinaryData::AppIcon_png, BinaryData::AppIcon_pngSize } };
     int icons = 0;
-    for (const int size : { 16, 24, 32, 48, 64, 128, 256, 512 })
+    for (const auto& entry : sized)
     {
-        const auto dir = share.getChildFile("icons/hicolor/" + juce::String(size) + "x" + juce::String(size) + "/apps");
+        const auto dir = share.getChildFile("icons/hicolor/" + juce::String(entry.size) + "x" + juce::String(entry.size) + "/apps");
         dir.createDirectory();
         const auto file = dir.getChildFile("organsampler.png");
         file.deleteFile();
         juce::FileOutputStream out(file);
         if (!out.openedOk()) continue;
-        if (juce::PNGImageFormat().writeImageToStream(icon.rescaled(size, size, juce::Graphics::highResamplingQuality), out)) ++icons;
+        auto image = juce::ImageCache::getFromMemory(entry.data, entry.bytes);
+        if (image.getWidth() != entry.size) image = image.rescaled(entry.size, entry.size, juce::Graphics::highResamplingQuality);
+        if (juce::PNGImageFormat().writeImageToStream(image, out)) ++icons;
     }
     const auto apps = share.getChildFile("applications");
     apps.createDirectory();

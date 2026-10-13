@@ -79,14 +79,6 @@ inline void installFilteredAlsaType(juce::AudioDeviceManager& manager)
 }
 #endif
 
-inline void installPlatformAudioTypes(juce::AudioDeviceManager& manager)
-{
-    addAggregatedWASAPIType(manager);
-   #if JUCE_LINUX
-    installFilteredAlsaType(manager);
-   #endif
-}
-
 #if JUCE_LINUX
 // JACK through PipeWire: JUCE loads "libjack.so.0" by name, which on most
 // distributions is the jackd2 client library - useless unless a jackd runs.
@@ -95,6 +87,7 @@ inline void installPlatformAudioTypes(juce::AudioDeviceManager& manager)
 // dlopen of the same soname find it, so "JACK" in the device list connects to
 // PipeWire and shows every channel of every card. Returns what was loaded.
 #include <dlfcn.h>
+inline void*& jackLibraryHandle() { static void* handle = nullptr; return handle; }
 inline juce::String preloadPipeWireJack()
 {
     static const char* const candidates[]{
@@ -104,7 +97,99 @@ inline juce::String preloadPipeWireJack()
         "/usr/lib/aarch64-linux-gnu/pipewire-0.3/jack/libjack.so.0",
         "/usr/local/lib/pipewire-0.3/jack/libjack.so.0" };
     for (const char* path : candidates)
-        if (juce::File(path).existsAsFile() && dlopen(path, RTLD_NOW | RTLD_GLOBAL) != nullptr) return path;
+        if (juce::File(path).existsAsFile())
+            if (void* handle = dlopen(path, RTLD_NOW | RTLD_GLOBAL)) { jackLibraryHandle() = handle; return path; }
+    jackLibraryHandle() = dlopen("libjack.so.0", RTLD_NOW | RTLD_GLOBAL);
     return {};
 }
+
+// JUCE's JACK type lists every client that owns a port, MIDI bridges and MIDI
+// devices included ("Midi-Bridge", "BLE MIDI 1" - routes "opened" on them run
+// with a buffer of 1 frame). This wrapper keeps the clients that own AUDIO
+// ports in the wanted direction, asked of the JACK server through the library
+// loaded above. The type name stays "JACK" for the saved configurations.
+class FilteredJackDeviceType final : public juce::AudioIODeviceType
+{
+public:
+    FilteredJackDeviceType() : juce::AudioIODeviceType("JACK"), inner(juce::AudioIODeviceType::createAudioIODeviceType_JACK()) {}
+
+    void scanForDevices() override
+    {
+        if (inner == nullptr) return;
+        inner->scanForDevices();
+        const auto audioOutputs = audioClients(true);    // clients with audio INPUT ports: where we can play
+        const auto audioInputs = audioClients(false);
+        outputs.clear(); inputs.clear();
+        for (const auto& name : inner->getDeviceNames(false)) if (audioOutputs.contains(name)) outputs.add(name);
+        for (const auto& name : inner->getDeviceNames(true)) if (audioInputs.contains(name)) inputs.add(name);
+    }
+    juce::StringArray getDeviceNames(bool wantInputNames = false) const override { return wantInputNames ? inputs : outputs; }
+    int getDefaultDeviceIndex(bool forInput) const override { return (forInput ? inputs : outputs).isEmpty() ? -1 : 0; }
+    int getIndexOfDevice(juce::AudioIODevice* device, bool asInput) const override
+    {
+        return device == nullptr ? -1 : (asInput ? inputs : outputs).indexOf(device->getName());
+    }
+    bool hasSeparateInputsAndOutputs() const override { return true; }
+    juce::AudioIODevice* createDevice(const juce::String& outputDeviceName, const juce::String& inputDeviceName) override
+    {
+        return inner != nullptr ? inner->createDevice(outputDeviceName, inputDeviceName) : nullptr;
+    }
+private:
+    // The clients owning audio ports of one direction, by the JACK API itself
+    // (only the handful of functions needed, taken from the loaded library).
+    static juce::StringArray audioClients(bool playbackPorts)
+    {
+        juce::StringArray clients;
+        void* lib = jackLibraryHandle();
+        if (lib == nullptr) return clients;
+        using ClientOpen = void* (*)(const char*, int, int*, ...);
+        using GetPorts = const char** (*)(void*, const char*, const char*, unsigned long);
+        using Free = void (*)(void*);
+        using ClientClose = int (*)(void*);
+        auto open = (ClientOpen)dlsym(lib, "jack_client_open");
+        auto getPorts = (GetPorts)dlsym(lib, "jack_get_ports");
+        auto freePorts = (Free)dlsym(lib, "jack_free");
+        auto close = (ClientClose)dlsym(lib, "jack_client_close");
+        if (open == nullptr || getPorts == nullptr || freePorts == nullptr || close == nullptr) return clients;
+        int status = 0;
+        void* client = open("OrganSamplerScan", 0x01 /* JackNoStartServer */, &status);
+        if (client == nullptr) return clients;
+        // Playback ports of the server are INPUT ports (we write into them): JackPortIsInput = 1, JackPortIsOutput = 2.
+        if (const char** ports = getPorts(client, nullptr, "32 bit float mono audio", playbackPorts ? 1UL : 2UL))
+        {
+            for (const char** p = ports; *p != nullptr; ++p)
+            {
+                const juce::String name = juce::CharPointer_UTF8(*p);
+                clients.addIfNotAlreadyThere(name.upToFirstOccurrenceOf(":", false, false));
+            }
+            freePorts(ports);
+        }
+        close(client);
+        return clients;
+    }
+    std::unique_ptr<juce::AudioIODeviceType> inner;
+    juce::StringArray outputs, inputs;
+};
+
+inline void installFilteredJackType(juce::AudioDeviceManager& manager)
+{
+    for (auto* type : manager.getAvailableDeviceTypes())
+        if (type != nullptr && type->getTypeName() == "JACK" && dynamic_cast<FilteredJackDeviceType*>(type) == nullptr)
+        {
+            manager.removeAudioDeviceType(type);
+            break;
+        }
+    auto filtered = std::make_unique<FilteredJackDeviceType>();
+    filtered->scanForDevices();
+    manager.addAudioDeviceType(std::move(filtered));
+}
 #endif
+
+inline void installPlatformAudioTypes(juce::AudioDeviceManager& manager)
+{
+    addAggregatedWASAPIType(manager);
+   #if JUCE_LINUX
+    installFilteredAlsaType(manager);
+    installFilteredJackType(manager);
+   #endif
+}

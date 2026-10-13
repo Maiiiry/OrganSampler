@@ -175,13 +175,17 @@ application-data folder:
 
 The window title shows the program version.
 
-On Linux the executable itself cannot carry an icon; the application menu,
-the dock and the file manager take it from a `.desktop` entry. *Install menu
-entry and icon* at the bottom of the Configuration Editor writes that entry
+On Linux the executable file itself cannot carry an icon (unlike a Windows
+.exe): in the file manager it always shows the generic "executable" symbol,
+on every Linux program. The application menu, the dock and the task bar take
+the icon from a `.desktop` entry: *Install menu entry and icon* at the
+bottom of the Configuration Editor writes that entry
 (`~/.local/share/applications/organsampler.desktop`, pointing at the
 executable where it is now) and the icon in every size from 16 to 512 px
-under `~/.local/share/icons/hicolor`. Install again after moving the
-executable. The window itself carries the icon on every platform.
+under `~/.local/share/icons/hicolor` - the same hand-tuned images as the
+Windows icon, size for size. Start OrganSampler from the menu afterwards;
+install again after moving the executable. On macOS the application bundle
+carries the icon. The window itself shows it on every platform.
 
 ## 1.3 The first start, step by step
 
@@ -1128,6 +1132,14 @@ with `pw-metadata -n settings 0 clock.force-quantum 256` and
 `clock.force-rate 48000` when the defaults do not suit. If the JACK type
 lists no device, PipeWire's JACK library was not found (the package is
 `pipewire-jack`); start the program with `pw-jack ./OrganSampler` then.
+
+The names in the JACK list are PipeWire's names of the cards' outputs
+("Analog Stereo 1/2" for a Komplete Audio 6 - with all its six outputs as
+channels 1-6), not the cards' model names; only clients with audio ports are
+listed (PipeWire also exposes MIDI bridges to JACK, which are no audio
+devices). Tick the channels of every route as on Windows: where you send a
+route, there it plays. No patchbay (qpwgraph, Patchance, Carla) is needed:
+OrganSampler connects its outputs to the chosen device's channels itself.
 
 The ALSA default device stays for a quick stereo start; the hardware device
 of a card ("Direct hardware device without any conversions") opens only when

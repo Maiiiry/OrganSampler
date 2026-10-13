@@ -179,13 +179,17 @@ static const char* const kManualText_part0 =
     "\n"
     "The window title shows the program version.\n"
     "\n"
-    "On Linux the executable itself cannot carry an icon; the application menu,\n"
-    "the dock and the file manager take it from a `.desktop` entry. *Install menu\n"
-    "entry and icon* at the bottom of the Configuration Editor writes that entry\n"
+    "On Linux the executable file itself cannot carry an icon (unlike a Windows\n"
+    ".exe): in the file manager it always shows the generic \"executable\" symbol,\n"
+    "on every Linux program. The application menu, the dock and the task bar take\n"
+    "the icon from a `.desktop` entry: *Install menu entry and icon* at the\n"
+    "bottom of the Configuration Editor writes that entry\n"
     "(`~/.local/share/applications/organsampler.desktop`, pointing at the\n"
     "executable where it is now) and the icon in every size from 16 to 512 px\n"
-    "under `~/.local/share/icons/hicolor`. Install again after moving the\n"
-    "executable. The window itself carries the icon on every platform.\n"
+    "under `~/.local/share/icons/hicolor` - the same hand-tuned images as the\n"
+    "Windows icon, size for size. Start OrganSampler from the menu afterwards;\n"
+    "install again after moving the executable. On macOS the application bundle\n"
+    "carries the icon. The window itself shows it on every platform.\n"
     "\n"
     "## 1.3 The first start, step by step\n"
     "\n"
@@ -198,12 +202,12 @@ static const char* const kManualText_part0 =
     "\n"
     "### Step 2: Divisions\n"
     "\n"
+    ;
+static const char* const kManualText_part1 =
     "The box in the upper right corner of the main window (or *Configuration\n"
     "Editor > Console > Divisions*) sets how many manuals the console has; the\n"
     "pedal is always there.\n"
     "\n"
-    ;
-static const char* const kManualText_part1 =
     "### Step 3: MIDI\n"
     "\n"
     "Click *Settings* in a division's header: the Divisions dialog opens. Choose\n"
@@ -400,12 +404,12 @@ static const char* const kManualText_part1 =
     "- **Microphone perspectives.** When the same stops exist under several\n"
     "  prefixes (\"dir-Principal 8\", \"dif-Principal 8\", \"rear-Principal 8\") the\n"
     "  prefixes are recognised as perspectives (Direct, Diffuse, Rear) and each\n"
+    ;
+static const char* const kManualText_part2 =
     "  becomes an independent audio route with its own device, channels, volume and\n"
     "  reverb. The prefixes are listed in *Configuration Editor > Folder name\n"
     "  patterns > Perspective prefixes*, one line per perspective: all the prefixes\n"
     "  that belong to the same perspective stand on one line, separated by\n"
-    ;
-static const char* const kManualText_part2 =
     "  semicolons, and the perspective is named after the first entry of its line\n"
     "  (\"Direct;01-dirMk2H-;dir\" is the perspective \"Direct\", whichever of the\n"
     "  three prefixes a folder carries). New prefixes found in a set are added\n"
@@ -602,12 +606,12 @@ static const char* const kManualText_part2 =
     "that division. Drag the dividers between the columns to share out the width.\n"
     "The mouse wheel scrolls the workspace, except over a division whose voicing is\n"
     "open, where it moves the sliders.\n"
+    ;
+static const char* const kManualText_part3 =
     "\n"
     "## 2.6 Two program windows\n"
     "\n"
     "*Configuration Editor > Console > Program windows* opens a second window\n"
-    ;
-static const char* const kManualText_part3 =
     "(empty at first). In the Configuration Editor's division sections, *Shown in\n"
     "window* moves a division to window 1 or 2; a division is in one window only.\n"
     "The second window's position is remembered; closing it returns to one window.\n"
@@ -804,12 +808,12 @@ static const char* const kManualText_part3 =
     "but no plain file plays its highest layer for every velocity. Release files\n"
     "carry the same suffix: the release of a \"_070\" attack is the \"_070\" release\n"
     "from the rel folder; a velocity without a release of its own takes the nearest\n"
+    ;
+static const char* const kManualText_part4 =
     "one that exists. Filled pipes follow the layers as well.\n"
     "\n"
     "The voicing row of a stop with layers shows a tick box per layer, named by the\n"
     "suffix (\"_070\"), and one for the plain files, the top layer. Unticked, a\n"
-    ;
-static const char* const kManualText_part4 =
     "layer's velocities use the next layer up or the plain samples; the plain layer\n"
     "unticked sends its velocities to the highest ticked layer. When nothing is\n"
     "ticked the plain files play anyway - a key never falls silent. The choice is\n"
@@ -1006,12 +1010,12 @@ static const char* const kManualText_part4 =
     "  and under it *Driver Control Panel* (the driver's own settings, e.g. the RME\n"
     "  buffer size), *Reopen device* and *Set for all ...*.\n"
     "\n"
+    ;
+static const char* const kManualText_part5 =
     "*Set for all* copies the device, sample rate and buffer size of this tab to\n"
     "every perspective of every division (\"none\" is copied too); on the auxiliary\n"
     "tab it acts on the auxiliary routes of all divisions. *Set effects for all*\n"
     "does the same for the IR, dry/wet, IR settings, perspective volume and channel\n"
-    ;
-static const char* const kManualText_part5 =
     "separation; the box unticks itself when one route's effects change afterwards.\n"
     "\n"
     "## 5.4 Sample channels and output channels\n"
@@ -1143,6 +1147,14 @@ static const char* const kManualText_part5 =
     "lists no device, PipeWire's JACK library was not found (the package is\n"
     "`pipewire-jack`); start the program with `pw-jack ./OrganSampler` then.\n"
     "\n"
+    "The names in the JACK list are PipeWire's names of the cards' outputs\n"
+    "(\"Analog Stereo 1/2\" for a Komplete Audio 6 - with all its six outputs as\n"
+    "channels 1-6), not the cards' model names; only clients with audio ports are\n"
+    "listed (PipeWire also exposes MIDI bridges to JACK, which are no audio\n"
+    "devices). Tick the channels of every route as on Windows: where you send a\n"
+    "route, there it plays. No patchbay (qpwgraph, Patchance, Carla) is needed:\n"
+    "OrganSampler connects its outputs to the chosen device's channels itself.\n"
+    "\n"
     "The ALSA default device stays for a quick stereo start; the hardware device\n"
     "of a card (\"Direct hardware device without any conversions\") opens only when\n"
     "PipeWire lets go of the card.\n"
@@ -1200,6 +1212,8 @@ static const char* const kManualText_part5 =
     "- **The buffer size: do not chase the smallest one.** A small buffer\n"
     "  (64 or 128 samples) cuts the reachable polyphony dramatically, because\n"
     "  every block must be rendered in a fraction of the time. An organ does not\n"
+    ;
+static const char* const kManualText_part6 =
     "  need it: the action of a real organ has its own delay, and a latency of\n"
     "  about 10 ms (512 samples at 48 kHz) is absolutely fine for organ playing -\n"
     "  even 20 ms (1024 samples) is still perfectly comfortable. Choose the\n"
@@ -1212,8 +1226,6 @@ static const char* const kManualText_part5 =
     "  for Aggregated WASAPI*).\n"
     "- **Mixed ASIO and Windows Audio.** Works; the ASIO workers leave processor\n"
     "  time to the WASAPI threads. But see \"Audio drivers: many sound cards at\n"
-    ;
-static const char* const kManualText_part6 =
     "  once\" for the price.\n"
     "- **Several devices against one.** Every open device - an ASIO driver, a\n"
     "  Windows Audio device - has a driver thread of its own, and the part of a\n"
@@ -1402,6 +1414,8 @@ static const char* const kManualText_part6 =
     "analysis block (half a second for a 32' pipe) and inharmonic content can\n"
     "tremulate. And it often breaks the loops: the loop points are kept, but the\n"
     "vocoder's output at the loop end no longer matches the loop start exactly, so\n"
+    ;
+static const char* const kManualText_part7 =
     "the seam becomes audible as a click or a bump at every repeat. The setting\n"
     "*Filled pipes: loop crossfade* exists for this - a long blend over the seam\n"
     "hides it at least partly. The slowest build of the three, though still\n"
@@ -1414,8 +1428,6 @@ static const char* const kManualText_part6 =
     "lowest extension pipes and raise it when the loop is heard.\n"
     "\n"
     "Practical advice: stay with the default, *Pitch shift + time stretch*, unless a\n"
-    ;
-static const char* const kManualText_part7 =
     "stop sounds wrong with it; then try the plain pitch shift (no frayed attack)\n"
     "or, for shifts within an octave, the phase vocoder (the speaking at its real\n"
     "speed, at the price of the loops). Compare on the lowest keys of a reed\n"
@@ -1604,6 +1616,8 @@ static const char* const kManualText_part7 =
     "   completely.\n"
     "3. Watch *DSP* and *PEAK* while you do it. At the moment the audio starts to\n"
     "   break up (crackle, dropouts), note the *PEAK* value.\n"
+    ;
+static const char* const kManualText_part8 =
     "4. Enter a somewhat lower number as the limit.\n"
     "5. Repeat until no breaking up of the audio (dropouts, crackle) is ever heard.\n"
     "\n"
@@ -1616,8 +1630,6 @@ static const char* const kManualText_part7 =
     "\n"
     "### Measure the maximum polyphony\n"
     "\n"
-    ;
-static const char* const kManualText_part8 =
     "*Measure...* does the procedure above for you, with the loaded organ and its\n"
     "configured audio outputs - every route, auxiliary route, IR reverb and\n"
     "driver as it is. The button is greyed out until samples are loaded: a\n"
@@ -1806,6 +1818,8 @@ static const char* const kManualText_part8 =
     "\n"
     "The chiff of a gently struck key is blunted: the pipe starts with this much\n"
     "high-frequency loss (a high shelf above the treble start frequency) at velocity\n"
+    ;
+static const char* const kManualText_part9 =
     "1, less for firmer strokes, none at 127 (default 9 dB). The level itself stays\n"
     "normal. Stops with velocity layers are not touched.\n"
     "\n"
@@ -1818,8 +1832,6 @@ static const char* const kManualText_part8 =
     "\n"
     "The tremulant modulates pitch (the division's *Tremulant depth*) and level;\n"
     "this is the level modulation per cent of pitch modulation (default 0.187 dB\n"
-    ;
-static const char* const kManualText_part9 =
     "per cent). Higher values give a tremulant that is more heard in the loudness\n"
     "than in the pitch.\n"
     "\n"
@@ -2008,6 +2020,8 @@ static const char* const kManualText_part9 =
     "second window's position is remembered; closing it returns to one window.\n"
     "\n"
     "### Top bar: PANIC\n"
+    ;
+static const char* const kManualText_part10 =
     "\n"
     "Shows or hides the PANIC button, which silences every sounding pipe at once.\n"
     "\n"
@@ -2020,8 +2034,6 @@ static const char* const kManualText_part9 =
     "Shows or hides the Stop List button (see \"4. The Stop List (building the\n"
     "organ)\").\n"
     "\n"
-    ;
-static const char* const kManualText_part10 =
     "### Top bar: Couplers\n"
     "\n"
     "Shows or hides the Couplers button (see \"Couplers\").\n"
@@ -2210,6 +2222,8 @@ static const char* const kManualText_part10 =
     "default 13). The harmonic filter (*Swell: harmonic filter*) dulls the tone at\n"
     "the same time.\n"
     "\n"
+    ;
+static const char* const kManualText_part11 =
     "### Swell: shutter inertia (settling time)\n"
     "\n"
     "How slowly the shutters follow the pedal (50 to 2000 ms, default 300). Larger\n"
@@ -2222,8 +2236,6 @@ static const char* const kManualText_part10 =
     "divisions against each other.\n"
     "\n"
     "### Audio output channels (default perspective)\n"
-    ;
-static const char* const kManualText_part11 =
     "\n"
     "The channels of the division's audio device that the default perspective\n"
     "plays on, as numbers separated by commas (the same channels the Divisions\n"
