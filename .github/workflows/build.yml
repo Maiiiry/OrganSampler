@@ -95,3 +95,15 @@ jobs:
             Pre-release build for testers - not an official release yet. Windows: `OrganSampler.exe`; macOS: `OrganSampler-macos.zip` (unsigned: right-click > Open the first time); Linux: `OrganSampler` (`chmod +x` first). Changes: see `OrganSampler/CHANGELOG.md`.
 
             **An organ to play:** the Rural Organ demo (dry recordings with IR reverb, sample folders and configuration included) - https://github.com/zurek-jiri/OrganSampler/releases/tag/rural-organ-0.8. **More organs:** sample folders in wave format from Sonus Paradisi, https://www.sonusparadisi.cz/en/organs.html (free material: https://www.sonusparadisi.cz/en/free-stuff.html); ready-made configurations in `configurations/`.
+      # Only the newest build stays on the releases page: every older v* release
+      # (and its tag) is deleted; the Rural Organ demo release is kept.
+      - name: Delete the older program releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          current="${GITHUB_REF_NAME}"
+          for tag in $(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName --jq '.[].tagName'); do
+            case "$tag" in
+              v*) if [ "$tag" != "$current" ]; then echo "deleting $tag"; gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag; fi ;;
+            esac
+          done
