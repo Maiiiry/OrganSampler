@@ -13,6 +13,8 @@ namespace
     // it on Windows too); a path written by a Windows build with "\\" must
     // still resolve on Linux and macOS, where "\\" is an ordinary character.
     juce::String slashes(juce::String path) { return path.replaceCharacter('\\', '/'); }
+    // The last component of a path written on any platform ("F:\\a\\Samply" -> "Samply").
+    juce::String leafName(const juce::String& path) { return slashes(path).trimCharactersAtEnd("/").fromLastOccurrenceOf("/", false, false); }
 }
 #include "CrashHandler.h"
 #include "TemperamentsData.h"   // temperaments.csv embedded by the pre-build step
@@ -9170,28 +9172,51 @@ void MainComponent::savePortableConfiguration(const juce::File& file, bool inclu
                 }
         if (auto* pool = root->getProperty("sampleTrees").getArray())
         {
+            // The pool itself travels relative to the library root ("Samply",
+            // "003136/pipe/HW"): no path of this computer in the file. A tree
+            // outside the root keeps its absolute path (it cannot be found elsewhere).
             std::map<int, int> remap;
             juce::Array<juce::var> kept;
             for (int i = 0; i < pool->size(); ++i)
-                if (usedTrees.count(i) != 0) { remap[i] = kept.size(); kept.add(pool->getReference(i)); }
-            if (kept.size() != pool->size())
             {
-                CrashHandler::note("Portable configuration: " + juce::String(pool->size() - kept.size()) + " unused folder tree(s) left out");
-                if (auto* array = manuals.getArray())
-                    for (auto& itemVar : *array)
-                        if (auto* item = itemVar.getDynamicObject())
-                            if (auto* entries = item->getProperty("stopBuild").getProperty("entries", juce::var()).getArray())
-                                for (auto& entry : *entries)
-                                    if (auto* folders = entry.getProperty("folders", juce::var()).getArray())
-                                        for (auto& folderVar : *folders)
-                                            if (auto* folder = folderVar.getDynamicObject())
-                                            {
-                                                const auto found = remap.find((int)folder->getProperty("tree"));
-                                                if (found != remap.end()) folder->setProperty("tree", found->second);
-                                            }
-                root->setProperty("sampleTrees", kept);
+                if (usedTrees.count(i) == 0) continue;
+                juce::String entry = pool->getReference(i).toString();
+                const juce::File treeFile(entry);
+                if (libraryRoot != juce::File() && (treeFile == libraryRoot || treeFile.isAChildOf(libraryRoot)))
+                    entry = treeFile == libraryRoot ? juce::String(".") : slashes(treeFile.getRelativePathFrom(libraryRoot));
+                remap[i] = kept.size();
+                kept.add(entry);
             }
+            if (kept.size() != pool->size())
+                CrashHandler::note("Portable configuration: " + juce::String(pool->size() - kept.size()) + " unused folder tree(s) left out");
+            if (auto* array = manuals.getArray())
+                for (auto& itemVar : *array)
+                    if (auto* item = itemVar.getDynamicObject())
+                        if (auto* entries = item->getProperty("stopBuild").getProperty("entries", juce::var()).getArray())
+                            for (auto& entry : *entries)
+                                if (auto* folders = entry.getProperty("folders", juce::var()).getArray())
+                                    for (auto& folderVar : *folders)
+                                        if (auto* folder = folderVar.getDynamicObject())
+                                        {
+                                            const auto found = remap.find((int)folder->getProperty("tree"));
+                                            if (found != remap.end()) folder->setProperty("tree", found->second);
+                                        }
+            root->setProperty("sampleTrees", kept);
         }
+        // No absolute path of this computer anywhere: the IRs and the trees of the
+        // divisions are carried by their relative paths.
+        if (auto* array = manuals.getArray())
+            for (auto& itemVar : *array)
+                if (auto* item = itemVar.getDynamicObject())
+                {
+                    if (item->getProperty("folderRelativePath").toString().isNotEmpty()) item->setProperty("folderPath", "");
+                    if (auto* routes = item->getProperty("perspectiveAudio").getArray())
+                        for (auto& routeVar : *routes)
+                            if (auto* routeObject = routeVar.getDynamicObject())
+                                if (routeObject->getProperty("reverbIrLibraryRelative").toString().isNotEmpty()
+                                    || routeObject->getProperty("reverbIrRelative").toString().isNotEmpty())
+                                    routeObject->removeProperty("reverbIr");
+                }
         CrashHandler::note("Portable configuration saved (no MIDI, no audio devices, no machine settings): " + file.getFullPathName());
     }
 
@@ -9406,6 +9431,27 @@ void MainComponent::applyPortableConfiguration(juce::var configuration,
                                 if (candidate.existsAsFile()) { routeObject->setProperty("reverbIr", candidate.getFullPathName()); break; }
                         }
             }
+
+    // The pool of a portable configuration: trees relative to the library root
+    // (or paths of another computer) become this computer's paths, found like
+    // the divisions' trees; one not found keeps the path where it is expected,
+    // so the division header can name it.
+    if (auto* pool = root->getProperty("sampleTrees").getArray())
+    {
+        juce::Array<juce::var> resolved;
+        for (const auto& entry : *pool)
+        {
+            const auto text = slashes(entry.toString());
+            const bool foreignAbsolute = text.length() > 1 && text[1] == ':' && juce::File::getSeparatorChar() == '/';   // "F:/..." on Linux/macOS
+            if (text.isEmpty() || (juce::File::isAbsolutePath(text) && !foreignAbsolute)) { resolved.add(entry); continue; }
+            if (foreignAbsolute) { resolved.add(entry); continue; }   // nothing to resolve it against; the divisions' relative paths relocate it below
+            const auto candidates = portableFolderCandidates(configuration, configurationFile, libraryRoot, text, {});
+            juce::File found = firstExistingDirectory(candidates);
+            if (found == juce::File() && !candidates.isEmpty()) found = candidates.getFirst();
+            resolved.add(found != juce::File() ? found.getFullPathName() : entry.toString());
+        }
+        root->setProperty("sampleTrees", resolved);
+    }
 
     if (!root->getProperty("containsMidiMappings"))
     {
@@ -13669,7 +13715,7 @@ void MainComponent::loadSettings()
         if (!juce::File(path).isDirectory())
             for (int manual = 0; manual < SamplerEngine::maxManuals; ++manual)
                 for (const auto& tree : manualConfigs[(size_t)manual].stopBuild.legacyTrees)
-                    if (juce::File(tree).isDirectory() && juce::File(tree).getFileName() == juce::File(path).getFileName()) path = tree;
+                    if (juce::File(tree).isDirectory() && leafName(tree) == leafName(path)) path = tree;
     for (int manual = 0; manual < SamplerEngine::maxManuals; ++manual)   // trees of divisions without a table are pool trees too
         if (!manualConfigs[(size_t)manual].stopBuild.active)
             for (const auto& tree : manualConfigs[(size_t)manual].stopBuild.legacyTrees)
