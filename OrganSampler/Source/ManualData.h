@@ -189,7 +189,8 @@ static const char* const kManualText_part0 =
     "under `~/.local/share/icons/hicolor` - the same hand-tuned images as the\n"
     "Windows icon, size for size. Then open the application menu (the launcher\n"
     "button in the panel, or the Super/Windows key) and type \"Organ\": OrganSampler\n"
-    "is there, in the Multimedia (Sound & Video) group, with its icon; right-click\n"
+    "is there, in the Multimedia (Sound & Video) group - Audio Production on\n"
+    "Ubuntu Studio - with its icon; right-click\n"
     "it to pin it to the panel or the dock. Install again after moving the\n"
     "executable. On macOS the application bundle\n"
     "carries the icon. The window itself shows it on every platform.\n"
@@ -201,9 +202,9 @@ static const char* const kManualText_part0 =
     "The window opens sized for your screen; resize it by dragging its edges like\n"
     "any other window. If the elements of the console - buttons, sliders, text -\n"
     "are too big or too small for your screen, open *Configuration Editor* (top\n"
-    "bar) and move *Interface size*.\n"
     ;
 static const char* const kManualText_part1 =
+    "bar) and move *Interface size*.\n"
     "\n"
     "### Step 2: Divisions\n"
     "\n"
@@ -403,9 +404,9 @@ static const char* const kManualText_part1 =
     "  (the *Sustain fade-out* of Global sound) and the voice falls silent, with no\n"
     "  room decay.\n"
     "- **Loop points and pitch** come from the WAV's smpl chunk. A sustained sample\n"
-    "  without loop points is looped as a whole (a short fade at its end, no click).\n"
     ;
 static const char* const kManualText_part2 =
+    "  without loop points is looped as a whole (a short fade at its end, no click).\n"
     "- **Microphone perspectives.** When the same stops exist under several\n"
     "  prefixes (\"dir-Principal 8\", \"dif-Principal 8\", \"rear-Principal 8\") the\n"
     "  prefixes are recognised as perspectives (Direct, Diffuse, Rear) and each\n"
@@ -605,9 +606,9 @@ static const char* const kManualText_part2 =
     "division's keyboard from the next key pressed, *Clear learned keyboard MIDI*\n"
     "forgets it), the division's name, the swell display (drag it, or right-click it\n"
     "to learn the swell pedal's MIDI controller), the *Tremulant* button\n"
-    "(registration, like a stop) and *Settings*, which opens the Divisions dialog at\n"
     ;
 static const char* const kManualText_part3 =
+    "(registration, like a stop) and *Settings*, which opens the Divisions dialog at\n"
     "that division. Drag the dividers between the columns to share out the width.\n"
     "The mouse wheel scrolls the workspace, except over a division whose voicing is\n"
     "open, where it moves the sliders.\n"
@@ -807,9 +808,9 @@ static const char* const kManualText_part3 =
     "A sample file is a velocity layer when its name ends in \"_NNN\" (two or three\n"
     "digits, 1 to 127, after an underscore): `060-C4_070.wav` plays for key\n"
     "velocities up to 70, above that the plain `060-C4.wav` plays, or the next\n"
-    "layer up when there are several (`_025`, `_070`, `_100`). A key that has layers\n"
     ;
 static const char* const kManualText_part4 =
+    "layer up when there are several (`_025`, `_070`, `_100`). A key that has layers\n"
     "but no plain file plays its highest layer for every velocity. Release files\n"
     "carry the same suffix: the release of a \"_070\" attack is the \"_070\" release\n"
     "from the rel folder; a velocity without a release of its own takes the nearest\n"
@@ -1009,9 +1010,9 @@ static const char* const kManualText_part4 =
     "  this share of its length) and *Fade-out* (the share of the used IR's end\n"
     "  that dies away along a gentle curve; proposed automatically when *Decay* is\n"
     "  moved; 0 % = the IR exactly as recorded).\n"
-    "- **The device box**: audio device type, device, sample rate, buffer size,\n"
     ;
 static const char* const kManualText_part5 =
+    "- **The device box**: audio device type, device, sample rate, buffer size,\n"
     "  and under it *Driver Control Panel* (the driver's own settings, e.g. the RME\n"
     "  buffer size), *Reopen device* and *Set for all ...*.\n"
     "\n"
@@ -1211,9 +1212,9 @@ static const char* const kManualText_part5 =
     "  halves the polyphony. Set it to *none* unless you need it (see \"The\n"
     "  auxiliary route\").\n"
     "- **IR reverb.** The convolution of an impulse response is heavy and its\n"
-    "  cost does not depend on how many pipes sound: it is paid on every route\n"
     ;
 static const char* const kManualText_part6 =
+    "  cost does not depend on how many pipes sound: it is paid on every route\n"
     "  that has an IR, at every audio period. The convolutions run on the render\n"
     "  workers, in parallel, one buffer behind the dry signal (that buffer is\n"
     "  part of the pre-delay), so they take render time away from the pipes but\n"
@@ -1413,9 +1414,9 @@ static const char* const kManualText_part6 =
     "(*Filled pipes: release length*). Nothing in the copy varies with time, so\n"
     "nothing modulates or hisses. Weakness: the attack still speaks at the\n"
     "resampled speed - slow downwards, fast upwards.\n"
-    "\n"
     ;
 static const char* const kManualText_part7 =
+    "\n"
     "**Pitch shift + time stretch (attack and release).** The same copy, and the\n"
     "attack (downwards) and the release are time-stretched back towards the\n"
     "source's duration (*time stretch of the attack*, *time stretch of the\n"
@@ -1615,9 +1616,9 @@ static const char* const kManualText_part7 =
     "avoid cracks and dropouts. The polyphony display of the main window shows\n"
     "*NOW* (the voices sounding), *PEAK* (the most that sounded since the last\n"
     "reset), *DSP* (the load) and *LIMIT* (this setting).\n"
-    "\n"
     ;
 static const char* const kManualText_part8 =
+    "\n"
     "The value belongs to the organ, not to the computer alone: the number of\n"
     "audio routes, the auxiliary routes, the IR reverbs, the drivers and the buffer\n"
     "sizes all change it (see \"Getting the most polyphony\"). It is saved with the\n"
@@ -1817,9 +1818,9 @@ static const char* const kManualText_part8 =
     "of its dip (default 4 dB), so the tone breathes as well as the level.\n"
     "\n"
     "### Tremulant: harmonic filter phase\n"
-    "\n"
     ;
 static const char* const kManualText_part9 =
+    "\n"
     "How far the tone oscillation lags the volume oscillation (0 to 360 degrees,\n"
     "default 90): 0 = the tone dips exactly when the level does, 90 = a quarter cycle\n"
     "later, 180 = the tone dips when the level peaks. Real tremulants differ here;\n"
@@ -2019,9 +2020,9 @@ static const char* const kManualText_part9 =
     "estimate. Applied when the slider is released: every open window keeps its\n"
     "place and size on the screen, only its content changes size.\n"
     "\n"
-    "### Divisions\n"
     ;
 static const char* const kManualText_part10 =
+    "### Divisions\n"
     "\n"
     "How many manuals the console has (1 to 7; the pedal is always there). Reducing\n"
     "the number forgets everything about the removed divisions (folders, audio,\n"
@@ -2221,9 +2222,9 @@ static const char* const kManualText_part10 =
     "*C D E ...* (no C# and no D#). The compass of the division is set on the same\n"
     "line of the Divisions dialog.\n"
     "\n"
-    "### MIDI transposition\n"
     ;
 static const char* const kManualText_part11 =
+    "### MIDI transposition\n"
     "\n"
     "The keys of this division's MIDI keyboard play this many semitones away from\n"
     "what they send (-24 to +24, default 0): with -12 the key 036 plays the pipe\n"

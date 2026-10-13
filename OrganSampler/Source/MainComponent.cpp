@@ -10356,7 +10356,7 @@ void MainComponent::installLinuxDesktopEntry()
     juce::AlertWindow::showMessageBoxAsync(ok ? juce::MessageBoxIconType::InfoIcon : juce::MessageBoxIconType::WarningIcon, "Menu entry and icon",
         ok ? "Installed: " + entry.getFullPathName() + " and the icon in " + juce::String(icons) + " sizes under ~/.local/share/icons/hicolor.\n\n"
              "Where to find it: open the application menu (the launcher button or the Super/Windows key) and type \"Organ\" - OrganSampler "
-             "is in the Multimedia / Sound & Video group with its icon; right-click it there to pin it to the panel or dock.\n\n"
+             "is in the Multimedia (Sound & Video) group - Audio Production on Ubuntu Studio - with its icon; right-click it there to pin it to the panel or dock.\n\n"
              "The entry starts " + exe.getFullPathName() + " - install again after moving the executable. "
              "Log out and in if the menu does not show it at once."
            : "The entry could not be written under ~/.local/share - see the activity log.");
