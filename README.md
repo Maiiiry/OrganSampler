@@ -13,6 +13,29 @@ general crescendo and combinations. No organ definition file is needed: you load
 the folders, the program proposes the organ, you shape it and save it as a
 configuration. Free software under the GNU GPL v3. Windows, macOS and Linux.
 
+## Try it in five minutes
+
+1. **The program:** the latest build on the
+   [releases page](https://github.com/zurek-jiri/OrganSampler/releases)
+   (pre-release builds for testers; one executable for Windows, macOS or
+   Linux, no installation).
+2. **An organ to play:** download
+   [**RuralOrgan.zip**](https://github.com/zurek-jiri/OrganSampler/releases/download/rural-organ-0.8/RuralOrgan.zip)
+   (about 950 MB) - the **Rural Organ** demo: a small village organ, three
+   divisions, fifteen stops, **dry recordings with IR reverb**, with its
+   sample folders and a portable configuration. Unpack it, start
+   OrganSampler, *Load Configuration*, choose `Rural Organ.json`. It plays
+   through your default sound device at once; a message says what to set
+   up next. Details: [`configurations/rural-organ`](configurations/rural-organ/README.md).
+3. **More organs:** OrganSampler ships no other samples. Sample folders in
+   wave format from [**Sonus Paradisi**](https://www.sonusparadisi.cz/en/organs.html)
+   work with OrganSampler as they are - and their
+   [Free stuff](https://www.sonusparadisi.cz/en/free-stuff.html) page has
+   free instruments and impulse responses. Ready-made configurations for
+   them: [`configurations/`](configurations/README.md).
+
+## Links
+
 - Website: https://zurek-jiri.github.io/OrganSampler/
 - Downloads: https://github.com/zurek-jiri/OrganSampler/releases
 - User manual: [`OrganSampler/USER_MANUAL.md`](OrganSampler/USER_MANUAL.md)
