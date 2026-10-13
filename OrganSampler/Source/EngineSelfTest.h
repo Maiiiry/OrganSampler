@@ -115,12 +115,14 @@ namespace EngineSelfTest
             const auto until = juce::Time::getMillisecondCounter() + (juce::uint32)ms;
             while (juce::Time::getMillisecondCounter() < until)
             {
+               #if JUCE_WINDOWS
                 MSG msg;
                 while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
                 {
                     TranslateMessage(&msg);
                     DispatchMessageW(&msg);
                 }
+               #endif
                 juce::Thread::sleep(5);
             }
         };
@@ -1214,7 +1216,7 @@ namespace EngineSelfTest
                     {
                         double power = 0.0;
                         for (size_t i = a; i < b && i < audio.size(); ++i) power += (double)audio[i] * audio[i];
-                        return std::sqrt(power / (double)juce::jmax<size_t>(1, b - a));
+                        return std::sqrt(power / (double)std::max<size_t>(1, b - a));   // not jmax<size_t>: clang instantiates the SIMDRegister overload
                     };
                     const size_t window = 4800, skip = 720;   // 100 ms windows, the release's after the 10 ms fade-out
                     const double sustain = rms(before > window ? before - window : 0, before), release = rms(before + skip, before + skip + window);

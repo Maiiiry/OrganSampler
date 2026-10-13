@@ -1150,7 +1150,7 @@ namespace
                 }
                 span = 1;
             }
-            else span = (int)juce::jmin<uint64_t>((uint64_t)span, dist);
+            else span = (int)std::min<uint64_t>((uint64_t)span, dist);
 
             // --- envelope values at span start/end
             float e0 = 1.0f, e1 = 1.0f;
@@ -1580,8 +1580,8 @@ namespace
             else renderVoiceSpans<int16_t>(v, *s, c, lanes, incStartF, incEndF, gainStart, gainEnd);
             return !v.finished;
         }
-        static thread_local alignas(32) float tmp0[kMaxBlockFrames];
-        static thread_local alignas(32) float tmp1[kMaxBlockFrames];
+        alignas(32) static thread_local float tmp0[kMaxBlockFrames];   // the attribute first: GCC rejects it between decl-specifiers
+        alignas(32) static thread_local float tmp1[kMaxBlockFrames];
         LaneOutputs filtered = lanes;
         if (ch0 >= 0) { juce::FloatVectorOperations::clear(tmp0, n); filtered.out[ch0] = tmp0; }
         if (ch1 >= 0) { juce::FloatVectorOperations::clear(tmp1, n); filtered.out[ch1] = tmp1; }
@@ -2501,7 +2501,7 @@ struct SamplerEngine::Impl
                 fresh->preDelayMs.store(route.reverbTone.preDelayMs, std::memory_order_relaxed);
                 fresh->wetGain.store(juce::Decibels::decibelsToGain(juce::jlimit(-40.0f, 12.0f, route.reverbTone.wetDb)), std::memory_order_relaxed);
                 const int delaySize = juce::nextPowerOfTwo((int)(RouteReverb::kMaxPreDelaySeconds * fresh->preparedRate) + RouteReverb::kMaxBlock);
-                const int pairCount = juce::jmax(1, juce::countNumberOfBits(route.channelMask.load(std::memory_order_relaxed)) / 2);
+                const int pairCount = juce::jmax(1, juce::countNumberOfBits((juce::uint64)route.channelMask.load(std::memory_order_relaxed)) / 2);
                 const juce::dsp::ProcessSpec spec{ fresh->preparedRate, (juce::uint32)fresh->preparedBlock, 2 };
                 auto stereoCopy = [&](int c0, int c1)
                 {
@@ -4916,7 +4916,7 @@ void SamplerEngine::setPerspectiveOutputChannels(int manualIndex, const juce::St
         const juce::ScopedLock sl(controlLock);
         if (Route* r = impl->ensureRoute(manualIndex, perspective))
         {
-            const bool pairsChanged = juce::countNumberOfBits(r->channelMask.load()) / 2 != juce::countNumberOfBits(mask) / 2;
+            const bool pairsChanged = juce::countNumberOfBits((juce::uint64)r->channelMask.load()) / 2 != juce::countNumberOfBits((juce::uint64)mask) / 2;
             r->channelMask.store(mask);
             r->maskExplicit.store(true);
             if (pairsChanged && r->reverb != nullptr) changed = r;
@@ -8479,7 +8479,7 @@ void SamplerEngine::loadManualFolder(const juce::File& topFolder, int manualInde
         totalAssignments = groups[baseManual].assignments.size();
     }
 
-    const double totalFolders = (double)juce::jmax<size_t>(1, totalAssignments);
+    const double totalFolders = (double)std::max<size_t>(1, totalAssignments);   // not jmax<size_t>: clang instantiates the SIMDRegister overload
     int processedFolders = 0;
     loadOutOfMemory.store(false, std::memory_order_relaxed);
     for (auto& [groupManual, group] : groups)

@@ -2706,7 +2706,7 @@ std::vector<LoadStep> MainComponent::audioRouteSteps(double first, double last, 
         const juce::String perspective = missing[i].second;
         steps.push_back({ "Compiling the Stop List: audio route " + names[juce::jlimit(0, 7, manual)] + " / " + perspective
             + " (" + juce::String((int)i + 1) + "/" + juce::String((int)missing.size()) + ")",
-            first + span * (0.15 + 0.85 * (double)i / (double)juce::jmax<size_t>(1, missing.size())),
+            first + span * (0.15 + 0.85 * (double)i / (double)std::max<size_t>(1, missing.size())),
             [this, manual, perspective] { buildPerspectiveAudioRoute(manual, perspective); } });
     }
     steps.push_back({ "Compiling the Stop List: audio routes done", last, [this, afterwards]
@@ -7896,7 +7896,7 @@ public:
             int64_t maxLen = 0; double sr = 48000; int chans = 1;
             for (auto& p : filesToMerge) {
                 if (auto r = std::unique_ptr<juce::AudioFormatReader>(formatManager.createReaderFor(p.file))) {
-                    maxLen = juce::jmax(maxLen, r->lengthInSamples);
+                    maxLen = juce::jmax((juce::int64)maxLen, (juce::int64)r->lengthInSamples);   // int64_t is 'long' on Linux, juce::int64 'long long'
                     sr = r->sampleRate;
                     chans = juce::jmax(chans, (int)r->numChannels);
                 }
@@ -9548,7 +9548,7 @@ void MainComponent::clearSampleLibraryInMemory()
         config.folderPath.clear();
         config.extraFolderPaths.clear();
     }
-    topFolder = {};
+    topFolder = juce::File();
 }
 
 void MainComponent::shutdownComputer()
@@ -12591,7 +12591,7 @@ void MainComponent::unloadWholeManualFolder(int manualIndex)
     engine.unloadManual(manualIndex);
     manualConfigs[(size_t)manualIndex].folderPath.clear();
     manualConfigs[(size_t)manualIndex].stopBuild = {};
-    if (manualIndex == 0) topFolder = {};
+    if (manualIndex == 0) topFolder = juce::File();
     if (voicer)
     {
         voicer->setActiveManualCount(manualCount + 1);
@@ -14727,7 +14727,7 @@ void MainComponent::executeGlobalReset(bool clearMidiLearn, bool resetAudioOutpu
             engine.unloadManual(manual);
         }
         clearSampleLibraryInMemory();
-        currentConfigurationFile = {};
+        currentConfigurationFile = juce::File();
         configurationFingerprint.clear();
         configurationDirty = false;
         CrashHandler::note("Global reset: everything unloaded, the instrument is empty");
