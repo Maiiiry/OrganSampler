@@ -69,7 +69,7 @@ target_compile_definitions(OrganSampler PRIVATE
     JUCE_USE_CURL=0
     JUCE_STRICT_REFCOUNTEDPOINTER=1
     JUCE_DISPLAY_SPLASH_SCREEN=0
-    # Sample sets are WAV (FLAC/Ogg readers stay); MP3, Opus and WebP only add code.
+    # Sample folders are WAV (FLAC/Ogg readers stay); MP3, Opus and WebP only add code.
     JUCE_USE_MP3AUDIOFORMAT=0
     JUCE_USE_OPUS=0
     JUCE_USE_WEBP=0

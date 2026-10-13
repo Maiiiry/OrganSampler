@@ -6523,7 +6523,7 @@ void SamplerEngine::retireReleaseCopiesAndRebuild()
 
 namespace
 {
-    // The copy cache file of one sample set: "OSPC", version, the parameter key,
+    // The copy cache file of one folder tree: "OSPC", version, the parameter key,
     // then one record per filled pipe: pipe, fill offset, the frame counts of the
     // source variants (the identity of the source), and the copies themselves.
     constexpr uint32_t kCopyCacheMagic = 0x4350534F;   // "OSPC"
@@ -6630,7 +6630,7 @@ namespace
         return copies;
     }
 
-    // The file name of a rank's sample set: readable leaf, set tag, hash of the
+    // The file name of a rank's folder tree: readable leaf, set tag, hash of the
     // folder path. One file per rank and set whatever the settings: a set built
     // with other settings replaces the file (the parameters are in its header),
     // so the cache never holds two versions of the same copies.
@@ -6641,7 +6641,7 @@ namespace
         return directory.getChildFile(leaf + "_" + setTag + "_" + copyCachePathTag(rank) + ".ospc");
     }
 
-    // Writes one sample set's copies (every pipe in 'offsets' that has copies) as a
+    // Writes one folder tree's copies (every pipe in 'offsets' that has copies) as a
     // cache file: a temporary file renamed into place. The samples only change under
     // the build lock, which the caller holds.
     bool writeCopyCacheFile(const juce::File& cacheFile, const juce::String& parameters, const std::map<int, int>& offsets,
@@ -6892,7 +6892,7 @@ void SamplerEngine::buildAntiAliasCopies(Stop* stop, bool background)
         }
     } queuedReset{ stop };
     if (buildsAborted.load(std::memory_order_acquire) || buildsInterrupted.load(std::memory_order_acquire)) return;   // launched again later
-    // Progress for the UI: how many pipes (over every rank and sample set) still
+    // Progress for the UI: how many pipes (over every rank and folder tree) still
     // need a copy; counted first, then built.
     {
         const int planned = countMissingCopies(stop);

@@ -1299,7 +1299,7 @@ MainComponent::MainComponent()
     for (auto& state : manualKeyboardStates) state.allNotesOff(0);
     suppressKeyboardStateNotesTL = false;
     applicationReady.store(true);
-    // Remember folder locations, but never allocate/load a sample set merely
+    // Remember folder locations, but never allocate/load sample folders merely
     // because the application was launched. A portable configuration load is
     // the explicit operation that restores folders and the complete state.
     audioMuted.store(false);
@@ -1315,7 +1315,7 @@ MainComponent::MainComponent()
         item.button->addMouseListener(this, false);
     }
     // Optional: re-open the configuration used last time (Configuration Editor >
-    // Console). Off by default: launching alone never loads a sample set - and
+    // Console). Off by default: launching alone never loads sample folders - and
     // then the instrument starts clean: no trees in the pool, no stop tables
     // (the Stop List opens empty), unless a development reload asks for them.
     const bool willLoadLastConfiguration = loadLastConfigurationAtStartup && currentConfigurationFile.existsAsFile();

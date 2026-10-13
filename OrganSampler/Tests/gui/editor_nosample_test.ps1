@@ -1,4 +1,4 @@
-# Opens the Configuration Editor with NO sample set loaded and screenshots it
+# Opens the Configuration Editor with NO sample folders loaded and screenshots it
 # (%TEMP%\editor_nosample.png): the "Measure the maximum polyphony" button must
 # be greyed out. Settings backed up and restored.
 param([string]$Exe = "F:\JUCE_PROJEKTY\OrganSamplerC\OrganSampler\Builds\VisualStudio2026\x64\Release\App\OrganSampler.exe")

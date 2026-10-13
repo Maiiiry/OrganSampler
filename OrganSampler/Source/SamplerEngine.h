@@ -118,7 +118,7 @@ struct Stop
     Stop* groupMasterPtr = nullptr;
     bool container = false;     // a stop folder's master without samples of its own (only its children sound)
     juce::File folder;
-    juce::File tree;   // the folder tree (sample set) this stop was loaded from
+    juce::File tree;   // the folder tree this stop was loaded from
 
     // Attack/sustain samples per MIDI note (round robin between variants).
     std::array<std::vector<std::unique_ptr<Sample>>, 128> samplesByNote;
@@ -640,7 +640,7 @@ public:
     // on the message thread; it swaps the prepared stops in.
     void loadTopFolder(const juce::File& topFolder, double targetSR = 48000.0);
     // append = true keeps the division's existing stops and adds this folder
-    // tree to them (composite divisions from several sample sets).
+    // tree to them (composite divisions from several folder trees).
     // Stop building: which sample folder becomes which perspective of which
     // stop. Without a map the folder names decide (perspective prefixes,
     // sub-folders). A map - the table of the Stop building dialog - replaces that
@@ -996,10 +996,10 @@ public:
     void setCopyLoopCrossfade(float fraction);
     float getCopyLoopCrossfade() const noexcept { return copyLoopCrossfade.load(std::memory_order_relaxed); }
     static void applyCopyLoopCrossfade(Sample& sample, double fraction);
-    // How many copies (over the stop's ranks and sample sets) are missing for the current method.
+    // How many copies (over the stop's ranks and folder trees) are missing for the current method.
     int countMissingCopies(Stop* stop, juce::String* detail = nullptr);   // detail: per-set counts (diagnostics)
     // Cache of the generated copies on disk (a Configuration Editor option): one
-    // file per rank and sample set in 'directory'. A copy whose build parameters
+    // file per rank and folder tree in 'directory'. A copy whose build parameters
     // and source sample match is read from the file instead of being computed;
     // every build writes its set. The build parameters are part of the file name
     // (sets built with other settings stay beside it) and a copy's "formants
