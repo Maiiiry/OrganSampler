@@ -9,7 +9,7 @@
 # what the GitHub Actions workflow and the macOS/Linux builds use. Both compile
 # the same sources with the same defines.
 cmake_minimum_required(VERSION 3.22)
-project(OrganSampler VERSION 0.8.52 LANGUAGES C CXX)
+project(OrganSampler VERSION 0.8.53 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -44,7 +44,8 @@ target_sources(OrganSampler PRIVATE
 juce_add_binary_data(OrganSamplerData SOURCES
     "${ORGAN_SRC}/ProspektSP.png"
     "${ORGAN_SRC}/ProspektSP_2.jpg"
-    "${ORGAN_SRC}/_Prospekt3.ico")
+    "${ORGAN_SRC}/_Prospekt3.ico"
+    "${ORGAN_SRC}/AppIcon.png")
 
 target_include_directories(OrganSampler PRIVATE
     "${ORGAN_SRC}"
@@ -62,6 +63,13 @@ if(WIN32)
         "${CMAKE_CURRENT_SOURCE_DIR}/ASIOSDK/host/pc")
     target_compile_definitions(OrganSampler PRIVATE JUCE_ASIO=1 JUCE_ASIO_DEBUGGING=1 _USE_MATH_DEFINES=1 NOMINMAX=1)   # M_PI and std::min/max for Rubber Band under MSVC
     target_link_libraries(OrganSampler PRIVATE dbghelp)
+endif()
+
+# Linux: JACK (through PipeWire's libjack, loaded at start) shows every channel
+# of every card; the ALSA list is filtered of the template PCMs (PlatformAudio.h).
+if(UNIX AND NOT APPLE)
+    target_compile_definitions(OrganSampler PRIVATE JUCE_JACK=1)
+    target_link_libraries(OrganSampler PRIVATE ${CMAKE_DL_LIBS})
 endif()
 
 target_compile_definitions(OrganSampler PRIVATE

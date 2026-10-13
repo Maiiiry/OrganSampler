@@ -1837,7 +1837,7 @@ void Voicer::layoutScreen(int screen, juce::Component& container, juce::Viewport
             addAndMakeVisible(tremulant);
             missing.setColour(juce::TextButton::buttonColourId, juce::Colours::darkgrey);
             missing.setColour(juce::TextButton::textColourOffId, juce::Colours::orange);
-            missing.onClick = [this] { if (load.onClick) load.onClick(); };
+            missing.onClick = [this] { if (missingAction) missingAction(); else if (load.onClick) load.onClick(); };
             addChildComponent(missing);
             rebuildCouplers();
             startTimerHz(25);
@@ -2150,7 +2150,8 @@ void Voicer::layoutScreen(int screen, juce::Component& container, juce::Viewport
         }
     public:
         std::function<void(int, const std::vector<juce::String>&)> couplerReorder;
-        std::function<void(int, bool)> arrangeStateChanged;   // (manual, arranging) - remembered by the owner
+        std::function<void(int, bool)> arrangeStateChanged;
+        std::function<void()> missingAction;   // the notice under the header was clicked   // (manual, arranging) - remembered by the owner
         void setCouplerArranging(bool on) { couplerArrange = on; }
     };
 
@@ -2283,6 +2284,7 @@ void Voicer::layoutScreen(int screen, juce::Component& container, juce::Viewport
         header->setCouplerArranging(couplerArrangeManual == manual);
         if (missingTreesGetter)
             header->setMissingNotice(missingTreesGetter(manual), missingTreesDetail ? missingTreesDetail(manual) : juce::String());
+        header->missingAction = [this, manual] { if (missingTreesAction) missingTreesAction(manual); };
         const int headerHeight = header->getPreferredHeight(columnWidth);
         header->setBounds(x, y, columnWidth, headerHeight);
         container.addAndMakeVisible(header.get());

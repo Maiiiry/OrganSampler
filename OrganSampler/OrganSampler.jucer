@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
 <JUCERPROJECT id="TSAADV" name="OrganSampler" projectType="guiapp" useAppConfig="0"
-              version="0.8.52" companyName="OrganSampler" addUsingNamespaceToJuceHeader="0"
+              version="0.8.53" companyName="OrganSampler" addUsingNamespaceToJuceHeader="0"
               jucerFormatVersion="1" headerPath="../../../ASIOSDK/common;../../../ASIOSDK/host;../../../ASIOSDK/host/pc;../../../ThirdParty/signalsmith">
   <MAINGROUP id="bQGqRZ" name="OrganSampler">
     <GROUP id="{1CF4E020-5D96-48D3-C007-4FEDB9856EFD}" name="Source">
@@ -10,6 +10,7 @@
       <FILE id="F6wXnA" name="ProspektSP_2.jpg" compile="0" resource="1"
             file="Source/ProspektSP_2.jpg"/>
       <FILE id="DAMp1m" name="_Prospekt3.ico" compile="0" resource="1" file="Source/_Prospekt3.ico"/>
+      <FILE id="AppIc01" name="AppIcon.png" compile="0" resource="1" file="Source/AppIcon.png"/>
       <FILE id="cCehlh" name="SamplerEngine.cpp" compile="1" resource="0"
             file="Source/SamplerEngine.cpp"/>
       <FILE id="elMrgs" name="SamplerEngine.h" compile="0" resource="0" file="Source/SamplerEngine.h"/>

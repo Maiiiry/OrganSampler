@@ -514,6 +514,7 @@ public:
     // component rebuilds the columns when the set of missing trees changes.
     std::function<juce::String(int)> missingTreesGetter;
     std::function<juce::String(int)> missingTreesDetail;   // the tooltip: the paths and what to do
+    std::function<void(int)> missingTreesAction;           // a click on the notice: replace a tree / open the Stop List
 private:
     Stop* scrollTarget = nullptr;
     int activeManualCount = 2;

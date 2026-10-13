@@ -9,6 +9,7 @@
 #include <JuceHeader.h>
 #include "MainComponent.h"
 #include "CrashHandler.h"
+#include "PlatformAudio.h"
 #include "UIScale.h"
 #include "EngineSelfTest.h"
 
@@ -39,6 +40,14 @@ public:
     {
         // Any fatal error writes <AppData>/OrganSampler/CrashLogs/crash-<time>.txt (+ .dmp).
         CrashHandler::install(getApplicationName(), getApplicationVersion());
+       #if JUCE_LINUX
+        {
+            // JACK through PipeWire, before any audio device type is created (PlatformAudio.h).
+            const auto jack = preloadPipeWireJack();
+            CrashHandler::note(jack.isNotEmpty() ? "JACK: PipeWire's libjack loaded from " + jack
+                                                 : juce::String("JACK: no PipeWire libjack found, the system's libjack.so.0 is used"));
+        }
+       #endif
         // JUCE's own audio-driver diagnostics (ASIO buffer creation, resets)
         // go to CrashLogs/juce-audio.log so device problems can be traced.
         juceLog = std::make_unique<juce::FileLogger>(juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
@@ -161,6 +170,9 @@ public:
                               DocumentWindow::allButtons)
         {
             setUsingNativeTitleBar (true);
+            // The program's icon on the window (title bar, task bar, dock): the
+            // 1024 px icon embedded at build time, scaled by the window system.
+            setIcon (juce::ImageCache::getFromMemory (BinaryData::AppIcon_png, BinaryData::AppIcon_pngSize));
             setContentOwned (new MainComponent(), true);
 
            #if JUCE_IOS || JUCE_ANDROID

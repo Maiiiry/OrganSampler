@@ -12,6 +12,34 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.53] - 2026-10-13
+
+### Fixed
+- Relative paths inside a configuration (the trees below the library root,
+  the stop folders of the tables, the IRs) were written with "\" and did not
+  resolve on Linux and macOS, where "\" is an ordinary character - a
+  configuration from Windows, the Rural Organ package included, found its
+  tree but none of the folders in it. Paths are now stored with "/" on every
+  platform and normalised when read. The Rural Organ package is rebuilt (its
+  zip, made on Windows, had "\" in the entry names as well and unpacked flat
+  on Linux).
+- Linux: the ALSA device list was drowned in the templates ALSA advertises
+  for every card (surround 4.0 ... 7.1, front, rear, dmix), none of which can
+  be opened while PipeWire holds the card; they are hidden now.
+
+### Added
+- "Replace ... with a folder on this computer..." on the missing-tree notice
+  of a division header, and "Replace ... with another folder..." in the Stop
+  List's Unload folder menu: a tree is taken from another folder whatever
+  its name; its rows keep their folders and the divisions reload.
+- Linux: JACK through PipeWire. The program loads PipeWire's JACK library at
+  start, so the JACK device type lists every output of every card with no
+  separate server; the manual's "Audio on Linux" explains the setup.
+- The window carries the program's icon on every platform (Linux title bar
+  and task bar, macOS dock), and the Configuration Editor's "Install menu
+  entry and icon" (Linux) writes a .desktop entry and the icon in every size
+  under ~/.local/share.
+
 ## [0.8.52] - 2026-10-13
 
 ### Fixed

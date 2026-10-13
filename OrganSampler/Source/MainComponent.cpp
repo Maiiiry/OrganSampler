@@ -5,6 +5,15 @@
 #include <algorithm>
 #include <juce_audio_formats/juce_audio_formats.h>
 #include "AggregatedWASAPIAudio.h"
+#include "PlatformAudio.h"
+
+namespace
+{
+    // Relative paths are stored with "/" on every platform (juce::File accepts
+    // it on Windows too); a path written by a Windows build with "\\" must
+    // still resolve on Linux and macOS, where "\\" is an ordinary character.
+    juce::String slashes(juce::String path) { return path.replaceCharacter('\\', '/'); }
+}
 #include "CrashHandler.h"
 #include "TemperamentsData.h"   // temperaments.csv embedded by the pre-build step
 #include "LicencesData.h"       // the licence texts embedded (GenerateLicencesData.ps1)
@@ -1083,7 +1092,7 @@ MainComponent::MainComponent()
     // The divisions' private managers start without a device: loadSettings
     // attaches every division's own route to its shared host (or none).
     deviceManager.getAvailableDeviceTypes();
-    addAggregatedWASAPIType(deviceManager);
+    installPlatformAudioTypes(deviceManager);
     primaryAudioCallback = std::make_unique<DivisionAudioCallback>(*this, 0);
     deviceManager.addAudioCallback(primaryAudioCallback.get());
     audioSettings = std::make_unique<juce::AudioDeviceSelectorComponent>(
@@ -1095,7 +1104,7 @@ MainComponent::MainComponent()
     {
         extraAudioManagers[(size_t)i] = std::make_unique<juce::AudioDeviceManager>();
         extraAudioManagers[(size_t)i]->getAvailableDeviceTypes();
-        addAggregatedWASAPIType(*extraAudioManagers[(size_t)i]);
+        installPlatformAudioTypes(*extraAudioManagers[(size_t)i]);
         extraAudioCallbacks[(size_t)i] = std::make_unique<DivisionAudioCallback>(*this, i + 1);
         extraAudioManagers[(size_t)i]->addAudioCallback(extraAudioCallbacks[(size_t)i].get());
         extraAudioSettings[(size_t)i] = std::make_unique<juce::AudioDeviceSelectorComponent>(
@@ -1244,6 +1253,7 @@ MainComponent::MainComponent()
     voicer->setTemperamentDescriber([this](const Stop* stop) { return describeRecordedTemperament(stop); });
     voicer->missingTreesGetter = [this](int manual) { return missingTreeNotice(manual, false); };
     voicer->missingTreesDetail = [this](int manual) { return missingTreeNotice(manual, true); };
+    voicer->missingTreesAction = [this](int manual) { showMissingTreesMenu(manual); };
     voicer->setCompassGetter([this](int manual)
     {
         const auto& config = manualConfigs[(size_t)juce::jlimit(0, SamplerEngine::maxManuals - 1, manual)];
@@ -2815,7 +2825,7 @@ void MainComponent::buildPerspectiveAudioRoute(int manual, const juce::String& p
             {
                 route->manager = std::make_unique<juce::AudioDeviceManager>();
                 route->manager->getAvailableDeviceTypes();   // types for the selector; a device only from a saved state below
-                addAggregatedWASAPIType(*route->manager);
+                installPlatformAudioTypes(*route->manager);
                 route->managerInUse = route->manager.get();
             }
             if (route->manager && config.audioDeviceStateXml.isNotEmpty() && !savedNone)
@@ -3390,7 +3400,7 @@ juce::AudioDeviceManager* MainComponent::sharedHostFor(const juce::String& typeN
     // Force JUCE's native type list to exist before appending our virtual type;
     // otherwise switching the manager to ASIO would drop the custom type.
     host->getAvailableDeviceTypes();
-    addAggregatedWASAPIType(*host);
+    installPlatformAudioTypes(*host);
     juce::String error;
     // Never let JUCE open the type's *default* ASIO device on the way (that is
     // what setCurrentAudioDeviceType does): it is most likely the driver another
@@ -3668,7 +3678,7 @@ void MainComponent::detachRouteAudioQuietly(int manualIndex, const juce::String&
         {
             route.manager = std::make_unique<juce::AudioDeviceManager>();
             route.manager->getAvailableDeviceTypes();   // types for the selector, no device opened
-            addAggregatedWASAPIType(*route.manager);
+            installPlatformAudioTypes(*route.manager);
         }
         else route.manager->closeAudioDevice();
         route.managerInUse = route.manager.get();
@@ -3889,7 +3899,7 @@ juce::AudioDeviceManager* MainComponent::setRouteAudioType(int manualIndex, cons
                 {
                     route.manager = std::make_unique<juce::AudioDeviceManager>();
                     route.manager->initialiseWithDefaultDevices(0, 2);
-                    addAggregatedWASAPIType(*route.manager);
+                    installPlatformAudioTypes(*route.manager);
                 }
                 route.managerInUse = route.manager.get();
                 openType(*route.managerInUse);
@@ -9040,7 +9050,7 @@ void MainComponent::savePortableConfiguration(const juce::File& file, bool inclu
         // Where the library root lies relative to this configuration file
         // ("..\..\Samples" and the like). When the configuration travels
         // together with the library, the folders are found without asking.
-        const auto rootRelative = libraryRoot.getRelativePathFrom(file.getParentDirectory());
+        const auto rootRelative = slashes(libraryRoot.getRelativePathFrom(file.getParentDirectory()));
         root->setProperty("sampleLibraryRootRelative",
             juce::File::isAbsolutePath(rootRelative) ? juce::String() : rootRelative);
     }
@@ -9058,7 +9068,7 @@ void MainComponent::savePortableConfiguration(const juce::File& file, bool inclu
                 item->removeProperty("folderRelativePath");
                 if (folder.isDirectory() && libraryRoot != juce::File())
                 {
-                    const auto relative = folder.getRelativePathFrom(libraryRoot);
+                    const auto relative = slashes(folder.getRelativePathFrom(libraryRoot));
                     if (!juce::File::isAbsolutePath(relative))
                     {
                         item->setProperty("folderRelativePath", relative);
@@ -9073,7 +9083,7 @@ void MainComponent::savePortableConfiguration(const juce::File& file, bool inclu
                     {
                         const juce::File extraFolder(extra.toString());
                         if (!extraFolder.isDirectory()) continue;
-                        const auto relative = libraryRoot != juce::File() ? extraFolder.getRelativePathFrom(libraryRoot) : juce::String();
+                        const auto relative = libraryRoot != juce::File() ? slashes(extraFolder.getRelativePathFrom(libraryRoot)) : juce::String();
                         if (relative.isNotEmpty() && !juce::File::isAbsolutePath(relative)) extraRelative.add(relative);
                         else { extraAbsolute.add(extraFolder.getFullPathName()); absoluteOnly.add(extraFolder.getFullPathName()); }
                     }
@@ -9087,12 +9097,12 @@ void MainComponent::savePortableConfiguration(const juce::File& file, bool inclu
                         {
                             const juce::File ir(routeObject->getProperty("reverbIr").toString());
                             if (!ir.existsAsFile()) continue;
-                            const auto relative = ir.getRelativePathFrom(file.getParentDirectory());
+                            const auto relative = slashes(ir.getRelativePathFrom(file.getParentDirectory()));
                             routeObject->setProperty("reverbIrRelative", juce::File::isAbsolutePath(relative) ? juce::String() : relative);
                             // An IR inside the sample library travels with it: its path from the
                             // library root is tried wherever the root is found (a shared package).
                             if (libraryRoot != juce::File() && ir.isAChildOf(libraryRoot))
-                                routeObject->setProperty("reverbIrLibraryRelative", ir.getRelativePathFrom(libraryRoot));
+                                routeObject->setProperty("reverbIrLibraryRelative", slashes(ir.getRelativePathFrom(libraryRoot)));
                             else routeObject->removeProperty("reverbIrLibraryRelative");
                         }
                 // A tree below the library root travels as a relative path only;
@@ -9207,10 +9217,11 @@ namespace
     // relative to the configuration file (".." segments included), next to the
     // configuration file, or at the absolute path the file still carries.
     juce::Array<juce::File> portableFolderCandidates(const juce::var& configuration, const juce::File& configurationFile,
-        const juce::File& selectedLibraryRoot, const juce::String& relative, const juce::String& absolute)
+        const juce::File& selectedLibraryRoot, const juce::String& relativeIn, const juce::String& absolute)
     {
+        const auto relative = slashes(relativeIn);
         const auto rootName = configuration.getProperty("sampleLibraryRootName", "").toString();
-        const auto rootRelative = configuration.getProperty("sampleLibraryRootRelative", "").toString();
+        const auto rootRelative = slashes(configuration.getProperty("sampleLibraryRootRelative", "").toString());
         const auto configDir = configurationFile.getParentDirectory();
         juce::Array<juce::File> candidates;
         if (relative.isEmpty())
@@ -9376,8 +9387,8 @@ void MainComponent::applyPortableConfiguration(juce::var configuration,
                     for (auto& routeVar : *routes)
                         if (auto* routeObject = routeVar.getDynamicObject())
                         {
-                            const auto irRelative = routeObject->getProperty("reverbIrRelative").toString();
-                            const auto irLibraryRelative = routeObject->getProperty("reverbIrLibraryRelative").toString();
+                            const auto irRelative = slashes(routeObject->getProperty("reverbIrRelative").toString());
+                            const auto irLibraryRelative = slashes(routeObject->getProperty("reverbIrLibraryRelative").toString());
                             const auto configDir = configurationFile.getParentDirectory();
                             juce::Array<juce::File> candidates;
                             if (irRelative.isNotEmpty()) candidates.add(configDir.getChildFile(irRelative));
@@ -9385,7 +9396,7 @@ void MainComponent::applyPortableConfiguration(juce::var configuration,
                             {
                                 // Where the library root may be, as for the folder trees.
                                 const auto rootName = configuration.getProperty("sampleLibraryRootName", "").toString();
-                                const auto rootRelative = configuration.getProperty("sampleLibraryRootRelative", "").toString();
+                                const auto rootRelative = slashes(configuration.getProperty("sampleLibraryRootRelative", "").toString());
                                 if (libraryRoot != juce::File()) candidates.add(libraryRoot.getChildFile(irLibraryRelative));
                                 if (rootRelative.isNotEmpty()) candidates.add(configDir.getChildFile(rootRelative).getChildFile(irLibraryRelative));
                                 if (rootName.isNotEmpty()) candidates.add(configDir.getChildFile(rootName).getChildFile(irLibraryRelative));
@@ -10137,6 +10148,119 @@ std::shared_ptr<std::vector<SamplerEngine::FolderAssignment>> MainComponent::sto
     return all;
 }
 
+void MainComponent::relocateTree(int poolIndex, const juce::File& tree)
+{
+    if (poolIndex < 0 || poolIndex >= (int)sampleTrees.size() || !tree.isDirectory() || activeFolderLoader != nullptr) return;
+    const size_t index = (size_t)poolIndex;
+    const juce::File old(sampleTrees[index]);
+    if (old == tree) return;
+    if (poolIndexOf(tree.getFullPathName()) >= 0)
+    {
+        juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, "Replace folder tree",
+            "That folder is already a tree of the pool; a tree cannot stand in for another one.");
+        return;
+    }
+    sampleTrees[index] = tree.getFullPathName();
+    for (int m = 0; m <= manualCount && m < SamplerEngine::maxManuals; ++m)
+    {
+        auto& config = manualConfigs[(size_t)m];
+        if (juce::File(config.folderPath) == old) config.folderPath = tree.getFullPathName();
+        for (auto& extra : config.extraFolderPaths) if (juce::File(extra) == old) extra = tree.getFullPathName();
+    }
+    syncDivisionTreeLists();
+    std::vector<int> users;
+    for (int m = 0; m <= manualCount && m < SamplerEngine::maxManuals; ++m)
+        for (const auto& path : divisionTrees(m))
+            if (juce::File(path) == tree) { users.push_back(m); break; }
+    CrashHandler::note("Tree " + tree.getFullPathName() + " takes the place of the pool tree " + old.getFullPathName()
+        + " (index " + juce::String((int)index) + (old.isDirectory() ? "" : ", not on this computer") + "); divisions reloaded: " + juce::String((int)users.size()));
+    saveSettings();
+    if (!users.empty()) reloadDivisions(users);
+}
+
+void MainComponent::showMissingTreesMenu(int manual)
+{
+    // The notice under a division header: every missing tree of the division
+    // can be replaced by a folder of this computer, or the Stop List opened.
+    if (manual < 0 || manual >= SamplerEngine::maxManuals) return;
+    auto tail = [](const juce::String& path)
+    {
+        juce::StringArray parts;
+        parts.addTokens(path.replaceCharacter('/', '\\'), "\\", "");
+        parts.removeEmptyStrings();
+        while (parts.size() > 3) parts.remove(0);
+        return parts.joinIntoString(juce::File::getSeparatorString());
+    };
+    juce::PopupMenu menu;
+    std::vector<int> missing;
+    for (const auto& path : divisionTrees(manual))
+    {
+        const int index = poolIndexOf(path);
+        if (index < 0 || path.isEmpty() || juce::File(path).isDirectory()) continue;
+        missing.push_back(index);
+        menu.addItem(index + 1, "Replace \"" + tail(path) + "\" with a folder on this computer...");
+    }
+    if (!missing.empty()) menu.addSeparator();
+    menu.addItem(1000, "Open the Stop List");
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    menu.showMenuAsync(juce::PopupMenu::Options(), [safeThis, manual](int result)
+    {
+        if (safeThis == nullptr || result <= 0) return;
+        if (result == 1000) { safeThis->showStopBuildingDialog(manual); return; }
+        const int index = result - 1;
+        if (index >= (int)safeThis->sampleTrees.size()) return;
+        const juce::File old(safeThis->sampleTrees[(size_t)index]);
+        safeThis->folderChooser = std::make_unique<juce::FileChooser>(
+            "The folder that replaces \"" + old.getFileName() + "\" (the stop folders of the tree lie in it)",
+            juce::File::getSpecialLocation(juce::File::userHomeDirectory), "", true);
+        safeThis->folderChooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+            [safeThis, index](const juce::FileChooser& chooser)
+            {
+                const auto folder = chooser.getResult();
+                if (safeThis != nullptr && folder.isDirectory()) safeThis->relocateTree(index, folder);
+            });
+    });
+}
+
+void MainComponent::installLinuxDesktopEntry()
+{
+   #if JUCE_LINUX
+    const auto share = juce::File::getSpecialLocation(juce::File::userHomeDirectory).getChildFile(".local/share");
+    const auto exe = juce::File::getSpecialLocation(juce::File::currentExecutableFile);
+    const auto icon = juce::ImageCache::getFromMemory(BinaryData::AppIcon_png, BinaryData::AppIcon_pngSize);
+    int icons = 0;
+    for (const int size : { 16, 24, 32, 48, 64, 128, 256, 512 })
+    {
+        const auto dir = share.getChildFile("icons/hicolor/" + juce::String(size) + "x" + juce::String(size) + "/apps");
+        dir.createDirectory();
+        const auto file = dir.getChildFile("organsampler.png");
+        file.deleteFile();
+        juce::FileOutputStream out(file);
+        if (!out.openedOk()) continue;
+        if (juce::PNGImageFormat().writeImageToStream(icon.rescaled(size, size, juce::Graphics::highResamplingQuality), out)) ++icons;
+    }
+    const auto apps = share.getChildFile("applications");
+    apps.createDirectory();
+    const auto entry = apps.getChildFile("organsampler.desktop");
+    juce::String text;
+    text << "[Desktop Entry]\nType=Application\nName=OrganSampler\nComment=Pipe organ sampler for creative minds\n"
+         << "Exec=" << exe.getFullPathName().quoted() << "\nIcon=organsampler\nTerminal=false\nCategories=AudioVideo;Audio;Music;\n"
+         << "StartupWMClass=OrganSampler\nStartupNotify=false\n";
+    const bool ok = entry.replaceWithText(text) && icons > 0;
+    // The menu and icon caches, where the tools exist (harmless where they do not).
+    juce::ChildProcess update;
+    if (update.start("update-desktop-database " + apps.getFullPathName().quoted())) update.waitForProcessToFinish(4000);
+    juce::ChildProcess cache;
+    if (cache.start("gtk-update-icon-cache -f -t " + share.getChildFile("icons/hicolor").getFullPathName().quoted())) cache.waitForProcessToFinish(6000);
+    CrashHandler::note(juce::String("Linux desktop entry ") + (ok ? "installed: " : "FAILED: ") + entry.getFullPathName() + ", " + juce::String(icons) + " icon size(s)");
+    juce::AlertWindow::showMessageBoxAsync(ok ? juce::MessageBoxIconType::InfoIcon : juce::MessageBoxIconType::WarningIcon, "Menu entry and icon",
+        ok ? "Installed: " + entry.getFullPathName() + " and the icon in " + juce::String(icons) + " sizes under ~/.local/share/icons/hicolor. "
+             "OrganSampler now appears in the application menu with its icon; the entry starts " + exe.getFullPathName()
+             + " - install again after moving the executable. Log out and in if the menu does not show it at once."
+           : "The entry could not be written under ~/.local/share - see the activity log.");
+   #endif
+}
+
 void MainComponent::loadTreeIntoDivision(const juce::File& tree, int manual)
 {
     // A tree enters the pool once; its folders join the division's table by the
@@ -10172,29 +10296,7 @@ void MainComponent::loadTreeIntoDivision(const juce::File& tree, int manual)
             const juce::File old(sampleTrees[index]);
             if (!old.isDirectory() && tail(old, components) == tail(tree, components)) relocate = (int)index;
         }
-    if (relocate >= 0)
-    {
-        const size_t index = (size_t)relocate;
-        const juce::File old(sampleTrees[index]);
-        sampleTrees[index] = tree.getFullPathName();
-        for (int m = 0; m <= manualCount && m < SamplerEngine::maxManuals; ++m)
-        {
-            auto& config = manualConfigs[(size_t)m];
-            if (juce::File(config.folderPath) == old) config.folderPath = tree.getFullPathName();
-            for (auto& extra : config.extraFolderPaths) if (juce::File(extra) == old) extra = tree.getFullPathName();
-        }
-        syncDivisionTreeLists();
-        std::vector<int> users;
-        for (int m = 0; m <= manualCount && m < SamplerEngine::maxManuals; ++m)
-            for (const auto& path : divisionTrees(m))
-                if (juce::File(path) == tree) { users.push_back(m); break; }
-        if (std::find(users.begin(), users.end(), manual) == users.end()) users.push_back(manual);
-        CrashHandler::note("Tree " + tree.getFullPathName() + " takes the place of the missing pool tree " + old.getFullPathName()
-            + " (index " + juce::String((int)index) + "); divisions reloaded: " + juce::String((int)users.size()));
-        saveSettings();
-        reloadDivisions(users);
-        return;
-    }
+    if (relocate >= 0) { relocateTree(relocate, tree); return; }
     auto& config = manualConfigs[(size_t)manual];
     if (!config.stopBuild.active)
     {
@@ -10280,7 +10382,7 @@ MainComponent::ManualConfig::StopBuild MainComponent::deriveStopBuildFromEngine(
             if (folder == tree || folder.isAChildOf(tree))
             {
                 ref.tree = i;
-                ref.relativePath = folder == tree ? juce::String(".") : folder.getRelativePathFrom(tree);
+                ref.relativePath = folder == tree ? juce::String(".") : slashes(folder.getRelativePathFrom(tree));
                 return true;
             }
         }
@@ -10335,7 +10437,7 @@ MainComponent::ManualConfig::StopBuild MainComponent::deriveStopBuildFromEngine(
                     build.entries.push_back(entry);
                     target = &build.entries.back();
                 }
-                target->folders[perspective] = { treeIndex, assignment.folder.getRelativePathFrom(tree) };
+                target->folders[perspective] = { treeIndex, slashes(assignment.folder.getRelativePathFrom(tree)) };
                 addPerspective(perspective);
             }
         }
@@ -10373,7 +10475,7 @@ void MainComponent::extendStopBuildWithTree(int manual, const juce::File& tree, 
             build.entries.push_back(entry);
             target = &build.entries.back();
         }
-        target->folders[perspective] = { treeIndex, assignment.folder.getRelativePathFrom(tree) };
+        target->folders[perspective] = { treeIndex, slashes(assignment.folder.getRelativePathFrom(tree)) };
     }
 }
 
@@ -10651,7 +10753,7 @@ std::vector<MainComponent::ReadyStop> MainComponent::readyStopsNotIn(const std::
                 for (auto& stop : ready)
                     if (stopBuildKey(stop.name) == stopBuildKey(assignment.stopName) && stop.folders.count(perspective) == 0) { target = &stop; break; }
             if (target == nullptr) { ready.push_back({ assignment.stopName, {} }); target = &ready.back(); }
-            target->folders[perspective] = { treeIndex, assignment.folder.getRelativePathFrom(tree) };
+            target->folders[perspective] = { treeIndex, slashes(assignment.folder.getRelativePathFrom(tree)) };
         }
     }
     auto folderUsed = [&](const ManualConfig::StopBuild::FolderRef& ref)
@@ -11124,7 +11226,7 @@ juce::var MainComponent::stopBuildToVar(const ManualConfig::StopBuild& build)
             juce::DynamicObject::Ptr folder = new juce::DynamicObject();
             folder->setProperty("perspective", perspective);
             folder->setProperty("tree", ref.tree);
-            folder->setProperty("path", ref.relativePath);
+            folder->setProperty("path", slashes(ref.relativePath));
             folders.add(juce::var(folder.get()));
         }
         item->setProperty("folders", folders);
@@ -11155,7 +11257,7 @@ MainComponent::ManualConfig::StopBuild MainComponent::stopBuildFromVar(const juc
                 {
                     const auto perspective = folder.getProperty("perspective", "default").toString();
                     entry.folders[perspective.isEmpty() ? juce::String("default") : perspective] =
-                        { (int)folder.getProperty("tree", 0), folder.getProperty("path", "").toString() };
+                        { (int)folder.getProperty("tree", 0), slashes(folder.getProperty("path", "").toString()) };
                 }
             build.entries.push_back(entry);
         }
@@ -11744,7 +11846,7 @@ void MainComponent::showStopBuildingDialog(int)
             {
                 const juce::File tree(pool[(size_t)index]);
                 if (folder == tree || folder.isAChildOf(tree))
-                    return { index, folder == tree ? juce::String(".") : folder.getRelativePathFrom(tree) };
+                    return { index, folder == tree ? juce::String(".") : slashes(folder.getRelativePathFrom(tree)) };
             }
             return { 0, folder.getFileName() };
         }
@@ -12644,11 +12746,35 @@ void MainComponent::showStopBuildingDialog(int)
             {
                 menu.addSeparator();
                 menu.addItem((int)pool.size() + 1, "Unload all folder trees (" + juce::String((int)pool.size()) + ")");
+                // A tree replaced by another folder (moved disk, a configuration from
+                // elsewhere): the rows keep their folders, the divisions reload.
+                menu.addSeparator();
+                for (int t = 0; t < (int)pool.size(); ++t)
+                    menu.addItem(2001 + t, "Replace \"" + juce::File(pool[(size_t)t]).getFileName() + "\" with another folder..."
+                        + (juce::File(pool[(size_t)t]).isDirectory() ? juce::String() : juce::String("   (not on this computer)")));
             }
             juce::Component::SafePointer<StopListDialog> safeThis(this);
             menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&unloadFolderButton), [safeThis](int result)
             {
-                if (safeThis == nullptr || result <= 0 || result - 1 > (int)safeThis->pool.size()) return;
+                if (safeThis == nullptr || result <= 0) return;
+                if (result >= 2001)
+                {
+                    const int t = result - 2001;
+                    if (t >= (int)safeThis->pool.size()) return;
+                    MainComponent& owner = safeThis->owner;
+                    const juce::File old(safeThis->pool[(size_t)t]);
+                    owner.folderChooser = std::make_unique<juce::FileChooser>(
+                        "The folder that replaces \"" + old.getFileName() + "\" (the stop folders of the tree lie in it)",
+                        old.isDirectory() ? old.getParentDirectory() : juce::File::getSpecialLocation(juce::File::userHomeDirectory), "", true);
+                    owner.folderChooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                        [&owner, t](const juce::FileChooser& chooser)
+                        {
+                            const auto folder = chooser.getResult();
+                            if (folder.isDirectory()) owner.relocateTree(t, folder);
+                        });
+                    return;
+                }
+                if (result - 1 > (int)safeThis->pool.size()) return;
                 if (result - 1 == (int)safeThis->pool.size())
                 {
                     // Every tree at once: the rows stay (as empty stops), every division empties.
@@ -17030,6 +17156,13 @@ void MainComponent::showConfigurationEditor()
                 "and opens the GitHub bug report with the fields filled in.");
             report.onClick = [this] { this->owner.showProblemReportDialog(); };
             addAndMakeVisible(report);
+           #if JUCE_LINUX
+            desktopEntry.setButtonText("Install menu entry and icon");
+            desktopEntry.setTooltip("Writes a .desktop entry and the program's icon in every size under ~/.local/share, so "
+                "OrganSampler appears in the application menu, the dock and the file manager with its icon.");
+            desktopEntry.onClick = [this] { this->owner.installLinuxDesktopEntry(); };
+            addAndMakeVisible(desktopEntry);
+           #endif
             close.setButtonText("Close");
             close.onClick = [this]
             {
@@ -17050,6 +17183,9 @@ void MainComponent::showConfigurationEditor()
             close.setBounds(buttons.removeFromRight(100).reduced(3));
             reloadAll.setBounds(buttons.removeFromRight(130).reduced(3));
             openFolder.setBounds(buttons.removeFromLeft(160).reduced(3));
+           #if JUCE_LINUX
+            desktopEntry.setBounds(buttons.removeFromLeft(220).reduced(3));
+           #endif
             viewport.setBounds(area);
             const int width = juce::jmax(700, viewport.getWidth() - viewport.getScrollBarThickness() - 4);
             const int labelWidth = 330;
@@ -17101,7 +17237,7 @@ void MainComponent::showConfigurationEditor()
         juce::Component content;
         std::vector<Row> rows;
         std::map<juce::String, bool> collapsedSections;   // survives "Refresh values"
-        juce::TextButton openFolder, reloadAll, close, licences, report;
+        juce::TextButton openFolder, reloadAll, close, licences, report, desktopEntry;
         juce::Label aboutLabel;
         juce::Array<juce::MidiDeviceInfo> midiDevices;
 

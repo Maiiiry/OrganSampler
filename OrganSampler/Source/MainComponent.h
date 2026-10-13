@@ -327,6 +327,15 @@ private:
     int addTreeToPool(const juce::String& path);           // returns its index
     void syncDivisionTreeLists();
     void loadTreeIntoDivision(const juce::File& tree, int manual);   // a new tree: its stops join the division's table
+    // The pool tree at that index is replaced by another folder, wherever it is
+    // and whatever its name: the table rows keep their folders (relative to the
+    // tree), every division that uses it is rebuilt. "Replace ... with another
+    // folder" of the Stop List and of the missing-tree notice.
+    void relocateTree(int poolIndex, const juce::File& newFolder);
+    void showMissingTreesMenu(int manual);   // the notice under a division header was clicked
+    // Linux: a .desktop entry and the icon in every size under ~/.local/share, so
+    // the program has its icon in the menu, the dock and the file manager.
+    void installLinuxDesktopEntry();
     void unloadTreeFromPool(const juce::String& path);     // the tree and every stop built from it, in every division
     void unloadAllTreesFromPool();                           // every tree: the rows stay as empty stops, every division reloads (empty)
     std::shared_ptr<std::vector<SamplerEngine::FolderAssignment>> stopMapForDivisions(const std::set<int>& divisions) const;

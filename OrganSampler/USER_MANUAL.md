@@ -175,6 +175,14 @@ application-data folder:
 
 The window title shows the program version.
 
+On Linux the executable itself cannot carry an icon; the application menu,
+the dock and the file manager take it from a `.desktop` entry. *Install menu
+entry and icon* at the bottom of the Configuration Editor writes that entry
+(`~/.local/share/applications/organsampler.desktop`, pointing at the
+executable where it is now) and the icon in every size from 16 to 512 px
+under `~/.local/share/icons/hicolor`. Install again after moving the
+executable. The window itself carries the icon on every platform.
+
 ## 1.3 The first start, step by step
 
 ### Step 1: Size
@@ -460,11 +468,16 @@ different disk get absolute paths. A configuration whose trees are not on
 this computer loads all the same, with the trees that are here: every
 division that uses a missing tree shows an orange notice under its header,
 "Sample folder not found", with the folder's name (the full paths are in its
-tooltip; a click opens the Stop List). Then either load the folder again -
-*Load folder...* in the Stop List with a folder of the same name puts it in
-the missing tree's place, and the stops keep their samples - or unload the
-missing tree there (*Unload folder...*); the notice goes when no tree of the
-division is missing.
+tooltip). Click it: a menu offers *Replace "..." with a folder on this
+computer...* for every missing tree - choose the folder where that tree is
+now, whatever its name, and the stops come alive at once, their rows keep
+their folders - or *Open the Stop List*, where *Unload folder...* also
+offers *Replace "..." with another folder...* for every tree and removes a
+tree you no longer have. The notice goes when no tree of the division is
+missing.
+
+Paths are stored with "/" and resolved on every platform; a configuration
+saved on Windows loads on Linux and macOS and the other way round.
 
 **Voicing** (everything set in the voicing rows of the stops) is saved
 automatically and also with the configuration; *Save Voicing* and *Load
@@ -829,7 +842,10 @@ plays that perspective of the stop.
   missing tree's place and the stops built from it keep their samples.
 - **Unload folder...** removes one tree from the whole organ after saying how
   many stops lose their samples (their rows stay as empty stops). **Unload all
-  folder trees** empties the organ.
+  folder trees** empties the organ. The same menu offers **Replace "..." with
+  another folder...** for every tree: the tree is taken from another folder
+  (a moved disk, a configuration from another computer), its rows keep their
+  folders and the divisions that use it reload.
 - The table starts out as the automatic rules built the divisions (from the
   folder names and the perspective prefixes), so it shows what was
   recognised, and it can be corrected where the rules could not pair the
@@ -1074,7 +1090,8 @@ The kinds of driver:
   packets of 480 samples at 48 kHz, so a smaller buffer only splits each
   packet into shorter deadlines - an IR's tail FFT alone can exceed a block
   of 256 - without lowering the latency at all.
-- macOS: CoreAudio; Linux: ALSA or JACK.
+- macOS: CoreAudio.
+- Linux: **JACK** through PipeWire, or ALSA. See "Audio on Linux" below.
 
 The price of mixing drivers (ASIO beside WASAPI in one organ) - read this
 before you do it:
@@ -1090,6 +1107,31 @@ before you do it:
 
 The best layout for the highest polyphony is therefore: one ASIO driver, all
 routes on it, the output channels spread over its outputs.
+
+### Audio on Linux
+
+Modern Linux runs PipeWire, which holds every sound card and hands the
+programs a stereo "default" device. ALSA's own list adds, for every card, the
+templates of its configuration (surround 4.0 ... 7.1, front, rear, dmix) that
+have nothing to do with the card's real outputs and cannot be opened while
+PipeWire holds the card - that is where "no channels" came from. OrganSampler
+hides those templates; what remains are the real devices (the card's hardware
+device, the default and the digital outputs).
+
+For every channel of a multichannel interface choose the device type
+**JACK**: OrganSampler loads PipeWire's own JACK library at start (the
+activity log says "JACK: PipeWire's libjack loaded from ..."), so JACK needs
+no separate server - PipeWire is the server, and every output of every card
+appears as a channel (a Komplete Audio 6 shows its four analogue outputs and
+the S/PDIF pair). The buffer size and sample rate are PipeWire's; set them
+with `pw-metadata -n settings 0 clock.force-quantum 256` and
+`clock.force-rate 48000` when the defaults do not suit. If the JACK type
+lists no device, PipeWire's JACK library was not found (the package is
+`pipewire-jack`); start the program with `pw-jack ./OrganSampler` then.
+
+The ALSA default device stays for a quick stereo start; the hardware device
+of a card ("Direct hardware device without any conversions") opens only when
+PipeWire lets go of the card.
 
 ## 5.7 Audio devices not ready when OrganSampler starts
 
