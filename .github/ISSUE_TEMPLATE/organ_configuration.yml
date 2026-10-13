@@ -1,0 +1,64 @@
+name: Organ configuration
+description: Share a ready-made organ configuration (.json) for a sample set, so others can play it at once.
+title: "[Configuration] "
+labels: ["configuration"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A configuration is the organ you built in OrganSampler - stop list, voicing, audio routes, couplers, combinations - saved with
+        *Save Configuration*. Published configurations live in the [configurations](https://github.com/zurek-jiri/OrganSampler/tree/main/configurations)
+        folder of the repository; read its README for what a published configuration must contain. Attach the .json here (drag it into
+        the "Files" field), together with the impulse responses it uses, if any, and the maintainer adds it - or open a pull request yourself.
+  - type: input
+    id: organ
+    attributes:
+      label: Organ and sample set
+      description: The instrument, the sample set and its author or producer.
+      placeholder: "Stralsund, St. Jakobi, Wegscheider 2008 - Sonus Paradisi"
+    validations:
+      required: true
+  - type: input
+    id: source
+    attributes:
+      label: Where the sample set comes from
+      description: A link to the page where the sample set is sold or downloaded. The samples themselves are never published here.
+      placeholder: "https://www.sonusparadisi.cz/..."
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Saved with OrganSampler version
+      placeholder: "0.8.49"
+    validations:
+      required: true
+  - type: textarea
+    id: trees
+    attributes:
+      label: Folder trees the configuration expects
+      description: The names of the sample folder trees as the configuration saved them (the window title and the Stop List show them; "Sample folder not found" names them when they are missing).
+      placeholder: |
+        Library root: 003136
+        Trees: 003136\pipe
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Audio layout (how many routes, which perspectives, IRs), divisions, anything the player should know. Which parts of the set are not used.
+  - type: textarea
+    id: files
+    attributes:
+      label: Files
+      description: Drag the configuration .json here, and the IR files (.wav) it uses, if any.
+    validations:
+      required: true
+  - type: checkboxes
+    id: licence
+    attributes:
+      label: Publication
+      options:
+        - label: I made this configuration myself and agree to its publication in this repository under the repository's licence (GPLv3); it contains no sample data.
+          required: true

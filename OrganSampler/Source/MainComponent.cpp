@@ -1,0 +1,17701 @@
+#include "MainComponent.h"
+#include <set>
+#include <map>
+#include <unordered_map>
+#include <algorithm>
+#include <juce_audio_formats/juce_audio_formats.h>
+#include "AggregatedWASAPIAudio.h"
+#include "CrashHandler.h"
+#include "TemperamentsData.h"   // temperaments.csv embedded by the pre-build step
+#include "LicencesData.h"       // the licence texts embedded (GenerateLicencesData.ps1)
+#include "ManualData.h"         // the user manual embedded (GenerateManualData.ps1)
+#include "UIScale.h"
+
+namespace
+{
+    // A popup menu at the mouse that takes its interface size from 'scaleFrom'
+    // (a component of a scaled window; without it the menu would be unscaled,
+    // with the component alone it would open below the whole component).
+    juce::PopupMenu::Options menuOptionsAtMouse(juce::Component* scaleFrom)
+    {
+        const auto mouse = juce::Desktop::getMousePosition();
+        return juce::PopupMenu::Options().withTargetComponent(scaleFrom).withTargetScreenArea({ mouse.x, mouse.y, 1, 1 });
+    }
+}
+
+static juce::String canonicalPerspectiveName(juce::String name)
+{
+    return name.equalsIgnoreCase("misc.") ? juce::String("default") : name;
+}
+
+// Per-thread: the MIDI thread and the GUI thread each feed MidiKeyboardState
+// and must not disturb each other's "ignore the listener echo" flag.
+static thread_local bool suppressKeyboardStateNotesTL = false;
+
+class PolyphonyDisplay final : public juce::Component, private juce::Timer
+{
+public:
+    explicit PolyphonyDisplay(SamplerEngine& e) : engine(e)
+    {
+        limitEditor.setInputRestrictions(6, "0123456789");
+        limitEditor.setText(juce::String(engine.getMaxPolyphony()), false);
+        limitEditor.setJustification(juce::Justification::centred);
+        limitEditor.setColour(juce::TextEditor::backgroundColourId, juce::Colours::black);
+        limitEditor.setColour(juce::TextEditor::textColourId, juce::Colours::lightgreen);
+        limitEditor.setColour(juce::TextEditor::outlineColourId, juce::Colours::darkgrey);
+        limitEditor.setFont(juce::FontOptions(17.0f, juce::Font::bold));
+        auto apply = [this]
+        {
+            engine.setMaxPolyphony(limitEditor.getText().getIntValue());
+            limitEditor.setText(juce::String(engine.getMaxPolyphony()), false);
+        };
+        limitEditor.onReturnKey = [this, apply] { apply(); limitEditor.giveAwayKeyboardFocus(); };   // Enter: the caret leaves the box at once
+        limitEditor.onFocusLost = apply;
+        addAndMakeVisible(limitEditor);
+        startTimerHz(25);
+    }
+    void resized() override
+    {
+        // Columns NOW, PEAK, DSP (peak hold), LIMIT (editable, wider for typing).
+        const int column = columnWidth();
+        const int limitWidth = getWidth() - 3 * column;
+        limitEditor.setFont(juce::FontOptions(limitWidth < 90 ? 14.0f : 17.0f, juce::Font::bold));
+        limitEditor.setBounds(3 * column + 4, getHeight() - 27, limitWidth - 8, 24);
+    }
+    int columnWidth() const noexcept { return juce::jmax(1, getWidth() * 22 / 100); }   // LIMIT gets the rest (34 %)
+    void paint(juce::Graphics& g) override
+    {
+        // Same look as the combination display: black, lime digits.
+        auto r = getLocalBounds().toFloat().reduced(1.0f);
+        g.setColour(juce::Colours::black);
+        g.fillRoundedRectangle(r, 3.0f);
+        g.setColour(juce::Colours::darkgrey);
+        g.drawRoundedRectangle(r, 3.0f, 1.0f);
+        const int column = columnWidth();
+        const juce::String labels[4]{ "NOW", "PEAK", "DSP", "LIMIT" };
+        const juce::String values[3]{ juce::String(current), juce::String(maximum),
+            juce::String(juce::roundToInt(loadPeak * 100.0f)) + " %" };
+        const float valueFont = juce::jlimit(13.0f, 22.0f, (float)getHeight() * 0.32f);
+        for (int i = 0; i < 4; ++i)
+        {
+            const juce::Rectangle<int> cell(i * column, 0, i < 3 ? column : getWidth() - 3 * column, getHeight());
+            g.setColour(juce::Colours::lightgrey);
+            g.setFont(juce::FontOptions(12.0f, juce::Font::bold));
+            g.drawText(labels[i], cell.withHeight(20).translated(0, 3), juce::Justification::centred);
+            if (i < 3)
+            {
+                g.setColour(i == 2 && loadPeak > 0.85f ? juce::Colours::orange : juce::Colours::lime);
+                g.setFont(juce::FontOptions(valueFont, juce::Font::bold));
+                // Digits must always fit the column: shrink rather than clip.
+                g.drawFittedText(values[i], cell.withTrimmedTop(21).reduced(2, 0), juce::Justification::centred, 1, 0.5f);
+            }
+            if (i > 0)
+            {
+                g.setColour(juce::Colours::darkgrey.withAlpha(0.6f));
+                g.drawVerticalLine(cell.getX(), 8.0f, (float)getHeight() - 8.0f);
+            }
+        }
+    }
+private:
+    void timerCallback() override
+    {
+        current = engine.getCurrentPolyphony();
+        load = engine.getDisplayLoad();   // the whole driver callback, not the render alone
+        if (!limitEditor.hasKeyboardFocus(true))
+            limitEditor.setText(juce::String(engine.getMaxPolyphony()), false);
+        const double now = juce::Time::getMillisecondCounterHiRes();
+        // Peaks are held for three seconds, then fall back to the current value.
+        constexpr double holdMs = 3000.0;
+        if (current > maximum)
+        {
+            maximum = current;
+            resetAt = now + holdMs;
+        }
+        else if (resetAt > 0.0 && now >= resetAt)
+        {
+            maximum = current;
+            resetAt = current > 0 ? now + holdMs : -1.0;
+        }
+        if (load >= loadPeak)
+        {
+            loadPeak = load;
+            loadResetAt = now + holdMs;
+        }
+        else if (loadResetAt > 0.0 && now >= loadResetAt)
+        {
+            loadPeak = load;
+            loadResetAt = load > 0.001f ? now + holdMs : -1.0;
+        }
+        repaint();
+    }
+    SamplerEngine& engine;
+    int current = 0, maximum = 0;
+    float load = 0.0f, loadPeak = 0.0f;
+    double resetAt = -1.0, loadResetAt = -1.0;
+    juce::TextEditor limitEditor;
+};
+
+// General crescendo display: the console display look (black rounded panel,
+// dark grey frame, lime), one evenly spaced segment per crescendo step and the
+// number of the active step at the right. Left click / drag / wheel move the
+// crescendo, right click opens the MIDI Learn and settings menu.
+class MainComponent::CrescendoDisplay final : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    std::function<int()> stepCount;
+    std::function<int()> currentStep;
+    std::function<bool()> enabled;          // Cresc. button off: the lit segments are dimmed
+    std::function<void(float)> setPosition;
+    std::function<void()> showMenu;
+    void paint(juce::Graphics& g) override
+    {
+        const auto panel = getLocalBounds().toFloat().reduced(1.0f);
+        g.setColour(juce::Colours::black);
+        g.fillRoundedRectangle(panel, 3.0f);
+        g.setColour(juce::Colours::darkgrey);
+        g.drawRoundedRectangle(panel, 3.0f, 1.0f);
+        const int steps = juce::jmax(1, stepCount ? stepCount() : 1);
+        const int step = currentStep ? currentStep() : 0;
+        const auto bar = barArea().toFloat();
+        const bool active = enabled == nullptr || enabled();
+        const auto lit = active ? juce::Colours::lime : juce::Colours::lime.darker(0.75f);
+        const auto dark = juce::Colours::darkgreen.darker(0.7f);
+        const float gap = steps > 40 ? 1.0f : 2.0f;
+        const float width = (bar.getWidth() - gap * (float)(steps + 1)) / (float)steps;
+        const auto track = juce::Rectangle<float>(bar.getX() + gap, bar.getY() + 5.0f,
+            juce::jmax(1.0f, bar.getWidth() - 2.0f * gap), bar.getHeight() - 10.0f);
+        if (width >= 2.0f)
+        {
+            for (int i = 0; i < steps; ++i)
+            {
+                g.setColour(i < step ? lit : dark);
+                g.fillRect(bar.getX() + gap + (float)i * (width + gap), track.getY(), width, track.getHeight());
+            }
+        }
+        else
+        {
+            // Too narrow for separate segments: one continuous bar, filled in
+            // proportion to the step; it always ends before the step number.
+            g.setColour(dark);
+            g.fillRect(track);
+            g.setColour(lit);
+            g.fillRect(track.withWidth(track.getWidth() * (float)step / (float)steps));
+        }
+        g.setColour(juce::Colours::darkgrey.withAlpha(0.6f));
+        g.drawVerticalLine(juce::roundToInt(bar.getRight()), 8.0f, (float)getHeight() - 8.0f);
+        g.setColour(lit);
+        g.setFont(juce::FontOptions(juce::jlimit(14.0f, 24.0f, (float)getHeight() * 0.42f), juce::Font::bold));
+        g.drawFittedText(juce::String(step), numberArea().reduced(2, 0), juce::Justification::centred, 1, 0.6f);
+    }
+    void mouseDown(const juce::MouseEvent& event) override
+    {
+        if (event.mods.isPopupMenu()) { if (showMenu) showMenu(); return; }
+        if (event.mods.isLeftButtonDown()) setFromMouse(event.position.x);
+    }
+    void mouseDrag(const juce::MouseEvent& event) override
+    {
+        if (event.mods.isLeftButtonDown()) setFromMouse(event.position.x);
+    }
+    void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails& wheel) override
+    {
+        const int steps = juce::jmax(1, stepCount ? stepCount() : 1);
+        const int step = juce::jlimit(0, steps, (currentStep ? currentStep() : 0) + (wheel.deltaY > 0 ? 1 : -1));
+        if (setPosition) setPosition((float)step / (float)steps);
+    }
+private:
+    int numberWidth() const { return juce::jmin(46, juce::jmax(28, getWidth() / 5)); }
+    juce::Rectangle<int> numberArea() const { return getLocalBounds().removeFromRight(numberWidth()); }
+    juce::Rectangle<int> barArea() const { return getLocalBounds().withTrimmedRight(numberWidth()); }
+    void setFromMouse(float x)
+    {
+        const auto bar = barArea();
+        // The centre of segment i lies at (i + 0.5) / steps, so rounding picks the
+        // step whose segment was clicked; left of the first segment switches off.
+        const int steps = juce::jmax(1, stepCount ? stepCount() : 1);
+        const float fraction = juce::jlimit(0.0f, 1.0f, (x - (float)bar.getX()) / juce::jmax(1.0f, (float)bar.getWidth()));
+        const int step = juce::jlimit(0, steps, juce::roundToInt(fraction * (float)steps));
+        if (setPosition) setPosition((float)step / (float)steps);
+    }
+};
+
+// The second program window: a stop workspace like the main window's, showing
+// the divisions assigned to it (Configuration Editor). Closing it switches
+// back to one window.
+class MainComponent::SecondWindow final : public juce::DocumentWindow
+{
+public:
+    struct Content final : public juce::Component
+    {
+        explicit Content(MainComponent& o) : owner(o)
+        {
+            addAndMakeVisible(viewport);
+            viewport.setViewedComponent(&stops, false);
+            viewport.setScrollBarsShown(true, false);
+            viewport.allowWheel = [&o](const juce::MouseEvent& event)
+            {
+                return o.voicer == nullptr || !o.voicer->wheelBlockedAt(event.getScreenPosition());
+            };
+        }
+        void paint(juce::Graphics& g) override
+        {
+            g.fillAll(getLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId));
+        }
+        void resized() override
+        {
+            viewport.setBounds(getLocalBounds().reduced(4));
+            if (owner.voicer && owner.secondWindow != nullptr) owner.voicer->rebuildUI(owner.stopsContent, owner.stopsViewport);
+        }
+        MainComponent& owner;
+        NoWheelViewport viewport;
+        juce::Component stops;
+    };
+
+    explicit SecondWindow(MainComponent& ownerIn)
+        : juce::DocumentWindow("OrganSampler - window 2",
+            juce::Desktop::getInstance().getDefaultLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId),
+            juce::DocumentWindow::allButtons),
+          owner(ownerIn)
+    {
+        setUsingNativeTitleBar(true);
+        setResizable(true, true);
+        content = new Content(owner);
+        content->setSize(1200, 800);
+        setContentOwned(content, true);
+    }
+    void closeButtonPressed() override
+    {
+        // Deleting this window from its own callback is not allowed: later.
+        MainComponent* target = &owner;
+        juce::MessageManager::callAsync([target] { target->setTwoWindows(false); });
+    }
+    float getDesktopScaleFactor() const override { return UIScale::factor(); }   // interface size, see UIScale.h
+    Content* content = nullptr;
+    MainComponent& owner;
+};
+
+class MainComponent::DivisionAudioCallback final : public juce::AudioIODeviceCallback
+{
+public:
+    DivisionAudioCallback(MainComponent& owner, int manual, juce::String perspective = "default",
+        bool useConfiguredOutputs = true)
+        : owner(owner), manual(manual), perspective(std::move(perspective)),
+          useConfiguredOutputs(useConfiguredOutputs) {}
+    void audioDeviceIOCallbackWithContext(const float* const*, int, float* const* outputs,
+        int numOutputs, int numSamples, const juce::AudioIODeviceCallbackContext&) override
+    {
+        // Health statistics (a few relaxed atomics; read once a second by the GUI timer).
+        const int64_t entryTicks = juce::Time::getHighResolutionTicks();
+        // The device clock: is this the first route of a new driver callback?
+        // Between the routes of one callback the thread does microseconds of
+        // work; between two callbacks it waits for the driver (0.2 ms is the border).
+        if (deviceClock != nullptr)
+        {
+            const int block = expectedBlock.load(std::memory_order_relaxed);
+            const double rate = expectedRate.load(std::memory_order_relaxed);
+            const double ticksPerMs = (double)juce::Time::getHighResolutionTicksPerSecond() / 1000.0;
+            const double periodMs = block > 0 && rate > 0.0 ? 1000.0 * block / rate : 0.0;
+            const int64_t lastEnd = deviceClock->lastEnd.load(std::memory_order_relaxed);
+            const int64_t lastFirst = deviceClock->lastFirst.load(std::memory_order_relaxed);
+            const bool first = lastEnd == 0 || (double)(entryTicks - lastEnd) > 0.2 * ticksPerMs;
+            if (first && periodMs > 0.0 && lastFirst > 0 && lastEnd > lastFirst)
+            {
+                // The previous driver callback is complete: its whole duration against the period.
+                const float share = (float)((double)(lastEnd - lastFirst) / ticksPerMs / periodMs);
+                float known = deviceClock->maxCallbackShare.load(std::memory_order_relaxed);
+                while (share > known && !deviceClock->maxCallbackShare.compare_exchange_weak(known, share, std::memory_order_relaxed)) {}
+                deviceClock->periodMs.store(periodMs, std::memory_order_relaxed);
+                owner.engine.reportDeviceCallbackShare(share);   // the DSP field shows the whole callback
+            }
+            if (periodMs > 0.0 && lastFirst > 0)
+            {
+                const double sinceFirstMs = (double)(entryTicks - lastFirst) / ticksPerMs;
+                // The gap between driver callbacks: a new callback (first route), or
+                // - the thread never idle, callbacks back to back - a route still
+                // running when the next period was due. Counted against 1.5 and 2
+                // periods (diagnostics) and 3 periods + 2 ms (late: the health log's rule).
+                if (sinceFirstMs > 1.5 * periodMs)
+                {
+                    deviceClock->over15.fetch_add(1, std::memory_order_relaxed);
+                    if (sinceFirstMs > 2.0 * periodMs) deviceClock->over2.fetch_add(1, std::memory_order_relaxed);
+                    const bool asio = deviceClock->asio.load(std::memory_order_relaxed);
+                    // Windows Audio works in 10 ms packets: a shared-mode stream opened
+                    // with a smaller buffer (an aggregate at 256) gets its blocks in
+                    // bursts, two blocks then a 20 ms wait, even idle. The late rule of
+                    // such a device counts from the packet, not from the block.
+                    const double lateBase = asio ? periodMs : juce::jmax(periodMs, 10.0);
+                    if (asio || sinceFirstMs > 3.0 * lateBase + 2.0) deviceClock->late.fetch_add(1, std::memory_order_relaxed);
+                    if (!first) deviceClock->lastFirst.store(entryTicks, std::memory_order_relaxed);   // counted once per period
+                }
+                if (first || sinceFirstMs > 1.5 * periodMs)
+                {
+                    double known = deviceClock->maxGapMs.load(std::memory_order_relaxed);
+                    while (sinceFirstMs > known && !deviceClock->maxGapMs.compare_exchange_weak(known, sinceFirstMs, std::memory_order_relaxed)) {}
+                }
+            }
+            if (first) deviceClock->lastFirst.store(entryTicks, std::memory_order_relaxed);
+        }
+        uint64_t entryCycles = 0;
+       #if JUCE_WINDOWS
+        QueryThreadCycleTime(GetCurrentThread(), (PULONG64)&entryCycles);   // CPU cycles this thread has run
+       #endif
+        {
+            const int64_t now = entryTicks;
+            const int64_t last = statLastTicks.exchange(now, std::memory_order_relaxed);
+            const uint64_t lastCycles = statLastCycles.exchange(entryCycles, std::memory_order_relaxed);
+            if (last > 0)
+            {
+                const double gapMs = 1000.0 * (double)(now - last) / (double)juce::Time::getHighResolutionTicksPerSecond();
+                // A late callback (counted for the polyphony measurement): the same
+                // rule as the health log's "max gap" anomaly, three periods plus
+                // 2 ms. The routes of one device are called one after another, so
+                // the gap of a single route stretches by up to a period even when
+                // the driver is punctual; such gaps are not heard, those beyond
+                // three periods are (the dropouts of 0.8.41 were gaps of 18-30 ms).
+                {
+                    const int block = expectedBlock.load(std::memory_order_relaxed);
+                    const double rate = expectedRate.load(std::memory_order_relaxed);
+                    if (block > 0 && rate > 0.0)
+                    {
+                        // Non-ASIO: never below the 10 ms packet of the Windows audio engine (see the device clock above).
+                        const double periodMs = 1000.0 * block / rate;
+                        const double base = usesAsio.load(std::memory_order_relaxed) ? periodMs : juce::jmax(periodMs, 10.0);
+                        if (gapMs > 3.0 * base + 2.0) statLate.fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
+                double expected = statMaxGapMs.load(std::memory_order_relaxed);
+                if (gapMs > expected)
+                {
+                    // How much of the longest gap this thread actually ran (cycles ->
+                    // ms with the clock rate seen inside the callbacks): the rest it
+                    // spent off the CPU, held back by the scheduler or blocked.
+                    const double ghz = statGhz.load(std::memory_order_relaxed);
+                    statMaxGapCpuMs.store(ghz > 0.0 ? (double)(entryCycles - lastCycles) / (ghz * 1.0e6) : -1.0, std::memory_order_relaxed);
+                    while (gapMs > expected && !statMaxGapMs.compare_exchange_weak(expected, gapMs, std::memory_order_relaxed)) {}
+                }
+            }
+            statCallbacks.fetch_add(1, std::memory_order_relaxed);
+            int expected = statMinFrames.load(std::memory_order_relaxed);
+            while (numSamples < expected && !statMinFrames.compare_exchange_weak(expected, numSamples, std::memory_order_relaxed)) {}
+            expected = statMaxFrames.load(std::memory_order_relaxed);
+            while (numSamples > expected && !statMaxFrames.compare_exchange_weak(expected, numSamples, std::memory_order_relaxed)) {}
+            statChannels.store(numOutputs, std::memory_order_relaxed);
+        }
+        scratch.setSize(juce::jmax(1, numOutputs), numSamples, false, false, true);
+        scratch.clear();
+        if (owner.audioMuted.load())
+        {
+            for (int channel = 0; channel < numOutputs; ++channel)
+                if (outputs[channel] != nullptr)
+                    juce::FloatVectorOperations::clear(outputs[channel], numSamples);
+            if (deviceClock != nullptr) deviceClock->lastEnd.store(juce::Time::getHighResolutionTicks(), std::memory_order_relaxed);
+            return;
+        }
+        // Routing is updated only when the user changes audio settings. Doing
+        // this here used to copy channel vectors into every active voice on
+        // every real-time callback, an O(polyphony) operation with allocations.
+        const float master = owner.masterGainLinear.load(std::memory_order_relaxed);
+        // A shared host (ASIO, Windows Audio) renders with the whole pool; a private
+        // Aggregated WASAPI device with its own lanes setting.
+        owner.engine.renderBlockForPerspective(scratch, master, manual, perspective,
+            usesSharedHost.load(std::memory_order_relaxed) ? 0 : owner.wasapiRenderLanes.load(std::memory_order_relaxed));
+        float peak = 0.0f;
+        // The polyphony measurement: heard very quietly (-42 dB), the rendering as
+        // usual; the level glides to the target over two seconds, never jumps.
+        const float target = owner.outputGainTarget.load(std::memory_order_relaxed);
+        const float gainStart = outputGain;
+        float gainEnd = target;
+        if (gainStart != target)
+        {
+            // Down in 50 ms (before the first strike of the measurement), up over 2 s (after the report's OK).
+            const double rate = expectedRate.load(std::memory_order_relaxed);
+            const double seconds = target < gainStart ? 0.05 : 2.0;
+            const float maxStep = (float)(numSamples / juce::jmax(1000.0, rate) / seconds);
+            gainEnd = gainStart + juce::jlimit(-maxStep, maxStep, target - gainStart);
+        }
+        outputGain = gainEnd;
+        const bool unity = gainStart >= 1.0f && gainEnd >= 1.0f;
+        for (int channel = 0; channel < numOutputs; ++channel)
+            if (outputs[channel] != nullptr)
+            {
+                const float* data = scratch.getReadPointer(channel);
+                if (unity) juce::FloatVectorOperations::copy(outputs[channel], data, numSamples);
+                else
+                {
+                    float* out = outputs[channel];
+                    const float step = (gainEnd - gainStart) / (float)juce::jmax(1, numSamples);
+                    float g = gainStart;
+                    for (int i = 0; i < numSamples; ++i) { out[i] = data[i] * g; g += step; }
+                }
+                const auto range = juce::FloatVectorOperations::findMinAndMax(data, numSamples);
+                peak = juce::jmax(peak, std::abs(range.getStart()), std::abs(range.getEnd()));
+            }
+        // Level evidence for the activity log: which device really carries audio.
+        float known = statPeak.load(std::memory_order_relaxed);
+        while (peak > known && !statPeak.compare_exchange_weak(known, peak, std::memory_order_relaxed)) {}
+        // Time spent inside this callback (control tick + render + copy): a gap
+        // between callbacks that exceeds it is time the thread spent off the CPU.
+        const double insideMs = 1000.0 * (double)(juce::Time::getHighResolutionTicks() - entryTicks)
+            / (double)juce::Time::getHighResolutionTicksPerSecond();
+        double worst = statMaxInsideMs.load(std::memory_order_relaxed);
+        while (insideMs > worst && !statMaxInsideMs.compare_exchange_weak(worst, insideMs, std::memory_order_relaxed)) {}
+       #if JUCE_WINDOWS
+        // The thread's clock rate, learned from the callbacks themselves (they run
+        // without a break): cycles per ms, smoothed.
+        uint64_t exitCycles = 0;
+        QueryThreadCycleTime(GetCurrentThread(), (PULONG64)&exitCycles);
+        if (insideMs > 0.2 && exitCycles > entryCycles)
+        {
+            const double ghz = (double)(exitCycles - entryCycles) / (insideMs * 1.0e6);
+            const double knownGhz = statGhz.load(std::memory_order_relaxed);
+            statGhz.store(knownGhz > 0.0 ? knownGhz * 0.9 + ghz * 0.1 : ghz, std::memory_order_relaxed);
+        }
+       #endif
+        if (deviceClock != nullptr) deviceClock->lastEnd.store(juce::Time::getHighResolutionTicks(), std::memory_order_relaxed);
+    }
+    // Peak output level since the last call (linear), for the periodic level log.
+    float takePeak() noexcept { return statPeak.exchange(0.0f, std::memory_order_relaxed); }
+    juce::String label() const { return deviceLabel; }
+    void audioDeviceAboutToStart(juce::AudioIODevice* device) override
+    {
+        if (device != nullptr)
+        {
+            owner.engine.setPerspectiveSampleRate(manual, perspective, device->getCurrentSampleRate());
+            const int channels = juce::jmax(1, device->getOutputChannelNames().size());
+            const int block = juce::jmax(1, device->getCurrentBufferSizeSamples());
+            owner.engine.setPerspectiveBlockSize(manual, perspective, block);
+            // Some drivers deliver more frames than announced; keep headroom so
+            // the real-time callback never has to reallocate.
+            scratch.setSize(channels, block * 4, false, false, true);
+            scratch.clear();
+            owner.engine.prepareRenderWorkers(channels, block);
+            expectedBlock.store(block, std::memory_order_relaxed);
+            expectedRate.store(device->getCurrentSampleRate(), std::memory_order_relaxed);
+            deviceLabel = device->getName() + " manual " + juce::String(manual) + " perspective " + perspective;
+            statLastTicks.store(0, std::memory_order_relaxed);
+            statCallbacks.store(0, std::memory_order_relaxed);
+            statMinFrames.store(1 << 30, std::memory_order_relaxed);
+            statMaxFrames.store(0, std::memory_order_relaxed);
+            statMaxGapMs.store(0.0, std::memory_order_relaxed);
+            healthTicks = juce::Time::getHighResolutionTicks();
+            healthGrace = 2;
+            lastDevice = device;
+            deviceClock = owner.deviceClockFor(device, device->getTypeName().equalsIgnoreCase("ASIO"));
+            CrashHandler::note("Audio device started: " + device->getName() + " manual "
+                + juce::String(manual) + " perspective " + perspective + "  buffer " + juce::String(block)
+                + "  rate " + juce::String(device->getCurrentSampleRate(), 0));
+            // A start we did not initiate (outside the ignore window) means the
+            // ASIO driver reset itself, typically after a control-panel latency change.
+            usesAsio.store(device->getTypeName().equalsIgnoreCase("ASIO"), std::memory_order_relaxed);
+            usesSharedHost.store(MainComponent::isSharedHostType(device->getTypeName()), std::memory_order_relaxed);
+            if (usesAsio.load(std::memory_order_relaxed))
+                CrashHandler::note("  ASIO details: driver preferred buffer " + juce::String(device->getDefaultBufferSize())
+                    + ", running " + juce::String(block));
+            // An Aggregated WASAPI device starts with no endpoint: the route's
+            // configured channels open them, here, on every path that starts it.
+            owner.applyAggregateSelection(manual, perspective, device);
+            // No automatic device restarts here: they are only ever triggered by
+            // the user (Driver Control Panel / Reopen buttons in the audio tab).
+        }
+    }
+    void audioDeviceStopped() override {}
+    void setUseConfiguredOutputs(bool shouldUse) { useConfiguredOutputs = shouldUse; }
+
+    // Called about once a second from the GUI timer. Returns an empty string
+    // while the callbacks match the device's announced buffer size and rate.
+    juce::String healthReport()
+    {
+        rateMismatch = false;
+        const int64_t now = juce::Time::getHighResolutionTicks();
+        const int64_t since = healthTicks;
+        healthTicks = now;
+        const int n = statCallbacks.exchange(0, std::memory_order_relaxed);
+        const int minFrames = statMinFrames.exchange(1 << 30, std::memory_order_relaxed);
+        const int maxFrames = statMaxFrames.exchange(0, std::memory_order_relaxed);
+        const double maxGap = statMaxGapMs.exchange(0.0, std::memory_order_relaxed);
+        const double maxInside = statMaxInsideMs.exchange(0.0, std::memory_order_relaxed);
+        const double maxGapCpu = statMaxGapCpuMs.exchange(0.0, std::memory_order_relaxed);
+        const int block = expectedBlock.load(std::memory_order_relaxed);
+        const double rate = expectedRate.load(std::memory_order_relaxed);
+        if (since <= 0 || block <= 0 || rate <= 0.0) return {};
+        if (healthGrace > 0) { --healthGrace; return {}; }   // the first seconds after a (re)start
+        const double seconds = (double)(now - since) / (double)juce::Time::getHighResolutionTicksPerSecond();
+        if (seconds < 0.5) return {};
+        const double perSecond = n / seconds;
+        const double expectedPerSecond = rate / block;
+        const double periodMs = 1000.0 * block / rate;
+        juce::String report;
+        if (n == 0)
+            report << "no callbacks";
+        else if (std::abs(perSecond - expectedPerSecond) > expectedPerSecond * 0.15)
+            report << "rate " << juce::String(perSecond, 1) << "/s, expected " << juce::String(expectedPerSecond, 1) << "/s";
+        if (n > 0 && (minFrames != block || maxFrames != block))
+            report << (report.isEmpty() ? "" : "; ") << "frames " << minFrames << ".." << maxFrames << ", expected " << block;
+        // Non-ASIO devices: the 10 ms packet of the Windows audio engine is the
+        // period that counts (a shared stream at 256 is fed in bursts, 20 ms gaps idle).
+        const double gapBase = usesAsio.load(std::memory_order_relaxed) ? periodMs : juce::jmax(periodMs, 10.0);
+        if (maxGap > 3.0 * gapBase + 2.0)
+            report << (report.isEmpty() ? "" : "; ") << "max gap " << juce::String(maxGap, 1) << " ms (period "
+                   << juce::String(periodMs, 2) << " ms, longest callback " << juce::String(maxInside, 2) << " ms, the thread ran "
+                   << juce::String(maxGapCpu, 1) << " ms of that gap)";
+        rateMismatch = n > 0 && std::abs(perSecond - expectedPerSecond) > expectedPerSecond * 0.15;
+        if (report.isEmpty()) return {};
+        return deviceLabel + ": " + report + ", outputs " + juce::String(statChannels.load(std::memory_order_relaxed));
+    }
+    bool hadRateMismatch() const noexcept { return rateMismatch; }
+    bool isAsio() const noexcept { return usesAsio.load(std::memory_order_relaxed); }
+    int takeLateCallbacks() noexcept { return statLate.exchange(0, std::memory_order_relaxed); }
+    const juce::AudioIODevice* device() const noexcept { return lastDevice; }   // identity only
+    int blockSize() const noexcept { return expectedBlock.load(std::memory_order_relaxed); }
+    double sampleRate() const noexcept { return expectedRate.load(std::memory_order_relaxed); }
+private:
+    bool rateMismatch = false;
+    MainComponent& owner;
+    int manual;
+    juce::String perspective;
+    bool useConfiguredOutputs = false;
+    std::atomic<bool> usesAsio{ false }, usesSharedHost{ false };
+    juce::AudioIODevice* lastDevice = nullptr;   // identity only, never dereferenced
+    MainComponent::DeviceClock* deviceClock = nullptr;   // the clock of the device this route plays through
+    juce::AudioBuffer<float> scratch;
+    float outputGain = 1.0f;   // audio thread only: the level gliding towards owner.outputGainTarget
+    // health statistics
+    std::atomic<int> statCallbacks{ 0 }, statMinFrames{ 1 << 30 }, statMaxFrames{ 0 }, statChannels{ 0 }, statLate{ 0 };
+    std::atomic<float> statPeak{ 0.0f };
+    std::atomic<int64_t> statLastTicks{ 0 };
+    std::atomic<double> statMaxGapMs{ 0.0 }, statMaxInsideMs{ 0.0 }, statMaxGapCpuMs{ 0.0 }, statGhz{ 0.0 };
+    std::atomic<uint64_t> statLastCycles{ 0 };
+    std::atomic<int> expectedBlock{ 0 };
+    std::atomic<double> expectedRate{ 0.0 };
+    int64_t healthTicks = 0;
+    int healthGrace = 0;
+    juce::String deviceLabel;   // written on the message thread only (device start), read there too
+};
+
+float MainComponent::swellCurve(float position) noexcept
+{
+    // Monotone cubic through the requested points (shutter opening -> level):
+    // 0 -> 0, 10 % -> 25 %, 33 % -> 50 %, 50 % -> 80 %, 67 % -> 90 %, 100 % -> 100 %.
+    static constexpr float xs[]{ 0.0f, 0.10f, 0.333f, 0.50f, 0.667f, 1.0f };
+    static constexpr float ys[]{ 0.0f, 0.25f, 0.50f, 0.80f, 0.90f, 1.0f };
+    static constexpr int n = 6;
+    const float x = juce::jlimit(0.0f, 1.0f, position);
+    // Fritsch-Carlson tangents (computed once): keeps the curve monotone and smooth.
+    static const std::array<float, n> tangents = []
+    {
+        std::array<float, n> m{};
+        float d[n - 1];
+        for (int i = 0; i < n - 1; ++i) d[i] = (ys[i + 1] - ys[i]) / (xs[i + 1] - xs[i]);
+        m[0] = d[0];
+        m[n - 1] = d[n - 2];
+        for (int i = 1; i < n - 1; ++i)
+            m[(size_t)i] = d[i - 1] * d[i] <= 0.0f ? 0.0f
+                : 3.0f * (xs[i + 1] - xs[i - 1]) / ((2.0f * (xs[i + 1] - xs[i]) + (xs[i] - xs[i - 1])) / d[i - 1]
+                    + ((xs[i + 1] - xs[i]) + 2.0f * (xs[i] - xs[i - 1])) / d[i]);
+        return m;
+    }();
+    int i = 0;
+    while (i < n - 2 && x > xs[i + 1]) ++i;
+    const float h = xs[i + 1] - xs[i];
+    const float t = (x - xs[i]) / h;
+    const float t2 = t * t, t3 = t2 * t;
+    const float y = (2.0f * t3 - 3.0f * t2 + 1.0f) * ys[i] + (t3 - 2.0f * t2 + t) * h * tangents[(size_t)i]
+        + (-2.0f * t3 + 3.0f * t2) * ys[i + 1] + (t3 - t2) * h * tangents[(size_t)i + 1];
+    return juce::jlimit(0.0f, 1.0f, y);
+}
+
+float MainComponent::expressionGainFor(const ManualConfig& config) const noexcept
+{
+    const float attenuationDb = -config.expressionMaxAttenuationDb * (1.0f - swellCurve(config.expressionPosition));
+    return std::pow(10.0f, attenuationDb / 20.0f);
+}
+
+void MainComponent::applyDefaultWindProfile(int manualIndex)
+{
+    if (manualIndex < 0 || manualIndex >= SamplerEngine::maxManuals) return;
+    auto& config = manualConfigs[(size_t)manualIndex];
+
+    // Pedal, I., II., III., IV., V., VI., VII. factory wind profiles (VI. and
+    // VII. repeat III. and I.).
+    // Depth is one third of the original profile (the level coupling is a fixed
+    // 0.2 dB per cent), oscillation strength 4/3 of the original profile.
+    static constexpr float depth[8]       {  2.67f, 2.17f, 2.5f,  3.0f, 2.33f, 1.67f, 3.0f, 2.17f };
+    static constexpr float frequency[8]   {  4.5f,  7.5f,  5.5f,  8.0f, 9.0f, 5.0f, 8.0f, 7.5f };
+    static constexpr float oscillations[8]{ 5.6f,  7.0f,  5.0f,  7.0f,10.0f, 8.0f, 7.0f, 7.0f };
+    static constexpr float strength[8]    { 53.3f, 25.3f, 33.3f, 56.7f, 66.7f, 53.3f, 56.7f, 25.3f };
+    static constexpr float smoothing[8]   {285.0f,180.0f,225.0f,180.0f,165.0f,203.0f,180.0f,180.0f };
+    static constexpr float swellInertia[8]{320.0f,260.0f,380.0f,600.0f,440.0f,220.0f,600.0f,260.0f };
+    static constexpr uint8_t targets[8] {
+        0xff,                                           // Ped. -> all
+        (uint8_t)((1u << 1) | (1u << 3)),              // I. -> III.
+        (uint8_t)0xfe,                                  // II. -> all manuals, no Ped.
+        (uint8_t)((1u << 1) | (1u << 3) | (1u << 4)),  // III. -> I. and IV.
+        (uint8_t)(1u << 4),                             // IV. -> itself only
+        (uint8_t)(1u << 5),                             // V. -> itself only
+        (uint8_t)(1u << 6),                             // VI. -> itself only
+        (uint8_t)(1u << 7)                              // VII. -> itself only
+    };
+
+    config.windDepthCents = depth[manualIndex];
+    config.windFrequencyHz = frequency[manualIndex];
+    config.windOscillations = oscillations[manualIndex];
+    config.windOscillationStrength = strength[manualIndex];
+    config.windSmoothingMs = smoothing[manualIndex];
+    config.expressionInertiaMs = swellInertia[manualIndex];
+    config.windTargetMask = targets[manualIndex];
+    engine.setWindModel(manualIndex, config.windDepthCents, config.windFrequencyHz,
+        config.windOscillations, config.windOscillationStrength / 50.0f,
+        config.windSmoothingMs, config.windTargetMask);
+}
+
+void MainComponent::applyDefaultTremulantProfile(int manualIndex)
+{
+    if (manualIndex < 0 || manualIndex >= SamplerEngine::maxManuals) return;
+    // Pedal, I., II., III., IV., V., VI., VII.
+    static constexpr float rates[8]  { 4.0f, 4.4f, 4.9f, 5.6f, 3.7f, 9.0f, 5.6f, 4.4f };
+    static constexpr float depths[8] { 6.0f, 8.0f, 8.0f,10.0f, 6.0f,18.0f,10.0f, 8.0f };
+    auto& config = manualConfigs[(size_t)manualIndex];
+    config.tremulantEnabled = false;
+    config.tremulantRateHz = rates[manualIndex];
+    config.tremulantDepthCents = depths[manualIndex];
+    config.tremulantRankDriftDegrees = 260.0f;
+    engine.setManualTremulant(manualIndex, false,
+        config.tremulantRateHz, config.tremulantDepthCents, config.tremulantRankDriftDegrees);
+}
+
+MainComponent::MainComponent()
+    : AudioAppComponent()
+{
+    setOpaque(true);
+    DBG("MainComponent constructor start");
+    manualConfigs[0].compassHigh = 67;   // pedal: 32 keys by default
+    for (int manual = 0; manual < SamplerEngine::maxManuals; ++manual)
+        engine.setManualCompass(manual, manualConfigs[(size_t)manual].compassLow, manualConfigs[(size_t)manual].compassHigh);
+    for (int manual = 0; manual < SamplerEngine::maxManuals; ++manual)
+    {
+        expressionTargetPositions[(size_t)manual].store(1.0f);
+        applyDefaultWindProfile(manual);
+        applyDefaultTremulantProfile(manual);
+    }
+
+    addAndMakeVisible(selectFolderButton);
+    selectFolderButton.setButtonText("Select Top Folder with Stops");
+    selectFolderButton.onClick = [this] { selectTopFolder(); };
+
+    addAndMakeVisible(panicButton);
+    panicButton.onClick = [this] { panic(); };
+    panicButton.setColour(juce::TextButton::buttonColourId, juce::Colours::red);
+    panicButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+
+    addAndMakeVisible(keyboardsButton);
+    keyboardsButton.onClick = [this] { showKeyboardsDialog(); };
+    addAndMakeVisible(temperamentsButton);
+    temperamentsButton.onClick = [this] { showTemperamentsDialog(); };
+    addAndMakeVisible(manualCountLabel);
+    manualCountLabel.setJustificationType(juce::Justification::centredRight);
+    addAndMakeVisible(manualCountBox);
+    for (int count = 1; count < SamplerEngine::maxManuals; ++count)
+        manualCountBox.addItem(juce::String(count) + "m.+P.", count);
+    manualCountBox.onChange = [this]
+    {
+        const int previousCount = manualCount;
+        if (applicationReady.load()) panic();
+        manualCount = juce::jlimit(1, SamplerEngine::maxManuals - 1, manualCountBox.getSelectedId());
+        if (manualCount < previousCount)
+            for (int manual = manualCount + 1; manual <= previousCount; ++manual)
+            {
+                removePerspectiveAudioRoutesForManual(manual);
+                engine.unloadManual(manual);
+                forgetDivision(manual);   // a division that is gone leaves nothing behind
+            }
+        else if (manualCount > previousCount)
+            for (int manual = previousCount + 1; manual <= manualCount; ++manual)
+            {
+                // A new division starts empty: nothing from a division that once
+                // existed at this position is remembered (folders, devices, MIDI).
+                forgetDivision(manual);
+                rebuildPerspectiveAudioRoutes();
+            }
+        if (voicer)
+        {
+            voicer->setActiveManualCount(manualCount + 1);
+            voicer->rebuildUI(stopsContent, stopsViewport);
+        }
+        rebuildCouplerCatalog();
+        rebuildCouplerRail();
+        saveSettings();
+        refreshConfigurationEditor();
+    };
+    addAndMakeVisible(toggleAllVoicingButton);
+    toggleAllVoicingButton.onClick = [this]
+    {
+        allVoicingVisible = false;
+        for (auto* stop : engine.getStops())
+        {
+            stop->voicingExpanded = false;
+            for (auto& t : stop->transmissions) t.voicingExpanded = false;
+        }
+        toggleAllVoicingButton.setButtonText("Hide all voicing");
+        if (voicer) voicer->rebuildUI(stopsContent, stopsViewport);
+    };
+
+    addAndMakeVisible(resetButton);
+    resetButton.setButtonText("GLOBAL RESET");
+    resetButton.onClick = [this] { performGlobalReset(); };
+    resetButton.setColour(juce::TextButton::buttonColourId, juce::Colours::red);
+    resetButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+    addAndMakeVisible(shutdownButton);
+    shutdownButton.setTooltip("Saves the configuration, quits OrganSampler and shuts the computer down at once - no question "
+        "asked (for consoles without a screen).");
+    shutdownButton.onClick = [this] { shutdownComputer(); };
+
+    addAndMakeVisible(enableAllButton);
+    enableAllButton.setButtonText("Tutti");
+    enableAllButton.onClick = [this] { enableAllStops(); };
+
+    addAndMakeVisible(disableAllButton);
+    disableAllButton.setButtonText("X");
+    disableAllButton.onClick = [this] { disableAllStops(); };
+
+    addAndMakeVisible(saveCombinationsButton);
+    saveCombinationsButton.onClick = [this] { chooseCombinationsFileToSave(); };
+    addAndMakeVisible(loadCombinationsButton);
+    loadCombinationsButton.onClick = [this] { chooseCombinationsFileToLoad(); };
+
+    addAndMakeVisible(saveStopSettingsButton);
+    saveStopSettingsButton.setButtonText("Save Voicing");
+    saveStopSettingsButton.onClick = [this] { saveStopSettings(); };
+    saveStopSettingsButton.setEnabled(false); // initially disabled until a folder is loaded
+
+    addAndMakeVisible(loadStopSettingsButton);
+    loadStopSettingsButton.setButtonText("Load Voicing");
+    loadStopSettingsButton.onClick = [this] { loadStopSettings(); };
+    loadStopSettingsButton.setEnabled(false);
+
+    addAndMakeVisible(mergeStopsButton);
+    mergeStopsButton.setButtonText("Stop-Merging");
+    mergeStopsButton.onClick = [this] { mergeStops(); };
+    mergeStopsButton.setEnabled(false);
+
+    addAndMakeVisible(loadConfigurationButton);
+    loadConfigurationButton.onClick = [this] { chooseConfigurationToLoad(); };
+    addAndMakeVisible(saveConfigurationButton);
+    saveConfigurationButton.onClick = [this] { chooseConfigurationToSave(); };
+
+    // ========== NOVÉ TLAČÍTKO PRO ONE‑SHOT PATTERNS ==========
+    addAndMakeVisible(oneShotPatternsButton);
+    oneShotPatternsButton.setButtonText("One-shot Patterns...");
+    oneShotPatternsButton.onClick = [this] { editOneShotPatterns(); };
+    // ========== KONEC NOVÉ ČÁSTI ==========
+
+    // ========== NOVÉ TLAČÍTKO PRO IGNORED PATTERNS ==========
+    addAndMakeVisible(ignoredPatternsButton);
+    ignoredPatternsButton.setButtonText("Ignored Patterns...");
+    ignoredPatternsButton.onClick = [this] { editFolderPatterns(false); };
+    addAndMakeVisible(perspectivePatternsButton);
+    perspectivePatternsButton.onClick = [this] { editFolderPatterns(true); };
+    addAndMakeVisible(stopListButton);
+    stopListButton.setTooltip("The stop list of the whole organ: every division's stops, their sample folders per "
+        "perspective, transmissions and stop folders; loads and unloads sample folders.");
+    stopListButton.onClick = [this] { showStopBuildingDialog(-1); };
+    // "Waiting for audio devices ..." box: shown while a saved device is awaited at start-up.
+    addChildComponent(waitingForAudioLabel);
+    waitingForAudioLabel.setJustificationType(juce::Justification::centred);
+    waitingForAudioLabel.setFont(juce::FontOptions(16.0f, juce::Font::bold));
+    waitingForAudioLabel.setInterceptsMouseClicks(false, false);
+    addChildComponent(generatingLabel);
+    generatingLabel.setJustificationType(juce::Justification::centred);
+    generatingLabel.setFont(juce::FontOptions(17.0f, juce::Font::bold));
+    generatingLabel.setInterceptsMouseClicks(false, false);
+    addAndMakeVisible(couplersButton);
+    couplersButton.onClick = [this] { showCouplersDialog(); };
+    addAndMakeVisible(configurationEditorButton);
+    configurationEditorButton.onClick = [this] { showConfigurationEditor(); };
+    addAndMakeVisible(recordButton);
+    recordButton.onClick = [this] { toggleRecording(); };
+    // ========== KONEC NOVÉ ČÁSTI ==========
+
+    addAndMakeVisible(masterVolumeSlider);
+    masterVolumeSlider.setRange(-60.0, 12.0, 0.1);
+    masterVolumeSlider.setValue(-20.0, juce::dontSendNotification);
+    masterVolumeSlider.setTextValueSuffix(" dB");
+    masterVolumeSlider.onValueChange = [this] {
+        masterGainLinear.store(juce::Decibels::decibelsToGain((float)masterVolumeSlider.getValue()));
+        masterLabel.setText("Master: " + juce::String(masterVolumeSlider.getValue(), 1) + " dB",
+            juce::dontSendNotification);
+        saveSettings(); // added
+        };
+    masterGainLinear.store(juce::Decibels::decibelsToGain((float)masterVolumeSlider.getValue()));
+    // The note bookkeeping on its own thread (ORGAN_CONTROL_ON_AUDIO=1 keeps it
+    // inside the audio callbacks, for comparison).
+    if (const char* onAudio = std::getenv("ORGAN_CONTROL_ON_AUDIO"); onAudio == nullptr || juce::String(onAudio).getIntValue() == 0)
+        engine.startControlThread();
+    else CrashHandler::note("ORGAN_CONTROL_ON_AUDIO: the note bookkeeping stays inside the audio callbacks");
+
+    addAndMakeVisible(masterLabel);
+    masterLabel.setJustificationType(juce::Justification::centred);
+    masterLabel.setText("Master: -20.0 dB", juce::dontSendNotification);
+
+    addAndMakeVisible(releaseFadeOutSlider);
+    releaseFadeOutSlider.setRange(10.0, 500.0, 1.0);
+    releaseFadeOutSlider.setValue(70.0, juce::dontSendNotification);
+    releaseFadeOutSlider.setTextValueSuffix(" ms");
+    releaseFadeOutSlider.onValueChange = [this] {
+        engine.setReleaseFadeOutMs((float)releaseFadeOutSlider.getValue());
+        releaseFadeOutLabel.setText("Sustain fade-out: " + juce::String(releaseFadeOutSlider.getValue(), 0) + " ms",
+            juce::dontSendNotification);
+        saveSettings();
+        };
+    addAndMakeVisible(releaseFadeOutLabel);
+    releaseFadeOutLabel.setJustificationType(juce::Justification::centred);
+    releaseFadeOutLabel.setText("Sustain fade-out: 70 ms", juce::dontSendNotification);
+    releaseFadeOutSlider.setTooltip("How long the sounding pipe fades out when its key is released (the release sample "
+        "takes over). The value is for the sounding c1 (MIDI 60 of an 8' rank, the rank's footage counted in): lower pipes "
+        "get 1.5 times as much per octave below it (a 32' C 3.4 times), higher pipes the value as set. A filled pipe counts "
+        "as the pipe it stands for.");
+    releaseFadeInSlider.setTooltip("How long the release sample fades in when the key is released. The value is for the "
+        "sounding c1 (MIDI 60 of an 8' rank, the rank's footage counted in): lower pipes get 1.5 times as much per octave "
+        "below it (a 32' C 3.4 times), higher pipes the value as set. A filled pipe counts as the pipe it stands for.");
+
+    addAndMakeVisible(releaseFadeInSlider);
+    releaseFadeInSlider.setRange(0.0, 200.0, 1.0);
+    releaseFadeInSlider.setValue(70.0, juce::dontSendNotification);
+    releaseFadeInSlider.setTextValueSuffix(" ms");
+    releaseFadeInSlider.onValueChange = [this] {
+        engine.setReleaseFadeInMs((float)releaseFadeInSlider.getValue());
+        releaseFadeInLabel.setText("Release fade-in: " + juce::String(releaseFadeInSlider.getValue(), 0) + " ms",
+            juce::dontSendNotification);
+        saveSettings();
+        };
+    // ★ Force initial engine value and label consistency
+    engine.setReleaseFadeInMs((float)releaseFadeInSlider.getValue());
+    releaseFadeInLabel.setText("Release fade-in: " + juce::String(releaseFadeInSlider.getValue(), 0) + " ms",
+        juce::dontSendNotification);
+
+    addAndMakeVisible(releaseFadeInLabel);
+    releaseFadeInLabel.setJustificationType(juce::Justification::centred);
+    releaseFadeInLabel.setText("Release fade-in: 70 ms (def.)", juce::dontSendNotification);
+
+    addAndMakeVisible(releaseScalingSlider);
+    releaseScalingSlider.setRange(-21.0, 6.0, 0.1); // -21 is the silence sentinel below -20 dB
+    releaseScalingSlider.setValue(0.0, juce::dontSendNotification);
+    releaseScalingSlider.setTextValueSuffix(" dB");
+    releaseScalingSlider.textFromValueFunction = [](double value)
+    {
+        return value < -20.5 ? juce::String("-inf") : juce::String(value, 1);
+    };
+    releaseScalingSlider.onValueChange = [this]
+    {
+        auto db = (float)releaseScalingSlider.getValue();
+        if (db > -21.0f && db < -20.0f)
+        {
+            db = db < -20.5f ? -21.0f : -20.0f;
+            releaseScalingSlider.setValue(db, juce::dontSendNotification);
+        }
+        engine.setReleaseScalingDb(db);
+        releaseScalingLabel.setText(db < -20.5f ? "Release scaling: -inf"
+            : "Release scaling: " + juce::String(db, 1) + " dB",
+            juce::dontSendNotification);
+        saveSettings();
+    };
+    engine.setReleaseScalingDb(0.0f);
+    addAndMakeVisible(releaseScalingLabel);
+    releaseScalingLabel.setJustificationType(juce::Justification::centred);
+    releaseScalingLabel.setText("Release scaling: 0.0 dB", juce::dontSendNotification);
+
+    addAndMakeVisible(pitchSlider);
+    pitchSlider.setRange(-200.0, 200.0, 1.0);
+    pitchSlider.setValue(0.0, juce::dontSendNotification);
+    pitchSlider.setTextValueSuffix(" cents");
+    pitchSlider.onValueChange = [this]
+    {
+        engine.setGlobalPitchCents((float)pitchSlider.getValue());
+        pitchLabel.setText("Pitch: " + juce::String(pitchSlider.getValue(), 0) + " cents",
+            juce::dontSendNotification);
+        saveSettings();
+    };
+    addAndMakeVisible(pitchLabel);
+    pitchLabel.setJustificationType(juce::Justification::centred);
+    polyphonyDisplay = std::make_unique<PolyphonyDisplay>(engine);
+    addAndMakeVisible(*polyphonyDisplay);
+
+    addAndMakeVisible(attackMinimumSlider);
+    attackMinimumSlider.setRange(0.0, 500.0, 1.0);
+    attackMinimumSlider.setValue(80.0, juce::dontSendNotification);
+    attackMinimumSlider.setTextValueSuffix(" ms");
+    attackMinimumSlider.onValueChange = [this] {
+        engine.setAttackMinimumMs((float)attackMinimumSlider.getValue());
+        attackMinimumLabel.setText("Attack min. time: " + juce::String(attackMinimumSlider.getValue(), 0) + " ms",
+            juce::dontSendNotification);
+        saveSettings();
+        };
+    engine.setAttackMinimumMs((float)attackMinimumSlider.getValue());
+    addAndMakeVisible(attackMinimumLabel);
+    attackMinimumLabel.setJustificationType(juce::Justification::centred);
+    attackMinimumLabel.setText("Attack min. time: 80 ms", juce::dontSendNotification);
+
+    addAndMakeVisible(attackMinimumDelaySlider);
+    attackMinimumDelaySlider.setRange(0.0, 500.0, 1.0);
+    attackMinimumDelaySlider.setValue(2.0, juce::dontSendNotification);
+    attackMinimumDelaySlider.setTextValueSuffix(" ms");
+    attackMinimumDelaySlider.onValueChange = [this] {
+        engine.setAttackMinimumDelayMs((float)attackMinimumDelaySlider.getValue());
+        attackMinimumDelayLabel.setText("Attack min. delay: " + juce::String(attackMinimumDelaySlider.getValue(), 0) + " ms",
+            juce::dontSendNotification);
+        saveSettings();
+        };
+    engine.setAttackMinimumDelayMs((float)attackMinimumDelaySlider.getValue());
+    addAndMakeVisible(attackMinimumDelayLabel);
+    attackMinimumDelayLabel.setJustificationType(juce::Justification::centred);
+    attackMinimumDelayLabel.setText("Attack min. delay: 2 ms", juce::dontSendNotification);
+
+    auto makeGlobalSliderLearnable = [this](LearnableSlider& slider,
+        const juce::String& name, double defaultValue)
+    {
+        slider.setScrollWheelEnabled(true);
+        slider.setDoubleClickReturnValue(true, defaultValue);
+        slider.getProperties().set("midiTarget", "slider:global:" + name);
+        slider.addMouseListener(this, false);
+    };
+    makeGlobalSliderLearnable(masterVolumeSlider, "master", -20.0);
+    makeGlobalSliderLearnable(pitchSlider, "pitch", 0.0);
+    makeGlobalSliderLearnable(releaseFadeOutSlider, "sustainFade", 70.0);
+    makeGlobalSliderLearnable(releaseFadeInSlider, "releaseFade", 70.0);
+    makeGlobalSliderLearnable(releaseScalingSlider, "releaseScale", 0.0);
+    makeGlobalSliderLearnable(attackMinimumSlider, "attackTime", 80.0);
+    makeGlobalSliderLearnable(attackMinimumDelaySlider, "attackDelay", 2.0);
+
+    // Release cutting: release samples faded out over this share of their length
+    // and freed from the polyphony there (100 % = full releases).
+    addAndMakeVisible(releaseCutSlider);
+    releaseCutSlider.setRange(5.0, 100.0, 1.0);
+    releaseCutSlider.setValue(100.0, juce::dontSendNotification);
+    releaseCutSlider.setTextValueSuffix(" %");
+    releaseCutSlider.onValueChange = [this]
+    {
+        releaseCutPercent = (float)releaseCutSlider.getValue();
+        engine.setReleaseCutPercent(releaseCutPercent);
+        releaseCutLabel.setText("Release cut: " + juce::String(releaseCutPercent, 0) + " %", juce::dontSendNotification);
+        saveSettings();
+    };
+    addAndMakeVisible(releaseCutLabel);
+    releaseCutLabel.setJustificationType(juce::Justification::centred);
+    makeGlobalSliderLearnable(releaseCutSlider, "releaseCut", 100.0);
+
+    addAndMakeVisible(stopsViewport);
+    stopsViewport.setViewedComponent(&stopsContent, false);
+    stopsViewport.setScrollBarsShown(true, false);
+    stopsViewport.setInterceptsMouseClicks(true, true);
+    // The empty instrument: a hint and a button to the manual, over the stop workspace.
+    emptyHintLabel.setText("Need help designing your pipe organ?\nOpen the user manual and read \"Getting started\":",
+        juce::dontSendNotification);
+    emptyHintLabel.setJustificationType(juce::Justification::centred);
+    emptyHintLabel.setFont(juce::FontOptions(20.0f));
+    emptyHintLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+    emptyHintPanel.addAndMakeVisible(emptyHintLabel);
+    emptyHintButton.setButtonText("Open the User manual");
+    emptyHintButton.setTooltip("The user manual, embedded in the program: how to load your samples and build the organ");
+    emptyHintButton.onClick = [this] { showManualSection("1. Getting started"); };
+    emptyHintPanel.addAndMakeVisible(emptyHintButton);
+    emptyHintPanel.setOpaque(true);
+    addChildComponent(emptyHintPanel);
+
+    addAndMakeVisible(combinationSetButton);
+    combinationSetButton.setClickingTogglesState(true);
+    combinationSetButton.setColour(juce::ToggleButton::tickColourId, juce::Colours::orange);
+
+    addAndMakeVisible(previousCombinationButton);
+    previousCombinationButton.onClick = [this] { stepCombination(-1); };
+    addAndMakeVisible(nextCombinationButton);
+    nextCombinationButton.onClick = [this] { stepCombination(1); };
+    addAndMakeVisible(bankDownButton);
+    bankDownButton.onStateChange = [this]
+    {
+        bankButtonStateChanged(-1, bankDownButton.isDown());
+    };
+    addAndMakeVisible(bankUpButton);
+    bankUpButton.onStateChange = [this]
+    {
+        bankButtonStateChanged(1, bankUpButton.isDown());
+    };
+    addAndMakeVisible(bankLabel);
+    bankLabel.setJustificationType(juce::Justification::centred);
+    bankLabel.setFont(juce::FontOptions(18.0f, juce::Font::bold));
+    addAndMakeVisible(combinationDisplay);
+    combinationDisplay.setJustificationType(juce::Justification::centred);
+    combinationDisplay.setFont(juce::FontOptions(22.0f, juce::Font::bold));
+    combinationDisplay.setColour(juce::Label::backgroundColourId, juce::Colours::black);
+    combinationDisplay.setColour(juce::Label::textColourId, juce::Colours::lime);
+    // General crescendo display (after the combination Save/Load buttons).
+    crescendoSteps.resize((size_t)crescendoStepCount);
+    crescendoDisplay = std::make_unique<CrescendoDisplay>();
+    crescendoDisplay->stepCount = [this] { return crescendoStepCount; };
+    crescendoDisplay->currentStep = [this] { return crescendoStep; };
+    crescendoDisplay->setPosition = [this](float position) { setCrescendoPosition(position); };
+    crescendoDisplay->showMenu = [this] { showCrescendoMenu(); };
+    crescendoDisplay->enabled = [this] { return crescendoEnabled; };
+    crescendoDisplay->setTooltip("General crescendo: drag or use a learned MIDI controller. Right-click: MIDI Learn and settings.");
+    addAndMakeVisible(*crescendoDisplay);
+    crescendoButton.setClickingTogglesState(true);
+    crescendoButton.setColour(juce::TextButton::buttonOnColourId, onColour());
+    crescendoButton.setTooltip("Crescendo on/off: on remembers the current registration, off brings it back. Right-click: MIDI Learn.");
+    crescendoButton.onClick = [this] { setCrescendoEnabled(crescendoButton.getToggleState()); };
+    crescendoButton.addMouseListener(this, false);
+    addAndMakeVisible(crescendoButton);
+    addAndMakeVisible(pistonCountLabel);
+    pistonCountLabel.setJustificationType(juce::Justification::centredRight);
+    addAndMakeVisible(pistonCountBox);
+    for (int count = 0; count <= maxPistons; ++count)
+        pistonCountBox.addItem(juce::String(count), count + 1);
+    pistonCountBox.onChange = [this]
+    {
+        pistonCount = pistonCountBox.getSelectedId() - 1;
+        activePiston = -1;
+        updateCombinationControls();
+        saveMemories();
+        resized();
+    };
+
+    for (int i = 0; i < maxPistons; ++i)
+    {
+        auto* button = new LeftOnlyTextButton(juce::String(i));
+        button->onClick = [this, i] { pressPiston(i); };
+        button->setColour(juce::TextButton::buttonOnColourId, onColour());
+        pistonButtons.add(button);
+        addAndMakeVisible(button);
+    }
+    combinationSetButton.addMouseListener(this, false);
+    previousCombinationButton.addMouseListener(this, false);
+    nextCombinationButton.addMouseListener(this, false);
+    bankDownButton.addMouseListener(this, false);
+    bankUpButton.addMouseListener(this, false);
+    for (auto* button : pistonButtons)
+        button->addMouseListener(this, false);
+    enableAllButton.addMouseListener(this, false);
+    disableAllButton.addMouseListener(this, false);
+
+    couplerRailLabel.setVisible(false);
+    couplerViewport.setViewedComponent(&couplerContent, false);
+    couplerViewport.setVisible(false);
+
+    for (auto& state : manualKeyboardStates)
+        state.addListener(this);
+
+    // The divisions' private managers start without a device: loadSettings
+    // attaches every division's own route to its shared host (or none).
+    deviceManager.getAvailableDeviceTypes();
+    addAggregatedWASAPIType(deviceManager);
+    primaryAudioCallback = std::make_unique<DivisionAudioCallback>(*this, 0);
+    deviceManager.addAudioCallback(primaryAudioCallback.get());
+    audioSettings = std::make_unique<juce::AudioDeviceSelectorComponent>(
+        deviceManager, 0, 0, 0, 256, false, false, false, false);
+    installAudioTypeInterceptor(*audioSettings, 0, "default");
+    audioSettings->addMouseListener(this, true);
+    addAndMakeVisible(audioSettings.get());
+    for (int i = 0; i < SamplerEngine::maxManuals - 1; ++i)
+    {
+        extraAudioManagers[(size_t)i] = std::make_unique<juce::AudioDeviceManager>();
+        extraAudioManagers[(size_t)i]->getAvailableDeviceTypes();
+        addAggregatedWASAPIType(*extraAudioManagers[(size_t)i]);
+        extraAudioCallbacks[(size_t)i] = std::make_unique<DivisionAudioCallback>(*this, i + 1);
+        extraAudioManagers[(size_t)i]->addAudioCallback(extraAudioCallbacks[(size_t)i].get());
+        extraAudioSettings[(size_t)i] = std::make_unique<juce::AudioDeviceSelectorComponent>(
+            *extraAudioManagers[(size_t)i], 0, 0, 0, 256, false, false, false, false);
+        installAudioTypeInterceptor(*extraAudioSettings[(size_t)i], i + 1, "default");
+        extraAudioSettings[(size_t)i]->addMouseListener(this, true);
+    }
+
+    // Společný adresář pro JSON soubory
+    juce::File appDataDir = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+        .getChildFile("OrganSampler");
+    if (!appDataDir.exists())
+        appDataDir.createDirectory();
+
+    voicerStateFile = appDataDir.getChildFile("voicer.json");
+    memoriesJsonFile = appDataDir.getChildFile("memories.json");
+    lastDirFile = appDataDir.getChildFile("lastdir.json");
+    settingsFile = appDataDir.getChildFile("settings.json");
+
+    DBG("App data dir: " << appDataDir.getFullPathName());
+    DBG("Voicer state file: " << voicerStateFile.getFullPathName());
+    DBG("Memories file: " << memoriesJsonFile.getFullPathName());
+    DBG("LastDir file: " << lastDirFile.getFullPathName());
+    DBG("Settings file: " << settingsFile.getFullPathName());
+
+    if (lastDirFile.existsAsFile())
+    {
+        DBG("File exists.");
+        auto text = lastDirFile.loadFileAsString();
+        DBG("File content: " << text);
+        auto parsed = juce::JSON::parse(text);
+        if (parsed.isObject())
+        {
+            auto path = parsed.getProperty("lastDir", "").toString();
+            if (path.isNotEmpty())
+            {
+                lastSettingsDirectory = juce::File(path);
+                DBG("Loaded lastSettingsDirectory: " << lastSettingsDirectory.getFullPathName());
+            }
+            else
+            {
+                DBG("Property 'lastDir' is empty.");
+            }
+        }
+        else
+        {
+            DBG("JSON is not an object.");
+        }
+    }
+    else
+    {
+        DBG("File does NOT exist.");
+    }
+
+    if (!memoriesJsonFile.getParentDirectory().exists())
+        memoriesJsonFile.getParentDirectory().createDirectory();
+
+    loadBuiltInTemperaments();
+    loadSettings();
+    refreshMidiRouting();
+    rebuildCouplerCatalog();
+    rebuildCouplerRail();
+    reopenMidiInputs();
+    loadMemories();
+    CrashHandler::setStateProvider([this]
+    {
+        juce::String state;
+        state << "  polyphony now: " << engine.getCurrentPolyphony()
+              << "  limit: " << engine.getMaxPolyphony()
+              << "  render load: " << juce::String(engine.getRenderLoad() * 100.0f, 1) << "%\n"
+              << "  render workers: " << engine.getRenderWorkerCount()
+              << "  stops loaded: " << engine.getStops().size()
+              << "  divisions: " << (manualCount + 1)
+              << "  audio muted: " << (audioMuted.load() ? "yes" : "no") << "\n";
+        for (int manual = 0; manual <= manualCount && manual < SamplerEngine::maxManuals; ++manual)
+            state << "  division " << manual << " folder: " << manualConfigs[(size_t)manual].folderPath << "\n";
+        return state;
+    });
+    pistonCountBox.setSelectedId(pistonCount + 1, juce::dontSendNotification);
+    updateCombinationControls();
+
+    if (lastDirFile.existsAsFile())
+    {
+        auto text = lastDirFile.loadFileAsString();
+        auto parsed = juce::JSON::parse(text);
+
+        if (parsed.isObject())
+        {
+            auto path = parsed.getProperty("lastDir", "").toString();
+            if (path.isNotEmpty())
+                lastSettingsDirectory = juce::File(path);
+        }
+    }
+
+    manualCountBox.setSelectedId(manualCount, juce::dontSendNotification);
+    voicer = std::make_unique<Voicer>(engine,
+        [this](const juce::String& target) { showMidiLearnMenu(target); },
+        [this](int manual) { selectManualFolder(manual); },
+        [this](int manual) { unloadManualFolder(manual); },
+        [this](int manual) { showKeyboardsDialog(manual); },
+        [this](int manual) { showKeyboardLearnMenu(manual); },
+        [this](int manual) { return manualConfigs[(size_t)manual].expressionPosition; },
+        [this](int manual, float position)
+        {
+            setExpressionTarget(manual, position);
+        },
+        [this](int manual) { showSwellLearnMenu(manual); },
+        [this](int manual) { return listeningExpressionManual.load() == manual; },
+        [this]
+        {
+            voicingSaveAt = juce::Time::getMillisecondCounterHiRes() + 350.0;
+            if (stopPoolRefresh) stopPoolRefresh();   // the Division dialog's lists follow every voicing change
+        },
+        [this](int manual) { return getDivisionCouplers(manual); },
+        [this](const juce::String& id, bool enabled) { setCouplerEnabled(id, enabled); },
+        [this](int manual) { return manualConfigs[(size_t)manual].tremulantEnabled; },
+        [this](int manual, bool enabled)
+        {
+            auto& config = manualConfigs[(size_t)manual];
+            config.tremulantEnabled = enabled;
+            engine.setManualTremulant(manual, enabled,
+                config.tremulantRateHz, config.tremulantDepthCents, config.tremulantRankDriftDegrees);
+            saveSettings();
+        },
+        [this](int manual)
+        {
+            return divisionColumnWeights[(size_t)juce::jlimit(0, SamplerEngine::maxManuals - 1, manual)];
+        },
+        [this](int leftManual, float leftWeight, int rightManual, float rightWeight)
+        {
+            divisionColumnWeights[(size_t)juce::jlimit(0, SamplerEngine::maxManuals - 1, leftManual)] =
+                juce::jlimit(0.15f, 10.0f, leftWeight);
+            divisionColumnWeights[(size_t)juce::jlimit(0, SamplerEngine::maxManuals - 1, rightManual)] =
+                juce::jlimit(0.15f, 10.0f, rightWeight);
+            if (voicer) voicer->rebuildUI(stopsContent, stopsViewport);
+            saveSettings();
+        },
+        [this](int manual) { showStopBuildingDialog(manual); });
+    voicer->setActiveManualCount(manualCount + 1);
+    voicer->setCouplerOrderSetter([this](int manual, const std::vector<juce::String>& ids)
+    {
+        couplerOrder[manual] = ids;
+        rebuildCouplerRail();
+        saveSettings();
+    });
+    voicer->setTemperamentDescriber([this](const Stop* stop) { return describeRecordedTemperament(stop); });
+    voicer->missingTreesGetter = [this](int manual) { return missingTreeNotice(manual, false); };
+    voicer->missingTreesDetail = [this](int manual) { return missingTreeNotice(manual, true); };
+    voicer->setCompassGetter([this](int manual)
+    {
+        const auto& config = manualConfigs[(size_t)juce::jlimit(0, SamplerEngine::maxManuals - 1, manual)];
+        return std::pair<int, int>(config.compassLow, config.compassHigh);
+    });
+    // Folding of the per-key rows in the voicing is remembered in the settings.
+    // The wheel scrolls the stop workspace except over a division whose voicing
+    // is open (there it belongs to the per-key sliders).
+    stopsViewport.allowWheel = [this](const juce::MouseEvent& event)
+    {
+        return voicer == nullptr || !voicer->wheelBlockedAt(event.getScreenPosition());
+    };
+    // Two program windows: each division is shown on the window it was given.
+    voicer->screenGetter = [this](int manual) { return twoWindows ? divisionScreen[(size_t)juce::jlimit(0, SamplerEngine::maxManuals - 1, manual)] : 0; };
+    // Arrange mode: a stop dragged into another division's grid moves house; its "x" removes it.
+    voicer->moveStopRequest = [this](Stop* stop, int target) { moveStopToDivision(stop, target); };
+    voicer->removeStopRequest = [this](Stop* stop) { removeStopFromGrid(stop); };
+    voicer->indentStopRequest = [this](Stop* stop, Stop* master) { indentStopUnder(stop, master); };
+    voicer->outdentStopRequest = [this](Stop* stop) { outdentStop(stop); };
+    voicer->newStopFolderRequest = [this](int manual, int column, int row) { createStopFolderOnGrid(manual, column, row); };
+    voicer->readyStopNames = [this](int manual)
+    {
+        std::vector<juce::String> names;
+        if (manual < 0 || manual >= SamplerEngine::maxManuals) return names;
+        const auto& config = manualConfigs[(size_t)manual];
+        const auto entries = config.stopBuild.active ? config.stopBuild.entries : deriveStopBuildFromEngine(manual).entries;
+        for (const auto& ready : readyStopsNotIn(manual, entries)) names.push_back(ready.name);
+        return names;
+    };
+    voicer->newStopRequest = [this](int manual, int column, int row, const juce::String& name)
+    {
+        if (manual < 0 || manual >= SamplerEngine::maxManuals) return;
+        const auto& config = manualConfigs[(size_t)manual];
+        const auto entries = config.stopBuild.active ? config.stopBuild.entries : deriveStopBuildFromEngine(manual).entries;
+        for (const auto& ready : readyStopsNotIn(manual, entries))
+            if (ready.name == name) { addReadyStopToDivision(manual, ready, column, row); return; }
+    };
+    voicer->mergeStopFolderRequest = [this](Stop* folder, Stop* target) { mergeStopFolderInto(folder, target); };
+    updateSecondWindow();
+    if (voicerStateFile.existsAsFile())
+        voicer->loadState(voicerStateFile);
+
+    // A clean installation must fit comfortably on a 1920x1080 desktop,
+    // including room for the taskbar and native window frame. Preserve the
+    // established larger workspace for users who already have settings.
+    {
+        const auto size = UIScale::toWindowSpace(juce::Rectangle<int>(savedWindowWidth, savedWindowHeight));   // saved in screen pixels
+        setSize(size.getWidth(), size.getHeight());
+    }
+    startTimerHz(40);
+    engine.noteOffAll();
+    suppressKeyboardStateNotesTL = true;
+    for (auto& state : manualKeyboardStates) state.allNotesOff(0);
+    suppressKeyboardStateNotesTL = false;
+    applicationReady.store(true);
+    // Remember folder locations, but never allocate/load a sample set merely
+    // because the application was launched. A portable configuration load is
+    // the explicit operation that restores folders and the complete state.
+    audioMuted.store(false);
+    {
+        // The document window exists only after construction.
+        juce::Component::SafePointer<MainComponent> safeThis(this);
+        juce::MessageManager::callAsync([safeThis] { if (safeThis != nullptr) safeThis->updateWindowTitle(); });
+    }
+    // Every top-bar button can be fired from MIDI (right-click: learn).
+    for (const auto& item : headerButtons())
+    {
+        item.button->getProperties().set("midiTarget", "header:" + juce::String(item.key));
+        item.button->addMouseListener(this, false);
+    }
+    // Optional: re-open the configuration used last time (Configuration Editor >
+    // Console). Off by default: launching alone never loads a sample set - and
+    // then the instrument starts clean: no trees in the pool, no stop tables
+    // (the Stop List opens empty), unless a development reload asks for them.
+    const bool willLoadLastConfiguration = loadLastConfigurationAtStartup && currentConfigurationFile.existsAsFile();
+    if (!willLoadLastConfiguration && std::getenv("ORGAN_RELOAD_DIVISION") == nullptr)
+    {
+        clearSampleLibraryInMemory();
+        // No configuration is open (its file stays remembered for "load at
+        // start-up"): the title shows none, and quitting offers a new file.
+        setCurrentConfigurationName({});
+        CrashHandler::note("Started without a configuration: the sample library starts empty");
+    }
+    if (willLoadLastConfiguration)
+    {
+        juce::Component::SafePointer<MainComponent> safeThis(this);
+        const juce::File file = currentConfigurationFile;
+        juce::MessageManager::callAsync([safeThis, file]
+        {
+            if (safeThis == nullptr) return;
+            auto configuration = juce::JSON::parse(file.loadFileAsString());
+            if (configuration.isObject() && configuration.getProperty("manualKeyboards", juce::var()).isArray())
+                safeThis->resolveAndApplyPortableConfiguration(configuration, file);
+        });
+    }
+    // Development: ORGAN_LOAD_TREE="<division>|<folder>" loads the folder into
+    // the division 25 s after start, as "Load folder..." of the Stop List would
+    // (a tree of the same name as a missing pool tree takes its place).
+    if (const char* loadTree = std::getenv("ORGAN_LOAD_TREE"))
+    {
+        const juce::String spec(loadTree);
+        const int division = spec.upToFirstOccurrenceOf("|", false, false).getIntValue();
+        const juce::File tree(spec.fromFirstOccurrenceOf("|", false, false));
+        juce::Component::SafePointer<MainComponent> safeThis(this);
+        juce::Timer::callAfterDelay(25000, [safeThis, division, tree]
+        {
+            if (safeThis == nullptr) return;
+            CrashHandler::note("ORGAN_LOAD_TREE: " + tree.getFullPathName() + " into division " + juce::String(division));
+            safeThis->loadTreeIntoDivision(tree, division);
+        });
+    }
+    // Development aids: ORGAN_OPEN_CONFIG_EDITOR=1 opens the editor at startup,
+    // ORGAN_OPEN_KEYBOARDS=<division> opens that division's Settings dialog.
+    if (const char* env = std::getenv("ORGAN_OPEN_CONFIG_EDITOR"))
+        if (juce::String(env).getIntValue() != 0)
+        {
+            juce::Component::SafePointer<MainComponent> safeThis(this);
+            juce::MessageManager::callAsync([safeThis] { if (safeThis != nullptr) safeThis->showConfigurationEditor(); });
+        }
+    // ORGAN_STRESS=<seconds>: once the instrument is loaded, every stop is engaged
+    // and the keys 36..96 of every division are held for that long, the polyphony
+    // and the render load logged every second - the polyphony of the real
+    // instrument on the real audio device, with the settings as they are.
+    if (const char* env = std::getenv("ORGAN_STRESS"))
+    {
+        const int seconds = juce::jlimit(1, 120, juce::jmax(1, juce::String(env).getIntValue()));
+        juce::Component::SafePointer<MainComponent> safeThis(this);
+        auto tryStart = std::make_shared<std::function<void(int)>>();
+        *tryStart = [safeThis, seconds, tryStart](int attempt)
+        {
+            if (safeThis == nullptr) return;
+            if ((safeThis->activeFolderLoader != nullptr || safeThis->engine.getStops().isEmpty()) && attempt < 60)
+            { juce::Timer::callAfterDelay(2000, [tryStart, attempt] { (*tryStart)(attempt + 1); }); return; }
+            // ORGAN_STRESS_LIMIT=<voices> lifts the polyphony limit for the run (a loaded
+            // configuration brings its own limit, which would cap the measurement).
+            if (const char* limit = std::getenv("ORGAN_STRESS_LIMIT"))
+                if (juce::String(limit).getIntValue() > 0) safeThis->engine.setMaxPolyphony(juce::String(limit).getIntValue());
+            // ORGAN_STRESS_NO_IR=1: every route's IR reverb removed for the run (its cost measured by the difference).
+            if (const char* noIr = std::getenv("ORGAN_STRESS_NO_IR"))
+                if (juce::String(noIr).getIntValue() != 0)
+                    for (int manual = 0; manual <= safeThis->manualCount; ++manual)
+                        for (const auto& perspective : safeThis->engine.getPerspectivesForManual(manual))
+                            safeThis->engine.setPerspectiveReverb(manual, perspective, juce::File(), 0.0f);
+            // ORGAN_STRESS_NO_AUX=1: the auxiliary routes let go of their devices for the run
+            // (their cost - every pipe rendered once more - measured by the difference).
+            // =1: the "set for all" way (detached quietly); =2: the way of the device
+            // list (JUCE closes the device itself, as "<< none >>" in the list does).
+            if (const char* noAux = std::getenv("ORGAN_STRESS_NO_AUX"))
+                if (juce::String(noAux).getIntValue() != 0)
+                {
+                    for (int manual = 0; manual <= safeThis->manualCount; ++manual)
+                    {
+                        if (juce::String(noAux).getIntValue() == 2)
+                        {
+                            auto* manager = safeThis->managerForRoute(manual, SamplerEngine::auxiliaryPerspectiveName());
+                            if (manager == nullptr || manager->getCurrentAudioDevice() == nullptr) continue;
+                            auto setup = manager->getAudioDeviceSetup();
+                            setup.outputDeviceName.clear();
+                            setup.inputDeviceName.clear();
+                            manager->setAudioDeviceSetup(setup, true);
+                            CrashHandler::note("Stress: manual " + juce::String(manual) + " auxiliary set to none the device-list way");
+                        }
+                        else safeThis->detachRouteAudioQuietly(manual, SamplerEngine::auxiliaryPerspectiveName());
+                    }
+                    safeThis->saveSettings();   // as both ways do: the remembered 'none' must survive a save
+                }
+            // ORGAN_STRESS_THREADS=<n>: the render thread count for the run (the audio thread included).
+            if (const char* threads = std::getenv("ORGAN_STRESS_THREADS"))
+                if (juce::String(threads).getIntValue() > 0) safeThis->engine.setRenderThreadCount(juce::jlimit(0, 62, juce::String(threads).getIntValue() - 1));
+            // ORGAN_STRESS_BASH=1: the keys are struck again every 250 ms instead of held
+            // ("bashing the keys": attacks and releases pile up, the worst case).
+            const bool bash = std::getenv("ORGAN_STRESS_BASH") != nullptr && juce::String(std::getenv("ORGAN_STRESS_BASH")).getIntValue() != 0;
+            safeThis->enableAllStops();
+            safeThis->engine.takeMaxBlockLoad();
+            auto keys = [safeThis](bool on)
+            {
+                for (int manual = 0; manual <= safeThis->manualCount; ++manual)
+                    for (int note = 36; note <= 96; ++note) safeThis->routeKeyboardNote(manual, note, on ? 127 : 0, on);
+            };
+            keys(true);
+            CrashHandler::note("STRESS: every stop engaged, keys 36-96 " + juce::String(bash ? "bashed" : "held") + " on every division for " + juce::String(seconds) + " s");
+            auto bashTick = std::make_shared<std::function<void()>>();
+            auto bashing = std::make_shared<bool>(bash);
+            *bashTick = [safeThis, keys, bashTick, bashing]
+            {
+                if (safeThis == nullptr || !*bashing) return;
+                keys(false);
+                juce::Timer::callAfterDelay(120, [safeThis, keys, bashTick, bashing]
+                {
+                    if (safeThis == nullptr || !*bashing) return;
+                    keys(true);
+                    juce::Timer::callAfterDelay(130, [bashTick] { (*bashTick)(); });
+                });
+            };
+            if (bash) juce::Timer::callAfterDelay(250, [bashTick] { (*bashTick)(); });
+            auto tick = std::make_shared<std::function<void(int)>>();
+            *tick = [safeThis, seconds, tick, keys, bashing](int t)
+            {
+                if (safeThis == nullptr) return;
+                int worstRoute = -1;
+                const float worst = safeThis->engine.takeMaxBlockLoad(&worstRoute);
+                int ticks = 0, started = 0; double tickMs = 0.0; float phases[4]{};
+                safeThis->engine.takeControlStats(ticks, tickMs, started, phases);
+                CrashHandler::note("STRESS " + juce::String(t) + " s: control " + juce::String(ticks) + " ticks, "
+                    + juce::String(tickMs, 1) + " ms, " + juce::String(started) + " voices started ("
+                    + juce::String(started > 0 ? 1000.0 * tickMs / started : 0.0, 1) + " us each), longest phases reclaim "
+                    + juce::String(phases[0], 2) + " / MIDI " + juce::String(phases[1], 2) + " / pending " + juce::String(phases[2], 2)
+                    + " / stale " + juce::String(phases[3], 2) + " ms");
+                float loads[8]{};
+                int loadRoutes[8]{};
+                const int loadCount = safeThis->engine.getRenderLoads(loads, loadRoutes, 8);
+                juce::String perThread;
+                for (int i = 0; i < loadCount; ++i)
+                    perThread << (i > 0 ? ", " : "") << safeThis->engine.routeLabel(loadRoutes[i]) << " " << juce::roundToInt(loads[i] * 100.0f) << " %";
+                CrashHandler::note("STRESS " + juce::String(t) + " s: polyphony " + juce::String(safeThis->engine.getCurrentPolyphony())
+                    + ", render load " + juce::String(juce::roundToInt(safeThis->engine.getRenderLoad() * 100.0f)) + " % (device threads by first route: "
+                    + perThread + "), worst block "
+                    + juce::String(juce::roundToInt(worst * 100.0f)) + " % of its budget" + (worst > 1.0f ? " *** OVER BUDGET ***" : "")
+                    + " (" + safeThis->engine.routeLabel(worstRoute) + ")"
+                    + ", control tick max " + juce::String(safeThis->engine.takeMaxControlTickMs(), 2) + " ms, limit " + juce::String(safeThis->engine.getMaxPolyphony()) + ", render threads " + juce::String(safeThis->engine.getRenderWorkerCount() + 1));
+                if (t < seconds) { juce::Timer::callAfterDelay(1000, [tick, t] { (*tick)(t + 1); }); return; }
+                *bashing = false;
+                keys(false);
+                CrashHandler::note("STRESS done");
+            };
+            juce::Timer::callAfterDelay(1000, [tick] { (*tick)(1); });
+        };
+        juce::Timer::callAfterDelay(5000, [tryStart] { (*tryStart)(0); });
+    }
+    // ORGAN_MEASURE_POLYPHONY=1: the polyphony measurement of the Configuration
+    // Editor runs by itself once the instrument is loaded (development aid).
+    if (const char* env = std::getenv("ORGAN_MEASURE_POLYPHONY"))
+        if (juce::String(env).getIntValue() != 0)
+        {
+            juce::Component::SafePointer<MainComponent> safeThis(this);
+            auto tryStart = std::make_shared<std::function<void(int)>>();
+            *tryStart = [safeThis, tryStart](int attempt)
+            {
+                if (safeThis == nullptr) return;
+                if (!safeThis->canMeasurePolyphony() && attempt < 60)
+                { juce::Timer::callAfterDelay(2000, [tryStart, attempt] { (*tryStart)(attempt + 1); }); return; }
+                safeThis->startPolyphonyMeasurement();
+            };
+            juce::Timer::callAfterDelay(5000, [tryStart] { (*tryStart)(0); });
+        }
+    // ORGAN_OPEN_MANUAL=<option label> opens the About dialog on the manual at that
+    // option's chapter after 3 s (what the option's "?" button does).
+    if (const char* env = std::getenv("ORGAN_OPEN_MANUAL"))
+    {
+        const juce::String section = juce::String::fromUTF8(env);
+        juce::Component::SafePointer<MainComponent> safeThis(this);
+        juce::Timer::callAfterDelay(3000, [safeThis, section] { if (safeThis != nullptr) safeThis->showManualSection(section); });
+    }
+    if (const char* env = std::getenv("ORGAN_OPEN_KEYBOARDS"))
+    {
+        const int manual = juce::jlimit(0, SamplerEngine::maxManuals - 1, juce::String(env).getIntValue());
+        juce::Component::SafePointer<MainComponent> safeThis(this);
+        // After the start-up work (device opening, optional configuration load,
+        // which rebuilds the console and closes dialogs) has settled: while a
+        // loader runs, the dialog would be closed again, so it waits for it.
+        auto open = std::make_shared<std::function<void()>>();
+        *open = [safeThis, manual, open]
+        {
+            if (safeThis == nullptr) return;
+            if (safeThis->activeFolderLoader != nullptr) { juce::Timer::callAfterDelay(2000, *open); return; }
+            safeThis->showKeyboardsDialog(manual);
+        };
+        juce::Timer::callAfterDelay(8000, *open);
+    }
+    // ORGAN_RELOAD_DIVISION=<manual> loads that division's saved folder trees
+    // shortly after start-up (development aid: launching alone never loads samples).
+    const bool reloadAtStart = std::getenv("ORGAN_RELOAD_DIVISION") != nullptr;
+    if (const char* env = std::getenv("ORGAN_RELOAD_DIVISION"))
+    {
+        std::vector<int> manuals;   // "1" or "1,2"
+        for (const auto& token : juce::StringArray::fromTokens(juce::String(env), ",", ""))
+            if (token.trim().isNotEmpty()) manuals.push_back(juce::jlimit(0, SamplerEngine::maxManuals - 1, token.trim().getIntValue()));
+        juce::Component::SafePointer<MainComponent> safeThis(this);
+        juce::Timer::callAfterDelay(2000, [safeThis, manuals] { if (safeThis != nullptr) safeThis->reloadDivisions(manuals); });
+    }
+    // ORGAN_OPEN_STOP_BUILD=<manual> opens that division's Stop building table after start-up (development aid).
+    if (const char* env = std::getenv("ORGAN_OPEN_STOP_BUILD"))
+    {
+        const int manual = juce::jlimit(0, SamplerEngine::maxManuals - 1, juce::String(env).getIntValue());
+        juce::Component::SafePointer<MainComponent> safeThis(this);
+        // After the divisions are loaded (a load may still be running: then a little later).
+        auto tryOpen = std::make_shared<std::function<void(int)>>();
+        *tryOpen = [safeThis, manual, tryOpen](int attempt)
+        {
+            if (safeThis == nullptr) return;
+            if (safeThis->activeFolderLoader != nullptr && attempt < 15) { juce::Timer::callAfterDelay(2000, [tryOpen, attempt] { (*tryOpen)(attempt + 1); }); return; }
+            safeThis->showStopBuildingDialog(manual);
+        };
+        juce::Timer::callAfterDelay(reloadAtStart ? 16000 : 8000, [tryOpen] { (*tryOpen)(0); });
+    }
+    // ORGAN_EXPAND_VOICING=<part of a stop name> opens that stop's voicing after start-up.
+    if (const char* env = std::getenv("ORGAN_EXPAND_VOICING"))
+    {
+        const juce::String needle(env);
+        juce::Component::SafePointer<MainComponent> safeThis(this);
+        // After the divisions are loaded (a reload may still be running at 8 s: then a little later).
+        auto tryExpand = std::make_shared<std::function<void(int)>>();
+        *tryExpand = [safeThis, needle, tryExpand](int attempt)
+        {
+            if (safeThis == nullptr || safeThis->voicer == nullptr) return;
+            if ((safeThis->activeFolderLoader != nullptr || safeThis->engine.getStops().isEmpty()) && attempt < 60)   // a configuration loading at start-up takes up to a minute
+            { juce::Timer::callAfterDelay(2000, [tryExpand, attempt] { (*tryExpand)(attempt + 1); }); return; }
+            for (auto* stop : safeThis->engine.getStops())
+                if (stop->name.containsIgnoreCase(needle) || stop->alias.containsIgnoreCase(needle)) { stop->voicingExpanded = true; break; }
+            safeThis->voicer->rebuildUI(safeThis->stopsContent, safeThis->stopsViewport);
+        };
+        juce::Timer::callAfterDelay(8000, [tryExpand] { (*tryExpand)(0); });
+    }
+    // Settings saved within the first seconds (device starts, folder loading)
+    // are start-up bookkeeping, not user changes to the configuration.
+    startupCompleteMs = juce::Time::getMillisecondCounterHiRes() + 20000.0;
+    DBG("MainComponent constructor end");
+}
+
+void MainComponent::requestQuit(std::function<void()> proceed)
+{
+    saveSettings();
+    askToKeepChanges("Quit OrganSampler", "quit", std::move(proceed));
+}
+
+void MainComponent::askToKeepChanges(const juce::String& title, const juce::String& continueVerb, std::function<void()> proceed)
+{
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    const juce::String continueCapitalised = continueVerb.substring(0, 1).toUpperCase() + continueVerb.substring(1);
+    // "Open" means loaded or saved in this session: a name remembered from an
+    // earlier session is not an open configuration (the start was clean), so an
+    // instrument built since then is offered for a new file.
+    const bool configurationOpen = configurationUsedThisSession && currentConfigurationName.isNotEmpty()
+        && currentConfigurationFile.existsAsFile();
+    if (!configurationOpen)
+    {
+        const bool builtSomething = !sampleTrees.empty() || !engine.getStops().isEmpty();
+        if (!builtSomething) { if (proceed) proceed(); return; }
+        juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+            .withIconType(juce::MessageBoxIconType::QuestionIcon)
+            .withTitle(title)
+            .withMessage("The instrument was changed (sample folders, stops, voicing, settings) but no configuration file is open.\n"
+                "Save it as a new configuration file? Without that these changes are lost: the next start begins with an empty instrument.")
+            .withButton("Save to a file...")
+            .withButton(continueCapitalised + " without saving")
+            .withButton("Cancel"),
+            [safeThis, proceed](int result)
+            {
+                // JUCE result codes for three buttons: first = 1, second = 2, third (Cancel) = 0.
+                if (safeThis == nullptr || result == 0) return;
+                if (result == 2) { if (proceed) proceed(); return; }
+                safeThis->chooseConfigurationToSave([proceed](bool saved) { if (saved && proceed) proceed(); });
+            });
+        return;
+    }
+    if (!configurationDirty)
+    {
+        if (proceed) proceed();
+        return;
+    }
+    juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+        .withIconType(juce::MessageBoxIconType::QuestionIcon)
+        .withTitle(title)
+        .withMessage("Save the changed settings into the configuration \"" + currentConfigurationName + "\" before you " + continueVerb + "?")
+        .withButton("Save and " + continueVerb)
+        .withButton(continueCapitalised + " without saving")
+        .withButton("Cancel"),
+        [safeThis, proceed](int result)
+        {
+            if (safeThis == nullptr || result == 0) return;
+            if (result == 1) safeThis->savePortableConfiguration(safeThis->currentConfigurationFile, true);
+            if (proceed) proceed();
+        });
+}
+
+MainComponent::~MainComponent()
+{
+    engine.stopRecording();
+    if (quietTestManager != nullptr)
+        quietTestManager->removeAudioCallback(&quietTestPlayer);
+    quietTestPlayer.setSource(nullptr);
+    for (auto& entry : perspectiveAudioRoutes)
+        if (entry.second->managerInUse && entry.second->callback)
+            entry.second->managerInUse->removeAudioCallback(entry.second->callback.get());
+    for (int i = 0; i < SamplerEngine::maxManuals - 1; ++i)
+        if (extraAudioManagers[(size_t)i] && extraAudioCallbacks[(size_t)i])
+        {
+            extraAudioManagers[(size_t)i]->removeAudioCallback(extraAudioCallbacks[(size_t)i].get());
+            for (auto& host : asioHosts) host->removeAudioCallback(extraAudioCallbacks[(size_t)i].get());
+        }
+    if (primaryAudioCallback)
+    {
+        deviceManager.removeAudioCallback(primaryAudioCallback.get());
+        for (auto& host : asioHosts) host->removeAudioCallback(primaryAudioCallback.get());
+    }
+    for (auto& host : asioHosts) host->closeAudioDevice();
+    shutdownAudio();
+    midiInputs.clear();
+    if (voicer)
+        voicer->saveState(voicerStateFile);
+    saveMemories();
+    saveSettings();
+}
+
+void MainComponent::prepareToPlay(int /*samplesPerBlockExpected*/, double sampleRate)
+{
+    currentSampleRate = sampleRate;
+    engine.setSampleRate(sampleRate);
+    engine.setManualSampleRate(0, sampleRate);
+    DBG("prepareToPlay: sampleRate = " << sampleRate);
+}
+
+void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill)
+{
+    // Not used: every division is driven by its own DivisionAudioCallback.
+    bufferToFill.clearActiveBufferRegion();
+}
+
+void MainComponent::releaseResources()
+{
+    engine.noteOffAll();
+}
+
+void MainComponent::paint(juce::Graphics& g)
+{
+    g.fillAll(getLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId));
+}
+
+void MainComponent::resized()
+{
+    if (applicationReady.load() && (getWidth() != observedWindowWidth
+        || getHeight() != observedWindowHeight))
+    {
+        observedWindowWidth = getWidth();
+        observedWindowHeight = getHeight();
+        windowResizeSaveAt = juce::Time::getMillisecondCounterHiRes() + 500.0;
+    }
+    auto bounds = getLocalBounds().reduced(16);
+
+    auto topRow = bounds.removeFromTop(40);
+    const int divisionLabelWidth = juce::jmin(80, juce::jmax(55, topRow.getWidth() / 20));
+    const int divisionBoxWidth = juce::jmin(110, juce::jmax(80, topRow.getWidth() / 15));
+    manualCountLabel.setBounds(topRow.removeFromLeft(divisionLabelWidth));
+    manualCountBox.setBounds(topRow.removeFromLeft(divisionBoxWidth).reduced(4));
+    selectFolderButton.setBounds({});
+    keyboardsButton.setBounds({});
+    // The top bar: every button can be switched off (Configuration Editor >
+    // Console); the shown ones share the width by their weights.
+    auto headerItems = headerButtons();
+    int remainingWeight = 0;
+    for (auto& item : headerItems)
+    {
+        const bool shown = isHeaderButtonShown(item.key);
+        item.button->setVisible(shown);
+        if (shown) remainingWeight += item.weight;
+    }
+    for (auto& item : headerItems)
+    {
+        if (!item.button->isVisible()) continue;
+        const int width = remainingWeight == item.weight ? topRow.getWidth()
+            : juce::jmax(1, juce::roundToInt((double)topRow.getWidth()
+                * item.weight / remainingWeight));
+        item.button->setBounds(topRow.removeFromLeft(width).reduced(3));
+        remainingWeight -= item.weight;
+    }
+    // ========== NOVÉ TLAČÍTKO V LAYOUTU ==========
+    // Positioned by the adaptive header layout above.
+    // ========== KONEC NOVÉ ČÁSTI ==========
+    // ========== NOVÉ TLAČÍTKO V LAYOUTU (vlevo od One-shot Patterns) ==========
+    // Positioned by the adaptive header layout above.
+    // ========== KONEC NOVÉ ČÁSTI ==========
+
+    // Global sound sliders (optional, Configuration Editor): with them hidden the
+    // combination row moves up and the polyphony display sits in that row.
+    // Indexed by GlobalSlider (storage order); laid out in kGlobalSliderOrder.
+    juce::Slider* sliders[gsCount]{ &attackMinimumDelaySlider, &attackMinimumSlider, &releaseFadeOutSlider,
+        &releaseFadeInSlider, &releaseScalingSlider, &pitchSlider, &masterVolumeSlider, &releaseCutSlider };
+    juce::Label* sliderLabels[gsCount]{ &attackMinimumDelayLabel, &attackMinimumLabel, &releaseFadeOutLabel,
+        &releaseFadeInLabel, &releaseScalingLabel, &pitchLabel, &masterLabel, &releaseCutLabel };
+    int shownCount = 0;
+    for (int i = 0; i < gsCount; ++i)
+    {
+        sliders[i]->setVisible(globalSliderShown[(size_t)i]);
+        sliders[i]->setTextBoxStyle(juce::Slider::TextBoxRight, false, 64, 20);   // value box after the slider
+        sliderLabels[i]->setVisible(globalSliderShown[(size_t)i]);
+        sliderLabels[i]->setJustificationType(juce::Justification::centredLeft); // aligned with the slider's left end
+        if (globalSliderShown[(size_t)i]) ++shownCount;
+    }
+    if (shownCount > 0)
+    {
+        // The shown sliders share the row evenly with the polyphony display, which
+        // keeps a fixed share of the width; fewer sliders make each one longer.
+        auto controlsRow = bounds.removeFromTop(80);
+        const int polyphonyWidth = juce::jlimit(180, 420, controlsRow.getWidth() / 6);
+        auto polyphonyArea = controlsRow.removeFromRight(polyphonyWidth);
+        const int cellWidth = controlsRow.getWidth() / shownCount;
+        const int cellPad = juce::jlimit(6, 40, cellWidth / 12);
+        for (const GlobalSlider which : kGlobalSliderOrder)
+        {
+            const int i = (int)which;
+            if (!globalSliderShown[(size_t)i]) continue;
+            // Caption above, slider below it, value box right of the slider.
+            auto cell = controlsRow.removeFromLeft(cellWidth).reduced(cellPad, 0);
+            sliderLabels[i]->setBounds(cell.getX(), cell.getY() + 8, cell.getWidth(), 18);
+            sliders[i]->setBounds(cell.getX(), cell.getY() + 28, cell.getWidth(), 26);
+        }
+        if (polyphonyDisplay != nullptr)
+            polyphonyDisplay->setBounds(polyphonyArea.reduced(5, 5));
+    }
+
+    if (audioSettings)
+        audioSettings->setBounds({});
+
+    // Paměti mají vlastní řádek těsně nad klaviaturou. Horní řádek tak
+    // zůstává volný pro současné i budoucí zvukové parametry.
+    auto memRow = bounds.removeFromTop(64).reduced(4);
+    // A narrower window shrinks everything on this row - buttons, displays,
+    // gaps and the padding around the buttons - by one common factor down to
+    // per-item minimum widths, so that all of it stays visible as long as
+    // possible. Only when even the minima do not fit do the pistons give way.
+    const bool polyphonyHere = !anyGlobalSliderShown() && polyphonyDisplay != nullptr;
+    struct RowItem { juce::Component* component; int natural, minimum; bool tall; };
+    std::vector<RowItem> items{
+        { &combinationSetButton, 70, 46, false }, { &bankDownButton, 78, 44, false },
+        { &bankLabel, 92, 50, false }, { &bankUpButton, 78, 44, false },
+        { &combinationDisplay, 88, 58, false }, { &pistonCountLabel, 70, 48, false },
+        { &pistonCountBox, 58, 46, false } };
+    for (int i = 0; i < pistonCount; ++i) items.push_back({ pistonButtons[i], 74, 40, false });
+    items.push_back({ &previousCombinationButton, 58, 40, false });
+    items.push_back({ &nextCombinationButton, 58, 40, false });
+    items.push_back({ nullptr, 12, 4, false });   // gap
+    items.push_back({ &enableAllButton, 78, 50, false });
+    items.push_back({ &disableAllButton, 58, 40, false });
+    items.push_back({ nullptr, 12, 4, false });
+    items.push_back({ &saveCombinationsButton, 64, 44, false });
+    items.push_back({ &loadCombinationsButton, 64, 44, false });
+    items.push_back({ nullptr, 12, 4, false });
+    items.push_back({ &crescendoButton, 64, 58, false });   // "Cresc." keeps its width almost to the end
+    items.push_back({ crescendoDisplay.get(), 240, 110, true });
+    if (polyphonyHere)
+    {
+        items.push_back({ nullptr, 12, 4, false });
+        items.push_back({ polyphonyDisplay.get(), 300, 150, true });
+    }
+    int naturalTotal = 0, minimumTotal = 0;
+    for (const auto& item : items) { naturalTotal += item.natural; minimumTotal += item.minimum; }
+    const int available = memRow.getWidth();
+    float factor = 1.0f;
+    if (naturalTotal > available)
+        factor = naturalTotal > minimumTotal
+            ? juce::jlimit(0.0f, 1.0f, (float)(available - minimumTotal) / (float)(naturalTotal - minimumTotal)) : 0.0f;
+    std::vector<int> widths;
+    int total = 0;
+    for (const auto& item : items)
+    {
+        widths.push_back(item.minimum + juce::roundToInt((float)(item.natural - item.minimum) * factor));
+        total += widths.back();
+    }
+    if (total > available && pistonCount > 0)
+    {
+        // Even the minima do not fit: the pistons shrink further (down to nothing).
+        const int overflow = total - available;
+        const int perPiston = (overflow + pistonCount - 1) / pistonCount;
+        for (size_t i = 7; i < 7 + (size_t)pistonCount; ++i) widths[i] = juce::jmax(0, widths[i] - perPiston);
+    }
+    const int pad = factor >= 1.0f ? 3 : 1 + juce::roundToInt(2.0f * factor);   // padding around the buttons
+    for (size_t i = 0; i < items.size(); ++i)
+    {
+        auto cell = memRow.removeFromLeft(juce::jmin(widths[i], juce::jmax(0, memRow.getWidth())));
+        if (items[i].component == nullptr) continue;
+        if (items[i].component == &pistonCountLabel) items[i].component->setBounds(cell);
+        else items[i].component->setBounds(items[i].tall ? cell.reduced(pad, 2) : cell.reduced(pad));
+    }
+    for (int i = pistonCount; i < maxPistons; ++i)
+        if (auto* button = pistonButtons[i]) button->setBounds({});
+    couplerRailLabel.setBounds({});
+    couplerViewport.setBounds({});
+
+    bounds.removeFromTop(8);
+    stopsViewport.setBounds(bounds.reduced(4));
+    {
+        // The empty-instrument hint in the middle of the stop workspace, on its
+        // own panel (the window's background) so that no column divider crosses it.
+        emptyHintPanel.setBounds(stopsViewport.getBounds().withSizeKeepingCentre(juce::jmin(760, stopsViewport.getWidth()), 140));
+        auto hint = emptyHintPanel.getLocalBounds().reduced(12);
+        emptyHintLabel.setBounds(hint.removeFromTop(64));
+        hint.removeFromTop(8);
+        emptyHintButton.setBounds(hint.withSizeKeepingCentre(260, 34));
+        updateEmptyHint();
+    }
+    // The notices lie over the (still empty) stop area, one above the other: the
+    // audio-device wait above, "Compiling the Stop List ..." below it.
+    {
+        const int noticeWidth = juce::jmin(juce::jmax(200, getWidth() - 40), 820);
+        const int top = stopsViewport.getY() + juce::jmin(90, juce::jmax(10, stopsViewport.getHeight() / 4));
+        waitingForAudioLabel.setBounds(stopsViewport.getBounds().withSizeKeepingCentre(noticeWidth, 34).withY(top));
+        generatingLabel.setBounds(stopsViewport.getBounds().withSizeKeepingCentre(noticeWidth, 38).withY(top + 34 + 8));
+    }
+
+    // If stops are loaded, rebuild the UI to adapt to the new size
+    if (voicer)
+    {
+        voicer->rebuildUI(stopsContent, stopsViewport);
+    }
+
+    stopsViewport.setViewPosition(0, 0);
+}
+
+void MainComponent::reopenMidiInputs()
+{
+    midiInputs.clear();
+    midiInputIdentifiers.clear();
+    auto devices = juce::MidiInput::getAvailableDevices();
+    for (const auto& device : devices)
+    {
+        auto input = juce::MidiInput::openDevice(device.identifier, this);
+        if (input)
+        {
+            input->start();
+            midiInputIdentifiers.push_back(device.identifier);
+            midiInputs.push_back(std::move(input));
+        }
+    }
+}
+
+void MainComponent::refreshMidiRouting()
+{
+    const juce::ScopedLock lock(midiRoutingLock);
+    midiRoutingManualCount = manualCount;
+    for (int manual = 0; manual < SamplerEngine::maxManuals; ++manual)
+    {
+        const auto& config = manualConfigs[(size_t)manual];
+        auto& routing = midiRouting[(size_t)manual];
+        routing.device = config.deviceIdentifier;
+        routing.channel = config.midiChannel;
+        routing.disableVelocity = config.disableVelocity;
+        routing.bassOctaveLayout = config.bassOctaveLayout;
+        routing.midiTranspose = config.midiTranspose;
+        routing.expressionDevice = config.expressionDeviceIdentifier;
+        routing.expressionChannel = config.expressionChannel;
+        routing.expressionController = config.expressionController;
+        routing.expressionMinimum = config.expressionMinimum;
+        routing.expressionMaximum = config.expressionMaximum;
+    }
+}
+
+void MainComponent::handleIncomingMidiMessage(juce::MidiInput* source,
+    const juce::MidiMessage& message)
+{
+    // MIDI thread. Only atomics, the routing snapshot, the coupler state
+    // (under its own lock) and the engine's lock-free queue are touched here;
+    // everything that edits configuration is posted to the message thread.
+    if (!applicationReady.load()) return;
+    const juce::String sourceIdentifier = source != nullptr ? source->getIdentifier() : juce::String();
+    std::array<MidiRouting, SamplerEngine::maxManuals> routing;
+    int routedManualCount = 0;
+    {
+        const juce::ScopedLock lock(midiRoutingLock);
+        routing = midiRouting;
+        routedManualCount = juce::jlimit(0, SamplerEngine::maxManuals - 1, midiRoutingManualCount);
+    }
+
+    const int expressionLearnIndex = listeningExpressionManual.load();
+    if (expressionLearnIndex >= 0 && expressionLearnIndex < SamplerEngine::maxManuals && message.isController())
+    {
+        const int controller = message.getControllerNumber();
+        const int value = message.getControllerValue();
+        const int channel = message.getChannel();
+        juce::Component::SafePointer<MainComponent> safeThis(this);
+        juce::MessageManager::callAsync([safeThis, expressionLearnIndex, sourceIdentifier, channel, controller, value]
+        {
+            if (safeThis == nullptr || safeThis->listeningExpressionManual.load() != expressionLearnIndex) return;
+            auto& config = safeThis->manualConfigs[(size_t)expressionLearnIndex];
+            if (config.expressionController < 0)
+            {
+                config.expressionDeviceIdentifier = sourceIdentifier;
+                config.expressionChannel = channel;
+                config.expressionController = controller;
+                config.expressionMinimum = value;
+                config.expressionMaximum = value;
+            }
+            else if (config.expressionDeviceIdentifier == sourceIdentifier
+                && config.expressionChannel == channel && config.expressionController == controller)
+            {
+                config.expressionMinimum = juce::jmin(config.expressionMinimum, value);
+                config.expressionMaximum = juce::jmax(config.expressionMaximum, value);
+            }
+            else return;
+            safeThis->saveSettings();
+        });
+        // Calibration is exclusive to its selected division. In particular,
+        // a pedal-learn movement must not operate an already learned manual I.
+        return;
+    }
+
+    bool operatedExpression = false;
+    if (message.isController())
+    {
+        for (int manual = 0; manual <= routedManualCount; ++manual)
+        {
+            const auto& config = routing[(size_t)manual];
+            if (config.expressionDevice != sourceIdentifier
+                || config.expressionChannel != message.getChannel()
+                || config.expressionController != message.getControllerNumber())
+                continue;
+
+            const int span = config.expressionMaximum - config.expressionMinimum;
+            if (span <= 0) continue;
+            setExpressionTarget(manual, juce::jlimit(0.0f, 1.0f,
+                (float)(message.getControllerValue() - config.expressionMinimum) / (float)span));
+            operatedExpression = true;
+        }
+    }
+    // Learned swell controllers take precedence over generic button bindings;
+    // otherwise Done appeared successful but the CC was consumed elsewhere.
+    if (operatedExpression) return;
+    if (processMidiButtonMessage(sourceIdentifier, message)) return;
+
+    const int learnIndex = listeningManual.exchange(-1);
+    if (learnIndex >= 0 && learnIndex < SamplerEngine::maxManuals && message.getChannel() > 0)
+    {
+        const int learnedChannel = message.getChannel();
+        juce::MessageManager::callAsync([this, learnIndex, sourceIdentifier, learnedChannel]
+        {
+            manualConfigs[(size_t)learnIndex].deviceIdentifier = sourceIdentifier;
+            manualConfigs[(size_t)learnIndex].midiChannel = learnedChannel;
+            saveSettings();
+            if (keyboardLearnWindow != nullptr)
+                keyboardLearnWindow->exitModalState(1);
+        });
+        return;
+    }
+
+    if (!message.isNoteOnOrOff()) return;
+    for (int manual = 0; manual <= routedManualCount; ++manual)
+    {
+        const auto& config = routing[(size_t)manual];
+        if (config.device.isEmpty() || config.device != sourceIdentifier || config.channel != message.getChannel())
+            continue;
+        suppressKeyboardStateNotesTL = true;
+        manualKeyboardStates[(size_t)manual].processNextMidiEvent(message);
+        suppressKeyboardStateNotesTL = false;
+        int routedNote = mapNoteForLayout(config.bassOctaveLayout, message.getNoteNumber());
+        if (routedNote >= 0) routedNote = transposedNote(routedNote, config.midiTranspose);
+        const int routedVelocity = config.disableVelocity && message.isNoteOn() ? 127 : message.getVelocity();
+        if (routedNote >= 0)
+            routeKeyboardNote(manual, routedNote, routedVelocity,
+                message.isNoteOn() && routedVelocity > 0);
+        if (voicer)
+        {
+            if (routedNote >= 0) voicer->setNoteActive(routedNote, message.isNoteOn());
+            voicer->pulseManualActivity(manual);
+        }
+    }
+    return;
+#if 0
+    if (!message.isNoteOnOrOff()) return;
+    int note = message.getNoteNumber();
+    if (note < 21 || note > 108) return;
+
+    // ========== ZMĚNA: LISTENER NESMÍ SPUSTIT TÓN PODRUHÉ ==========
+    // Aktualizuje se jen vizuální stav klaviatury; zvuk spouští až kód níže.
+    suppressKeyboardStateNotes = true;
+    virtualKeyboardState.processNextMidiEvent(message);
+    suppressKeyboardStateNotes = false;
+    // ========== KONEC ZMĚNY ==========
+
+    int velocity = message.getVelocity();
+    if (disableVelocityButton.getToggleState())
+    {
+        velocity = (message.isNoteOn() && velocity > 0) ? 127 : 0;
+    }
+
+    DBG("MIDI: note=" << note << (message.isNoteOn() ? " ON" : " OFF") << " vel=" << velocity);
+
+    if (message.isNoteOn() && velocity > 0)
+        engine.noteOn(note, velocity);
+    else
+        engine.noteOff(note);
+    if (voicer) voicer->setNoteActive(note, message.isNoteOn());
+#endif
+}
+
+void MainComponent::handleNoteOn(juce::MidiKeyboardState* source, int /*midiChannel*/, int midiNoteNumber, float velocity)
+{
+    if (suppressKeyboardStateNotesTL) return;
+    for (int manual = 0; manual <= manualCount; ++manual)
+        if (source == &manualKeyboardStates[(size_t)manual])
+        {
+            const int routedVelocity = manualConfigs[(size_t)manual].disableVelocity ? 127 : (int)(velocity * 127.0f);
+            const int routedNote = mapKeyboardNote(manual, midiNoteNumber);
+            if (routedNote >= 0) routeKeyboardNote(manual, routedNote, routedVelocity, true);
+            if (voicer)
+            {
+                if (routedNote >= 0) voicer->setNoteActive(routedNote, true);
+                voicer->pulseManualActivity(manual);
+            }
+            return;
+        }
+#if 0
+    // ========== ZMĚNA: TÓN UŽ SPOUŠTÍ handleIncomingMidiMessage ==========
+    if (suppressKeyboardStateNotes) return;
+    // ========== KONEC ZMĚNY ==========
+
+    int vel = static_cast<int>(velocity * 127);
+    if (disableVelocityButton.getToggleState())
+        vel = 127;
+
+    DBG("Virtual keyboard note ON: " << midiNoteNumber << " vel=" << vel);
+    engine.noteOn(midiNoteNumber, vel);
+    if (voicer) voicer->setNoteActive(midiNoteNumber, true);
+#endif
+}
+
+void MainComponent::handleNoteOff(juce::MidiKeyboardState* source, int /*midiChannel*/, int midiNoteNumber, float /*velocity*/)
+{
+    if (suppressKeyboardStateNotesTL) return;
+    for (int manual = 0; manual <= manualCount; ++manual)
+        if (source == &manualKeyboardStates[(size_t)manual])
+        {
+            const int routedNote = mapKeyboardNote(manual, midiNoteNumber);
+            if (routedNote >= 0) routeKeyboardNote(manual, routedNote, 0, false);
+            if (voicer)
+            {
+                if (routedNote >= 0) voicer->setNoteActive(routedNote, false);
+                voicer->pulseManualActivity(manual);
+            }
+            return;
+        }
+#if 0
+    // ========== ZMĚNA: TÓN UŽ UKONČUJE handleIncomingMidiMessage ==========
+    if (suppressKeyboardStateNotes) return;
+    // ========== KONEC ZMĚNY ==========
+
+    DBG("Virtual keyboard note OFF: " << midiNoteNumber);
+    // ========== ZMĚNA: ODSTRANĚNO DUPLICITNÍ VOLÁNÍ noteOff ==========
+    engine.noteOff(midiNoteNumber);
+    // ========== KONEC ZMĚNY ==========
+    if (voicer) voicer->setNoteActive(midiNoteNumber, false);
+#endif
+}
+
+MainComponent::Coupler* MainComponent::findCoupler(const juce::String& id)
+{
+    for (auto& coupler : couplers)
+        if (coupler.id == id) return &coupler;
+    return nullptr;
+}
+
+void MainComponent::applyRoutedNoteDelta(int manual, int note, int velocity, int delta)
+{
+    if (manual < 0 || manual >= SamplerEngine::maxManuals || note < 0 || note >= 128 || delta == 0) return;
+    auto& count = routedNoteRefCounts[(size_t)manual][(size_t)note];
+    const int before = count;
+    count = juce::jmax(0, count + delta);
+    if (before == 0 && count > 0)
+        engine.noteOn(note, juce::jlimit(1, 127, velocity), manual);
+    else if (before > 0 && count == 0)
+        engine.noteOff(note, manual);
+}
+
+void MainComponent::recomputeCouplersForSource(int sourceManual, int changedNote,
+    bool changedNoteWasPressed)
+{
+    if (sourceManual < 0 || sourceManual >= SamplerEngine::maxManuals) return;
+    const auto& held = physicallyHeldNotes[(size_t)sourceManual];
+    for (auto& coupler : couplers)
+    {
+        if (coupler.sourceManual != sourceManual) continue;
+        std::map<int, int> desired;
+        // The division's own pitch is routed like a coupler that is on unless
+        // "Unison Off" is switched on.
+        const bool routing = coupler.type == CouplerType::unisonOff ? !coupler.enabled : coupler.enabled;
+        if (routing && !held.empty())
+        {
+            auto addHeld = [&](const std::pair<const int, int>& key)
+            {
+                int transpose = coupler.type == CouplerType::subOctave ? -12
+                    : coupler.type == CouplerType::superOctave ? 12 : 0;
+                const int note = key.first + transpose;
+                if (note >= 0 && note < 128) desired[note] = key.second;
+            };
+            if (melodyBassNewKeysOnly && changedNote >= 0
+                && (coupler.type == CouplerType::melody || coupler.type == CouplerType::bass))
+            {
+                desired = coupler.activeNotes;
+                if (changedNoteWasPressed)
+                {
+                    const int extreme = coupler.type == CouplerType::melody
+                        ? held.rbegin()->first : held.begin()->first;
+                    if (changedNote == extreme)
+                    {
+                        desired.clear();
+                        addHeld(*held.find(changedNote));
+                    }
+                }
+                else if (desired.count(changedNote) != 0)
+                {
+                    desired.clear();
+                    if (melodyBassGraceTime && !held.empty())
+                    {
+                        const auto candidate = coupler.type == CouplerType::melody
+                            ? *held.rbegin() : *held.begin();
+                        const auto pressed = physicalNotePressTimes[(size_t)sourceManual]
+                            .find(candidate.first);
+                        if (pressed != physicalNotePressTimes[(size_t)sourceManual].end()
+                            && juce::Time::getMillisecondCounterHiRes() - pressed->second <= 150.0)
+                            addHeld(candidate);
+                    }
+                }
+            }
+            else if (coupler.type == CouplerType::melody)
+                addHeld(*held.rbegin());
+            else if (coupler.type == CouplerType::bass)
+                addHeld(*held.begin());
+            else
+                for (const auto& key : held) addHeld(key);
+        }
+
+        for (const auto& old : coupler.activeNotes)
+            if (desired.count(old.first) == 0)
+                applyRoutedNoteDelta(coupler.targetManual, old.first, old.second, -1);
+        for (const auto& wanted : desired)
+            if (coupler.activeNotes.count(wanted.first) == 0)
+                applyRoutedNoteDelta(coupler.targetManual, wanted.first, wanted.second, 1);
+        coupler.activeNotes = std::move(desired);
+    }
+}
+
+void MainComponent::routeKeyboardNote(int manual, int note, int velocity, bool isOn)
+{
+    if (manual < 0 || manual > manualCount || note < 0 || note >= 128) return;
+    const juce::ScopedLock lock(couplerLock);
+    auto& held = physicallyHeldNotes[(size_t)manual];
+    // The division's own pitch normally goes through its "Unison Off" entry of the
+    // coupler catalog (so that it can be switched off); without one, route directly.
+    bool selfRoutedByCoupler = false;
+    for (const auto& coupler : couplers)
+        if (coupler.sourceManual == manual && coupler.type == CouplerType::unisonOff) { selfRoutedByCoupler = true; break; }
+    if (isOn)
+    {
+        if (held.count(note) == 0)
+        {
+            held[note] = juce::jlimit(1, 127, velocity);
+            physicalNotePressTimes[(size_t)manual][note] =
+                juce::Time::getMillisecondCounterHiRes();
+            if (!selfRoutedByCoupler) applyRoutedNoteDelta(manual, note, velocity, 1);
+        }
+        else
+            held[note] = juce::jlimit(1, 127, velocity);
+    }
+    else if (auto found = held.find(note); found != held.end())
+    {
+        if (!selfRoutedByCoupler) applyRoutedNoteDelta(manual, note, found->second, -1);
+        held.erase(found);
+    }
+    recomputeCouplersForSource(manual, note, isOn);
+    if (!isOn) physicalNotePressTimes[(size_t)manual].erase(note);
+}
+
+int MainComponent::newestHeldKey(int manual, int& velocity) const
+{
+    // The physically held key pressed last and the MIDI velocity it arrived with
+    // (-1: none held); the Settings keyboard writes it over that key.
+    velocity = 0;
+    if (manual < 0 || manual >= SamplerEngine::maxManuals) return -1;
+    const juce::ScopedLock lock(couplerLock);
+    const auto& held = physicallyHeldNotes[(size_t)manual];
+    const auto& times = physicalNotePressTimes[(size_t)manual];
+    int newest = -1;
+    double newestTime = -1.0;
+    for (const auto& [note, time] : times)
+        if (time > newestTime && held.count(note) != 0) { newestTime = time; newest = note; }
+    if (newest < 0) return -1;
+    velocity = held.at(newest);
+    // The keyboard shows the keys as they are played; a bass octave layout maps them, so find the shown key.
+    for (int shown = 0; shown < 128; ++shown)
+        if (mapKeyboardNote(manual, shown) == newest) return shown;
+    return newest;
+}
+
+int MainComponent::mapKeyboardNote(int manual, int note) const
+{
+    if (manual < 0 || manual >= SamplerEngine::maxManuals || note < 0 || note >= 128) return -1;
+    const int mapped = mapNoteForLayout(manualConfigs[(size_t)manual].bassOctaveLayout, note);
+    return mapped < 0 ? -1 : transposedNote(mapped, manualConfigs[(size_t)manual].midiTranspose);
+}
+
+int MainComponent::mapNoteForLayout(int layout, int note) noexcept
+{
+    if (note < 0 || note >= 128) return -1;
+    switch (layout)
+    {
+        case 1: // Short octave: E-C, F-F, F#-D, G-G, G#-E.
+            if (note == 36 || note == 37 || note == 38 || note == 39) return -1;
+            if (note == 40) return 36;
+            if (note == 42) return 38;
+            if (note == 44) return 40;
+            return note;
+        case 2: // C-D-D#: omit C#.
+            return note == 37 ? -1 : note;
+        case 3: // C-D-E: omit C# and D#.
+            return (note == 37 || note == 39) ? -1 : note;
+        default:
+            return note;
+    }
+}
+
+void MainComponent::setCouplerEnabled(const juce::String& id, bool enabled)
+{
+    {
+        const juce::ScopedLock lock(couplerLock);
+        if (auto* coupler = findCoupler(id))
+        {
+            if (coupler->enabled == enabled) return;
+            coupler->enabled = enabled;
+            recomputeCouplersForSource(coupler->sourceManual);
+        }
+        else return;
+    }
+    // Never rebuild/delete the rail synchronously from the onClick callback of
+    // one of its own buttons. That destroyed the currently executing Button
+    // and eventually corrupted JUCE/std weak-reference bookkeeping.
+    refreshCouplerRailState();
+    saveSettings();
+    updateCombinationLights();
+}
+
+void MainComponent::rebuildCouplerCatalog()
+{
+    const juce::ScopedLock catalogLock(couplerLock);
+    std::map<juce::String, std::pair<bool, bool>> previous;
+    for (const auto& coupler : couplers)
+        previous[coupler.id] = { coupler.enabled, coupler.visible };
+    couplers.clear();
+    static const juce::String names[8]{ "P", "I", "II", "III", "IV", "V", "VI", "VII" };
+    auto add = [&](int target, int source, CouplerType type, const juce::String& suffix)
+    {
+        const juce::String typeId = type == CouplerType::unison ? "8"
+            : type == CouplerType::subOctave ? "16" : type == CouplerType::superOctave ? "4"
+            : type == CouplerType::melody ? "mel" : type == CouplerType::bass ? "bass" : "uoff";
+        Coupler coupler;
+        coupler.id = juce::String(target) + "-" + juce::String(source) + "-" + typeId;
+        coupler.label = type == CouplerType::unisonOff ? names[source] + " Unison Off" : names[target] + "/" + names[source] + suffix;
+        coupler.targetManual = target;
+        coupler.sourceManual = source;
+        coupler.type = type;
+        coupler.visible = type == CouplerType::unison && target != source;
+        if (auto old = previous.find(coupler.id); old != previous.end())
+        {
+            coupler.enabled = old->second.first;
+            coupler.visible = old->second.second;
+        }
+        couplers.push_back(std::move(coupler));
+    };
+
+    // Group by the keyboard being played: pedal first, then I, II, ...
+    for (int source = 0; source <= manualCount; ++source)
+    {
+        add(source, source, CouplerType::unisonOff, "");   // silences the division's own pitch
+        for (int target = source + 1; target <= manualCount; ++target)
+        {
+            add(target, source, CouplerType::unison, "");
+            add(target, source, CouplerType::subOctave, " 16'");
+            add(target, source, CouplerType::superOctave, " 4'");
+            add(target, source, CouplerType::melody, " mel.");
+            add(target, source, CouplerType::bass, " bass");
+        }
+        add(source, source, CouplerType::subOctave, " 16'");
+        add(source, source, CouplerType::superOctave, " 4'");
+        // Common reverse exception: playing II may also pull division I.
+        if (source == 2 && manualCount >= 2)
+        {
+            add(1, 2, CouplerType::unison, "");
+            add(1, 2, CouplerType::subOctave, " 16'");
+            add(1, 2, CouplerType::superOctave, " 4'");
+            add(1, 2, CouplerType::melody, " mel.");
+            add(1, 2, CouplerType::bass, " bass");
+        }
+    }
+    for (int source = 1; source <= manualCount; ++source)
+        add(0, source, CouplerType::bass, " bass");
+}
+
+void MainComponent::rebuildCouplerRail()
+{
+    // Couplers now live in the header of the keyboard (source) division that
+    // operates them. Rebuilding the stop UI also recalculates their wrapping.
+    couplerButtons.clear();
+    couplerContent.removeAllChildren();
+    if (voicer != nullptr)
+        voicer->rebuildUI(stopsContent, stopsViewport);
+}
+
+void MainComponent::refreshCouplerRailState()
+{
+    // Section headers poll the small state snapshot at UI timer frequency.
+}
+
+std::vector<DivisionCouplerInfo> MainComponent::getDivisionCouplers(int manualIndex)
+{
+    std::vector<DivisionCouplerInfo> result;
+    const juce::ScopedLock lock(couplerLock);
+    for (const auto& coupler : couplers)
+        if (coupler.visible && coupler.sourceManual == manualIndex)
+            result.push_back({ coupler.id, coupler.label, coupler.enabled });
+    // Arranged order (unknown ids keep their default place at the end).
+    const auto order = couplerOrder.find(manualIndex);
+    if (order != couplerOrder.end() && !order->second.empty())
+    {
+        const auto& ids = order->second;
+        auto rank = [&](const DivisionCouplerInfo& info)
+        {
+            const auto pos = std::find(ids.begin(), ids.end(), info.id);
+            return pos == ids.end() ? (int)ids.size() : (int)std::distance(ids.begin(), pos);
+        };
+        std::stable_sort(result.begin(), result.end(),
+            [&](const DivisionCouplerInfo& a, const DivisionCouplerInfo& b) { return rank(a) < rank(b); });
+    }
+    return result;
+}
+
+void MainComponent::showCouplersDialog()
+{
+    class Editor final : public juce::Component
+    {
+    public:
+        explicit Editor(MainComponent& owner) : owner(owner)
+        {
+            title.setText("Couplers shown on the main rail - columns are source keyboards",
+                juce::dontSendNotification);
+            title.setFont(juce::FontOptions(17.0f, juce::Font::bold));
+            addAndMakeVisible(title);
+            newKeysOnly.setButtonText(
+                "Melody/bass: new extreme key only (do not fall back when it is released)");
+            newKeysOnly.setToggleState(owner.melodyBassNewKeysOnly, juce::dontSendNotification);
+            newKeysOnly.onClick = [this]
+            {
+                this->owner.melodyBassNewKeysOnly = newKeysOnly.getToggleState();
+                {
+                    const juce::ScopedLock lock(this->owner.couplerLock);
+                    for (int source = 0; source <= this->owner.manualCount; ++source)
+                        this->owner.recomputeCouplersForSource(source);
+                }
+                this->owner.saveSettings();
+            };
+            addAndMakeVisible(newKeysOnly);
+            graceTime.setButtonText("Allow grace time (legato in melody couplers)");
+            graceTime.setToggleState(owner.melodyBassGraceTime, juce::dontSendNotification);
+            graceTime.onClick = [this]
+            {
+                this->owner.melodyBassGraceTime = graceTime.getToggleState();
+                this->owner.saveSettings();
+            };
+            addAndMakeVisible(graceTime);
+
+            static const juce::String names[8]{ "Pedal", "I", "II", "III", "IV", "V", "VI", "VII" };
+            for (int source = 0; source <= owner.manualCount; ++source)
+            {
+                auto* heading = headings.add(new juce::Label({}, names[source]));
+                heading->setFont(juce::FontOptions(21.0f, juce::Font::bold));
+                heading->setJustificationType(juce::Justification::centredLeft);
+                content.addAndMakeVisible(heading);
+                std::vector<const Coupler*> ordered;
+                for (const auto& coupler : owner.couplers)
+                    if (coupler.sourceManual == source) ordered.push_back(&coupler);
+                std::stable_sort(ordered.begin(), ordered.end(), [](const Coupler* a, const Coupler* b)
+                {
+                    // "Unison Off" first, then by the division pulled and the type.
+                    const bool aOff = a->type == CouplerType::unisonOff, bOff = b->type == CouplerType::unisonOff;
+                    if (aOff != bOff) return aOff;
+                    if (a->targetManual != b->targetManual)
+                        return a->targetManual < b->targetManual;
+                    return (int)a->type < (int)b->type;
+                });
+                for (const auto* coupler : ordered)
+                {
+                    auto* toggle = toggles.add(new juce::ToggleButton(coupler->label));
+                    toggle->getProperties().set("source", source);
+                    toggle->setToggleState(coupler->visible, juce::dontSendNotification);
+                    toggle->onClick = [this, id = coupler->id, toggle]
+                    {
+                        if (auto* state = this->owner.findCoupler(id))
+                            state->visible = toggle->getToggleState();
+                        this->owner.rebuildCouplerRail();
+                        this->owner.saveSettings();
+                    };
+                    content.addAndMakeVisible(toggle);
+                }
+            }
+            viewport.setViewedComponent(&content, false);
+            addAndMakeVisible(viewport);
+            close.setButtonText("Close");
+            close.onClick = [this]
+            {
+                if (auto* window = findParentComponentOfClass<juce::DialogWindow>())
+                    window->closeButtonPressed();
+            };
+            addAndMakeVisible(close);
+        }
+        void resized() override
+        {
+            auto area = getLocalBounds().reduced(10);
+            title.setBounds(area.removeFromTop(34));
+            newKeysOnly.setBounds(area.removeFromTop(38));
+            graceTime.setBounds(area.removeFromTop(34));
+            close.setBounds(area.removeFromBottom(38).removeFromRight(90).reduced(2));
+            viewport.setBounds(area);
+            const int columns = owner.manualCount + 1;
+            const int cellWidth = 190;
+            std::array<int, SamplerEngine::maxManuals> rows{};
+            for (int source = 0; source < columns; ++source)
+                headings[source]->setBounds(source * cellWidth, 0, cellWidth - 4, 32);
+            int maximumRows = 0;
+            for (auto* toggle : toggles)
+            {
+                const int source = (int)toggle->getProperties().getWithDefault("source", 0);
+                toggle->setBounds(source * cellWidth + 4, 34 + rows[(size_t)source] * 31,
+                    cellWidth - 10, 29);
+                maximumRows = juce::jmax(maximumRows, ++rows[(size_t)source]);
+            }
+            content.setSize(juce::jmax(viewport.getWidth(), columns * cellWidth),
+                juce::jmax(viewport.getHeight(), 38 + maximumRows * 31));
+        }
+    private:
+        MainComponent& owner;
+        juce::Label title;
+        juce::Viewport viewport;
+        juce::Component content;
+        juce::OwnedArray<juce::Label> headings;
+        juce::OwnedArray<juce::ToggleButton> toggles;
+        juce::ToggleButton newKeysOnly;
+        juce::ToggleButton graceTime;
+        juce::TextButton close;
+    };
+    juce::DialogWindow::LaunchOptions options;
+    options.dialogTitle = "Couplers";
+    options.dialogBackgroundColour = juce::Colours::darkgrey;
+    auto* editor = new Editor(*this);
+    editor->setSize(1100, 760);
+    options.content.setOwned(new ScrollableContent(editor));   // scrollbars when the window is smaller
+    options.componentToCentreAround = this;   // also gives the dialog this window's interface size
+    options.useNativeTitleBar = true;
+    options.resizable = true;
+    if (auto* window = options.launchAsync()) placeDialog(*window, "couplers", 1100, 760);
+}
+
+void MainComponent::panic()
+{
+    // Zastavíme hlasy přímo, bez fade-outu a bez spuštění release samplů.
+    engine.noteOffAll();
+    {
+        const juce::ScopedLock lock(couplerLock);
+        for (auto& held : physicallyHeldNotes) held.clear();
+        for (auto& times : physicalNotePressTimes) times.clear();
+        for (auto& counts : routedNoteRefCounts) counts.fill(0);
+        for (auto& coupler : couplers) coupler.activeNotes.clear();
+    }
+
+    // Vyčistíme také stav virtuální i externí MIDI klaviatury. Listener musí být
+    // dočasně potlačený, jinak by allNotesOff znovu spouštělo release samply.
+    suppressKeyboardStateNotesTL = true;
+    for (auto& state : manualKeyboardStates)
+        state.allNotesOff(0);
+    suppressKeyboardStateNotesTL = false;
+
+    if (voicer)
+        for (int note = 0; note < 128; ++note)
+            voicer->setNoteActive(note, false);
+}
+
+void MainComponent::playQuietTestTone(juce::AudioDeviceManager& manager)
+{
+    if (quietTestManager != nullptr)
+        quietTestManager->removeAudioCallback(&quietTestPlayer);
+    quietTestTone.setFrequency(440.0);
+    quietTestTone.setAmplitude(juce::Decibels::decibelsToGain(-15.0f));
+    quietTestPlayer.setSource(&quietTestTone);
+    quietTestManager = &manager;
+    quietTestManager->addAudioCallback(&quietTestPlayer);
+    quietTestStopAt = juce::Time::getMillisecondCounterHiRes() + 500.0;
+}
+
+juce::AudioDeviceSelectorComponent* MainComponent::getAudioSettingsForManual(int manualIndex)
+{
+    if (manualIndex <= 0) return audioSettings.get();
+    if (manualIndex <= SamplerEngine::maxManuals - 1) return extraAudioSettings[(size_t)(manualIndex - 1)].get();
+    return nullptr;
+}
+
+std::string MainComponent::perspectiveRouteKey(int manualIndex, const juce::String& perspective)
+{
+    return (juce::String(manualIndex) + "|" + perspective.toLowerCase()).toStdString();
+}
+
+juce::AudioDeviceSelectorComponent* MainComponent::getAudioSettingsForPerspective(
+    int manualIndex, const juce::String& perspective)
+{
+    if (perspective.equalsIgnoreCase("default")) return getAudioSettingsForManual(manualIndex);
+    const auto found = perspectiveAudioRoutes.find(perspectiveRouteKey(manualIndex, perspective));
+    return found == perspectiveAudioRoutes.end() ? nullptr : found->second->selector.get();
+}
+
+std::vector<std::pair<int, juce::String>> MainComponent::missingPerspectiveRoutes() const
+{
+    // The perspectives (other than "default") of every division without an audio route yet.
+    std::vector<std::pair<int, juce::String>> missing;
+    for (int manual = 0; manual <= manualCount; ++manual)
+        for (const auto& perspective : engine.getPerspectivesForManual(manual))
+        {
+            if (perspective.equalsIgnoreCase("default")) continue;
+            if (perspectiveAudioRoutes.count(perspectiveRouteKey(manual, perspective)) != 0) continue;
+            missing.emplace_back(manual, perspective);
+        }
+    return missing;
+}
+
+std::unique_ptr<juce::XmlElement> MainComponent::requestedAsioStateForRoute(int manual, const juce::String& perspective, juce::String& driverName)
+{
+    // Which ASIO driver a perspective's route will ask for (the same rules as
+    // buildPerspectiveAudioRoute), and its saved device state when it has one.
+    driverName.clear();
+    if (manual < 0 || manual >= SamplerEngine::maxManuals) return nullptr;
+    const auto key = perspectiveRouteKey(manual, perspective);
+    const auto found = manualConfigs[(size_t)manual].perspectiveAudio.find(key);
+    const juce::String stateXml = found != manualConfigs[(size_t)manual].perspectiveAudio.end() ? found->second.audioDeviceStateXml : juce::String();
+    const bool isAuxiliary = perspective.equalsIgnoreCase(SamplerEngine::auxiliaryPerspectiveName());
+    auto* divisionHost = manualAsioHost[(size_t)manual];
+    bool requestsAsio = !isAuxiliary && stateXml.isEmpty() && divisionHost != nullptr;
+    juce::String typeName = divisionHost != nullptr ? divisionHost->getCurrentAudioDeviceType() : juce::String("Windows Audio");
+    std::unique_ptr<juce::XmlElement> xml = juce::parseXML(stateXml);
+    if (xml != nullptr)
+    {
+        typeName = xml->getStringAttribute("deviceType");
+        driverName = xml->getStringAttribute("audioOutputDeviceName");
+        requestsAsio = isSharedHostType(typeName) && !(xml->hasAttribute("audioOutputDeviceName") && driverName.isEmpty());   // none stays none
+    }
+    else if (!isAuxiliary && divisionHost == nullptr)
+    {
+        // No saved device and no division host: the system's default Windows
+        // Audio output, shared (the same stream as every other such route).
+        requestsAsio = true;
+        typeName = "Windows Audio";
+    }
+    if (requestsAsio && driverName.isEmpty() && divisionHost != nullptr && divisionHost->getCurrentAudioDevice() != nullptr
+        && divisionHost->getCurrentAudioDeviceType().equalsIgnoreCase(typeName))
+        driverName = divisionHost->getCurrentAudioDevice()->getName();
+    if (requestsAsio && driverName.isEmpty() && !typeName.equalsIgnoreCase("ASIO")) driverName = defaultDeviceNameOfType(typeName);
+    if (!requestsAsio) { driverName.clear(); return nullptr; }
+    if (xml == nullptr) xml = std::make_unique<juce::XmlElement>("DEVICESETUP");
+    if (!xml->hasAttribute("deviceType")) xml->setAttribute("deviceType", typeName);
+    return xml;
+}
+
+void MainComponent::rebuildPerspectiveAudioRoutes()
+{
+    ignoreDeviceRestartsUntil.store(juce::Time::getMillisecondCounterHiRes() + 6000.0);
+    for (const auto& [manual, perspective] : missingPerspectiveRoutes())
+        buildPerspectiveAudioRoute(manual, perspective);
+    closeHiddenRoutes();
+    pruneUnusedAsioHosts();
+}
+
+void MainComponent::closeHiddenRoutes()
+{
+    static const juce::String names[8]{ "Pedal", "I.", "II.", "III.", "IV.", "V.", "VI.", "VII." };
+    for (int manual = 0; manual < SamplerEngine::maxManuals; ++manual)
+    {
+        const bool unused = manual > manualCount;
+        std::vector<juce::String> live = unused ? std::vector<juce::String>() : engine.getPerspectivesForManual(manual);
+        bool defaultHidden = true;
+        for (const auto& perspective : live) if (perspective.equalsIgnoreCase("default")) defaultHidden = false;
+        // The division's own route without a tab: device closed, remembered as none.
+        if (defaultHidden)
+        {
+            auto* manager = managerForRoute(manual, "default");
+            const bool open = (manager != nullptr && manager->getCurrentAudioDevice() != nullptr) || manualAsioHost[(size_t)manual] != nullptr;
+            if (open)
+            {
+                const auto deviceName = manager != nullptr && manager->getCurrentAudioDevice() != nullptr
+                    ? manager->getCurrentAudioDevice()->getName() : juce::String("ASIO host");
+                CrashHandler::note(names[juce::jlimit(0, 7, manual)] + ": no stop plays through the division's own (default) route"
+                    + (unused ? " (division not in use)" : "") + " - its device '" + deviceName + "' closed, remembered as none");
+                detachRouteAudioQuietly(manual, "default");
+            }
+        }
+        // Settings of routes that do not exist: gone. An auxiliary route without a
+        // device: settings back to their defaults (no IR, no volume waiting).
+        auto& entries = manualConfigs[(size_t)manual].perspectiveAudio;
+        for (auto it = entries.begin(); it != entries.end();)
+        {
+            const auto perspective = juce::String(it->first).fromFirstOccurrenceOf("|", false, false);
+            bool isLive = false;
+            for (const auto& name : live) if (name.equalsIgnoreCase(perspective)) isLive = true;
+            auto& entry = it->second;
+            const bool hasSettings = entry.reverbIrPath.isNotEmpty() || std::abs(entry.reverbWet - 0.3f) > 1.0e-4f
+                || std::abs(entry.volumeDb) > 1.0e-4f || std::abs(entry.channelSeparation - 1.0f) > 1.0e-4f;
+            if (!isLive)
+            {
+                if (hasSettings)
+                    CrashHandler::note(names[juce::jlimit(0, 7, manual)] + " / " + perspective + ": settings of a route that does not exist dropped"
+                        + (entry.reverbIrPath.isNotEmpty() ? " (IR " + juce::File(entry.reverbIrPath).getFileName() + ")" : ""));
+                it = entries.erase(it);
+                continue;
+            }
+            if (isAuxiliaryPerspective(perspective) && hasSettings)
+            {
+                auto* manager = managerForRoute(manual, perspective);
+                if (manager == nullptr || manager->getCurrentAudioDevice() == nullptr)
+                {
+                    CrashHandler::note(names[juce::jlimit(0, 7, manual)] + " / auxiliary has no device: its settings reset"
+                        + (entry.reverbIrPath.isNotEmpty() ? " (IR " + juce::File(entry.reverbIrPath).getFileName() + " dropped)" : ""));
+                    const auto deviceState = entry.audioDeviceStateXml;
+                    entry = ManualConfig::PerspectiveAudioConfig();
+                    entry.audioDeviceStateXml = deviceState;
+                    engine.setPerspectiveOutputChannels(manual, perspective, entry.outputChannels);
+                    engine.setPerspectiveVolumeDb(manual, perspective, entry.volumeDb);
+                    engine.setPerspectiveChannelSeparation(manual, perspective, entry.channelSeparation);
+                    applyPerspectiveReverb(manual, perspective);
+                }
+            }
+            ++it;
+        }
+    }
+}
+
+std::vector<LoadStep> MainComponent::audioRouteSteps(double first, double last, std::function<void()> afterwards)
+{
+    // The same work as rebuildPerspectiveAudioRoutes, as loading steps: the
+    // dialog paints between them, so its text names the route being opened.
+    ignoreDeviceRestartsUntil.store(juce::Time::getMillisecondCounterHiRes() + 6000.0);
+    static const juce::String names[8]{ "Pedal", "I.", "II.", "III.", "IV.", "V.", "VI.", "VII." };
+    const auto missing = missingPerspectiveRoutes();
+    std::vector<LoadStep> steps;
+    // The ASIO drivers first, each as its own step: opening one takes
+    // seconds and would otherwise hide inside the first route that needs it.
+    std::vector<juce::String> drivers;
+    for (const auto& [manual, perspective] : missing)
+    {
+        juce::String driver;
+        if (auto state = requestedAsioStateForRoute(manual, perspective, driver))
+        {
+            const auto typeName = state->getStringAttribute("deviceType");
+            const auto hostKey = typeName + "|" + driver;
+            if (driver.isNotEmpty() && findSharedHost(typeName, driver) == nullptr
+                && std::find(drivers.begin(), drivers.end(), hostKey) == drivers.end())
+            {
+                drivers.push_back(hostKey);
+                std::shared_ptr<juce::XmlElement> shared(state.release());
+                steps.push_back({ "Compiling the Stop List: opening the " + typeName + " device " + driver
+                    + (typeName.equalsIgnoreCase("ASIO") ? " (this takes a few seconds)" : ""),
+                    first, [this, typeName, driver, shared] { sharedHostFor(typeName, driver, shared.get()); } });
+            }
+        }
+    }
+    const double span = last - first;
+    for (size_t i = 0; i < missing.size(); ++i)
+    {
+        const int manual = missing[i].first;
+        const juce::String perspective = missing[i].second;
+        steps.push_back({ "Compiling the Stop List: audio route " + names[juce::jlimit(0, 7, manual)] + " / " + perspective
+            + " (" + juce::String((int)i + 1) + "/" + juce::String((int)missing.size()) + ")",
+            first + span * (0.15 + 0.85 * (double)i / (double)juce::jmax<size_t>(1, missing.size())),
+            [this, manual, perspective] { buildPerspectiveAudioRoute(manual, perspective); } });
+    }
+    steps.push_back({ "Compiling the Stop List: audio routes done", last, [this, afterwards]
+        {
+            closeHiddenRoutes();
+            pruneUnusedAsioHosts();
+            if (afterwards) afterwards();
+            CrashHandler::note("Compiling the Stop List: audio routes rebuilt");
+        } });
+    return steps;
+}
+
+void MainComponent::buildPerspectiveAudioRoute(int manual, const juce::String& perspective)
+{
+    // One route: its audio device opened (the slow part, up to seconds per device)
+    // and its callback, selector, channels, volume and reverb set. The loading
+    // dialog runs these one per step so its percentage moves.
+    if (manual < 0 || manual >= SamplerEngine::maxManuals || perspective.equalsIgnoreCase("default")) return;
+        {
+            const auto key = perspectiveRouteKey(manual, perspective);
+            if (perspectiveAudioRoutes.count(key) != 0) return;
+            auto route = std::make_unique<PerspectiveAudioRoute>();
+            route->manual = manual;
+            route->perspective = perspective;
+            auto& config = manualConfigs[(size_t)manual].perspectiveAudio[key];
+            // The auxiliary (downmix) route has no device until the user picks one:
+            // it would otherwise double every division's sound on the default output.
+            const bool isAuxiliary = perspective.equalsIgnoreCase(SamplerEngine::auxiliaryPerspectiveName());
+            // A perspective without a saved device follows its division: when the
+            // division's default perspective plays through an ASIO host, so does it.
+            auto* divisionHost = manualAsioHost[(size_t)manual];
+            juce::String requestedAsioName;
+            juce::String requestedType = divisionHost != nullptr ? divisionHost->getCurrentAudioDeviceType() : juce::String("Windows Audio");
+            // A perspective without a saved device follows its division's host; without
+            // one it plays through the system's default Windows Audio output - shared.
+            bool requestsAsio = !isAuxiliary && config.audioDeviceStateXml.isEmpty();
+            // A remembered "no device" (the user chose none): the route stays without
+            // a device - it must not follow the division's host nor open a default.
+            bool savedNone = false;
+            if (auto xml = juce::parseXML(config.audioDeviceStateXml))
+            {
+                requestedType = xml->getStringAttribute("deviceType");
+                requestsAsio = isSharedHostType(requestedType);
+                requestedAsioName = xml->getStringAttribute("audioOutputDeviceName");
+                savedNone = xml->hasAttribute("audioOutputDeviceName") && requestedAsioName.isEmpty();
+                if (savedNone) requestsAsio = false;
+            }
+            if (requestsAsio && requestedAsioName.isEmpty() && divisionHost != nullptr
+                && divisionHost->getCurrentAudioDevice() != nullptr && divisionHost->getCurrentAudioDeviceType().equalsIgnoreCase(requestedType))
+                requestedAsioName = divisionHost->getCurrentAudioDevice()->getName();
+
+            juce::AudioDeviceManager* asioHost = nullptr;
+            if (requestsAsio)
+            {
+                // One physical client per device, many logical perspective callbacks:
+                // opening the same ASIO driver once per perspective is invalid for
+                // single-client drivers, and one Windows Audio stream per route cost
+                // a thread each. A different device gets its own host from the pool.
+                const auto xml = juce::parseXML(config.audioDeviceStateXml);
+                asioHost = sharedHostFor(requestedType, requestedAsioName, xml.get());
+            }
+            const bool requestedSameAsio = requestsAsio && asioHost != nullptr;
+
+            if (requestedSameAsio)
+            {
+                route->managerInUse = asioHost;
+            }
+            else
+            {
+                route->manager = std::make_unique<juce::AudioDeviceManager>();
+                route->manager->getAvailableDeviceTypes();   // types for the selector; a device only from a saved state below
+                addAggregatedWASAPIType(*route->manager);
+                route->managerInUse = route->manager.get();
+            }
+            if (route->manager && config.audioDeviceStateXml.isNotEmpty() && !savedNone)
+                if (auto xml = juce::parseXML(config.audioDeviceStateXml))
+                {
+                    // A state written by the short-lived zero-output
+                    // implementation contains an explicit empty channel mask.
+                    // JUCE then keeps zero required outputs even if initialise
+                    // is called with 2, which prevents reliable ASIO startup.
+                    if (xml->hasAttribute("audioDeviceOutChans")
+                        && !xml->getStringAttribute("audioDeviceOutChans").containsChar('1'))
+                        xml->removeAttribute("audioDeviceOutChans");
+                    // This is the required channel count, not the maximum the
+                    // selector may expose. Requesting 256 makes ordinary ASIO
+                    // devices fail to open even though their channels are valid.
+                    route->managerInUse->initialise(0, 2, xml.get(), true);
+                    noteIfDeviceMissing(*route->managerInUse, xml.get());
+                }
+            route->callback = std::make_unique<DivisionAudioCallback>(
+                *this, manual, perspective, true);
+            route->managerInUse->addAudioCallback(route->callback.get());
+            route->selector = std::make_unique<juce::AudioDeviceSelectorComponent>(
+                *route->managerInUse, 0, 0, 0, 256, false, false, false, false);
+            installAudioTypeInterceptor(*route->selector, manual, perspective);
+            route->selector->addMouseListener(this, true);
+            engine.setPerspectiveOutputChannels(manual, perspective, config.outputChannels);
+            engine.setPerspectiveVolumeDb(manual, perspective, config.volumeDb);
+            engine.setPerspectiveChannelSeparation(manual, perspective, config.channelSeparation);
+            perspectiveAudioRoutes[key] = std::move(route);
+            applyPerspectiveReverb(manual, perspective);
+        }
+}
+
+void MainComponent::applyPerspectiveReverb(int manualIndex, const juce::String& perspective)
+{
+    if (manualIndex < 0 || manualIndex >= SamplerEngine::maxManuals) return;
+    const auto key = perspectiveRouteKey(manualIndex, perspective);
+    const auto found = manualConfigs[(size_t)manualIndex].perspectiveAudio.find(key);
+    if (found == manualConfigs[(size_t)manualIndex].perspectiveAudio.end()) return;
+    const auto& config = found->second;
+    engine.setPerspectiveReverbTone(manualIndex, perspective, config.reverbTone);   // before the IR: one build
+    engine.setPerspectiveReverb(manualIndex, perspective,
+        config.reverbIrPath.isNotEmpty() ? juce::File(config.reverbIrPath) : juce::File(), config.reverbWet);
+    if (config.reverbIrPath.isNotEmpty())
+    {
+        const auto info = engine.getPerspectiveReverbInfo(manualIndex, perspective);
+        CrashHandler::note("IR reverb manual " + juce::String(manualIndex) + " perspective " + perspective + ": "
+            + juce::File(config.reverbIrPath).getFileName() + " -> " + juce::String(info.channels) + " ch, "
+            + juce::String(info.seconds, 2) + " s, wet " + juce::String(juce::roundToInt(config.reverbWet * 100.0f)) + " %"
+            + (info.error.isNotEmpty() ? "  ERROR " + info.error : juce::String()));
+    }
+}
+
+void MainComponent::applyAdvancedAudioSettings()
+{
+    engine.setWindLevelDbPerCent(windLevelDbPerCent);
+    engine.setTremulantLevelDbPerCent(tremulantLevelDbPerCent);
+    engine.setTremulantShelfPhaseDegrees(tremulantShelfPhaseDegrees);
+    engine.setVelocityFadeInMs(velocityFadeInMs);
+    engine.setVelocityShelfDb(velocityShelfDb);
+    engine.setVelocityShelfMs(velocityShelfMs);
+    engine.setWindShares(windOneStopShare, windOnePipeShare, windTwoPipesShare);
+    engine.setReleaseCutPercent(releaseCutPercent);
+    engine.setWindMaxEffect(windMaxEffect);
+    engine.setToneStartHz(toneStartHz);
+}
+
+void MainComponent::showReverbToneDialog(int manualIndex, const juce::String& perspective)
+{
+    if (manualIndex < 0 || manualIndex >= SamplerEngine::maxManuals) return;
+    const auto key = perspectiveRouteKey(manualIndex, perspective);
+    static const juce::String names[8]{ "Pedal", "I.", "II.", "III.", "IV.", "V.", "VI.", "VII." };
+
+    class ToneContent final : public juce::Component
+    {
+    public:
+        ToneContent(MainComponent& ownerIn, int manualIn, juce::String perspectiveIn, std::string keyIn)
+            : owner(ownerIn), manual(manualIn), perspective(std::move(perspectiveIn)), key(std::move(keyIn))
+        {
+            note.setText("Shapes the reverberated (wet) signal of this perspective. The cuts grow with the dry/wet ratio: "
+                "nothing is cut at 0 % wet, the set frequencies apply at 100 %. Fade-out (0 % = the IR as recorded) lets an IR "
+                "shortened with Decay die away over that share of its end along a gentle S-curve; moving Decay proposes "
+                "it automatically. The IR reverb lowers the reachable polyphony noticeably (four perspectives with IRs: "
+                "roughly a third of the polyphony without them).",
+                juce::dontSendNotification);
+            note.setJustificationType(juce::Justification::topLeft);
+            note.setFont(juce::FontOptions(13.0f));
+            note.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+            addAndMakeVisible(note);
+            auto& tone = owner.manualConfigs[(size_t)manual].perspectiveAudio[key].reverbTone;
+            add(highCut, highCutLabel, "High cut at 100 % wet", 500.0, 20000.0, 50.0, " Hz", tone.highCutHz, 2000.0);
+            add(lowCut, lowCutLabel, "Low cut at 100 % wet", 0.0, 500.0, 5.0, " Hz", tone.lowCutHz, 195.0);
+            add(preDelay, preDelayLabel, "Pre-delay", 0.0, 250.0, 1.0, " ms", tone.preDelayMs, 0.0);
+            add(wetLevel, wetLevelLabel, "Wet volume", -30.0, 6.0, 0.5, " dB", tone.wetDb, -4.0);
+            add(decay, decayLabel, "Decay (IR length)", 10.0, 100.0, 1.0, " %", tone.decayPercent, 100.0);
+            add(fade, fadeLabel, "Fade-out (of used length)", 0.0, 100.0, 1.0, " %", tone.fadePercent, 0.0);
+            highCut.setSkewFactorFromMidPoint(3000.0);
+            // Shortening the IR proposes a matching fade-out (100 - decay, at least
+            // 5 %); full length means no fade. The fade slider stays adjustable.
+            decay.onValueChange = [this]
+            {
+                const double d = decay.getValue();
+                fade.setValue(d >= 99.9 ? 0.0 : juce::jmax(5.0, 100.0 - d), juce::dontSendNotification);
+                apply();
+            };
+        }
+        void resized() override
+        {
+            auto area = getLocalBounds().reduced(12);
+            note.setBounds(area.removeFromTop(90));
+            auto place = [&](juce::Label& label, juce::Slider& slider)
+            {
+                auto row = area.removeFromTop(36);
+                label.setBounds(row.removeFromLeft(170));
+                slider.setBounds(row.reduced(0, 4));
+            };
+            place(highCutLabel, highCut);
+            place(lowCutLabel, lowCut);
+            place(preDelayLabel, preDelay);
+            place(wetLevelLabel, wetLevel);
+            place(decayLabel, decay);
+            place(fadeLabel, fade);
+        }
+    private:
+        void add(juce::Slider& slider, juce::Label& label, const juce::String& text, double minimum, double maximum,
+            double step, const juce::String& suffix, float value, double defaultValue)
+        {
+            label.setText(text, juce::dontSendNotification);
+            addAndMakeVisible(label);
+            slider.setSliderStyle(juce::Slider::LinearHorizontal);
+            slider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 72, 22);
+            slider.setRange(minimum, maximum, step);
+            slider.setTextValueSuffix(suffix);
+            slider.setValue(value, juce::dontSendNotification);
+            slider.setDoubleClickReturnValue(true, defaultValue);
+            slider.setScrollWheelEnabled(true);
+            slider.onValueChange = [this] { apply(); };
+            addAndMakeVisible(slider);
+        }
+        void apply()
+        {
+            auto& config = owner.manualConfigs[(size_t)manual].perspectiveAudio[key];
+            config.reverbTone.highCutHz = (float)highCut.getValue();
+            config.reverbTone.lowCutHz = (float)lowCut.getValue();
+            config.reverbTone.preDelayMs = (float)preDelay.getValue();
+            config.reverbTone.wetDb = (float)wetLevel.getValue();
+            config.reverbTone.decayPercent = (float)decay.getValue();
+            config.reverbTone.fadePercent = (float)fade.getValue();
+            owner.engine.setPerspectiveReverbTone(manual, perspective, config.reverbTone);
+            owner.propagateEffectsIfLinked(manual, perspective);
+            owner.saveSettings();
+        }
+        MainComponent& owner;
+        int manual;
+        juce::String perspective;
+        std::string key;
+        juce::Label note, highCutLabel, lowCutLabel, preDelayLabel, wetLevelLabel, decayLabel, fadeLabel;
+        juce::Slider highCut, lowCut, preDelay, wetLevel, decay, fade;
+    };
+
+    auto* content = new ToneContent(*this, manualIndex, perspective, key);
+    content->setSize(640, 400);
+    juce::DialogWindow::LaunchOptions options;
+    options.content.setOwned(new ScrollableContent(content));
+    options.dialogTitle = "IR reverb settings - " + names[manualIndex] + " / " + perspective;
+    options.dialogBackgroundColour = juce::Colours::darkgrey;
+    options.componentToCentreAround = this;
+    options.escapeKeyTriggersCloseButton = true;
+    options.useNativeTitleBar = true;
+    options.resizable = true;
+    if (auto* window = options.launchAsync())
+    {
+        // New position key: the first version remembered a window too small for
+        // all the sliders. Never smaller than the content needs, resizable by mouse.
+        window->setResizeLimits(560, 400, 1400, 900);
+        placeDialog(*window, "reverbTone2", 640, 400);
+        if (window->getHeight() < 400 || window->getWidth() < 560)
+            window->setSize(juce::jmax(560, window->getWidth()), juce::jmax(400, window->getHeight()));
+    }
+}
+
+bool MainComponent::isAuxiliaryPerspective(const juce::String& perspective)
+{
+    return perspective.equalsIgnoreCase(SamplerEngine::auxiliaryPerspectiveName());
+}
+
+void MainComponent::applyEffectsToAllPerspectives(int sourceManual, const juce::String& sourcePerspective)
+{
+    // The effects of one route (IR file, dry/wet, IR settings, perspective volume,
+    // channel separation) for every route of its scope: an ordinary perspective
+    // goes to every ordinary perspective of every division, the auxiliary route
+    // to the auxiliary routes of every division. Independent of the device "set for all".
+    const bool auxiliary = isAuxiliaryPerspective(sourcePerspective);
+    const auto sourceKey = perspectiveRouteKey(sourceManual, sourcePerspective);
+    const auto source = manualConfigs[(size_t)juce::jlimit(0, SamplerEngine::maxManuals - 1, sourceManual)].perspectiveAudio[sourceKey];
+    CrashHandler::note("Applying effects of manual " + juce::String(sourceManual) + " perspective " + sourcePerspective
+        + (auxiliary ? " to all auxiliary routes: " : " to all routes: ")
+        + (source.reverbIrPath.isEmpty() ? juce::String("no IR") : juce::File(source.reverbIrPath).getFileName()));
+    for (int manual = 0; manual <= manualCount && manual < SamplerEngine::maxManuals; ++manual)
+        for (const auto& perspective : engine.getPerspectivesForManual(manual))
+        {
+            if (isAuxiliaryPerspective(perspective) != auxiliary) continue;
+            if (manual == sourceManual && perspective.equalsIgnoreCase(sourcePerspective)) continue;
+            auto& target = manualConfigs[(size_t)manual].perspectiveAudio[perspectiveRouteKey(manual, perspective)];
+            target.reverbIrPath = source.reverbIrPath;
+            target.reverbWet = source.reverbWet;
+            target.reverbTone = source.reverbTone;
+            target.volumeDb = source.volumeDb;
+            target.channelSeparation = source.channelSeparation;
+            engine.setPerspectiveVolumeDb(manual, perspective, target.volumeDb);
+            engine.setPerspectiveChannelSeparation(manual, perspective, target.channelSeparation);
+            applyPerspectiveReverb(manual, perspective);
+        }
+    saveSettings();
+}
+
+void MainComponent::propagateEffectsIfLinked(int manual, const juce::String& perspective)
+{
+    // A change of one route's effects (volume, channel separation, IR, dry/wet)
+    // ends "set effects for all": the routes no longer agree, the box unticks,
+    // and the user ticks it again to copy the new state to all of them.
+    juce::ignoreUnused(manual);
+    if (applyingEffectsToAll) return;
+    (isAuxiliaryPerspective(perspective) ? effectsLinkedAux : effectsLinked).store(false);
+}
+
+bool MainComponent::allRoutesShareEffects(bool auxiliary)
+{
+    bool first = true;
+    ManualConfig::PerspectiveAudioConfig reference;
+    for (int manual = 0; manual <= manualCount && manual < SamplerEngine::maxManuals; ++manual)
+        for (const auto& perspective : engine.getPerspectivesForManual(manual))
+        {
+            if (isAuxiliaryPerspective(perspective) != auxiliary) continue;
+            const auto& config = manualConfigs[(size_t)manual].perspectiveAudio[perspectiveRouteKey(manual, perspective)];
+            if (first) { reference = config; first = false; continue; }
+            if (config.reverbIrPath != reference.reverbIrPath || std::abs(config.reverbWet - reference.reverbWet) > 0.001f
+                || std::abs(config.reverbTone.highCutHz - reference.reverbTone.highCutHz) > 0.5f
+                || std::abs(config.reverbTone.lowCutHz - reference.reverbTone.lowCutHz) > 0.5f
+                || std::abs(config.reverbTone.preDelayMs - reference.reverbTone.preDelayMs) > 0.01f
+                || std::abs(config.reverbTone.wetDb - reference.reverbTone.wetDb) > 0.01f
+                || std::abs(config.reverbTone.decayPercent - reference.reverbTone.decayPercent) > 0.01f
+                || std::abs(config.reverbTone.fadePercent - reference.reverbTone.fadePercent) > 0.01f
+                || std::abs(config.volumeDb - reference.volumeDb) > 0.01f
+                || std::abs(config.channelSeparation - reference.channelSeparation) > 0.001f)
+                return false;
+        }
+    return !first;
+}
+
+void MainComponent::chooseReverbIr(int manualIndex, const juce::String& perspective)
+{
+    if (manualIndex < 0 || manualIndex >= SamplerEngine::maxManuals) return;
+    const auto key = perspectiveRouteKey(manualIndex, perspective);
+    const auto current = manualConfigs[(size_t)manualIndex].perspectiveAudio[key].reverbIrPath;
+    const auto start = juce::File(current).existsAsFile() ? juce::File(current).getParentDirectory()
+        : (lastSettingsDirectory.isDirectory() ? lastSettingsDirectory
+            : juce::File::getSpecialLocation(juce::File::userMusicDirectory));
+    irChooser = std::make_unique<juce::FileChooser>("Impulse response for this perspective (mono, stereo or true stereo WAV)",
+        start, "*.wav;*.aif;*.aiff;*.flac");
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    irChooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+        [safeThis, manualIndex, perspective, key](const juce::FileChooser& chooser)
+        {
+            if (safeThis == nullptr) return;
+            const auto file = chooser.getResult();
+            if (!file.existsAsFile()) return;
+            auto& config = safeThis->manualConfigs[(size_t)manualIndex].perspectiveAudio[key];
+            config.reverbIrPath = file.getFullPathName();
+            safeThis->applyPerspectiveReverb(manualIndex, perspective);
+            safeThis->propagateEffectsIfLinked(manualIndex, perspective);
+            const auto info = safeThis->engine.getPerspectiveReverbInfo(manualIndex, perspective);
+            CrashHandler::note("IR reverb for manual " + juce::String(manualIndex) + " perspective " + perspective + ": "
+                + file.getFullPathName() + " -> " + juce::String(info.channels) + " ch, " + juce::String(info.seconds, 2) + " s"
+                + (info.error.isNotEmpty() ? "  ERROR " + info.error : juce::String()));
+            if (info.error.isNotEmpty())
+                juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Impulse response", info.error);
+            safeThis->saveSettings();
+        });
+}
+
+//==============================================================================
+// ASIO host pool
+//==============================================================================
+juce::AudioDeviceManager* MainComponent::findSharedHost(const juce::String& typeName, const juce::String& deviceName) const
+{
+    for (const auto& host : asioHosts)
+    {
+        if (!host->getCurrentAudioDeviceType().equalsIgnoreCase(typeName)) continue;
+        auto* device = host->getCurrentAudioDevice();
+        if (deviceName.isEmpty()) return host.get();                      // any open host of the type
+        if (device != nullptr && device->getName() == deviceName) return host.get();
+    }
+    return nullptr;
+}
+
+juce::String MainComponent::defaultDeviceNameOfType(const juce::String& typeName)
+{
+    for (auto* type : deviceManager.getAvailableDeviceTypes())
+        if (type->getTypeName().equalsIgnoreCase(typeName))
+        {
+            type->scanForDevices();
+            const auto names = type->getDeviceNames(false);
+            const int index = type->getDefaultDeviceIndex(false);
+            if (index >= 0 && index < names.size()) return names[index];
+            return names.isEmpty() ? juce::String() : names[0];
+        }
+    return {};
+}
+
+void MainComponent::noteMissingAudioDevice(const juce::String& description)
+{
+    // Several routes may miss devices at start-up: one message lists them all.
+    // Every device is reported once per session only; afterwards the program
+    // waits silently until the device is switched on again (the watcher reopens it).
+    const auto deviceKey = description.upToFirstOccurrenceOf("  (", false, false);
+    if (reportedMissingAudioDevices.contains(deviceKey)) return;
+    reportedMissingAudioDevices.add(deviceKey);
+    missingAudioDevices.addIfNotAlreadyThere(description);
+    // Devices may merely be late (an RME interface changes its sample rate at
+    // start-up and registers a few seconds later): the first missing device
+    // starts a 6 s wait, shown as "Waiting for audio devices" in the window and
+    // checked every second by the watcher. The message comes after the wait (and
+    // at least 2.5 s after the last device was found missing, routes open one
+    // after another) and names only the devices that are still absent.
+    const double nowMs = juce::Time::getMillisecondCounterHiRes();
+    if (!missingAudioDevicesReportPending) audioDevicesWaitDeadlineMs = nowMs + kAudioDevicesWaitMs;
+    missingAudioDevicesReportPending = true;
+    missingDevicesReportAtMs = juce::jmax(audioDevicesWaitDeadlineMs, nowMs + 2500.0);
+    CrashHandler::note("Audio device missing: " + description + "; waiting up to "
+        + juce::String(kAudioDevicesWaitMs / 1000.0, 0) + " s for it");
+    updateWaitingForAudioLabel();
+}
+
+void MainComponent::showGeneratingMessage(bool on)
+{
+    generatingLabel.setVisible(on);
+    if (!on) return;
+    generatingLabel.setText("Compiling the Stop List and building the stop grid ...", juce::dontSendNotification);
+    generatingLabel.toFront(false);
+    // The box is painted on the following vertical blanks; the loader waits a few
+    // frames before the commit blocks the message thread (see threadComplete).
+    generatingLabel.repaint();
+    CrashHandler::note("Compiling the Stop List: message shown");
+}
+
+void MainComponent::updateWaitingForAudioLabel()
+{
+    const bool waiting = missingAudioDevicesReportPending && !missingAudioDevices.isEmpty();
+    if (waiting)
+    {
+        juce::StringArray names;
+        for (const auto& item : missingAudioDevices) names.add(item.upToFirstOccurrenceOf("  (", false, false));
+        waitingForAudioLabel.setText("Waiting for audio devices: " + names.joinIntoString(", ") + " ...", juce::dontSendNotification);
+        waitingForAudioLabel.toFront(false);
+    }
+    waitingForAudioLabel.setVisible(waiting);
+}
+
+void MainComponent::forgetMissingAudioDevice(const juce::String& deviceName)
+{
+    // The device opened (the watcher reopened its route): it is no longer missing
+    // and will not be reported.
+    for (int i = missingAudioDevices.size(); --i >= 0;)
+        if (missingAudioDevices[i].contains("\"" + deviceName + "\"")) missingAudioDevices.remove(i);
+    if (missingAudioDevices.isEmpty() && missingAudioDevicesReportPending)
+    {
+        missingAudioDevicesReportPending = false;
+        audioDevicesWaitDeadlineMs = -1.0;
+    }
+    updateWaitingForAudioLabel();
+}
+
+bool MainComponent::isAudioDeviceOpenSomewhere(const juce::String& deviceName)
+{
+    for (const auto& host : asioHosts)
+        if (auto* device = host->getCurrentAudioDevice(); device != nullptr && device->getName() == deviceName) return true;
+    for (int manual = 0; manual <= manualCount && manual < SamplerEngine::maxManuals; ++manual)
+        for (const auto& perspective : engine.getPerspectivesForManual(manual))
+            if (auto* manager = managerForRoute(manual, perspective))
+                if (auto* device = manager->getCurrentAudioDevice(); device != nullptr && device->getName() == deviceName) return true;
+    return false;
+}
+
+bool MainComponent::isAudioDeviceAvailableNow(const juce::String& typeName, const juce::String& deviceName, juce::String* error)
+{
+    // Is the device listed by its type now, and (ASIO drivers are listed even
+    // with the hardware off) can it be opened? The probe uses a throw-away
+    // manager: a failure changes nothing, no route is rebuilt, nothing is muted.
+    bool listed = false;
+    for (auto* type : deviceManager.getAvailableDeviceTypes())
+        if (type->getTypeName().equalsIgnoreCase(typeName))
+        {
+            type->scanForDevices();
+            listed = type->getDeviceNames().contains(deviceName);
+        }
+    if (!listed) return false;
+    if (!typeName.equalsIgnoreCase("ASIO") || findSharedHost(typeName, deviceName) != nullptr) return true;
+    auto probe = std::make_unique<juce::AudioDeviceManager>();
+    probe->getAvailableDeviceTypes();
+    juce::XmlElement setup("DEVICESETUP");
+    setup.setAttribute("deviceType", "ASIO");
+    setup.setAttribute("audioOutputDeviceName", deviceName);
+    setup.setAttribute("audioInputDeviceName", "");
+    const auto result = probe->initialise(0, 2, &setup, false);
+    const bool opened = probe->getCurrentAudioDevice() != nullptr;
+    probe->closeAudioDevice();
+    probe.reset();
+    if (error != nullptr) *error = result;
+    return opened;
+}
+
+void MainComponent::showMissingAudioDevicesIfDue()
+{
+    if (!missingAudioDevicesReportPending || juce::Time::getMillisecondCounterHiRes() < missingDevicesReportAtMs) return;
+    if (activeFolderLoader != nullptr) return;   // more routes may still be opening
+    // The wait is over. A device that is open by now (another route's host got
+    // it) or has appeared meanwhile (the watcher reopens it within a second) is
+    // not reported; only the devices still absent are.
+    juce::StringArray stillMissing;
+    for (const auto& item : missingAudioDevices)
+    {
+        const auto typeName = item.upToFirstOccurrenceOf(" \"", false, false);
+        const auto name = item.fromFirstOccurrenceOf("\"", false, false).upToFirstOccurrenceOf("\"", false, false);
+        if (name.isNotEmpty() && isAudioDeviceOpenSomewhere(name))
+        {
+            CrashHandler::note("Audio device '" + name + "' opened during the wait: not reported");
+            continue;
+        }
+        if (name.isNotEmpty() && isAudioDeviceAvailableNow(typeName, name, nullptr))
+        {
+            CrashHandler::note("Audio device '" + name + "' appeared during the wait: the route is reopened, not reported");
+            continue;
+        }
+        stillMissing.add(item);
+    }
+    missingAudioDevicesReportPending = false;
+    audioDevicesWaitDeadlineMs = -1.0;
+    missingAudioDevices.clear();
+    updateWaitingForAudioLabel();
+    if (stillMissing.isEmpty()) return;
+    juce::String list;
+    for (const auto& item : stillMissing) list << "\n  - " << item;
+    CrashHandler::note("Audio devices still missing after the wait: " + stillMissing.joinIntoString("; "));
+    juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Audio devices not available",
+        "These audio devices could not be opened (waited " + juce::String(kAudioDevicesWaitMs / 1000.0, 0) + " s for them):" + list
+        + "\n\nThe routes using them stay silent until the device is switched on again (checked every 2 s) or another "
+          "device is chosen for them (division Settings, audio tabs).");
+}
+
+void MainComponent::noteIfDeviceMissing(juce::AudioDeviceManager& manager, const juce::XmlElement* wanted)
+{
+    // A device state that did not open (the manager runs without a device or
+    // with a substitute) is reported once per session.
+    if (wanted == nullptr) return;
+    const auto name = wanted->getStringAttribute("audioOutputDeviceName");
+    if (name.isEmpty()) return;
+    auto* device = manager.getCurrentAudioDevice();
+    if (device != nullptr && device->getName() == name) return;
+    noteMissingAudioDevice(wanted->getStringAttribute("deviceType") + " \"" + name + "\""
+        + (device != nullptr ? "  (playing through " + device->getName() + " meanwhile)" : juce::String()));
+}
+
+void MainComponent::watchMissingAudioDevices()
+{
+    if (activeFolderLoader != nullptr || applyAllWindow != nullptr) return;   // not while loading or "set for all" runs
+    if (audioDeviceSelectionUnmuteAt > 0.0) return;                           // a device change is in progress
+    // While the user is choosing devices (the Divisions dialog is open, a menu
+    // or dialog is up) nothing may rebuild a selector under the mouse.
+    if (keyboardsWindow != nullptr && keyboardsWindow->isVisible()) return;
+    if (juce::Component::getCurrentlyModalComponent() != nullptr) return;
+    struct Candidate { int manual; juce::String perspective; std::unique_ptr<juce::XmlElement> state; };
+    std::vector<Candidate> candidates;
+    for (int manual = 0; manual <= manualCount && manual < SamplerEngine::maxManuals; ++manual)
+        for (const auto& perspective : engine.getPerspectivesForManual(manual))
+        {
+            const bool isDefault = perspective.equalsIgnoreCase("default");
+            auto& xmlText = isDefault ? manualConfigs[(size_t)manual].audioDeviceStateXml
+                : manualConfigs[(size_t)manual].perspectiveAudio[perspectiveRouteKey(manual, perspective)].audioDeviceStateXml;
+            if (xmlText.isEmpty()) continue;
+            auto state = juce::parseXML(xmlText);
+            if (state == nullptr) continue;
+            const auto wanted = state->getStringAttribute("audioOutputDeviceName");
+            if (wanted.isEmpty()) continue;
+            auto* manager = managerForRoute(manual, perspective);
+            if (manager == nullptr) continue;
+            auto* device = manager->getCurrentAudioDevice();
+            if (device != nullptr && device->getName() == wanted) continue;   // the saved device is open
+            // A substitute opened because the saved device was missing at start-up
+            // is not the user's choice: the saved device stays wanted until the
+            // user touches a selector.
+            const bool substitute = !userTouchedAudioSelector
+                && reportedMissingAudioDevices.contains(state->getStringAttribute("deviceType") + " \"" + wanted + "\"");
+            if (device != nullptr && !ignoreCurrentAudioStateUntilUserSelection && !substitute)
+            {
+                // Another device is open and the user has been choosing devices in
+                // this session: that is their choice, not a substitute. Remember it;
+                // a device the user picked is never swapped back.
+                if (auto xml = manager->createStateXml()) xmlText = xml->toString();
+                continue;
+            }
+            candidates.push_back({ manual, perspective, std::move(state) });
+        }
+    if (candidates.empty()) return;
+    if (engine.getCurrentPolyphony() > 0) return;   // an attempt mutes the organ for a moment: not while it plays
+    // Something is missing: does it exist now? (Scanning is only done when needed.)
+    const double nowMs = juce::Time::getMillisecondCounterHiRes();
+    // While the start-up wait runs the checks come every second, otherwise every 2 s.
+    const double retryMs = missingAudioDevicesReportPending ? 900.0 : 1900.0;
+    for (auto& candidate : candidates)
+    {
+        auto* manager = managerForRoute(candidate.manual, candidate.perspective);
+        if (manager == nullptr) continue;
+        const auto typeName = candidate.state->getStringAttribute("deviceType");
+        const auto wanted = candidate.state->getStringAttribute("audioOutputDeviceName");
+        // A driver may be listed while its hardware is off (ASIO): the attempt
+        // fails silently and is repeated at the next check (while the organ is
+        // silent), so a device switched on plays again within seconds.
+        if (auto next = missingDeviceNextTryMs.find(wanted); next != missingDeviceNextTryMs.end() && nowMs < next->second) continue;
+        juce::String error;
+        if (!isAudioDeviceAvailableNow(typeName, wanted, &error))
+        {
+            if (error.isNotEmpty() && missingDeviceNextTryMs.count(wanted) == 0)
+                CrashHandler::note("Audio device '" + wanted + "' is listed but cannot be opened yet (" + error
+                    + "); checking every " + (retryMs < 1000.0 ? "second" : "2 s"));
+            missingDeviceNextTryMs[wanted] = nowMs + retryMs;
+            continue;
+        }
+        CrashHandler::note("Audio device '" + wanted + "' (" + typeName + ") is available again: reopening manual "
+            + juce::String(candidate.manual) + " perspective " + candidate.perspective);
+        if (isSharedHostType(typeName))
+            moveRouteToSharedDevice(candidate.manual, candidate.perspective, typeName, wanted);
+        else
+        {
+            audioMuted.store(true);
+            ignoreDeviceRestartsUntil.store(juce::Time::getMillisecondCounterHiRes() + 4000.0);
+            manager->initialise(0, 2, candidate.state.get(), true);
+            if (keyboardsDialogSelectorHook) keyboardsDialogSelectorHook(false);
+            saveSettings();
+            audioDeviceSelectionUnmuteAt = juce::Time::getMillisecondCounterHiRes() + 1200.0;
+        }
+        {
+            // Did it open? Otherwise wait half a minute before the next silent attempt.
+            auto* reopened = managerForRoute(candidate.manual, candidate.perspective);
+            auto* device = reopened != nullptr ? reopened->getCurrentAudioDevice() : nullptr;
+            if (device == nullptr || device->getName() != wanted) missingDeviceNextTryMs[wanted] = nowMs + retryMs;   // the next check
+            else
+            {
+                missingDeviceNextTryMs.erase(wanted);
+                forgetMissingAudioDevice(wanted);   // opened: nothing to report, the waiting box goes
+            }
+        }
+        return;   // one route per check; the next check follows in a few seconds
+    }
+}
+
+juce::AudioDeviceManager* MainComponent::sharedHostFor(const juce::String& typeName, const juce::String& requestedName, const juce::XmlElement* state)
+{
+    juce::String name = requestedName;
+    if (name.isEmpty() && state != nullptr && state->getStringAttribute("deviceType").equalsIgnoreCase(typeName))
+        name = state->getStringAttribute("audioOutputDeviceName");
+    // Windows Audio without a name means the system's default output: resolved
+    // to its name so that every "default" route shares that one stream.
+    const bool asio = typeName.equalsIgnoreCase("ASIO");
+    if (name.isEmpty() && !asio) name = defaultDeviceNameOfType(typeName);
+    if (auto* existing = findSharedHost(typeName, name)) return existing;
+    // Hosts are only ever removed by pruneUnusedAsioHosts, after the selectors
+    // that listen to them have been replaced: a selector deleted later than its
+    // manager crashes in removeChangeListener.
+
+    auto host = std::make_unique<juce::AudioDeviceManager>();
+    // Force JUCE's native type list to exist before appending our virtual type;
+    // otherwise switching the manager to ASIO would drop the custom type.
+    host->getAvailableDeviceTypes();
+    addAggregatedWASAPIType(*host);
+    juce::String error;
+    // Never let JUCE open the type's *default* ASIO device on the way (that is
+    // what setCurrentAudioDeviceType does): it is most likely the driver another
+    // host already runs, and one driver opened twice corrupts both streams. A
+    // named driver is opened directly from a device state and never falls back
+    // to a default device on failure.
+    if (name.isNotEmpty())
+    {
+        std::unique_ptr<juce::XmlElement> setup;
+        if (state != nullptr && state->getStringAttribute("deviceType").equalsIgnoreCase(typeName)
+            && state->getStringAttribute("audioOutputDeviceName") == name)
+            setup = std::make_unique<juce::XmlElement>(*state);
+        else
+        {
+            setup = std::make_unique<juce::XmlElement>("DEVICESETUP");
+            setup->setAttribute("deviceType", typeName);
+            setup->setAttribute("audioOutputDeviceName", name);
+            setup->setAttribute("audioInputDeviceName", "");
+        }
+        // A state written by the short-lived zero-output implementation contains
+        // an explicit empty channel mask that prevents reliable ASIO startup.
+        if (setup->hasAttribute("audioDeviceOutChans") && !setup->getStringAttribute("audioDeviceOutChans").containsChar('1'))
+            setup->removeAttribute("audioDeviceOutChans");
+        // All output channels active from the start, so channel numbers in the
+        // perspectives are the driver's physical outputs (extra bits are ignored).
+        if (!setup->hasAttribute("audioDeviceOutChans"))
+            setup->setAttribute("audioDeviceOutChans", juce::String::repeatedString("1", 64));
+        error = host->initialise(0, 2, setup.get(), false);
+    }
+    else
+        host->setCurrentAudioDeviceType(typeName, true);   // no host open yet: the type's default device
+    auto* device = host->getCurrentAudioDevice();
+    if (device != nullptr)
+    {
+        // The default-device path above opens two channels only: enable them all.
+        const int count = device->getOutputChannelNames().size();
+        juce::BigInteger all;
+        all.setRange(0, count, true);
+        auto current = host->getAudioDeviceSetup();
+        if (count > 0 && current.outputChannels != all)
+        {
+            current.useDefaultOutputChannels = false;
+            current.outputChannels = all;
+            host->setAudioDeviceSetup(current, true);
+            device = host->getCurrentAudioDevice();
+        }
+    }
+    if (device == nullptr)
+        noteMissingAudioDevice(typeName + " \"" + (name.isEmpty() ? juce::String("default") : name) + "\""
+            + (error.isNotEmpty() ? "  (" + error + ")" : juce::String()));
+    CrashHandler::note(typeName + " host opened for '" + (name.isEmpty() ? juce::String("default device") : name) + "': "
+        + (device != nullptr ? device->getName() + "  buffer " + juce::String(device->getCurrentBufferSizeSamples())
+            + "  rate " + juce::String(device->getCurrentSampleRate(), 0) : juce::String("no device"))
+        + (error.isNotEmpty() ? "  ERROR " + error : juce::String())
+        + "  (hosts now " + juce::String((int)asioHosts.size() + 1) + ")");
+    asioHosts.push_back(std::move(host));
+    return asioHosts.back().get();
+}
+
+bool MainComponent::isAsioHost(const juce::AudioDeviceManager* manager) const
+{
+    for (const auto& host : asioHosts) if (host.get() == manager) return true;
+    return false;
+}
+
+int MainComponent::routesOnManager(const juce::AudioDeviceManager* manager) const
+{
+    int count = 0;
+    for (int manual = 0; manual < SamplerEngine::maxManuals; ++manual)
+        if (manualAsioHost[(size_t)manual] == manager) ++count;
+    for (const auto& entry : perspectiveAudioRoutes)
+        if (entry.second != nullptr && entry.second->managerInUse == manager) ++count;
+    return count;
+}
+
+void MainComponent::pruneUnusedAsioHosts()
+{
+    for (size_t i = asioHosts.size(); i-- > 0;)
+    {
+        auto* host = asioHosts[i].get();
+        if (routesOnManager(host) > 0) continue;
+        if (quietTestManager == host)
+        {
+            quietTestManager->removeAudioCallback(&quietTestPlayer);
+            quietTestPlayer.setSource(nullptr);
+            quietTestManager = nullptr;
+            quietTestStopAt = -1.0;
+        }
+        if (asioPanelWatch.manager == host) { asioPanelWatch.active = false; asioPanelWatch.manager = nullptr; }
+        pendingWindowsAudioResume.erase(std::remove_if(pendingWindowsAudioResume.begin(), pendingWindowsAudioResume.end(),
+            [host](const SuspendedDevice& entry) { return entry.manager == host; }), pendingWindowsAudioResume.end());
+        auto* device = host->getCurrentAudioDevice();
+        CrashHandler::note(host->getCurrentAudioDeviceType() + " host closed (no route uses it): " + (device != nullptr ? device->getName() : juce::String("no device")));
+        host->closeAudioDevice();
+        asioHosts.erase(asioHosts.begin() + (long)i);
+    }
+}
+
+void MainComponent::installAsioDeviceInterceptor(juce::AudioDeviceSelectorComponent& selector, int manualIndex,
+    const juce::String& perspective)
+{
+    // JUCE's output-device box lives inside the selector's settings panel, which
+    // is rebuilt whenever the device type changes; the wrapper is (re)installed
+    // from the audio tab's timer and marked so it is only wrapped once.
+    juce::ComboBox* deviceBox = nullptr;
+    std::function<void(juce::Component&)> scan = [&](juce::Component& parent)
+    {
+        for (auto* child : parent.getChildren())
+        {
+            // JUCE labels the box "Device:" for types without separate inputs and
+            // outputs (ASIO) and "Output:" for the others.
+            if (auto* label = dynamic_cast<juce::Label*>(child))
+            {
+                const auto text = label->getText().trim();
+                if (text.startsWithIgnoreCase("Device") || text.startsWithIgnoreCase("Output"))
+                    if (auto* box = dynamic_cast<juce::ComboBox*>(label->getAttachedComponent())) deviceBox = box;
+            }
+            if (deviceBox == nullptr) scan(*child);
+        }
+    };
+    scan(selector);
+    if (deviceBox == nullptr || (bool)deviceBox->getProperties().getWithDefault("asioDeviceInterceptor", false)) return;
+    deviceBox->getProperties().set("asioDeviceInterceptor", true);
+    auto original = deviceBox->onChange;
+    auto* manager = &selector.deviceManager;
+    CrashHandler::note("ASIO device box intercepted for manual " + juce::String(manualIndex) + " perspective " + perspective);
+    deviceBox->onChange = [this, deviceBox, manager, manualIndex, perspective, original]
+    {
+        auto* device = manager->getCurrentAudioDevice();
+        const auto chosen = deviceBox->getText();
+        const auto current = device != nullptr ? device->getName() : juce::String();
+        // "<< none >>" on a route that plays through a shared ASIO host: only this
+        // route leaves the host. JUCE's own handling would close the driver, and
+        // with it every other route of the division that plays through the host.
+        if (isAsioHost(manager) && (chosen.isEmpty() || chosen.startsWith("<<")) && current.isNotEmpty())
+        {
+            CrashHandler::note("ASIO device box: manual " + juce::String(manualIndex) + " perspective " + perspective
+                + " chose none (was '" + current + "', " + juce::String(routesOnManager(manager))
+                + " route(s) on this host) -> detaching this route only");
+            juce::MessageManager::callAsync([this, manualIndex, perspective]
+            {
+                detachRouteAudio(manualIndex, perspective);
+            });
+            return;
+        }
+        // A different ASIO driver chosen for this tab: only this route moves to
+        // that driver's host (opened when necessary); every other route keeps
+        // playing where it is. JUCE's in-place change is never used for ASIO,
+        // because it would re-open a driver that another host may already run.
+        if (isAsioHost(manager) && isSharedHostType(manager->getCurrentAudioDeviceType())
+            && chosen.isNotEmpty() && !chosen.startsWith("<<") && chosen != current)
+        {
+            const auto typeName = manager->getCurrentAudioDeviceType();
+            CrashHandler::note(typeName + " device box: manual " + juce::String(manualIndex) + " perspective " + perspective
+                + " chose '" + chosen + "' (was '" + current + "', " + juce::String(routesOnManager(manager))
+                + " route(s) on this host) -> moving this route only");
+            juce::MessageManager::callAsync([this, manualIndex, perspective, typeName, chosen]
+            {
+                moveRouteToSharedDevice(manualIndex, perspective, typeName, chosen);
+            });
+            return;
+        }
+        if (original) original();   // not ASIO (or no change): JUCE handles it
+        // "<< none >>" chosen in the list: JUCE closed the device; the remembered
+        // state says so too, at once - the same result as "set for all" with none,
+        // whichever way none was chosen.
+        if (chosen.isEmpty() || chosen.startsWith("<<"))
+            juce::MessageManager::callAsync([this, manager, manualIndex, perspective]
+            {
+                if (manager->getCurrentAudioDevice() != nullptr) return;
+                juce::XmlElement state("DEVICESETUP");
+                const auto type = manager->getCurrentAudioDeviceType();
+                state.setAttribute("deviceType", type.isNotEmpty() ? type : juce::String("Windows Audio"));
+                state.setAttribute("audioOutputDeviceName", "");
+                state.setAttribute("audioInputDeviceName", "");
+                if (perspective.equalsIgnoreCase("default")) manualConfigs[(size_t)manualIndex].audioDeviceStateXml = state.toString();
+                else manualConfigs[(size_t)manualIndex].perspectiveAudio[perspectiveRouteKey(manualIndex, perspective)].audioDeviceStateXml = state.toString();
+                CrashHandler::note("Manual " + juce::String(manualIndex) + " perspective " + perspective + ": none chosen in the device list, remembered");
+                saveSettings();
+            });
+    };
+}
+
+void MainComponent::moveRouteToSharedDevice(int manualIndex, const juce::String& perspective, const juce::String& typeName, const juce::String& deviceName)
+{
+    if (quietTestManager != nullptr)
+    {
+        quietTestManager->removeAudioCallback(&quietTestPlayer);
+        quietTestPlayer.setSource(nullptr);
+        quietTestManager = nullptr;
+        quietTestStopAt = -1.0;
+    }
+    audioMuted.store(true);
+    engine.noteOffAll();
+    ignoreDeviceRestartsUntil.store(juce::Time::getMillisecondCounterHiRes() + 4000.0);
+    applyAudioToAll.store(false); applyAudioToAllAux.store(false);
+    CrashHandler::note("Moving manual " + juce::String(manualIndex) + " perspective " + perspective
+        + " to " + typeName + " device '" + deviceName + "'");
+    keyboardsWindowAudioTab = perspective;
+    if (keyboardsDialogSelectorHook) keyboardsDialogSelectorHook(true);
+    setRouteAudioType(manualIndex, perspective, typeName, nullptr, deviceName);
+    if (keyboardsDialogSelectorHook) keyboardsDialogSelectorHook(false);
+    saveSettings();
+    audioDeviceSelectionUnmuteAt = juce::Time::getMillisecondCounterHiRes() + 1200.0;
+}
+
+void MainComponent::detachRouteAudio(int manualIndex, const juce::String& perspective)
+{
+    if (manualIndex < 0 || manualIndex >= SamplerEngine::maxManuals) return;
+    if (quietTestManager != nullptr)
+    {
+        quietTestManager->removeAudioCallback(&quietTestPlayer);
+        quietTestPlayer.setSource(nullptr);
+        quietTestManager = nullptr;
+        quietTestStopAt = -1.0;
+    }
+    audioMuted.store(true);
+    engine.noteOffAll();
+    ignoreDeviceRestartsUntil.store(juce::Time::getMillisecondCounterHiRes() + 4000.0);
+    applyAudioToAll.store(false); applyAudioToAllAux.store(false);   // an individual change ends "set for all"
+    CrashHandler::note("Manual " + juce::String(manualIndex) + " perspective " + perspective + ": no audio device (route detached)");
+    keyboardsWindowAudioTab = perspective;
+    if (keyboardsDialogSelectorHook) keyboardsDialogSelectorHook(true);
+    detachRouteAudioQuietly(manualIndex, perspective);
+    if (keyboardsDialogSelectorHook) keyboardsDialogSelectorHook(false);
+    saveSettings();
+    audioDeviceSelectionUnmuteAt = juce::Time::getMillisecondCounterHiRes() + 1200.0;
+}
+
+void MainComponent::detachRouteAudioQuietly(int manualIndex, const juce::String& perspective)
+{
+    if (manualIndex < 0 || manualIndex >= SamplerEngine::maxManuals) return;
+    // The route keeps a manager of its own (the selector needs the device types)
+    // with no device open; the remembered state says "no device" so that the
+    // next start leaves it alone (an empty device name is never opened).
+    auto noDeviceState = [](juce::AudioDeviceManager& manager)
+    {
+        juce::XmlElement state("DEVICESETUP");
+        const auto type = manager.getCurrentAudioDeviceType();
+        state.setAttribute("deviceType", type.isNotEmpty() ? type : juce::String("Windows Audio"));
+        state.setAttribute("audioOutputDeviceName", "");
+        state.setAttribute("audioInputDeviceName", "");
+        return state.toString();
+    };
+    auto makeSelector = [this, manualIndex, perspective](juce::AudioDeviceManager& manager)
+    {
+        auto selector = std::make_unique<juce::AudioDeviceSelectorComponent>(manager, 0, 0, 0, 256, false, false, false, false);
+        installAudioTypeInterceptor(*selector, manualIndex, perspective);
+        selector->addMouseListener(this, true);
+        return selector;
+    };
+    if (perspective.equalsIgnoreCase("default"))
+    {
+        auto* callback = manualIndex == 0 ? primaryAudioCallback.get() : extraAudioCallbacks[(size_t)(manualIndex - 1)].get();
+        auto* own = manualIndex == 0 ? &deviceManager : extraAudioManagers[(size_t)(manualIndex - 1)].get();
+        if (own == nullptr || callback == nullptr) return;
+        if (manualAsioHost[(size_t)manualIndex] != nullptr) manualAsioHost[(size_t)manualIndex]->removeAudioCallback(callback);
+        else own->removeAudioCallback(callback);
+        manualAsioHost[(size_t)manualIndex] = nullptr;
+        own->closeAudioDevice();
+        own->addAudioCallback(callback);
+        if (manualIndex == 0) audioSettings = makeSelector(*own);
+        else extraAudioSettings[(size_t)(manualIndex - 1)] = makeSelector(*own);
+        manualConfigs[(size_t)manualIndex].audioDeviceStateXml = noDeviceState(*own);
+    }
+    else
+    {
+        const auto key = perspectiveRouteKey(manualIndex, perspective);
+        const auto found = perspectiveAudioRoutes.find(key);
+        if (found == perspectiveAudioRoutes.end()) return;
+        auto& route = *found->second;
+        if (route.managerInUse != nullptr && route.callback != nullptr)
+            route.managerInUse->removeAudioCallback(route.callback.get());
+        if (route.manager == nullptr)
+        {
+            route.manager = std::make_unique<juce::AudioDeviceManager>();
+            route.manager->getAvailableDeviceTypes();   // types for the selector, no device opened
+            addAggregatedWASAPIType(*route.manager);
+        }
+        else route.manager->closeAudioDevice();
+        route.managerInUse = route.manager.get();
+        if (route.callback != nullptr) route.managerInUse->addAudioCallback(route.callback.get());
+        route.selector = makeSelector(*route.managerInUse);
+        manualConfigs[(size_t)manualIndex].perspectiveAudio[key].audioDeviceStateXml = noDeviceState(*route.managerInUse);
+    }
+    pruneUnusedAsioHosts();   // a driver nobody plays through any more is released
+}
+
+void MainComponent::removePerspectiveAudioRoutesForManual(int manualIndex)
+{
+    // Nothing may keep pointing at a route that is about to go: the Divisions
+    // dialog of that division is closed (its audio tabs show these routes'
+    // selectors), other dialogs let go of their selectors for the moment, and
+    // the helpers that remember a manager forget the routes' managers.
+    if (keyboardsWindow != nullptr && keyboardsWindowManual == manualIndex) keyboardsWindow.reset();
+    if (keyboardsDialogSelectorHook) keyboardsDialogSelectorHook(true);
+    for (auto it = perspectiveAudioRoutes.begin(); it != perspectiveAudioRoutes.end();)
+    {
+        auto& route = *it->second;
+        if (route.manual != manualIndex) { ++it; continue; }
+        if (route.managerInUse != nullptr && route.callback != nullptr)
+            route.managerInUse->removeAudioCallback(route.callback.get());
+        if (route.manager != nullptr)
+        {
+            auto* manager = route.manager.get();
+            if (quietTestManager == manager)
+            {
+                quietTestManager->removeAudioCallback(&quietTestPlayer);
+                quietTestPlayer.setSource(nullptr);
+                quietTestManager = nullptr;
+                quietTestStopAt = -1.0;
+            }
+            if (asioPanelWatch.manager == manager) { asioPanelWatch.active = false; asioPanelWatch.manager = nullptr; }
+            pendingWindowsAudioResume.erase(std::remove_if(pendingWindowsAudioResume.begin(), pendingWindowsAudioResume.end(),
+                [manager](const SuspendedDevice& entry) { return entry.manager == manager; }), pendingWindowsAudioResume.end());
+        }
+        it = perspectiveAudioRoutes.erase(it);
+    }
+    if (keyboardsDialogSelectorHook) keyboardsDialogSelectorHook(false);
+    pruneUnusedAsioHosts();
+}
+
+void MainComponent::installAudioTypeInterceptor(juce::AudioDeviceSelectorComponent& selector,
+    int manualIndex, const juce::String& perspective)
+{
+    for (auto* child : selector.getChildren())
+        if (auto* types = dynamic_cast<juce::ComboBox*>(child))
+        {
+            types->onChange = [this, types, manager = &selector.deviceManager, manualIndex, perspective]
+            {
+                const auto requested = types->getText();
+                if (manager != nullptr
+                    && requested.equalsIgnoreCase(manager->getCurrentAudioDeviceType())) return;
+                juce::MessageManager::callAsync([this, manualIndex, perspective, requested]
+                {
+                    switchRouteAudioType(manualIndex, perspective, requested);
+                });
+            };
+            break; // the direct ComboBox child is JUCE's audio-device-type selector
+        }
+}
+
+void MainComponent::switchRouteAudioType(int manualIndex, const juce::String& perspective,
+    const juce::String& typeName)
+{
+    if (typeName.isEmpty()) return;
+    if (quietTestManager != nullptr)
+    {
+        quietTestManager->removeAudioCallback(&quietTestPlayer);
+        quietTestPlayer.setSource(nullptr);
+        quietTestManager = nullptr;
+        quietTestStopAt = -1.0;
+    }
+    audioMuted.store(true);
+    engine.noteOffAll();
+    ignoreDeviceRestartsUntil.store(juce::Time::getMillisecondCounterHiRes() + 4000.0);
+    applyAudioToAll.store(false); applyAudioToAllAux.store(false);   // any individual device change ends "set for all"
+    CrashHandler::note("Switching audio type to " + typeName + " for manual " + juce::String(manualIndex)
+        + " perspective " + perspective);
+    keyboardsWindowAudioTab = perspective;
+    // The Divisions dialog stays open: it lets go of the selector that is about
+    // to be recreated and picks up the new one afterwards.
+    if (keyboardsDialogSelectorHook) keyboardsDialogSelectorHook(true);
+    setRouteAudioType(manualIndex, perspective, typeName);
+    if (keyboardsDialogSelectorHook) keyboardsDialogSelectorHook(false);
+    audioDeviceSelectionUnmuteAt = juce::Time::getMillisecondCounterHiRes() + 1200.0;
+}
+
+juce::AudioDeviceManager* MainComponent::setRouteAudioType(int manualIndex, const juce::String& perspective,
+    const juce::String& typeName, const juce::XmlElement* deviceState, const juce::String& asioDeviceName)
+{
+    juce::AudioDeviceManager* result = nullptr;
+    const bool wantsAsio = isSharedHostType(typeName);   // ASIO or Windows Audio: the route joins the device's shared host
+    // The shared host this route joins (opened now when the device is not open yet).
+    auto joinAsioHost = [&]() -> juce::AudioDeviceManager* { return sharedHostFor(typeName, asioDeviceName, deviceState); };
+    // With a device state to copy, open exactly that device in one step
+    // instead of first opening the type's default device.
+    auto openType = [&](juce::AudioDeviceManager& manager)
+    {
+        if (deviceState != nullptr) manager.initialise(0, 2, deviceState, true);
+        else manager.setCurrentAudioDeviceType(typeName, true);
+    };
+    const bool wantsAggregate = typeName.equalsIgnoreCase("Aggregated WASAPI");
+    auto selectAggregateDevice = [wantsAggregate, deviceState](juce::AudioDeviceManager& manager)
+    {
+        if (!wantsAggregate || deviceState != nullptr) return;
+        auto setup = manager.getAudioDeviceSetup();
+        setup.outputDeviceName = "All WASAPI Outputs";
+        setup.inputDeviceName.clear();
+        setup.useDefaultOutputChannels = true;
+        manager.setAudioDeviceSetup(setup, true);
+        // AudioDeviceManager was originally initialised with two required
+        // outputs. Expand its host-side bus once, before a selector/panel owns
+        // any of its child components. The aggregate itself still opens only
+        // the first physical stereo endpoint at this stage.
+        if (auto* device = manager.getCurrentAudioDevice())
+        {
+            const int count = device->getOutputChannelNames().size();
+            if (count > 0)
+            {
+                auto fullSetup = manager.getAudioDeviceSetup();
+                fullSetup.useDefaultOutputChannels = false;
+                fullSetup.outputChannels.clear();
+                fullSetup.outputChannels.setRange(0, count, true);
+                manager.setAudioDeviceSetup(fullSetup, true);
+            }
+        }
+    };
+    if (perspective.equalsIgnoreCase("default"))
+    {
+        if (manualIndex <= 0)
+        {
+            if (manualAsioHost[0] != nullptr) manualAsioHost[0]->removeAudioCallback(primaryAudioCallback.get());
+            else deviceManager.removeAudioCallback(primaryAudioCallback.get());
+            manualAsioHost[0] = nullptr;
+            if (wantsAsio)
+            {
+                // The private device must not keep running without a callback.
+                deviceManager.closeAudioDevice();
+                auto* host = joinAsioHost();
+                host->addAudioCallback(primaryAudioCallback.get());
+                primaryAudioCallback->setUseConfiguredOutputs(true);
+                manualAsioHost[0] = host;
+                result = host;
+                audioSettings = std::make_unique<juce::AudioDeviceSelectorComponent>(
+                    *host, 0, 0, 0, 256, false, false, false, false);
+            }
+            else
+            {
+                openType(deviceManager);
+                selectAggregateDevice(deviceManager);
+                deviceManager.addAudioCallback(primaryAudioCallback.get());
+                primaryAudioCallback->setUseConfiguredOutputs(true);
+                result = &deviceManager;
+                audioSettings = std::make_unique<juce::AudioDeviceSelectorComponent>(
+                    deviceManager, 0, 0, 0, 256, false, false, false, false);
+            }
+            installAudioTypeInterceptor(*audioSettings, 0, "default");
+            audioSettings->addMouseListener(this, true);
+        }
+        else
+        {
+            const size_t i = (size_t)(manualIndex - 1);
+            auto* callback = extraAudioCallbacks[i].get();
+            if (manualAsioHost[(size_t)manualIndex] != nullptr)
+                manualAsioHost[(size_t)manualIndex]->removeAudioCallback(callback);
+            else
+                extraAudioManagers[i]->removeAudioCallback(callback);
+            manualAsioHost[(size_t)manualIndex] = nullptr;
+
+            if (wantsAsio)
+            {
+                extraAudioManagers[i]->closeAudioDevice();
+                auto* host = joinAsioHost();
+                host->addAudioCallback(callback);
+                callback->setUseConfiguredOutputs(true);
+                manualAsioHost[(size_t)manualIndex] = host;
+                result = host;
+                extraAudioSettings[i] = std::make_unique<juce::AudioDeviceSelectorComponent>(
+                    *host, 0, 0, 0, 256, false, false, false, false);
+            }
+            else
+            {
+                openType(*extraAudioManagers[i]);
+                selectAggregateDevice(*extraAudioManagers[i]);
+                extraAudioManagers[i]->addAudioCallback(callback);
+                callback->setUseConfiguredOutputs(true);
+                result = extraAudioManagers[i].get();
+                extraAudioSettings[i] = std::make_unique<juce::AudioDeviceSelectorComponent>(
+                    *extraAudioManagers[i], 0, 0, 0, 256, false, false, false, false);
+            }
+            installAudioTypeInterceptor(*extraAudioSettings[i], manualIndex, "default");
+            extraAudioSettings[i]->addMouseListener(this, true);
+        }
+    }
+    else
+    {
+        const auto key = perspectiveRouteKey(manualIndex, perspective);
+        auto found = perspectiveAudioRoutes.find(key);
+        if (found != perspectiveAudioRoutes.end())
+        {
+            auto& route = *found->second;
+            if (route.managerInUse && route.callback)
+                route.managerInUse->removeAudioCallback(route.callback.get());
+            route.managerInUse = nullptr;
+            if (wantsAsio)
+            {
+                // Stop the route's private (WASAPI / aggregated) device; it would
+                // otherwise keep calling into an AudioDeviceManager with no callbacks.
+                if (route.manager) route.manager->closeAudioDevice();
+                route.managerInUse = joinAsioHost();
+            }
+            else
+            {
+                if (!route.manager)
+                {
+                    route.manager = std::make_unique<juce::AudioDeviceManager>();
+                    route.manager->initialiseWithDefaultDevices(0, 2);
+                    addAggregatedWASAPIType(*route.manager);
+                }
+                route.managerInUse = route.manager.get();
+                openType(*route.managerInUse);
+                selectAggregateDevice(*route.managerInUse);
+            }
+            route.callback->setUseConfiguredOutputs(true);
+            route.managerInUse->addAudioCallback(route.callback.get());
+            route.selector = std::make_unique<juce::AudioDeviceSelectorComponent>(
+                *route.managerInUse, 0, 0, 0, 256, false, false, false, false);
+            installAudioTypeInterceptor(*route.selector, manualIndex, perspective);
+            route.selector->addMouseListener(this, true);
+            result = route.managerInUse;
+        }
+    }
+    pruneUnusedAsioHosts();   // a driver nobody plays through any more is released
+    return result;
+}
+
+void MainComponent::attachDivisionRoute(int manualIndex, const juce::String& typeName, const juce::String& deviceName, const juce::XmlElement* state)
+{
+    if (manualIndex < 0 || manualIndex >= SamplerEngine::maxManuals) return;
+    auto* manager = manualIndex == 0 ? &deviceManager : extraAudioManagers[(size_t)(manualIndex - 1)].get();
+    auto* callback = manualIndex == 0 ? primaryAudioCallback.get() : extraAudioCallbacks[(size_t)(manualIndex - 1)].get();
+    if (manager == nullptr || callback == nullptr) return;
+    // Off whatever it plays through now.
+    if (manualAsioHost[(size_t)manualIndex] != nullptr) manualAsioHost[(size_t)manualIndex]->removeAudioCallback(callback);
+    manager->removeAudioCallback(callback);
+    manualAsioHost[(size_t)manualIndex] = nullptr;
+    juce::AudioDeviceManager* shown = manager;
+    if (isSharedHostType(typeName))
+    {
+        manager->closeAudioDevice();   // the private device must not keep running without a callback
+        auto* host = sharedHostFor(typeName, deviceName, state);
+        callback->setUseConfiguredOutputs(true);
+        host->addAudioCallback(callback);
+        manualAsioHost[(size_t)manualIndex] = host;
+        shown = host;
+    }
+    else if (typeName.equalsIgnoreCase("none") || typeName.isEmpty())
+    {
+        manager->closeAudioDevice();
+        manager->addAudioCallback(callback);
+    }
+    else
+    {
+        // Aggregated WASAPI (a private device per route).
+        if (state != nullptr) { manager->initialise(0, 2, state, true); noteIfDeviceMissing(*manager, state); }
+        manager->addAudioCallback(callback);
+    }
+    auto replacement = std::make_unique<juce::AudioDeviceSelectorComponent>(*shown, 0, 0, 0, 256, false, false, false, false);
+    installAudioTypeInterceptor(*replacement, manualIndex, "default");
+    replacement->addMouseListener(this, true);
+    if (manualIndex == 0) audioSettings = std::move(replacement);
+    else extraAudioSettings[(size_t)(manualIndex - 1)] = std::move(replacement);
+}
+
+bool MainComponent::applyAggregateSelection(int manualIndex, const juce::String& perspective, juce::AudioIODevice* device)
+{
+    auto* aggregate = dynamic_cast<AggregatedWASAPIAudioDevice*>(device);
+    if (aggregate == nullptr || manualIndex < 0 || manualIndex >= SamplerEngine::maxManuals) return false;
+    // Devices start on the message thread (our own calls and JUCE's); a start
+    // from elsewhere is applied there a moment later.
+    if (!juce::MessageManager::getInstance()->isThisTheMessageThread())
+    {
+        juce::Component::SafePointer<MainComponent> safeThis(this);
+        juce::MessageManager::callAsync([safeThis, manualIndex, perspective, device]
+        {
+            if (safeThis == nullptr) return;
+            auto* manager = safeThis->managerForRoute(manualIndex, perspective);
+            if (manager != nullptr && manager->getCurrentAudioDevice() == device)   // still that device
+                safeThis->applyAggregateSelection(manualIndex, perspective, device);
+        });
+        return false;
+    }
+    const bool isDefault = perspective.equalsIgnoreCase("default");
+    const auto key = perspectiveRouteKey(manualIndex, perspective);
+    auto& channels = isDefault ? manualConfigs[(size_t)manualIndex].outputChannels
+        : manualConfigs[(size_t)manualIndex].perspectiveAudio[key].outputChannels;
+    juce::BigInteger wanted;
+    for (const auto channel : channels) if (channel >= 0) wanted.setBit(channel);
+    juce::String refused;
+    if (aggregate->getSelectedOutputChannels() != wanted) refused = aggregate->setSelectedOutputChannels(wanted);
+    const auto granted = aggregate->getSelectedOutputChannels();
+    const juce::String routeName = "manual " + juce::String(manualIndex) + " perspective " + perspective;
+    bool changed = false;
+    if (granted != wanted)
+    {
+        // The channels of endpoints that cannot be opened: none - the configuration
+        // holds only what plays, and the tab shows them unticked with the reason.
+        std::vector<int> kept;
+        for (const auto channel : channels) if (channel >= 0 && granted[channel]) kept.push_back(channel);
+        channels = kept;
+        if (isDefault) engine.setManualOutputChannels(manualIndex, kept);
+        engine.setPerspectiveOutputChannels(manualIndex, perspective, kept);
+        changed = true;
+        CrashHandler::note("Aggregated WASAPI " + routeName + ": refused " + (refused.isEmpty() ? juce::String("endpoint(s) that cannot be opened") : refused)
+            + " - their channels are set to none");
+    }
+    CrashHandler::note("Aggregated WASAPI " + routeName + " plays through " + aggregate->selectionDescription());
+    return changed;
+}
+
+juce::AudioDeviceManager* MainComponent::managerForRoute(int manualIndex, const juce::String& perspective)
+{
+    if (manualIndex < 0 || manualIndex >= SamplerEngine::maxManuals) return nullptr;
+    if (perspective.equalsIgnoreCase("default"))
+    {
+        if (manualAsioHost[(size_t)manualIndex] != nullptr) return manualAsioHost[(size_t)manualIndex];
+        return manualIndex == 0 ? &deviceManager : extraAudioManagers[(size_t)(manualIndex - 1)].get();
+    }
+    const auto found = perspectiveAudioRoutes.find(perspectiveRouteKey(manualIndex, perspective));
+    return found == perspectiveAudioRoutes.end() ? nullptr : found->second->managerInUse;
+}
+
+void MainComponent::applyAudioSetupEverywhere(int sourceManual, const juce::String& sourcePerspective)
+{
+    if (applyAllRunning) return;
+    auto* source = managerForRoute(sourceManual, sourcePerspective);
+    auto* sourceDevice = source != nullptr ? source->getCurrentAudioDevice() : nullptr;
+    const auto sourceKey = perspectiveRouteKey(sourceManual, sourcePerspective);
+    auto routesInScope = [this, sourceManual, sourcePerspective](bool auxScope)
+    {
+        std::vector<ApplyAllStep> steps;
+        for (int manual = 0; manual <= manualCount && manual < SamplerEngine::maxManuals; ++manual)
+            for (const auto& perspective : engine.getPerspectivesForManual(manual))
+                if (!(manual == sourceManual && perspective.equalsIgnoreCase(sourcePerspective))
+                    && isAuxiliaryPerspective(perspective) == auxScope)
+                    steps.push_back({ manual, perspective });
+        return steps;
+    };
+    if (sourceDevice == nullptr)
+    {
+        // "none" is copied like any device: every route of the scope lets go of
+        // its device (nothing to open, so no progress dialog).
+        const bool auxScope = isAuxiliaryPerspective(sourcePerspective);
+        CrashHandler::note(juce::String("Applying 'no audio device' to all ") + (auxScope ? "auxiliary routes" : "routes"));
+        audioMuted.store(true);
+        engine.noteOffAll();
+        ignoreDeviceRestartsUntil.store(juce::Time::getMillisecondCounterHiRes() + 4000.0);
+        keyboardsWindowAudioTab = sourcePerspective;
+        if (keyboardsDialogSelectorHook) keyboardsDialogSelectorHook(true);
+        for (const auto& step : routesInScope(auxScope)) detachRouteAudioQuietly(step.manual, step.perspective);
+        if (keyboardsDialogSelectorHook) keyboardsDialogSelectorHook(false);
+        (auxScope ? applyAudioToAllAux : applyAudioToAll).store(true);
+        saveSettings();
+        audioDeviceSelectionUnmuteAt = juce::Time::getMillisecondCounterHiRes() + 1200.0;
+        return;
+    }
+    // Build the state to copy by hand: AudioDeviceManager::createStateXml() is
+    // empty for devices that were opened as defaults, and the source's channel
+    // mask must not become a requirement for the other routes.
+    applyAllType = source->getCurrentAudioDeviceType();
+    // Aggregated WASAPI: the chosen endpoints are the point of the device, so the
+    // source's channel selection goes along (other types keep their own masks:
+    // ASIO perspectives usually sit on different channels).
+    applyAllCopyChannels = applyAllType.equalsIgnoreCase("Aggregated WASAPI");
+    applyAllChannels = sourcePerspective.equalsIgnoreCase("default")
+        ? manualConfigs[(size_t)sourceManual].outputChannels
+        : manualConfigs[(size_t)sourceManual].perspectiveAudio[sourceKey].outputChannels;
+    applyAllDeviceName = sourceDevice->getName();
+    applyAllState = std::make_unique<juce::XmlElement>("DEVICESETUP");
+    applyAllState->setAttribute("deviceType", applyAllType);
+    applyAllState->setAttribute("audioOutputDeviceName", applyAllDeviceName);
+    applyAllState->setAttribute("audioInputDeviceName", "");
+    applyAllState->setAttribute("audioDeviceRate", sourceDevice->getCurrentSampleRate());
+    applyAllState->setAttribute("audioDeviceBufferSize", sourceDevice->getCurrentBufferSizeSamples());
+    // Scope: an ordinary perspective is copied to the ordinary perspectives of
+    // every division, the auxiliary route to the auxiliary routes of every division.
+    applyAllAuxScope = isAuxiliaryPerspective(sourcePerspective);
+    CrashHandler::note("Applying audio device " + applyAllDeviceName + " (" + applyAllType + ") to all "
+        + (applyAllAuxScope ? "auxiliary routes" : "routes"));
+
+    applyAllRunning = true;
+    (applyAllAuxScope ? applyAudioToAllAux : applyAudioToAll).store(true);   // shown checked on every tab of the scope while it runs
+    audioMuted.store(true);
+    engine.noteOffAll();
+    ignoreDeviceRestartsUntil.store(juce::Time::getMillisecondCounterHiRes() + 120000.0);
+    applyAllReopenManual = keyboardsWindowManual;
+    keyboardsWindowAudioTab = sourcePerspective;
+    if (keyboardsDialogSelectorHook) keyboardsDialogSelectorHook(true);
+
+    applyAllQueue = routesInScope(applyAllAuxScope);
+    applyAllTotal = (int)applyAllQueue.size();
+    applyAllTickDivider = 0;
+
+    // Opening a device (especially Aggregated WASAPI) takes up to a second per
+    // route. The routes are processed one at a time from the GUI timer behind a
+    // modal progress dialog that gets a chance to repaint between steps.
+    auto* content = new juce::Component();
+    auto* label = new juce::Label();
+    label->setJustificationType(juce::Justification::centred);
+    label->setFont(juce::FontOptions(16.0f));
+    label->setText("Preparing...", juce::dontSendNotification);
+    label->setBounds(0, 0, 640, 90);
+    content->addAndMakeVisible(label);
+    content->setSize(640, 90);
+    juce::DialogWindow::LaunchOptions options;
+    options.dialogTitle = applyAllAuxScope ? "Set for all auxiliary routes" : "Set for all perspectives and divisions";
+    options.dialogBackgroundColour = juce::Colours::darkgrey;
+    options.content.setOwned(new ScrollableContent(content));
+    options.componentToCentreAround = this;
+    options.escapeKeyTriggersCloseButton = false;
+    options.useNativeTitleBar = true;
+    options.resizable = false;
+    applyAllWindow = options.launchAsync();
+    applyAllLabel = label;
+}
+
+void MainComponent::continueApplyAll()
+{
+    static const juce::String names[8]{ "Pedal", "I.", "II.", "III.", "IV.", "V.", "VI.", "VII." };
+    if (!applyAllQueue.empty())
+    {
+        const auto step = applyAllQueue.front();
+        const int done = applyAllTotal - (int)applyAllQueue.size();
+        if (applyAllLabel != nullptr)
+        {
+            applyAllLabel->setText("Opening " + applyAllDeviceName + "\nfor " + names[juce::jlimit(0, SamplerEngine::maxManuals - 1, step.manual)]
+                + " / " + step.perspective + "   (" + juce::String(done + 1) + " of " + juce::String(applyAllTotal) + ")",
+                juce::dontSendNotification);
+            if (applyAllWindow != nullptr)
+                if (auto* peer = applyAllWindow->getPeer()) peer->performAnyPendingRepaintsNow();
+        }
+        applyAllQueue.erase(applyAllQueue.begin());
+        auto* manager = setRouteAudioType(step.manual, step.perspective, applyAllType, applyAllState.get());
+        if (applyAllCopyChannels && manager != nullptr)
+        {
+            // The same endpoints as the source route (Aggregated WASAPI).
+            const auto key = perspectiveRouteKey(step.manual, step.perspective);
+            if (step.perspective.equalsIgnoreCase("default"))
+            {
+                manualConfigs[(size_t)step.manual].outputChannels = applyAllChannels;
+                engine.setManualOutputChannels(step.manual, applyAllChannels);
+            }
+            else
+            {
+                manualConfigs[(size_t)step.manual].perspectiveAudio[key].outputChannels = applyAllChannels;
+                engine.setPerspectiveOutputChannels(step.manual, step.perspective, applyAllChannels);
+            }
+            applyAggregateSelection(step.manual, step.perspective, manager->getCurrentAudioDevice());
+        }
+        if (!applyAllQueue.empty()) return;
+    }
+    if (applyAllWindow != nullptr) applyAllWindow->exitModalState(0);   // deletes itself
+    applyAllWindow = nullptr;
+    applyAllLabel = nullptr;
+    applyAllState.reset();
+    applyAllRunning = false;
+    (applyAllAuxScope ? applyAudioToAllAux : applyAudioToAll).store(true);
+    saveSettings();
+    ignoreDeviceRestartsUntil.store(juce::Time::getMillisecondCounterHiRes() + 4000.0);
+    audioDeviceSelectionUnmuteAt = juce::Time::getMillisecondCounterHiRes() + 1500.0;
+    if (keyboardsDialogSelectorHook) keyboardsDialogSelectorHook(false);
+}
+
+void MainComponent::setCurrentConfigurationName(const juce::String& name)
+{
+    currentConfigurationName = name.trim();
+    updateWindowTitle();
+}
+
+void MainComponent::updateWindowTitle()
+{
+    // "OrganSampler 0.5.0 - <configuration>": the version is part of the title.
+    const juce::String title = "OrganSampler " + juce::String(ProjectInfo::versionString);
+    if (auto* window = dynamic_cast<juce::DocumentWindow*>(getTopLevelComponent()))
+        window->setName(currentConfigurationName.isEmpty() ? title : title + " - " + currentConfigurationName);
+}
+
+void MainComponent::toggleRecording()
+{
+    if (engine.isRecording())
+    {
+        // The file ends with a 500 ms fade-out: the timer finishes it.
+        if (recordingFadeOutStartedMs < 0.0)
+        {
+            engine.beginRecordingFadeOut();
+            recordingFadeOutStartedMs = juce::Time::getMillisecondCounterHiRes();
+        }
+        return;
+    }
+    const auto baseName = (currentConfigurationName.isNotEmpty() ? currentConfigurationName : juce::String("Organ"))
+        .removeCharacters("\\/:*?\"<>|");
+    const auto start = (lastSettingsDirectory.isDirectory() ? lastSettingsDirectory
+        : juce::File::getSpecialLocation(juce::File::userMusicDirectory))
+        .getChildFile(baseName + " " + juce::Time::getCurrentTime().formatted("%Y-%m-%d %H-%M-%S") + ".wav");
+    recordChooser = std::make_unique<juce::FileChooser>("Record the stereo mix to a WAV file", start, "*.wav");
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    recordChooser->launchAsync(juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
+        | juce::FileBrowserComponent::warnAboutOverwriting,
+        [safeThis](const juce::FileChooser& chooser)
+        {
+            if (safeThis == nullptr) return;
+            auto file = chooser.getResult();
+            if (file == juce::File()) return;
+            if (!file.hasFileExtension("wav")) file = file.withFileExtension("wav");
+            CrashHandler::note("Recording to " + file.getFullPathName());
+            safeThis->recordingFadeOutStartedMs = -1.0;
+            if (!safeThis->engine.startRecording(file))
+                juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Record",
+                    "The file could not be created:\n" + file.getFullPathName());
+            safeThis->recordButton.setRecording(safeThis->engine.isRecording());
+        });
+}
+
+bool MainComponent::checkMemoryForFolders(const std::vector<juce::File>& folders)
+{
+   #if JUCE_WINDOWS
+    juce::int64 bytes = 0;
+    for (const auto& folder : folders)
+        for (const auto& entry : juce::RangedDirectoryIterator(folder, true, "*.wav;*.flac;*.aiff", juce::File::findFiles))
+            bytes += entry.getFileSize();
+    // Rough estimate only (24-bit files grow by 4/3 as float, FLAC files by
+    // more): it is written to the activity log and never blocks loading. If the
+    // memory really runs out, the engine stops at that point, keeps every stop
+    // loaded so far and the loader shows the message then.
+    const juce::int64 estimated = sampleStorageFloat ? bytes * 4 / 3 : bytes * 2 / 3;
+    MEMORYSTATUSEX status{};
+    status.dwLength = sizeof(status);
+    if (GlobalMemoryStatusEx(&status))
+        CrashHandler::note("Loading " + juce::String((int)folders.size()) + " folder(s): about "
+            + juce::String(estimated >> 20) + " MB of sample data estimated, "
+            + juce::String((juce::int64)status.ullAvailPhys >> 20) + " MB physical RAM free");
+    return true;
+   #else
+    juce::ignoreUnused(folders);
+    return true;
+   #endif
+}
+
+bool MainComponent::allRoutesShareAudioDevice(bool auxiliary)
+{
+    juce::String type, name;
+    double rate = 0.0;
+    int buffer = 0;
+    bool first = true, anyNone = false, anyDevice = false;
+    for (int manual = 0; manual <= manualCount && manual < SamplerEngine::maxManuals; ++manual)
+        for (const auto& perspective : engine.getPerspectivesForManual(manual))
+        {
+            if (isAuxiliaryPerspective(perspective) != auxiliary) continue;
+            auto* manager = managerForRoute(manual, perspective);
+            auto* device = manager != nullptr ? manager->getCurrentAudioDevice() : nullptr;
+            // "none" everywhere agrees as well; a mix of none and a device does not.
+            if (device == nullptr) { anyNone = true; if (anyDevice) return false; continue; }
+            anyDevice = true;
+            if (anyNone) return false;
+            if (first)
+            {
+                first = false;
+                type = manager->getCurrentAudioDeviceType();
+                name = device->getName();
+                rate = device->getCurrentSampleRate();
+                buffer = device->getCurrentBufferSizeSamples();
+                continue;
+            }
+            if (!type.equalsIgnoreCase(manager->getCurrentAudioDeviceType()) || name != device->getName()
+                || std::abs(rate - device->getCurrentSampleRate()) > 0.5
+                || buffer != device->getCurrentBufferSizeSamples())
+                return false;
+        }
+    return true;
+}
+
+void MainComponent::reopenAudioDeviceFresh(juce::AudioDeviceManager& manager, const juce::String& reason)
+{
+    auto* device = manager.getCurrentAudioDevice();
+    if (device == nullptr) return;
+    const auto name = device->getName();
+    const int oldBuffer = device->getCurrentBufferSizeSamples();
+    audioMuted.store(true);
+    engine.noteOffAll();
+    ignoreDeviceRestartsUntil.store(juce::Time::getMillisecondCounterHiRes() + 6000.0);
+    // Throw the driver instance away and open a new one with the driver's
+    // current preferred buffer size and sample rate: the same thing an
+    // application restart does. Nothing is ever reset "in place".
+    auto setup = manager.getAudioDeviceSetup();
+    setup.bufferSize = 0;
+    setup.sampleRate = 0.0;
+    // Measured on the RME Fireface USB: with a Windows Audio stream open on the
+    // same interface, a new ASIO instance reports the panel's new buffer size but
+    // the hardware keeps the old period, so every callback carries the wrong
+    // amount of audio. Closing the Windows Audio devices first lets the driver
+    // really switch; they are restored right after the ASIO device is up again.
+    std::vector<SuspendedDevice> suspended;
+    if (device->getTypeName().equalsIgnoreCase("ASIO")) suspended = suspendWindowsAudioDevices();
+    manager.closeAudioDevice();
+    const auto error = manager.setAudioDeviceSetup(setup, true);
+    auto* reopened = manager.getCurrentAudioDevice();
+    CrashHandler::note(reason + ": reopened " + name + " (was buffer " + juce::String(oldBuffer) + ") -> "
+        + (error.isNotEmpty() ? "ERROR " + error : juce::String("ok"))
+        + (reopened != nullptr ? "  buffer " + juce::String(reopened->getCurrentBufferSizeSamples())
+            + "  rate " + juce::String(reopened->getCurrentSampleRate(), 0)
+            + "  driver preferred " + juce::String(reopened->getDefaultBufferSize()) : juce::String("  no device")));
+    // Restored from the GUI timer (one device per tick) so the audio tab can
+    // show the new buffer size immediately instead of after all reopenings.
+    for (const auto& entry : suspended) pendingWindowsAudioResume.push_back(entry);
+    if (keyboardsDialogSelectorHook) keyboardsDialogSelectorHook(false);
+    saveSettings();
+    asioRateMismatchSeconds = 0;
+    asioRecoveriesSinceUserAction = 0;   // the automatic recovery sets this afterwards
+    audioDeviceSelectionUnmuteAt = juce::Time::getMillisecondCounterHiRes() + 1200.0;
+}
+
+std::vector<juce::AudioDeviceManager*> MainComponent::allAudioManagers()
+{
+    std::vector<juce::AudioDeviceManager*> managers{ &deviceManager };
+    auto add = [&](juce::AudioDeviceManager* manager)
+    {
+        if (manager != nullptr && std::find(managers.begin(), managers.end(), manager) == managers.end())
+            managers.push_back(manager);
+    };
+    for (auto& host : asioHosts) add(host.get());
+    for (auto& manager : extraAudioManagers) add(manager.get());
+    for (auto& entry : perspectiveAudioRoutes)
+        if (entry.second != nullptr) add(entry.second->manager.get());
+    return managers;
+}
+
+std::vector<MainComponent::SuspendedDevice> MainComponent::suspendWindowsAudioDevices()
+{
+    std::vector<SuspendedDevice> suspended;
+    for (auto* manager : allAudioManagers())
+    {
+        auto* device = manager->getCurrentAudioDevice();
+        if (device == nullptr || device->getTypeName().equalsIgnoreCase("ASIO")) continue;
+        suspended.push_back({ manager, manager->getAudioDeviceSetup() });
+        CrashHandler::note("  closing " + device->getTypeName() + " device '" + device->getName()
+            + "' while the ASIO device is reopened");
+        manager->closeAudioDevice();
+    }
+    return suspended;
+}
+
+void MainComponent::placeDialog(juce::Component& window, const juce::String& key, int defaultWidth, int defaultHeight)
+{
+    // Reopen where the user last had this kind of dialog (any division), as long
+    // as that place is still on a screen; otherwise centre it on the main window.
+    // dialogBounds are kept in screen pixels; a window's own bounds are in its
+    // scaled space (interface size, UIScale.h).
+    bool placed = false;
+    const auto it = dialogBounds.find(key);
+    if (it != dialogBounds.end() && it->second.getWidth() >= 300 && it->second.getHeight() >= 200)
+        for (const auto& display : juce::Desktop::getInstance().getDisplays().displays)
+            if (display.userBounds.toNearestInt().contains(it->second.getTopLeft() + juce::Point<int>(80, 20)))
+            {
+                // Never smaller than the design size while the screen allows it (a
+                // window remembered at another interface size would hide controls).
+                const auto area = UIScale::toWindowSpace(display.userBounds.toNearestInt());
+                auto bounds = UIScale::toWindowSpace(it->second);
+                bounds.setSize(juce::jmin(juce::jmax(bounds.getWidth(), defaultWidth), area.getWidth() - 16),
+                               juce::jmin(juce::jmax(bounds.getHeight(), defaultHeight), area.getHeight() - 40));
+                window.setBounds(bounds.constrainedWithin(area));
+                placed = true;
+                break;
+            }
+    if (!placed)
+    {
+        juce::Rectangle<int> around(0, 0, 1920, 1080);
+        if (auto* top = getTopLevelComponent(); top != nullptr && top != this) around = UIScale::toScreenSpace(top->getBounds());
+        else if (const auto* primary = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()) around = primary->userBounds.toNearestInt();
+        window.setBounds(juce::Rectangle<int>(defaultWidth, defaultHeight).withCentre(UIScale::toWindowSpace(around.getCentre())));
+    }
+    trackedDialogs.erase(std::remove_if(trackedDialogs.begin(), trackedDialogs.end(),
+        [&](const auto& entry) { return entry.first == key || entry.second == nullptr; }), trackedDialogs.end());
+    trackedDialogs.emplace_back(key, juce::Component::SafePointer<juce::Component>(&window));
+}
+
+void MainComponent::rememberDialogBounds()
+{
+    for (auto& entry : trackedDialogs)
+        if (entry.second != nullptr && entry.second->isVisible() && entry.second->getWidth() >= 300)
+            dialogBounds[entry.first] = UIScale::toScreenSpace(entry.second->getBounds());
+}
+
+void MainComponent::resumeWindowsAudioDevices(const std::vector<SuspendedDevice>& suspended)
+{
+    for (const auto& entry : suspended)
+    {
+        const auto error = entry.manager->setAudioDeviceSetup(entry.setup, true);
+        auto* device = entry.manager->getCurrentAudioDevice();
+        CrashHandler::note("  restored " + (device != nullptr ? device->getTypeName() + " device '" + device->getName() + "'"
+            : juce::String("Windows Audio device")) + (error.isNotEmpty() ? "  ERROR " + error : juce::String()));
+    }
+}
+
+namespace
+{
+   #if JUCE_WINDOWS
+    // All visible, titled top-level windows on the desktop. The driver's settings
+    // dialog is not necessarily in our process: RME's "Fireface USB Settings"
+    // belongs to the RME tray application, so a per-process scan never sees it.
+    std::vector<void*> topLevelVisibleWindows()
+    {
+        std::vector<void*> result;
+        EnumWindows([](HWND hwnd, LPARAM param) -> BOOL
+        {
+            if (IsWindowVisible(hwnd) && GetWindowTextLengthW(hwnd) > 0)
+                reinterpret_cast<std::vector<void*>*>(param)->push_back((void*)hwnd);
+            return TRUE;
+        }, reinterpret_cast<LPARAM>(&result));
+        return result;
+    }
+
+    juce::String windowTitle(void* hwnd)
+    {
+        wchar_t text[256]{};
+        GetWindowTextW((HWND)hwnd, text, 255);
+        return juce::String(text);
+    }
+
+    // Does a window title look like the settings dialog of this ASIO driver?
+    // ("ASIO Fireface USB" -> "Fireface USB Settings"). Used for panels that
+    // were already open before our button was pressed.
+    // Only the settings dialog itself: a window of the driver that is not a
+    // settings dialog (RME's TotalMix mixer, "RME TotalMix FX: Fireface UCX")
+    // stays open for the whole session and must never be waited for.
+    bool looksLikeSettingsTitle(const juce::String& title)
+    {
+        return title.containsIgnoreCase("Settings") || title.containsIgnoreCase("Control Panel")
+            || title.containsIgnoreCase("Setup") || title.containsIgnoreCase("Config")
+            || title.containsIgnoreCase("Preferences");
+    }
+    bool isMixerWindowTitle(const juce::String& title)
+    {
+        return title.containsIgnoreCase("TotalMix") || title.containsIgnoreCase("Mixer");
+    }
+    bool titleMatchesDriver(const juce::String& title, const juce::String& deviceName)
+    {
+        if (title.isEmpty() || isMixerWindowTitle(title) || !looksLikeSettingsTitle(title)) return false;
+        for (const auto& token : juce::StringArray::fromTokens(deviceName, " -_()", ""))
+        {
+            if (token.length() < 4) continue;
+            if (token.equalsIgnoreCase("ASIO") || token.equalsIgnoreCase("Driver")
+                || token.equalsIgnoreCase("Audio") || token.equalsIgnoreCase("Device")) continue;
+            if (title.containsIgnoreCase(token)) return true;
+        }
+        return title.containsIgnoreCase("ASIO");
+    }
+   #endif
+}
+
+void MainComponent::openAsioControlPanel(juce::AudioDeviceManager& manager)
+{
+    auto* device = manager.getCurrentAudioDevice();
+    if (device == nullptr || !device->hasControlPanel()) return;
+    CrashHandler::note("Opening control panel of " + device->getName() + " (buffer "
+        + juce::String(device->getCurrentBufferSizeSamples()) + ")");
+   #if JUCE_WINDOWS
+    // Remember the windows we have, open the panel (most drivers return at
+    // once and leave their dialog open), then watch for that dialog to close.
+    // Only then is the device reopened, because only then has the driver stored
+    // the new setting.
+    asioPanelWatch.before = topLevelVisibleWindows();
+    asioPanelWatch.manager = &manager;
+    asioPanelWatch.startedMs = juce::Time::getMillisecondCounterHiRes();
+    asioPanelWatch.panelWindows.clear();
+    asioPanelWatch.closedAtMs = -1.0;
+    asioPanelWatch.deviceName = device->getName();
+    asioPanelWatch.active = true;
+    device->showControlPanel();
+   #else
+    device->showControlPanel();
+    reopenAudioDeviceFresh(manager, "Control panel closed");
+   #endif
+}
+
+void MainComponent::pollAsioPanelWatch()
+{
+   #if JUCE_WINDOWS
+    if (!asioPanelWatch.active) return;
+    const double elapsed = juce::Time::getMillisecondCounterHiRes() - asioPanelWatch.startedMs;
+    if (asioPanelWatch.panelWindows.empty())
+    {
+        if (elapsed < 150.0) return;   // give the driver time to create its dialog
+        for (void* hwnd : topLevelVisibleWindows())
+        {
+            const bool isNew = std::find(asioPanelWatch.before.begin(), asioPanelWatch.before.end(), hwnd)
+                == asioPanelWatch.before.end();
+            const auto title = windowTitle(hwnd);
+            // A panel that was already open (e.g. left open from the tray icon)
+            // is recognised by its title instead. The driver's mixer window
+            // (TotalMix, raised together with the panel) is never the panel: it
+            // stays open and the reopen would wait for it for ever (seen 2026-10-09).
+            if ((isNew && !isMixerWindowTitle(title)) || titleMatchesDriver(title, asioPanelWatch.deviceName))
+            {
+                asioPanelWatch.panelWindows.push_back(hwnd);
+                CrashHandler::note("Control panel window detected: '" + title + "'");
+            }
+            else if (isNew)
+                CrashHandler::note("Control panel: ignoring the window '" + title + "' (not a settings dialog)");
+        }
+        if (asioPanelWatch.panelWindows.empty())
+        {
+            if (elapsed < 2500.0) return;
+            // No dialog appeared (modal panel already closed, or none): reopen now.
+            asioPanelWatch.active = false;
+            CrashHandler::note("Control panel: no dialog window detected, reopening");
+            reopenAudioDeviceFresh(*asioPanelWatch.manager, "Control panel finished");
+        }
+        return;
+    }
+    for (void* hwnd : asioPanelWatch.panelWindows)
+        if (IsWindow((HWND)hwnd) && IsWindowVisible((HWND)hwnd)) return;   // still open
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    if (asioPanelWatch.closedAtMs < 0.0)
+    {
+        // Give the driver a moment to store and apply the new setting before
+        // the device is thrown away and opened afresh.
+        asioPanelWatch.closedAtMs = now;
+        CrashHandler::note("Control panel window closed after " + juce::String(elapsed / 1000.0, 1) + " s");
+        return;
+    }
+    if (now - asioPanelWatch.closedAtMs < 300.0) return;
+    asioPanelWatch.active = false;
+    reopenAudioDeviceFresh(*asioPanelWatch.manager, "Control panel closed");
+   #endif
+}
+
+void MainComponent::checkAudioCallbackHealth()
+{
+    // Once a second: compare what every audio callback really received with
+    // what its device announced. Deviations go to the activity log, so a
+    // "digitally broken" device state leaves objective evidence.
+    int logged = 0;
+    bool asioPeriodMismatch = false;
+    // Which devices carry audio right now: the routes whose callback produced
+    // more than -60 dBFS are listed with their peak levels, at most every 10 s.
+    juce::String levels;
+    const double nowMs = juce::Time::getMillisecondCounterHiRes();
+    std::set<juce::String> anomalousNow;
+    auto check = [&](DivisionAudioCallback* callback)
+    {
+        if (callback == nullptr) return;
+        const auto report = callback->healthReport();
+        if (callback->hadRateMismatch() && callback->isAsio()) asioPeriodMismatch = true;
+        if (report.isNotEmpty())
+        {
+            // A persisting anomaly (a substitute device that never calls back, for
+            // example) is written once when it appears and then once a minute,
+            // not every second; its end is written too.
+            const auto label = callback->label();
+            anomalousNow.insert(label);
+            const auto last = audioAnomalyLastLogMs.find(label);
+            const bool fresh = last == audioAnomalyLastLogMs.end();
+            if ((fresh || nowMs - last->second >= 60000.0) && logged < 4)
+            {
+                ++logged;
+                audioAnomalyLastLogMs[label] = nowMs;
+                CrashHandler::note("Audio callback anomaly" + juce::String(fresh ? ": " : " (continuing): ") + report
+                    + (audioMuted.load() ? "  (muted)" : "") + "  render load "
+                    + juce::String(juce::roundToInt(engine.getRenderLoad() * 100.0f)) + " %");
+            }
+        }
+        const float peak = callback->takePeak();
+        if (peak > 0.001f)
+            levels << (levels.isEmpty() ? "" : " | ") << callback->label() << " "
+                   << juce::String(juce::Decibels::gainToDecibels(peak), 1) << " dB";
+    };
+    check(primaryAudioCallback.get());
+    for (auto& callback : extraAudioCallbacks) check(callback.get());
+    for (auto& entry : perspectiveAudioRoutes)
+        if (entry.second != nullptr) check(entry.second->callback.get());
+    for (auto it = audioAnomalyLastLogMs.begin(); it != audioAnomalyLastLogMs.end();)
+    {
+        if (anomalousNow.count(it->first) == 0)
+        {
+            CrashHandler::note("Audio callback anomaly ended: " + it->first);
+            it = audioAnomalyLastLogMs.erase(it);
+        }
+        else ++it;
+    }
+    if (levels.isNotEmpty() && nowMs - audioLevelsLastLogMs >= 10000.0)
+    {
+        audioLevelsLastLogMs = nowMs;
+        CrashHandler::note("Audio levels: " + levels);
+    }
+
+    // An ASIO device whose callback period contradicts its buffer size for two
+    // consecutive seconds (the buffer was changed in the driver's own panel while
+    // Windows Audio streams were running) is reopened once, with the Windows
+    // Audio devices closed meanwhile. If that does not help, nothing is retried
+    // until the user acts (Driver Control Panel / Reopen device).
+    asioRateMismatchSeconds = asioPeriodMismatch ? asioRateMismatchSeconds + 1 : 0;
+    if (asioRateMismatchSeconds >= 2 && asioRecoveriesSinceUserAction == 0
+        && !asioPanelWatch.active && !applyAllRunning)
+    {
+        asioRateMismatchSeconds = 0;
+        for (auto* manager : allAudioManagers())
+        {
+            auto* device = manager->getCurrentAudioDevice();
+            if (device != nullptr && device->getTypeName().equalsIgnoreCase("ASIO"))
+                reopenAudioDeviceFresh(*manager, "Callback period does not match the buffer size - recovery");
+        }
+        asioRecoveriesSinceUserAction = 1;
+    }
+    else if (asioRateMismatchSeconds == 2 && asioRecoveriesSinceUserAction > 0)
+        CrashHandler::note("ASIO callback period still does not match after the recovery; not retrying automatically");
+}
+
+void MainComponent::reconcileAsioDevices()
+{
+    // Reopen every ASIO device with the driver's current preferred buffer size.
+    const auto managers = allAudioManagers();
+    bool reopened = false;
+    for (auto* manager : managers)
+    {
+        if (manager == nullptr) continue;
+        auto* device = manager->getCurrentAudioDevice();
+        if (device == nullptr || !manager->getCurrentAudioDeviceType().equalsIgnoreCase("ASIO")) continue;
+        if (!reopened)
+        {
+            audioMuted.store(true);
+            engine.noteOffAll();
+            ignoreDeviceRestartsUntil.store(juce::Time::getMillisecondCounterHiRes() + 6000.0);
+            asioPreferredMismatchMs.store(-1.0, std::memory_order_relaxed);
+            reopened = true;
+        }
+        auto setup = manager->getAudioDeviceSetup();
+        const int oldBuffer = device->getCurrentBufferSizeSamples();
+        setup.bufferSize = 0;    // 0 = the driver's preferred (control panel) size
+        setup.sampleRate = 0.0;  // 0 = the driver's current rate
+        CrashHandler::note("ASIO driver reset detected, reopening " + setup.outputDeviceName
+            + " (was buffer " + juce::String(oldBuffer) + ")");
+        // A fresh driver instance, exactly like an application restart.
+        manager->closeAudioDevice();
+        const auto error = manager->setAudioDeviceSetup(setup, true);
+        auto* reopenedDevice = manager->getCurrentAudioDevice();
+        CrashHandler::note("ASIO reopened: " + (error.isNotEmpty() ? "ERROR " + error : juce::String("ok"))
+            + (reopenedDevice != nullptr ? "  buffer " + juce::String(reopenedDevice->getCurrentBufferSizeSamples())
+                + "  rate " + juce::String(reopenedDevice->getCurrentSampleRate(), 0) : juce::String("  no device")));
+    }
+    if (reopened)
+    {
+        // Same managers, same selectors: the dialog only needs to refresh its values.
+        if (keyboardsDialogSelectorHook) keyboardsDialogSelectorHook(false);
+        saveSettings();
+        audioDeviceSelectionUnmuteAt = juce::Time::getMillisecondCounterHiRes() + 1200.0;
+    }
+}
+
+void MainComponent::beginKeyboardLearn(int manualIndex)
+{
+    if (manualIndex < 0 || manualIndex > manualCount) return;
+    static const juce::String names[8]{ "Pedal", "I.", "II.", "III.", "IV.", "V.", "VI.", "VII." };
+    listeningManual.store(manualIndex);
+    if (keyboardLearnWindow != nullptr) keyboardLearnWindow->exitModalState(0);
+
+    auto* learn = new juce::AlertWindow("Keyboard MIDI Learn - " + names[manualIndex],
+        "Press any key on the MIDI keyboard to learn its device and channel.",
+        juce::MessageBoxIconType::NoIcon, this);
+    learn->addButton("Cancel Learn", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    keyboardLearnWindow = learn;
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    learn->enterModalState(true, juce::ModalCallbackFunction::create(
+        [safeThis, manualIndex](int)
+        {
+            if (safeThis == nullptr) return;
+            int expected = manualIndex;
+            safeThis->listeningManual.compare_exchange_strong(expected, -1);
+            safeThis->keyboardLearnWindow = nullptr;
+        }), true);
+}
+
+void MainComponent::showKeyboardLearnMenu(int manualIndex)
+{
+    if (manualIndex < 0 || manualIndex > manualCount) return;
+    juce::PopupMenu menu;
+    menu.addItem(1, "MIDI Learn...");
+    menu.addItem(2, "Clear learned keyboard MIDI",
+        manualConfigs[(size_t)manualIndex].deviceIdentifier.isNotEmpty());
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    menu.showMenuAsync(menuOptionsAtMouse(this),[safeThis, manualIndex](int result)
+    {
+        if (safeThis == nullptr) return;
+        if (result == 1)
+        {
+            safeThis->beginKeyboardLearn(manualIndex);
+        }
+        else if (result == 2)
+        {
+            int expected = manualIndex;
+            safeThis->listeningManual.compare_exchange_strong(expected, -1);
+            if (safeThis->keyboardLearnWindow != nullptr)
+                safeThis->keyboardLearnWindow->exitModalState(0);
+            auto& config = safeThis->manualConfigs[(size_t)manualIndex];
+            config.deviceIdentifier.clear();
+            config.midiChannel = 1;
+            safeThis->saveSettings();
+        }
+    });
+}
+
+void MainComponent::showKeyboardsDialog(int onlyManual)
+{
+    if (keyboardsWindow != nullptr)
+    {
+        if (keyboardsWindowManual == onlyManual)
+        {
+            keyboardsWindow->setVisible(true);
+            keyboardsWindow->toFront(true);
+            keyboardsWindow->grabKeyboardFocus();
+            return;
+        }
+        keyboardsWindow.reset();
+    }
+    keyboardsWindowManual = onlyManual;
+
+    class LearnKeyboard : public juce::MidiKeyboardComponent
+    {
+    public:
+        // velocityOfNewest(velocity) returns the key pressed last (-1: none) and fills its velocity.
+        LearnKeyboard(juce::MidiKeyboardState& state, std::function<void()> learn, std::function<int(int&)> velocityOfNewest = nullptr)
+            : juce::MidiKeyboardComponent(state, horizontalKeyboard), onLearn(std::move(learn)), velocityOf(std::move(velocityOfNewest))
+        {
+            setAvailableRange(0, 127);
+            setLowestVisibleKey(24);
+            setKeyWidth(9.0f);
+            // The velocity numbers on the sounding keys follow the playing: a steady repaint.
+            if (velocityOf) refresh.start(*this);
+        }
+
+        void mouseDown(const juce::MouseEvent& event) override
+        {
+            if (event.mods.isRightButtonDown())
+            {
+                if (onLearn) onLearn();
+                return;
+            }
+            juce::MidiKeyboardComponent::mouseDown(event);
+        }
+
+        // The key pressed last shows its MIDI velocity in a badge over the keys (the
+        // badge is three keys wide, so only the newest key carries one; the keyboard
+        // itself keeps its size).
+        void paint(juce::Graphics& g) override
+        {
+            juce::MidiKeyboardComponent::paint(g);
+            if (!velocityOf) return;
+            int velocity = 0;
+            const int note = velocityOf(velocity);   // the newest held key, its velocity
+            if (note < 0 || velocity <= 0) return;
+            const auto key = getRectangleForKey(note);
+            if (key.isEmpty()) return;
+            const juce::String text(velocity);
+            juce::Rectangle<float> box(key.getCentreX() - 14.0f, key.getBottom() - 30.0f, 28.0f, 14.0f);
+            box = box.constrainedWithin(getLocalBounds().toFloat());
+            g.setColour(juce::Colours::black.withAlpha(0.85f));
+            g.fillRoundedRectangle(box, 3.0f);
+            g.setColour(onColour());
+            g.drawRoundedRectangle(box, 3.0f, 1.0f);
+            g.setColour(juce::Colours::white);
+            g.setFont(juce::FontOptions(11.0f, juce::Font::bold));
+            g.drawText(text, box.toNearestInt(), juce::Justification::centred, false);
+        }
+
+    private:
+        struct Refresh final : public juce::Timer
+        {
+            void start(juce::Component& c) { target = &c; startTimerHz(20); }
+            void timerCallback() override { if (target != nullptr) target->repaint(); }
+            juce::Component* target = nullptr;
+        } refresh;
+        std::function<void()> onLearn;
+        std::function<int(int&)> velocityOf;
+    };
+
+    class LearnSlider : public juce::Slider
+    {
+    public:
+        explicit LearnSlider(std::function<void()> learn) : onLearn(std::move(learn))
+        {
+            setSliderStyle(juce::Slider::LinearHorizontal);
+            setRange(0.0, 1.0, 0.001);
+            setTextBoxStyle(juce::Slider::TextBoxRight, false, 55, 22);
+            setScrollWheelEnabled(true);
+            setDoubleClickReturnValue(true, 1.0);
+        }
+        void mouseDown(const juce::MouseEvent& event) override
+        {
+            if (event.mods.isRightButtonDown())
+            {
+                if (onLearn) onLearn();
+                return;
+            }
+            juce::Slider::mouseDown(event);
+        }
+    private:
+        std::function<void()> onLearn;
+    };
+
+    class KeyboardsDialog : public juce::Component, private juce::Timer
+    {
+    public:
+        class AudioTabPanel final : public juce::Component, private juce::Timer
+        {
+        public:
+            AudioTabPanel(MainComponent& owner, int manual, juce::String perspective,
+                juce::AudioDeviceSelectorComponent* selector)
+                : owner(owner), manual(manual), perspective(std::move(perspective)), selector(selector)
+            {
+                const bool auxiliary = this->perspective.equalsIgnoreCase(SamplerEngine::auxiliaryPerspectiveName());
+                logicalLabel.setText(auxiliary
+                    ? "Auxiliary: the downmix of every perspective of this division, on its own device and channels (for example rear channels with another IR). Silent until a device is chosen."
+                    : "Independent output channels for this perspective:",
+                    juce::dontSendNotification);
+                logicalLabel.setFont(juce::FontOptions(auxiliary ? 13.0f : 15.0f, juce::Font::bold));
+                addAndMakeVisible(logicalLabel);
+                volumeLabel.setText("Perspective volume", juce::dontSendNotification);
+                volumeLabel.setJustificationType(juce::Justification::centredRight);
+                addAndMakeVisible(volumeLabel);
+                volumeSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+                volumeSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 72, 22);
+                volumeSlider.setRange(-31.0, 6.0, 0.1);
+                volumeSlider.setTextValueSuffix(" dB");
+                volumeSlider.textFromValueFunction = [](double value)
+                { return value < -30.5 ? juce::String("-inf") : juce::String(value, 1); };
+                const auto key = MainComponent::perspectiveRouteKey(manual, this->perspective);
+                auto& perspectiveConfig = owner.manualConfigs[(size_t)manual].perspectiveAudio[key];
+                volumeSlider.setValue(perspectiveConfig.volumeDb, juce::dontSendNotification);
+                volumeSlider.setScrollWheelEnabled(true);
+                volumeSlider.setDoubleClickReturnValue(true, 0.0);
+                volumeSlider.getProperties().set("midiTarget", "slider:perspective:"
+                    + juce::String(manual) + ":" + this->perspective);
+                volumeSlider.addMouseListener(&owner, false);
+                volumeSlider.onValueChange = [this]
+                {
+                    auto db = (float)volumeSlider.getValue();
+                    if (db > -31.0f && db < -30.0f)
+                    {
+                        db = db < -30.5f ? -31.0f : -30.0f;
+                        volumeSlider.setValue(db, juce::dontSendNotification);
+                    }
+                    const auto key = MainComponent::perspectiveRouteKey(this->manual, this->perspective);
+                    this->owner.manualConfigs[(size_t)this->manual].perspectiveAudio[key].volumeDb = db;
+                    this->owner.engine.setPerspectiveVolumeDb(this->manual, this->perspective, db);
+                    this->owner.propagateEffectsIfLinked(this->manual, this->perspective);
+                    this->owner.saveSettings();
+                };
+                owner.engine.setPerspectiveVolumeDb(manual, this->perspective,
+                    perspectiveConfig.volumeDb);
+                addAndMakeVisible(volumeSlider);
+                // Channel separation: how much of each pipe leaks into the route's other channels.
+                separationLabel.setText("Channel separation", juce::dontSendNotification);
+                separationLabel.setJustificationType(juce::Justification::centredRight);
+                addAndMakeVisible(separationLabel);
+                separationSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+                separationSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 72, 22);
+                separationSlider.setRange(0.0, 100.0, 1.0);
+                separationSlider.setTextValueSuffix(" %");
+                separationSlider.setValue(perspectiveConfig.channelSeparation * 100.0f, juce::dontSendNotification);
+                separationSlider.setScrollWheelEnabled(true);
+                separationSlider.setDoubleClickReturnValue(true, 100.0);
+                separationSlider.setTooltip("100 % = every pipe only on its own channel pair (mono pipes are spread over the "
+                    "channels). Less lets every channel carry that share of the other channels too; 0 % = all channels "
+                    "carry the same sum.");
+                separationSlider.getProperties().set("midiTarget", "slider:separation:" + juce::String(manual) + ":" + this->perspective);
+                separationSlider.addMouseListener(&owner, false);
+                separationSlider.onValueChange = [this]
+                {
+                    const auto key = MainComponent::perspectiveRouteKey(this->manual, this->perspective);
+                    auto& config = this->owner.manualConfigs[(size_t)this->manual].perspectiveAudio[key];
+                    config.channelSeparation = (float)(separationSlider.getValue() / 100.0);
+                    this->owner.engine.setPerspectiveChannelSeparation(this->manual, this->perspective, config.channelSeparation);
+                    this->owner.propagateEffectsIfLinked(this->manual, this->perspective);
+                    this->owner.saveSettings();
+                };
+                owner.engine.setPerspectiveChannelSeparation(manual, this->perspective, perspectiveConfig.channelSeparation);
+                addAndMakeVisible(separationSlider);
+                channelViewport.setViewedComponent(&channelContent, false);
+                channelViewport.setScrollBarsShown(true, false);
+                addAndMakeVisible(channelViewport);
+                selectorViewport.setViewedComponent(selector, false);
+                // The viewport is given exactly the height of the selector's visible
+                // rows (see resized), so no scroll bar.
+                selectorViewport.setScrollBarsShown(false, false);
+                addAndMakeVisible(selectorViewport);
+                applyAll.setButtonText(auxiliary ? "Set for the auxiliary routes of all divisions"
+                                                 : "Set for all perspectives and divisions (except auxiliary)");
+                applyAll.setTooltip(auxiliary
+                    ? "Copies this audio device (or 'none'), sample rate and buffer size to the auxiliary route of every division. "
+                      "Output channel masks stay individual, except for Aggregated WASAPI, whose selected channels are copied too. "
+                      "Choosing another device on any auxiliary route cancels it."
+                    : "Copies this audio device (or 'none'), sample rate and buffer size to every perspective of every division "
+                      "(the auxiliary routes keep their own). Output channel masks stay individual, except for Aggregated WASAPI, "
+                      "whose selected channels are copied too. Choosing another device anywhere cancels it.");
+                applyAll.setToggleState((auxiliary ? owner.applyAudioToAllAux : owner.applyAudioToAll).load(), juce::dontSendNotification);
+                applyAll.onClick = [this, auxiliary]
+                {
+                    if (applyAll.getToggleState())
+                    {
+                        juce::Component::SafePointer<AudioTabPanel> safeThis(this);
+                        const int m = this->manual;
+                        const juce::String p = this->perspective;
+                        MainComponent* target = &this->owner;
+                        // The rebuild of the dialog destroys this panel; run it asynchronously.
+                        juce::MessageManager::callAsync([target, m, p] { target->applyAudioSetupEverywhere(m, p); });
+                    }
+                    else (auxiliary ? this->owner.applyAudioToAllAux : this->owner.applyAudioToAll).store(false);
+                };
+                addAndMakeVisible(applyAll);
+                panelButton.setButtonText("Driver Control Panel");
+                panelButton.setTooltip("Opens the driver's own settings (e.g. RME buffer size). Afterwards the device is "
+                    "reopened as a fresh instance with the driver's new preferred buffer size.");
+                panelButton.onClick = [this]
+                {
+                    if (this->selector == nullptr) return;
+                    auto* manager = &this->selector->deviceManager;
+                    MainComponent* target = &this->owner;
+                    juce::MessageManager::callAsync([target, manager] { target->openAsioControlPanel(*manager); });
+                };
+                addAndMakeVisible(panelButton);
+                reopenButton.setButtonText("Reopen device");
+                reopenButton.setTooltip("Closes and reopens this device as a fresh driver instance at the driver's "
+                    "preferred buffer size and sample rate.");
+                reopenButton.onClick = [this]
+                {
+                    if (this->selector == nullptr) return;
+                    auto* manager = &this->selector->deviceManager;
+                    MainComponent* target = &this->owner;
+                    juce::MessageManager::callAsync([target, manager] { target->reopenAudioDeviceFresh(*manager, "Reopen button"); });
+                };
+                addAndMakeVisible(reopenButton);
+                // IR reverb of this perspective: impulse response file and dry/wet.
+                irLoadButton.setButtonText("Load IR...");
+                irLoadButton.setTooltip("Impulse response WAV for this perspective's reverb: mono, stereo, or true stereo "
+                    "(4 channels: LL LR RL RR). Applied to the audio stream sent to this perspective's device. "
+                    "Right-click: IR settings (high cut, low cut, pre-delay, wet level, decay).");
+                irLoadButton.addMouseListener(this, false);
+                irLabel.addMouseListener(this, false);
+                irLabel.setTooltip("Right-click: IR settings (high cut, low cut, pre-delay, wet level, decay)");
+                irLoadButton.onClick = [this]
+                {
+                    MainComponent* target = &this->owner;
+                    const int m = this->manual;
+                    const juce::String p = this->perspective;
+                    juce::MessageManager::callAsync([target, m, p] { target->chooseReverbIr(m, p); });
+                };
+                addAndMakeVisible(irLoadButton);
+                irClearButton.setButtonText("Clear");
+                irClearButton.setTooltip("Removes the impulse response (no reverb, no render cost)");
+                irClearButton.onClick = [this]
+                {
+                    const auto routeKey = MainComponent::perspectiveRouteKey(this->manual, this->perspective);
+                    this->owner.manualConfigs[(size_t)this->manual].perspectiveAudio[routeKey].reverbIrPath.clear();
+                    this->owner.applyPerspectiveReverb(this->manual, this->perspective);
+                    this->owner.propagateEffectsIfLinked(this->manual, this->perspective);
+                    this->owner.saveSettings();
+                };
+                addAndMakeVisible(irClearButton);
+                irLabel.setJustificationType(juce::Justification::centredLeft);
+                irLabel.setFont(juce::FontOptions(13.0f));
+                addAndMakeVisible(irLabel);
+                wetLabel.setText("Reverb dry/wet", juce::dontSendNotification);
+                wetLabel.setJustificationType(juce::Justification::centredRight);
+                addAndMakeVisible(wetLabel);
+                // Section captions in the label column, like "Perspective volume".
+                irSectionLabel.setText("IR reverb", juce::dontSendNotification);
+                irSectionLabel.setJustificationType(juce::Justification::centredRight);
+                addAndMakeVisible(irSectionLabel);
+                wetSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+                wetSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 58, 20);
+                wetSlider.setRange(0.0, 100.0, 1.0);
+                wetSlider.setTextValueSuffix(" %");
+                wetSlider.setValue(perspectiveConfig.reverbWet * 100.0f, juce::dontSendNotification);
+                wetSlider.setScrollWheelEnabled(true);
+                wetSlider.setDoubleClickReturnValue(true, 30.0);
+                wetSlider.setTooltip("0 % = dry only (the convolution is skipped), 100 % = reverb only");
+                wetSlider.getProperties().set("midiTarget", "slider:reverb:" + juce::String(manual) + ":" + this->perspective);
+                wetSlider.addMouseListener(&owner, false);
+                wetSlider.onValueChange = [this]
+                {
+                    const auto routeKey = MainComponent::perspectiveRouteKey(this->manual, this->perspective);
+                    auto& config = this->owner.manualConfigs[(size_t)this->manual].perspectiveAudio[routeKey];
+                    config.reverbWet = (float)(wetSlider.getValue() / 100.0);
+                    this->owner.engine.setPerspectiveReverbWet(this->manual, this->perspective, config.reverbWet);
+                    this->owner.propagateEffectsIfLinked(this->manual, this->perspective);
+                    this->owner.saveSettings();
+                };
+                addAndMakeVisible(wetSlider);
+                irApplyAll.setButtonText(auxiliary ? "Set effects for the auxiliary routes of all divisions"
+                                                   : "Set effects for all perspectives and divisions (except auxiliary)");
+                irApplyAll.setTooltip(juce::String("Copies this route's effects (impulse response, dry/wet, IR settings, perspective "
+                    "volume, channel separation) to ") + (auxiliary ? "the auxiliary route of every division"
+                    : "every perspective of every division (the auxiliary routes keep their own)")
+                    + ". Any later change of one route's effects unticks this box (the routes no longer agree): tick it again "
+                      "to copy the new state to all. Independent of the audio device \"set for all\".");
+                irApplyAll.onClick = [this, auxiliary]
+                {
+                    auto& linked = auxiliary ? this->owner.effectsLinkedAux : this->owner.effectsLinked;
+                    linked.store(irApplyAll.getToggleState());
+                    if (!irApplyAll.getToggleState()) return;
+                    MainComponent* target = &this->owner;
+                    const int m = this->manual;
+                    const juce::String p = this->perspective;
+                    juce::MessageManager::callAsync([target, m, p]
+                    {
+                        target->applyingEffectsToAll = true;   // the copies themselves must not untick the box
+                        target->applyEffectsToAllPerspectives(m, p);
+                        target->applyingEffectsToAll = false;
+                    });
+                };
+                addAndMakeVisible(irApplyAll);
+                refreshReverbLabel();
+                startTimerHz(5);
+                refreshChannels();
+            }
+
+            void mouseDown(const juce::MouseEvent& event) override
+            {
+                // Right-click on the IR button or caption: the IR settings dialog.
+                if (event.mods.isPopupMenu() && (event.eventComponent == &irLoadButton || event.eventComponent == &irLabel))
+                {
+                    juce::PopupMenu menu;
+                    menu.addItem(1, "IR settings (high cut, low cut, pre-delay, wet level, decay)...");
+                    MainComponent* target = &owner;
+                    const int m = manual;
+                    const juce::String p = perspective;
+                    menu.showMenuAsync(menuOptionsAtMouse(target), [target, m, p](int result)
+                    {
+                        if (result == 1) target->showReverbToneDialog(m, p);
+                    });
+                }
+            }
+
+            void refreshReverbLabel()
+            {
+                const auto routeKey = MainComponent::perspectiveRouteKey(manual, perspective);
+                const auto& config = owner.manualConfigs[(size_t)manual].perspectiveAudio[routeKey];
+                const auto info = owner.engine.getPerspectiveReverbInfo(manual, perspective);
+                // The caption shows the file name only (without extension); everything
+                // known about the IR is in the tooltip so nothing gets truncated.
+                const juce::File irFile(config.reverbIrPath);
+                juce::String text, tip;
+                if (config.reverbIrPath.isEmpty())
+                {
+                    text = "IR: none";
+                    tip = "No impulse response: no reverb, no render cost. Right-click: IR settings.";
+                }
+                else
+                {
+                    text = "IR: " + irFile.getFileNameWithoutExtension();
+                    if (info.error.isNotEmpty()) text << "  (error)";
+                    else if (info.channels <= 0) text << "  (loading)";
+                    const juce::String kind = info.channels >= 4 ? "true stereo (4 channels: LL LR RL RR)"
+                        : info.channels == 2 ? "stereo" : info.channels == 1 ? "mono" : "unknown";
+                    tip << irFile.getFileName() << "\n" << irFile.getFullPathName() << "\n"
+                        << (info.error.isNotEmpty() ? "Error: " + info.error + "\n" : juce::String())
+                        << "Channels: " << kind << "\nLength: " << juce::String(info.seconds, 2) << " s"
+                        << (info.sampleRate > 0.0 ? " at " + juce::String(info.sampleRate, 0) + " Hz" : juce::String()) << "\n"
+                        << "Dry/wet: " << juce::roundToInt(config.reverbWet * 100.0f) << " %, wet volume "
+                        << juce::String(config.reverbTone.wetDb, 1) << " dB\n"
+                        << "High cut " << juce::roundToInt(config.reverbTone.highCutHz) << " Hz, low cut "
+                        << juce::roundToInt(config.reverbTone.lowCutHz) << " Hz, pre-delay "
+                        << juce::String(config.reverbTone.preDelayMs, 1) << " ms\n"
+                        << "Decay " << juce::roundToInt(config.reverbTone.decayPercent) << " %, fade-out "
+                        << juce::roundToInt(config.reverbTone.fadePercent) << " %\nRight-click: IR settings.";
+                }
+                if (text != irLabel.getText()) irLabel.setText(text, juce::dontSendNotification);
+                if (tip != irLabel.getTooltip()) irLabel.setTooltip(tip);
+                if (std::abs(wetSlider.getValue() - config.reverbWet * 100.0) > 0.5 && !wetSlider.isMouseButtonDown())
+                    wetSlider.setValue(config.reverbWet * 100.0, juce::dontSendNotification);
+                {
+                    // Linked only while the routes of the scope really agree (a loaded
+                    // configuration may have set them apart).
+                    const bool auxiliary = MainComponent::isAuxiliaryPerspective(perspective);
+                    auto& linked = auxiliary ? owner.effectsLinkedAux : owner.effectsLinked;
+                    if (linked.load() && !owner.allRoutesShareEffects(auxiliary)) linked.store(false);
+                    irApplyAll.setToggleState(linked.load(), juce::dontSendNotification);
+                }
+            }
+
+            void resized() override
+            {
+                auto area = getLocalBounds().reduced(4);
+                auto channelsArea = area.removeFromLeft(372);
+                logicalLabel.setBounds(channelsArea.removeFromTop(44));
+                channelViewport.setBounds(channelsArea.reduced(2));
+
+                // Perspective volume belongs to the audio-device side only.
+                // Keep the complete left-hand height available for channels.
+                // The caption sits left of the slider (like the Configuration
+                // Editor): the slider is in the column of the selector's boxes below.
+                // One column of controls: every slider, button row and checkbox has
+                // the same left edge (right of the label column) and the same width.
+                // The columns follow the device selector's own grid (its labels take
+                // 35 % of its width, its boxes the next 60 %; it sits 4 px in and is
+                // 14 px narrower than its viewport), so sliders and boxes line up.
+                const int selectorWidth = area.getWidth() - 8 - 14;
+                const int labelColumnWidth = 4 + juce::roundToInt(selectorWidth * 0.35f);
+                const int controlsWidth = juce::roundToInt(selectorWidth * 0.60f);
+                auto volumeArea = area.removeFromTop(46);
+                volumeLabel.setBounds(volumeArea.getX(), volumeArea.getY() + 11, labelColumnWidth, 24);
+                volumeSlider.setBounds(volumeArea.getX() + labelColumnWidth, volumeArea.getY() + 11, controlsWidth, 24);
+                auto separationArea = area.removeFromTop(30);
+                separationLabel.setBounds(separationArea.getX(), separationArea.getY(), labelColumnWidth, 24);
+                separationSlider.setBounds(separationArea.getX() + labelColumnWidth, separationArea.getY(), controlsWidth, 24);
+                // "IR reverb" section: caption in the label column, file row, dry/wet
+                // and "Set IR for all" in the controls column.
+                auto irBlock = area.removeFromTop(irRowsHeight + 6);
+                layoutIrRows(juce::Rectangle<int>(irBlock.getX(), irBlock.getY() + 4, irBlock.getWidth(), 22),
+                    labelColumnWidth, controlsWidth);
+                // The device selector (type, device, sample rate, buffer size) gets
+                // exactly the height its visible rows need (the channel lists are
+                // hidden), then "Driver Control Panel" / "Reopen device" and "Set for
+                // all" follow directly under the buffer size.
+                auto selectorArea = area.removeFromTop(selectorHeight() + 8);
+                selectorViewport.setBounds(selectorArea.reduced(4));
+                lastSelectorHeight = selectorHeight();
+                auto buttons = juce::Rectangle<int>(area.getX() + labelColumnWidth, area.getY() + 2, controlsWidth, 22);
+                panelButton.setBounds(buttons.removeFromLeft(buttons.getWidth() / 2).reduced(2, 0));
+                reopenButton.setBounds(buttons.reduced(2, 0));
+                applyAll.setBounds(area.getX() + labelColumnWidth + 2, area.getY() + 28, controlsWidth - 4, 22);
+                for (int index = 0; index < channelButtons.size(); ++index)
+                {
+                    auto* button = channelButtons[index];
+                    button->setBounds(4, index * 38 + 2, 342, 34);
+                }
+                channelContent.setSize(352, juce::jmax(channelViewport.getHeight(),
+                    channelButtons.size() * 38 + 4));
+            }
+
+            // Rows of the IR section (row = the full width, 'labelWidth' the label
+            // column, the controls right of it are 'controlsWidth' wide):
+            //   IR reverb      | [Load IR...] [Clear] IR: name
+            //   Reverb dry/wet | slider
+            //                  | [x] Set IR for all perspectives & divisions
+            enum { irRowsHeight = 26 + 26 + 26 };
+            void layoutIrRows(juce::Rectangle<int> row, int labelWidth, int controlsWidth)
+            {
+                auto controls = [&](int y)
+                { return juce::Rectangle<int>(row.getX() + labelWidth, row.getY() + y, controlsWidth, row.getHeight()); };
+                auto caption = [&](int y) { return row.translated(0, y).withWidth(labelWidth); };
+                irSectionLabel.setBounds(caption(0));
+                auto irRow = controls(0);
+                irLoadButton.setBounds(irRow.removeFromLeft(90).reduced(2, 0));
+                irClearButton.setBounds(irRow.removeFromLeft(60).reduced(2, 0));
+                irLabel.setBounds(irRow.reduced(2, 0));
+                wetLabel.setBounds(caption(26));
+                wetSlider.setBounds(controls(26).reduced(2, 0));
+                irApplyAll.setBounds(controls(52).reduced(2, 0));
+            }
+
+            // Height the selector's visible rows really need: the lowest bottom edge
+            // of its visible controls (the hidden channel lists and the JUCE buttons we
+            // replaced do not count). A container with visible children is measured by
+            // its children, so the settings panel's own full-height bounds are ignored.
+            static int visibleBottom(const juce::Component& parent, int offsetY)
+            {
+                int bottom = 0;
+                for (auto* child : parent.getChildren())
+                {
+                    if (child == nullptr || !child->isVisible() || child->getBounds().isEmpty()) continue;
+                    const int own = offsetY + child->getBottom();
+                    const int inner = child->getNumChildComponents() > 0
+                        ? visibleBottom(*child, offsetY + child->getY()) : 0;
+                    // A plain control (combo box, button) is counted by its own bounds;
+                    // a panel by its children.
+                    bottom = juce::jmax(bottom, inner > 0 && dynamic_cast<juce::ComboBox*>(child) == nullptr
+                        && dynamic_cast<juce::Button*>(child) == nullptr ? inner : own);
+                }
+                return bottom;
+            }
+            int selectorHeight()
+            {
+                if (selector == nullptr) return 0;
+                const int width = juce::jmax(400, selectorViewport.getWidth() > 0 ? selectorViewport.getWidth() - 14
+                    : getWidth() - 372 - 30);
+                if (selector->getWidth() != width || selector->getHeight() != 620)
+                {
+                    selector->setSize(width, 620);
+                    // JUCE's layout put the channel list back into the flow; hide it
+                    // again (and pull the rows below it up) before measuring.
+                    hidePhysicalChannelList(*selector);
+                }
+                const int bottom = visibleBottom(*selector, 0);
+                return bottom > 0 ? bottom + 6 : 120;
+            }
+            int lastSelectorHeight = -1;
+
+            // The selector belongs to MainComponent and is recreated whenever the
+            // route moves to another AudioDeviceManager (ASIO <-> private). The
+            // dialog therefore detaches before such a switch and rebinds afterwards.
+            void detachSelector()
+            {
+                selector = nullptr;
+                selectorViewport.setViewedComponent(nullptr, false);
+            }
+            void rebindSelector()
+            {
+                auto* fresh = owner.getAudioSettingsForPerspective(manual, perspective);
+                selector = fresh;
+                selectorViewport.setViewedComponent(fresh, false);
+                knownChannelCount = -1;
+                knownDevice.clear();
+                resized();
+                refreshChannels();
+            }
+
+        private:
+            MainComponent& owner;
+            int manual;
+            juce::String perspective;
+            juce::AudioDeviceSelectorComponent* selector = nullptr;
+            juce::Label logicalLabel;
+            juce::Label volumeLabel, separationLabel;
+            LearnableSlider volumeSlider, separationSlider;
+            juce::Viewport channelViewport, selectorViewport;
+            juce::Component channelContent;
+            juce::OwnedArray<juce::ToggleButton> channelButtons;
+            juce::ToggleButton applyAll;
+            juce::TextButton panelButton, reopenButton;
+            juce::TextButton irLoadButton, irClearButton;
+            juce::Label irLabel, wetLabel, irSectionLabel;
+            LearnableSlider wetSlider;
+            juce::ToggleButton irApplyAll;
+            int knownChannelCount = -1;
+            juce::String knownDevice;
+            bool aggregateMaskUpdatePending = false;
+
+            std::vector<int>& configuredChannels()
+            {
+                if (perspective.equalsIgnoreCase("default"))
+                    return owner.manualConfigs[(size_t)manual].outputChannels;
+                const auto key = MainComponent::perspectiveRouteKey(manual, perspective);
+                return owner.manualConfigs[(size_t)manual].perspectiveAudio[key].outputChannels;
+            }
+
+            void hidePhysicalChannelList(juce::Component& parent)
+            {
+                if (selector == nullptr) return;
+                const bool aggregate = selector->deviceManager.getCurrentAudioDeviceType()
+                    .equalsIgnoreCase("Aggregated WASAPI");
+                for (auto* child : parent.getChildren())
+                {
+                    if (auto* test = dynamic_cast<juce::TextButton*>(child))
+                    {
+                        if (test->getButtonText().equalsIgnoreCase("Test")
+                            && !(bool)test->getProperties().getWithDefault("quietTest", false))
+                        {
+                            test->getProperties().set("quietTest", true);
+                            test->onClick = [this]
+                            {
+                                if (selector != nullptr) owner.playQuietTestTone(selector->deviceManager);
+                            };
+                        }
+                        // JUCE's own "Control Panel" reopens the device with the stored
+                        // (old) buffer size afterwards and "Reset Device" does the same;
+                        // both are replaced by our buttons below the selector.
+                        if (test->getButtonText().equalsIgnoreCase("Control Panel")
+                            || test->getButtonText().equalsIgnoreCase("Reset Device"))
+                            test->setVisible(false);
+                    }
+                    // The physical channel list: a ListBox in JUCE 8, a ChannelSelector in
+                    // JUCE 9 - found through the "Active output channels" label attached to it.
+                    juce::Component* channelList = dynamic_cast<juce::ListBox*>(child);
+                    if (auto* label = dynamic_cast<juce::Label*>(child))
+                        if (label->getText().containsIgnoreCase("Active output channels") || label->getText().containsIgnoreCase("Active input channels"))
+                            channelList = label->getAttachedComponent();
+                    if (channelList != nullptr)
+                    {
+                        const auto old = channelList->getBounds();
+                        if (old.getHeight() > 0)
+                        {
+                            const int shift = old.getHeight() + 6;
+                            for (auto* sibling : parent.getChildren())
+                                if (sibling != channelList && sibling->getY() > old.getY()
+                                    && dynamic_cast<juce::Label*>(sibling) == nullptr)
+                                    sibling->setTopLeftPosition(sibling->getX(), sibling->getY() - shift);
+                            channelList->setBounds({});
+                        }
+                        channelList->setVisible(false);
+                    }
+                    if (auto* label = dynamic_cast<juce::Label*>(child))
+                    {
+                        if (label->getText().containsIgnoreCase("Active output channels"))
+                            label->setVisible(false);
+                        // The aggregate has exactly one virtual device. Selecting it
+                        // is automatic; only our large left-hand channel mask matters.
+                        if (aggregate && label->getText().trim().equalsIgnoreCase("Output:"))
+                        {
+                            if (auto* attached = label->getAttachedComponent())
+                                attached->setVisible(false);
+                            label->setVisible(false);
+                        }
+                    }
+                    hidePhysicalChannelList(*child);
+                }
+            }
+
+            void timerCallback() override
+            {
+                const auto key = MainComponent::perspectiveRouteKey(manual, perspective);
+                {
+                    const auto& config = owner.manualConfigs[(size_t)manual].perspectiveAudio[key];
+                    if (!volumeSlider.isMouseButtonDown()) volumeSlider.setValue(config.volumeDb, juce::dontSendNotification);
+                    if (!separationSlider.isMouseButtonDown())
+                        separationSlider.setValue(config.channelSeparation * 100.0, juce::dontSendNotification);
+                }
+                applyAll.setToggleState((MainComponent::isAuxiliaryPerspective(perspective) ? owner.applyAudioToAllAux
+                    : owner.applyAudioToAll).load(), juce::dontSendNotification);
+                {
+                    auto* device = selector != nullptr ? selector->deviceManager.getCurrentAudioDevice() : nullptr;
+                    panelButton.setEnabled(device != nullptr && device->hasControlPanel());
+                    reopenButton.setEnabled(device != nullptr);
+                }
+                refreshChannels();
+                refreshReverbLabel();
+                // The selector rebuilds its rows when the device type or device changes
+                // (asynchronously); follow with the buttons under the buffer size.
+                if (selector != nullptr && selectorHeight() != lastSelectorHeight) resized();
+            }
+
+            void scheduleAggregateMaskUpdate()
+            {
+                if (aggregateMaskUpdatePending) return;
+                aggregateMaskUpdatePending = true;
+                juce::Component::SafePointer<AudioTabPanel> safeThis(this);
+                juce::MessageManager::callAsync([safeThis]
+                {
+                    if (safeThis == nullptr) return;
+                    auto& self = *safeThis;
+                    self.aggregateMaskUpdatePending = false;
+                    if (self.selector == nullptr || !self.selector->deviceManager.getCurrentAudioDeviceType()
+                            .equalsIgnoreCase("Aggregated WASAPI")) return;
+
+                    juce::BigInteger physical;
+                    const auto& channels = self.configuredChannels();
+                    for (const auto channel : channels) physical.setBit(channel);
+
+                    auto* aggregate = dynamic_cast<AggregatedWASAPIAudioDevice*>(
+                        self.selector->deviceManager.getCurrentAudioDevice());
+                    if (aggregate == nullptr || aggregate->getSelectedOutputChannels() == physical) return;
+                    self.owner.audioMuted.store(true);
+                    self.owner.engine.noteOffAll();
+                    // Refused endpoints drop out of the configuration: the tick boxes
+                    // are rebuilt to show them unticked, with the reason in their names.
+                    // (The list is NOT rebuilt otherwise: a rebuild used to re-tick the
+                    // first two channels a second after the user unticked them all.)
+                    if (self.owner.applyAggregateSelection(self.manual, self.perspective, aggregate))
+                    {
+                        self.knownChannelCount = -1;
+                        self.knownDevice.clear();
+                        self.owner.saveSettings();
+                    }
+                    self.owner.audioDeviceSelectionUnmuteAt =
+                        juce::Time::getMillisecondCounterHiRes() + 1200.0;
+                });
+            }
+
+            void refreshChannels()
+            {
+                if (selector == nullptr) return;
+                hidePhysicalChannelList(*selector);
+                owner.installAsioDeviceInterceptor(*selector, manual, perspective);
+                auto* device = selector->deviceManager.getCurrentAudioDevice();
+                int count = device == nullptr ? 0 : device->getOutputChannelNames().size();
+                if (device != nullptr
+                    && !selector->deviceManager.getCurrentAudioDeviceType().equalsIgnoreCase("ASIO")
+                    && !selector->deviceManager.getCurrentAudioDeviceType().equalsIgnoreCase("Aggregated WASAPI"))
+                {
+                    const auto setup = selector->deviceManager.getAudioDeviceSetup();
+                    const int activeExtent = setup.outputChannels.getHighestBit() + 1;
+                    if (activeExtent > 0) count = juce::jmin(count, activeExtent);
+                    // JUCE's shared "Windows Audio" backend may expose the full
+                    // 64-bit speaker mask for a stereo endpoint (not 64 real DACs).
+                    if (selector->deviceManager.getCurrentAudioDeviceType()
+                            .equalsIgnoreCase("Windows Audio") && count > 2)
+                        count = 2;
+                }
+                const auto identity = selector->deviceManager.getCurrentAudioDeviceType() + "|"
+                    + (device == nullptr ? juce::String() : device->getName());
+                logicalLabel.setText("Independent output channels for this perspective:",
+                    juce::dontSendNotification);
+                logicalLabel.setColour(juce::Label::textColourId, juce::Colours::white);
+                if (count == knownChannelCount && identity == knownDevice) return;
+                knownChannelCount = count;
+                knownDevice = identity;
+                channelButtons.clear();
+                auto& selected = configuredChannels();
+                // Channels beyond the device drop out; a selection that is empty
+                // because of that gets the device's first pair. An empty selection
+                // the user made stays empty (no channel is none, on any device).
+                const bool hadChannels = !selected.empty();
+                selected.erase(std::remove_if(selected.begin(), selected.end(),
+                    [count](int channel) { return channel < 0 || channel >= count; }), selected.end());
+                if (selected.empty() && hadChannels && count > 0)
+                    for (int i = 0; i < juce::jmin(2, count); ++i) selected.push_back(i);
+
+                if (device != nullptr && count > 0
+                    && selector->deviceManager.getCurrentAudioDeviceType()
+                        .equalsIgnoreCase("Aggregated WASAPI"))
+                {
+                    juce::BigInteger requested;
+                    for (const auto channel : selected) requested.setBit(channel);
+                    auto* aggregate = dynamic_cast<AggregatedWASAPIAudioDevice*>(device);
+                    if (aggregate != nullptr && aggregate->getSelectedOutputChannels() != requested)
+                        scheduleAggregateMaskUpdate();
+                }
+
+                if (device != nullptr && count > 0
+                    && selector->deviceManager.getCurrentAudioDeviceType().equalsIgnoreCase("ASIO"))
+                {
+                    auto setup = selector->deviceManager.getAudioDeviceSetup();
+                    juce::BigInteger all;
+                    all.setRange(0, count, true);
+                    if (setup.outputChannels != all)
+                    {
+                        setup.useDefaultOutputChannels = false;
+                        setup.outputChannels = all;
+                        selector->deviceManager.setAudioDeviceSetup(setup, true);
+                    }
+                }
+
+                auto* aggregateDevice = dynamic_cast<AggregatedWASAPIAudioDevice*>(device);
+                for (int channel = 0; channel < count; ++channel)
+                {
+                    juce::String name = juce::String(channel + 1) + ": " + device->getOutputChannelNames()[channel];
+                    // An endpoint the aggregate could not open says so (its channels are none).
+                    if (aggregateDevice != nullptr && aggregateDevice->endpointErrorForChannel(channel).isNotEmpty())
+                        name << "   - " << aggregateDevice->endpointErrorForChannel(channel);
+                    auto* button = channelButtons.add(new juce::ToggleButton(name));
+                    button->setToggleState(std::find(selected.begin(), selected.end(), channel)
+                        != selected.end(), juce::dontSendNotification);
+                    button->onClick = [this, channel, button]
+                    {
+                        auto& channels = configuredChannels();
+                        channels.erase(std::remove(channels.begin(), channels.end(), channel), channels.end());
+                        if (button->getToggleState()) channels.push_back(channel);
+                        std::sort(channels.begin(), channels.end());
+                        if (selector != nullptr && selector->deviceManager.getCurrentAudioDeviceType()
+                                .equalsIgnoreCase("Aggregated WASAPI"))
+                            scheduleAggregateMaskUpdate();
+                        owner.engine.setPerspectiveOutputChannels(manual, perspective, channels);
+                        owner.saveSettings();
+                    };
+                    channelContent.addAndMakeVisible(button);
+                }
+                owner.engine.setPerspectiveOutputChannels(manual, perspective, selected);
+                resized();
+            }
+        };
+
+        explicit KeyboardsDialog(MainComponent& owner, int onlyManual)
+            : owner(owner), onlyManual(onlyManual)
+        {
+            addAndMakeVisible(audioTabs);
+            for (const auto& perspective : owner.engine.getPerspectivesForManual(onlyManual))
+                if (auto* audio = owner.getAudioSettingsForPerspective(onlyManual, perspective))
+                {
+                    auto* panel = audioPanels.add(new AudioTabPanel(owner, onlyManual, perspective, audio));
+                    audioTabs.addTab(perspective, juce::Colours::darkgrey, panel, false);
+                }
+            // Lets MainComponent swap the audio selectors underneath this dialog
+            // instead of closing it when a route changes its device manager.
+            owner.keyboardsDialogSelectorHook = [this](bool detach)
+            {
+                for (auto* panel : audioPanels)
+                    if (detach) panel->detachSelector();
+                    else panel->rebindSelector();
+            };
+            for (int tab = 0; tab < audioTabs.getNumTabs(); ++tab)
+                if (audioTabs.getTabNames()[tab].equalsIgnoreCase(owner.keyboardsWindowAudioTab))
+                {
+                    audioTabs.setCurrentTabIndex(tab, false);
+                    break;
+                }
+            devices = juce::MidiInput::getAvailableDevices();
+            static const juce::String names[8] { "P.", "I.", "II.", "III.", "IV.", "V.", "VI.", "VII." };
+            // Double-click defaults = the factory wind profile (applyDefaultWindProfile).
+            static constexpr double defaultWindDepth[8] { 2.67, 2.17, 2.5, 3.0, 2.33, 1.67, 3.0, 2.17 };
+            static constexpr double defaultWindFrequency[8] { 4.5, 7.5, 5.5, 8.0, 9.0, 5.0, 8.0, 7.5 };
+            static constexpr double defaultWindOscillations[8] { 5.6, 7.0, 5.0, 7.0, 10.0, 8.0, 7.0, 7.0 };
+            static constexpr double defaultWindStrength[8] { 53.3, 25.3, 33.3, 56.7, 66.7, 53.3, 56.7, 25.3 };
+            static constexpr double defaultWindSmoothing[8] { 285.0, 180.0, 225.0, 180.0, 165.0, 203.0, 180.0, 180.0 };
+            static constexpr double defaultTremulantRate[8] { 4.0, 4.4, 4.9, 5.6, 3.7, 9.0, 5.6, 4.4 };
+            static constexpr double defaultTremulantDepth[8] { 6.0, 8.0, 8.0, 10.0, 6.0, 18.0, 10.0, 8.0 };
+            static constexpr double defaultTremulantRankDrift = 260.0;
+
+            for (int manual = 0; manual < SamplerEngine::maxManuals; ++manual)
+            {
+                labels[(size_t)manual].setText(names[manual], juce::dontSendNotification);
+                labels[(size_t)manual].setJustificationType(juce::Justification::centred);
+                labels[(size_t)manual].setFont(juce::FontOptions(18.0f, juce::Font::bold));
+                addAndMakeVisible(labels[(size_t)manual]);
+                // Which program window shows this division (meaningful with two windows).
+                windowBoxes[(size_t)manual].addItem("Window 1", 1);
+                windowBoxes[(size_t)manual].addItem("Window 2", 2);
+                // With one window every division is in window 1, whatever was remembered
+                // for the second window (that comes back when two windows are switched on).
+                windowBoxes[(size_t)manual].setSelectedId(owner.twoWindows ? juce::jlimit(0, 1, owner.divisionScreen[(size_t)manual]) + 1 : 1,
+                    juce::dontSendNotification);
+                windowBoxes[(size_t)manual].setTooltip("The program window this division is shown in (Configuration Editor > Console: "
+                    "two windows). A division is shown in one window only.");
+                windowBoxes[(size_t)manual].onChange = [this, manual]
+                {
+                    const int screen = juce::jlimit(0, 1, windowBoxes[(size_t)manual].getSelectedId() - 1);
+                    if (!this->owner.twoWindows && screen == 0) return;   // one window: nothing to change
+                    this->owner.divisionScreen[(size_t)manual] = screen;
+                    // Window 2 chosen while the program runs with one window: open it.
+                    if (screen == 1 && !this->owner.twoWindows) this->owner.setTwoWindows(true);
+                    this->owner.saveSettings();
+                    if (this->owner.voicer) this->owner.voicer->rebuildUI(this->owner.stopsContent, this->owner.stopsViewport);
+                };
+                addAndMakeVisible(windowBoxes[(size_t)manual]);
+
+                // Right-click: the same MIDI Learn menu and dialog as every other control.
+                auto keyboard = std::make_unique<LearnKeyboard>(
+                    owner.manualKeyboardStates[(size_t)manual],
+                    [this, manual] { this->owner.showKeyboardLearnMenu(manual); },
+                    [this, manual](int& velocity) { return this->owner.newestHeldKey(manual, velocity); });
+                addAndMakeVisible(*keyboard);
+                keyboards[(size_t)manual] = std::move(keyboard);
+
+                auto& device = deviceBoxes[(size_t)manual];
+                deviceLabels[(size_t)manual].setText("MIDI device", juce::dontSendNotification);
+                addAndMakeVisible(deviceLabels[(size_t)manual]);
+                device.addItem("None", 1);
+                for (int i = 0; i < devices.size(); ++i)
+                    device.addItem(devices[i].name, i + 2);
+                device.onChange = [this, manual]
+                {
+                    const int index = deviceBoxes[(size_t)manual].getSelectedId() - 2;
+                    this->owner.manualConfigs[(size_t)manual].deviceIdentifier =
+                        index >= 0 && index < devices.size() ? devices[index].identifier : juce::String();
+                    this->owner.saveSettings();
+                };
+                addAndMakeVisible(device);
+
+                auto& channel = channelBoxes[(size_t)manual];
+                channelLabels[(size_t)manual].setText("MIDI channel", juce::dontSendNotification);
+                addAndMakeVisible(channelLabels[(size_t)manual]);
+                for (int ch = 1; ch <= 16; ++ch)
+                    channel.addItem("Ch " + juce::String(ch), ch);
+                channel.onChange = [this, manual]
+                {
+                    this->owner.manualConfigs[(size_t)manual].midiChannel =
+                        juce::jlimit(1, 16, channelBoxes[(size_t)manual].getSelectedId());
+                    this->owner.saveSettings();
+                };
+                addAndMakeVisible(channel);
+                // Note under the channel: "Shared with <division>" when another
+                // division uses the same MIDI device and channel.
+                channelNotes[(size_t)manual].setFont(juce::FontOptions(12.0f, juce::Font::italic));
+                channelNotes[(size_t)manual].setJustificationType(juce::Justification::centredLeft);
+                channelNotes[(size_t)manual].setColour(juce::Label::textColourId, onColour());
+                channelNotes[(size_t)manual].setTooltip("The same MIDI device and channel feeds these divisions: "
+                    "one key plays all of them.");
+                addAndMakeVisible(channelNotes[(size_t)manual]);
+
+                auto& velocity = velocityButtons[(size_t)manual];
+                velocity.setButtonText("Disable MIDI velocity");
+                velocity.onClick = [this, manual]
+                {
+                    this->owner.manualConfigs[(size_t)manual].disableVelocity =
+                        velocityButtons[(size_t)manual].getToggleState();
+                    this->owner.saveSettings();
+                };
+                addAndMakeVisible(velocity);
+
+                static const juce::String layoutNames[4]
+                    { "Standard", "Short Octave", "CDD#...", "CDE..." };
+                for (int layout = 0; layout < 4; ++layout)
+                {
+                    auto& button = keyboardLayoutButtons[(size_t)manual][(size_t)layout];
+                    button.setButtonText(layoutNames[layout]);
+                    button.setRadioGroupId(700 + manual, juce::dontSendNotification);
+                    button.onClick = [this, manual, layout]
+                    {
+                        if (!keyboardLayoutButtons[(size_t)manual][(size_t)layout].getToggleState())
+                            return;
+                        if (this->owner.manualConfigs[(size_t)manual].bassOctaveLayout == layout)
+                            return;
+                        this->owner.panic();
+                        this->owner.manualConfigs[(size_t)manual].bassOctaveLayout = layout;
+                        this->owner.saveSettings();
+                    };
+                    addAndMakeVisible(button);
+                }
+
+                // Compass of the division: lowest and highest key. Missing pipes of
+                // its stops are filled from neighbours; the voicing sliders cover it.
+                compassLabels[(size_t)manual].setText("Compass:", juce::dontSendNotification);
+                compassLabels[(size_t)manual].setJustificationType(juce::Justification::centredRight);
+                addAndMakeVisible(compassLabels[(size_t)manual]);
+                for (auto* box : { &compassLowBoxes[(size_t)manual], &compassHighBoxes[(size_t)manual] })
+                {
+                    for (int key = 12; key <= 120; ++key)
+                        box->addItem(juce::MidiMessage::getMidiNoteName(key, true, true, 3) + " (" + juce::String(key) + ")", key + 1);
+                    box->setTooltip("Compass of this division (lowest / highest key). Pipes a stop lacks inside it are "
+                        "filled from neighbouring pipes, transposed; the per-key voicing sliders cover this range.");
+                    box->onChange = [this, manual]
+                    {
+                        auto& config = this->owner.manualConfigs[(size_t)manual];
+                        int low = compassLowBoxes[(size_t)manual].getSelectedId() - 1;
+                        int high = compassHighBoxes[(size_t)manual].getSelectedId() - 1;
+                        if (low < 0 || high < 0) return;
+                        if (high < low) std::swap(low, high);
+                        if (config.compassLow == low && config.compassHigh == high) return;
+                        config.compassLow = low;
+                        config.compassHigh = high;
+                        this->owner.engine.setManualCompass(manual, low, high);
+                        compassLowBoxes[(size_t)manual].setSelectedId(low + 1, juce::dontSendNotification);
+                        compassHighBoxes[(size_t)manual].setSelectedId(high + 1, juce::dontSendNotification);
+                        this->owner.saveSettings();
+                        if (this->owner.voicer) this->owner.voicer->rebuildUI(this->owner.stopsContent, this->owner.stopsViewport);
+                    };
+                    addAndMakeVisible(*box);
+                }
+                // MIDI transposition of the keyboard: the keys play this many semitones away.
+                transposeLabels[(size_t)manual].setText("MIDI transposition", juce::dontSendNotification);
+                transposeLabels[(size_t)manual].setJustificationType(juce::Justification::centredLeft);
+                addAndMakeVisible(transposeLabels[(size_t)manual]);
+                {
+                    auto& box = transposeBoxes[(size_t)manual];
+                    for (int semitones = -24; semitones <= 24; ++semitones)
+                        box.addItem((semitones > 0 ? "+" : "") + juce::String(semitones) + " st", semitones + 25);
+                    box.setTooltip("MIDI transposition: the keys of this division's MIDI keyboard play this many semitones "
+                        "away from what they send (-12: key 036 plays the pipe of 024). Default 0.");
+                    box.onChange = [this, manual]
+                    {
+                        auto& config = this->owner.manualConfigs[(size_t)manual];
+                        const int semitones = juce::jlimit(-24, 24, transposeBoxes[(size_t)manual].getSelectedId() - 25);
+                        if (config.midiTranspose == semitones) return;
+                        this->owner.panic();
+                        config.midiTranspose = semitones;
+                        this->owner.refreshMidiRouting();
+                        this->owner.saveSettings();
+                    };
+                    addAndMakeVisible(box);
+                }
+
+                auto& outputs = outputEditors[(size_t)manual];
+                outputLabels[(size_t)manual].setText("Audio output channels (1,2,3...)", juce::dontSendNotification);
+                addAndMakeVisible(outputLabels[(size_t)manual]);
+                outputs.setTextToShowWhenEmpty("Outputs: 1,2...", juce::Colours::grey);
+                outputs.setTooltip("Enter output channel numbers separated by commas; press Enter or click outside to apply.");
+                outputs.onFocusLost = [this, manual]
+                {
+                    juce::StringArray tokens;
+                    tokens.addTokens(outputEditors[(size_t)manual].getText(), ",; ", "");
+                    std::vector<int> channels;
+                    for (const auto& token : tokens)
+                        if (token.getIntValue() > 0) channels.push_back(token.getIntValue() - 1);
+                    this->owner.manualConfigs[(size_t)manual].outputChannels = channels;
+                    this->owner.engine.setManualOutputChannels(manual, channels);
+                    this->owner.saveSettings();
+                };
+                outputs.onReturnKey = outputs.onFocusLost;
+                addAndMakeVisible(outputs);
+
+                auto& divisionVolume = divisionVolumeSliders[(size_t)manual];
+                divisionVolume.setSliderStyle(juce::Slider::LinearHorizontal);
+                divisionVolume.setTextBoxStyle(juce::Slider::TextBoxRight, false, 75, 22);
+                divisionVolume.setRange(-60.0, 12.0, 0.1);
+                divisionVolume.setTextValueSuffix(" dB");
+                divisionVolume.setScrollWheelEnabled(true);
+                divisionVolume.setDoubleClickReturnValue(true, 0.0);
+                divisionVolume.getProperties().set("midiTarget",
+                    "slider:division:" + juce::String(manual) + ":volume");
+                divisionVolume.addMouseListener(&this->owner, false);
+                divisionVolume.onValueChange = [this, manual]
+                {
+                    auto& config = this->owner.manualConfigs[(size_t)manual];
+                    config.divisionVolumeDb = (float)divisionVolumeSliders[(size_t)manual].getValue();
+                    this->owner.engine.setManualDivisionGain(manual,
+                        juce::Decibels::decibelsToGain(config.divisionVolumeDb));
+                    this->owner.saveSettings();
+                };
+                addAndMakeVisible(divisionVolume);
+                divisionVolumeLabels[(size_t)manual].setText("Division volume", juce::dontSendNotification);
+                divisionVolumeLabels[(size_t)manual].setJustificationType(juce::Justification::centredLeft);
+                addAndMakeVisible(divisionVolumeLabels[(size_t)manual]);
+
+                auto& randomTuning = randomTuningButtons[(size_t)manual];
+                randomTuning.setButtonText("Allow Random Tuning Error");
+                randomTuning.onClick = [this, manual]
+                {
+                    const bool allowed = randomTuningButtons[(size_t)manual].getToggleState();
+                    this->owner.manualConfigs[(size_t)manual].allowRandomTuningError = allowed;
+                    this->owner.engine.setManualRandomTuningAllowed(manual, allowed);
+                    this->owner.saveSettings();
+                    refreshControls();
+                };
+                addAndMakeVisible(randomTuning);
+                auto& pipeCoupling = pipeCouplingButtons[(size_t)manual];
+                pipeCoupling.setButtonText("Allow Pipe Coupling");
+                pipeCoupling.onClick = [this, manual]
+                {
+                    const bool allowed = pipeCouplingButtons[(size_t)manual].getToggleState();
+                    this->owner.manualConfigs[(size_t)manual].allowPipeCoupling = allowed;
+                    this->owner.engine.setManualPipeCouplingAllowed(manual, allowed);
+                    this->owner.saveSettings();
+                    refreshControls();
+                };
+                addAndMakeVisible(pipeCoupling);
+
+                auto applyWind = [this, manual]
+                {
+                    auto& config = this->owner.manualConfigs[(size_t)manual];
+                    config.windDepthCents = (float)windDepthSliders[(size_t)manual].getValue();
+                    config.windFrequencyHz = (float)windFrequencySliders[(size_t)manual].getValue();
+                    config.windOscillations = (float)windOscillationSliders[(size_t)manual].getValue();
+                    config.windOscillationStrength = (float)windStrengthSliders[(size_t)manual].getValue();
+                    config.windSmoothingMs = (float)windSmoothingSliders[(size_t)manual].getValue();
+                    uint8_t mask = (uint8_t)(1u << manual);
+                    for (int target = 0; target < SamplerEngine::maxManuals; ++target)
+                        if (windTargetButtons[(size_t)manual][(size_t)target].getToggleState())
+                            mask |= (uint8_t)(1u << target);
+                    config.windTargetMask = mask;
+                    this->owner.engine.setWindModel(manual, config.windDepthCents,
+                        config.windFrequencyHz, config.windOscillations,
+                        config.windOscillationStrength / 50.0f,
+                        config.windSmoothingMs, mask);
+                    this->owner.saveSettings();
+                };
+                auto setupWindSlider = [this, manual, applyWind](LearnableSlider& slider,
+                    juce::Label& label, const juce::String& text, double maximum,
+                    const juce::String& suffix, const juce::String& target, double defaultValue)
+                {
+                    slider.setSliderStyle(juce::Slider::LinearHorizontal);
+                    slider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 62, 20);
+                    slider.setRange(0.0, maximum, 0.1);
+                    slider.setTextValueSuffix(suffix);
+                    slider.setScrollWheelEnabled(true);
+                    slider.setDoubleClickReturnValue(true, defaultValue);
+                    slider.getProperties().set("midiTarget", "slider:division:"
+                        + juce::String(manual) + ":" + target);
+                    slider.addMouseListener(&this->owner, false);
+                    slider.onValueChange = applyWind;
+                    label.setText(text, juce::dontSendNotification);
+                    label.setJustificationType(juce::Justification::centredLeft);
+                    addAndMakeVisible(slider);
+                    addAndMakeVisible(label);
+                };
+                setupWindSlider(windDepthSliders[(size_t)manual], windDepthLabels[(size_t)manual],
+                    "Wind depth", 50.0, " cents", "windDepth",
+                    defaultWindDepth[manual]);
+                setupWindSlider(windFrequencySliders[(size_t)manual], windFrequencyLabels[(size_t)manual],
+                    "Wind frequency", 10.0, " Hz", "windFrequency",
+                    defaultWindFrequency[manual]);
+                windFrequencySliders[(size_t)manual].setRange(4.0, 10.0, 0.1);
+                setupWindSlider(windOscillationSliders[(size_t)manual], windOscillationLabels[(size_t)manual],
+                    "Wind oscillations", 20.0, "x", "windOscillations",
+                    defaultWindOscillations[manual]);
+                setupWindSlider(windStrengthSliders[(size_t)manual], windStrengthLabels[(size_t)manual],
+                    "Wind oscillation strength", 100.0, " %", "windStrength",
+                    defaultWindStrength[manual]);
+                setupWindSlider(windSmoothingSliders[(size_t)manual], windSmoothingLabels[(size_t)manual],
+                    "Windsag lag", 250.0, " ms", "windSmoothing",
+                    defaultWindSmoothing[manual]);
+                windSmoothingSliders[(size_t)manual].setRange(100.0, 400.0, 1.0);
+                windTargetLabels[(size_t)manual].setText("Wind affects:", juce::dontSendNotification);
+                addAndMakeVisible(windTargetLabels[(size_t)manual]);
+                // Folding section headers of the two models (Configuration Editor style;
+                // the state is remembered in the settings).
+                tremulantGroupHeaders[(size_t)manual].setTooltip("Click to show or hide tremulant depth and rank drift");
+                tremulantGroupHeaders[(size_t)manual].onClick = [this]
+                {
+                    this->owner.divisionTremulantExpanded = !this->owner.divisionTremulantExpanded;
+                    this->owner.saveSettings();
+                    resized();
+                };
+                addAndMakeVisible(tremulantGroupHeaders[(size_t)manual]);
+                windGroupHeaders[(size_t)manual].setTooltip("Click to show or hide the wind model details (frequency, "
+                    "oscillations, strength, sag lag, affected divisions)");
+                windGroupHeaders[(size_t)manual].onClick = [this]
+                {
+                    this->owner.divisionWindExpanded = !this->owner.divisionWindExpanded;
+                    this->owner.saveSettings();
+                    resized();
+                };
+                addAndMakeVisible(windGroupHeaders[(size_t)manual]);
+                static const juce::String windNames[8]{ "P.", "I.", "II.", "III.", "IV.", "V.", "VI.", "VII." };
+                for (int target = 0; target < SamplerEngine::maxManuals; ++target)
+                {
+                    auto& button = windTargetButtons[(size_t)manual][(size_t)target];
+                    button.setButtonText(windNames[target]);
+                    button.onClick = applyWind;
+                    addAndMakeVisible(button);
+                }
+                // (The "Stops on the grid" list is gone: the Stop List shows every stop and
+                // transmission, and arrange mode removes them with their "x".)
+                // Aliases, transmissions and pooling change while the dialog is open: relist at once.
+                owner.stopPoolRefresh = [this]
+                {
+                    for (auto& pool : stopPools)
+                        if (pool != nullptr) { pool->rebuildEntries(); pool->resized(); }
+                };
+
+                auto expression = std::make_unique<LearnSlider>([this, manual]
+                {
+                    // Right-click: the same swell MIDI Learn menu as on the main panel.
+                    this->owner.showSwellLearnMenu(manual);
+                });
+                expression->onValueChange = [this, manual, ptr = expression.get()]
+                {
+                    this->owner.setExpressionTarget(manual, (float)ptr->getValue());
+                };
+                addAndMakeVisible(*expression);
+                expressionSliders[(size_t)manual] = std::move(expression);
+
+                auto& attenuation = attenuationSliders[(size_t)manual];
+                attenuation.setSliderStyle(juce::Slider::LinearHorizontal);
+                attenuation.setTextBoxStyle(juce::Slider::TextBoxRight, false, 75, 22);
+                attenuation.setRange(0.0, 60.0, 0.1);
+                attenuation.setTextValueSuffix(" dB");
+                attenuation.setTextBoxStyle(juce::Slider::TextBoxRight, false, 65, 22);
+                attenuation.setScrollWheelEnabled(true);
+                attenuation.setDoubleClickReturnValue(true, 13.0);
+                attenuation.getProperties().set("midiTarget",
+                    "slider:division:" + juce::String(manual) + ":maxSwell");
+                attenuation.addMouseListener(&this->owner, false);
+                attenuation.onValueChange = [this, manual]
+                {
+                    auto& config = this->owner.manualConfigs[(size_t)manual];
+                    config.expressionMaxAttenuationDb =
+                        (float)attenuationSliders[(size_t)manual].getValue();
+                    this->owner.engine.setManualExpressionMaxAttenuationDb(manual, config.expressionMaxAttenuationDb);
+                    this->owner.engine.setManualExpressionGain(manual, this->owner.expressionGainFor(config));
+                    this->owner.saveSettings();
+                };
+                attenuation.setTooltip("Maximum attenuation with the swell shutter fully closed");
+                addAndMakeVisible(attenuation);
+
+                auto setupTremulantSlider = [this, manual](LearnableSlider& slider,
+                    juce::Label& label, const juce::String& text, double minimum,
+                    double maximum, double defaultValue, const juce::String& suffix,
+                    const juce::String& target)
+                {
+                    slider.setSliderStyle(juce::Slider::LinearHorizontal);
+                    slider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 66, 22);
+                    slider.setRange(minimum, maximum, 0.1);
+                    slider.setTextValueSuffix(suffix);
+                    slider.setScrollWheelEnabled(true);
+                    slider.setDoubleClickReturnValue(true, defaultValue);
+                    slider.getProperties().set("midiTarget", "slider:division:"
+                        + juce::String(manual) + ":" + target);
+                    slider.addMouseListener(&this->owner, false);
+                    slider.onValueChange = [this, manual]
+                    {
+                        auto& config = this->owner.manualConfigs[(size_t)manual];
+                        config.tremulantRateHz = (float)tremulantRateSliders[(size_t)manual].getValue();
+                        config.tremulantDepthCents = (float)tremulantDepthSliders[(size_t)manual].getValue();
+                        config.tremulantRankDriftDegrees = (float)tremulantRankDriftSliders[(size_t)manual].getValue();
+                        this->owner.engine.setManualTremulant(manual, config.tremulantEnabled,
+                            config.tremulantRateHz, config.tremulantDepthCents,
+                            config.tremulantRankDriftDegrees);
+                        this->owner.saveSettings();
+                    };
+                    label.setText(text, juce::dontSendNotification);
+                    label.setJustificationType(juce::Justification::centredLeft);
+                    addAndMakeVisible(label);
+                    addAndMakeVisible(slider);
+                };
+                setupTremulantSlider(tremulantRateSliders[(size_t)manual],
+                    tremulantRateLabels[(size_t)manual], "Tremulant Rate", 2.0, 11.0,
+                    defaultTremulantRate[manual], " Hz", "tremulantRate");
+                setupTremulantSlider(tremulantDepthSliders[(size_t)manual],
+                    tremulantDepthLabels[(size_t)manual], "Tremulant Depth", 0.0, 50.0,
+                    defaultTremulantDepth[manual], " cents", "tremulantDepth");
+                setupTremulantSlider(tremulantRankDriftSliders[(size_t)manual],
+                    tremulantRankDriftLabels[(size_t)manual], "Trem. rank drift", 0.0, 360.0,
+                    defaultTremulantRankDrift, " deg", "tremulantRankDrift");
+            }
+
+            // Learn messages only (small, beside the division label); nothing otherwise.
+            status.setText({}, juce::dontSendNotification);
+            status.setFont(juce::FontOptions(12.0f));
+            status.setJustificationType(juce::Justification::centredLeft);
+            status.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+            addAndMakeVisible(status);
+            bassLayoutLabel.setText("Bass octave layout:", juce::dontSendNotification);
+            bassLayoutLabel.setJustificationType(juce::Justification::centredLeft);
+            addAndMakeVisible(bassLayoutLabel);
+            swellHeader.setText("Swell Pedals", juce::dontSendNotification);
+            swellHeader.setJustificationType(juce::Justification::centred);
+            swellHeader.setFont(juce::FontOptions(16.0f, juce::Font::bold));
+            addAndMakeVisible(swellHeader);
+            attenuationHeader.setText("Max. Swell Attenuation", juce::dontSendNotification);
+            attenuationHeader.setJustificationType(juce::Justification::centredLeft);
+            attenuationHeader.setFont(juce::FontOptions(15.0f));
+            addAndMakeVisible(attenuationHeader);
+            doneButton.setButtonText("Done");
+            doneButton.setColour(juce::TextButton::buttonColourId, juce::Colours::darkorange);
+            doneButton.onClick = [this] { finishLearning("Learn complete."); };
+            addAndMakeVisible(doneButton);
+            doneButton.setVisible(false);
+            clearButton.setButtonText("Clear");
+            clearButton.setColour(juce::TextButton::buttonColourId, juce::Colours::darkred);
+            clearButton.onClick = [this] { clearCurrentLearning(); };
+            addAndMakeVisible(clearButton);
+            clearButton.setVisible(false);
+            closeButton.onClick = [this]
+            {
+                this->owner.listeningManual.store(-1);
+                this->owner.listeningExpressionManual.store(-1);
+                if (auto* window = findParentComponentOfClass<juce::DialogWindow>())
+                    window->closeButtonPressed();
+            };
+            addAndMakeVisible(closeButton);
+            closeButton.setButtonText("Close");
+            refreshControls();
+            startTimerHz(10);
+        }
+
+        ~KeyboardsDialog() override
+        {
+            owner.stopPoolRefresh = nullptr;
+            owner.keyboardsDialogSelectorHook = nullptr;
+            owner.listeningManual.store(-1);
+            owner.listeningExpressionManual.store(-1);
+            audioTabs.clearTabs();
+        }
+
+        void resized() override
+        {
+            auto area = getLocalBounds().reduced(12);
+            auto audioArea = area.removeFromBottom(480);
+            closeButton.setBounds(audioArea.removeFromBottom(38).removeFromRight(110).reduced(4));
+            audioTabs.setBounds(audioArea.reduced(4));
+            // No banner line: the division label sits above the MIDI column, the
+            // settings, wind and stop-pool columns start right at the top.
+            attenuationHeader.setVisible(onlyManual >= 0);
+            swellHeader.setVisible(false);
+
+            for (int manual = 0; manual < SamplerEngine::maxManuals; ++manual)
+            {
+                const bool visible = manual <= owner.manualCount
+                    && (onlyManual < 0 || manual == onlyManual);
+                labels[(size_t)manual].setVisible(visible);
+                windowBoxes[(size_t)manual].setVisible(visible);
+                deviceBoxes[(size_t)manual].setVisible(visible);
+                channelBoxes[(size_t)manual].setVisible(visible);
+                channelNotes[(size_t)manual].setVisible(visible);
+                velocityButtons[(size_t)manual].setVisible(visible);
+                for (auto& button : keyboardLayoutButtons[(size_t)manual])
+                    button.setVisible(visible);
+                compassLabels[(size_t)manual].setVisible(visible);
+                compassLowBoxes[(size_t)manual].setVisible(visible);
+                compassHighBoxes[(size_t)manual].setVisible(visible);
+                transposeLabels[(size_t)manual].setVisible(visible);
+                transposeBoxes[(size_t)manual].setVisible(visible);
+                outputEditors[(size_t)manual].setVisible(false);
+                outputLabels[(size_t)manual].setVisible(false);
+                deviceLabels[(size_t)manual].setVisible(visible);
+                channelLabels[(size_t)manual].setVisible(visible);
+                divisionVolumeSliders[(size_t)manual].setVisible(visible);
+                divisionVolumeLabels[(size_t)manual].setVisible(visible);
+                keyboards[(size_t)manual]->setVisible(visible);
+                expressionSliders[(size_t)manual]->setVisible(false);
+                attenuationSliders[(size_t)manual].setVisible(visible);
+                randomTuningButtons[(size_t)manual].setVisible(visible);
+                pipeCouplingButtons[(size_t)manual].setVisible(visible);
+                // Tremulant rate and wind depth stay in view; the rest of each model
+                // opens under "Tremulant +" / "Wind model +" (remembered folding).
+                const bool tremulantMore = visible && owner.divisionTremulantExpanded;
+                const bool windMore = visible && owner.divisionWindExpanded;
+                tremulantRateSliders[(size_t)manual].setVisible(visible);
+                tremulantRateLabels[(size_t)manual].setVisible(visible);
+                tremulantGroupHeaders[(size_t)manual].setVisible(visible);
+                tremulantGroupHeaders[(size_t)manual].setSection("Tremulant", owner.divisionTremulantExpanded);
+                tremulantDepthSliders[(size_t)manual].setVisible(tremulantMore);
+                tremulantRankDriftSliders[(size_t)manual].setVisible(tremulantMore);
+                tremulantDepthLabels[(size_t)manual].setVisible(tremulantMore);
+                tremulantRankDriftLabels[(size_t)manual].setVisible(tremulantMore);
+                windDepthSliders[(size_t)manual].setVisible(visible);
+                windDepthLabels[(size_t)manual].setVisible(visible);
+                windGroupHeaders[(size_t)manual].setVisible(visible);
+                windGroupHeaders[(size_t)manual].setSection("Wind model", owner.divisionWindExpanded);
+                windFrequencySliders[(size_t)manual].setVisible(windMore);
+                windOscillationSliders[(size_t)manual].setVisible(windMore);
+                windStrengthSliders[(size_t)manual].setVisible(windMore);
+                windSmoothingSliders[(size_t)manual].setVisible(windMore);
+                windFrequencyLabels[(size_t)manual].setVisible(windMore);
+                windOscillationLabels[(size_t)manual].setVisible(windMore);
+                windStrengthLabels[(size_t)manual].setVisible(windMore);
+                windSmoothingLabels[(size_t)manual].setVisible(windMore);
+                windTargetLabels[(size_t)manual].setVisible(windMore);
+                for (int target = 0; target < SamplerEngine::maxManuals; ++target)
+                    windTargetButtons[(size_t)manual][(size_t)target].setVisible(
+                        windMore && target <= owner.manualCount);
+                if (stopPools[(size_t)manual]) stopPools[(size_t)manual]->setVisible(visible);
+                if (!visible) continue;
+                labels[(size_t)manual].setFont(juce::FontOptions(30.0f, juce::Font::bold));
+                labels[(size_t)manual].setJustificationType(juce::Justification::centredLeft);
+                const auto fullRow = area.removeFromTop(420);   // the MIDI column: device, channel, three boxes, the transposition line
+                auto row = fullRow;
+                auto bottomStrip = row.removeFromBottom(78);
+                // The layout + compass line is as wide as the keyboard canvas (the last
+                // compass box may stick out a little); the stop pool keeps its column.
+                auto layoutArea = bottomStrip.removeFromTop(30).withWidth(800).reduced(4, 0);
+                auto keyboardArea = bottomStrip.removeFromLeft(700);
+                bassLayoutLabel.setBounds(layoutArea.removeFromLeft(112));
+                static constexpr int layoutWidths[4] { 92, 118, 80, 74 };
+                for (int layout = 0; layout < 4; ++layout)
+                {
+                    keyboardLayoutButtons[(size_t)manual][(size_t)layout].setBounds(
+                        layoutArea.removeFromLeft(layoutWidths[layout]));
+                    layoutArea.removeFromLeft(6);
+                }
+                // Same line: the compass comboboxes.
+                compassLabels[(size_t)manual].setBounds(layoutArea.removeFromLeft(62));
+                layoutArea.removeFromLeft(4);
+                compassLowBoxes[(size_t)manual].setBounds(layoutArea.removeFromLeft(90).reduced(0, 3));
+                layoutArea.removeFromLeft(4);
+                compassHighBoxes[(size_t)manual].setBounds(layoutArea.removeFromLeft(90).reduced(0, 3));
+                keyboards[(size_t)manual]->setBounds(keyboardArea.reduced(4, 4));
+                auto midiArea = row.removeFromLeft(232).reduced(8);   // narrow: leaves room for the stop pool
+                {
+                    // Division label ("I.") above the MIDI column; learn messages (small) beside it.
+                    auto head = midiArea.removeFromTop(40);
+                    labels[(size_t)manual].setBounds(head.removeFromLeft(60));
+                    windowBoxes[(size_t)manual].setBounds(head.removeFromLeft(118).reduced(2, 7));
+                    status.setBounds(head);
+                    // Done / Clear of a learn in progress (hidden otherwise): over the
+                    // foot of the MIDI column, which keeps its full height for the checkboxes.
+                    auto foot = midiArea.removeFromBottom(0).withHeight(28).translated(0, -28);
+                    doneButton.setBounds(foot.removeFromLeft(foot.getWidth() / 2).reduced(2));
+                    clearButton.setBounds(foot.reduced(2));
+                }
+                deviceLabels[(size_t)manual].setBounds(midiArea.removeFromTop(22));
+                deviceBoxes[(size_t)manual].setBounds(midiArea.removeFromTop(38));
+                channelLabels[(size_t)manual].setBounds(midiArea.removeFromTop(22));
+                channelBoxes[(size_t)manual].setBounds(midiArea.removeFromTop(38));
+                channelNotes[(size_t)manual].setBounds(midiArea.removeFromTop(16));
+                velocityButtons[(size_t)manual].setBounds(midiArea.removeFromTop(42));
+                randomTuningButtons[(size_t)manual].setBounds(
+                    midiArea.removeFromTop(34).reduced(0, 2));
+                pipeCouplingButtons[(size_t)manual].setBounds(
+                    midiArea.removeFromTop(34).reduced(0, 2));
+                // The MIDI transposition of the keyboard: the last line of the MIDI column.
+                {
+                    auto line = midiArea.removeFromTop(32).reduced(0, 3);
+                    transposeLabels[(size_t)manual].setBounds(line.removeFromLeft(128));
+                    transposeBoxes[(size_t)manual].setBounds(line.removeFromLeft(84));
+                }
+                row.removeFromLeft(28);
+                auto settingsArea = row.removeFromLeft(260).reduced(8);
+                auto placeSetting = [](juce::Rectangle<int>& settingArea,
+                    juce::Label& label, juce::Slider& slider)
+                {
+                    auto line = settingArea.removeFromTop(40);
+                    label.setBounds(line.removeFromTop(18));
+                    slider.setBounds(line);
+                };
+                placeSetting(settingsArea, divisionVolumeLabels[(size_t)manual],
+                    divisionVolumeSliders[(size_t)manual]);
+                placeSetting(settingsArea, attenuationHeader,
+                    attenuationSliders[(size_t)manual]);
+                placeSetting(settingsArea, tremulantRateLabels[(size_t)manual],
+                    tremulantRateSliders[(size_t)manual]);
+                tremulantGroupHeaders[(size_t)manual].setBounds(settingsArea.removeFromTop(26));
+                if (owner.divisionTremulantExpanded)
+                {
+                    placeSetting(settingsArea, tremulantDepthLabels[(size_t)manual],
+                        tremulantDepthSliders[(size_t)manual]);
+                    placeSetting(settingsArea, tremulantRankDriftLabels[(size_t)manual],
+                        tremulantRankDriftSliders[(size_t)manual]);
+                }
+                row.removeFromLeft(28);
+                auto windArea = row.removeFromLeft(260).reduced(6);
+                auto placeWind = [&](juce::Label& label, juce::Slider& slider)
+                {
+                    auto line = windArea.removeFromTop(38);
+                    label.setBounds(line.removeFromTop(16));
+                    slider.setBounds(line);
+                };
+                placeWind(windDepthLabels[(size_t)manual], windDepthSliders[(size_t)manual]);
+                windGroupHeaders[(size_t)manual].setBounds(windArea.removeFromTop(26));
+                if (owner.divisionWindExpanded)
+                {
+                    placeWind(windFrequencyLabels[(size_t)manual], windFrequencySliders[(size_t)manual]);
+                    placeWind(windOscillationLabels[(size_t)manual], windOscillationSliders[(size_t)manual]);
+                    placeWind(windStrengthLabels[(size_t)manual], windStrengthSliders[(size_t)manual]);
+                    placeWind(windSmoothingLabels[(size_t)manual], windSmoothingSliders[(size_t)manual]);
+                    windTargetLabels[(size_t)manual].setBounds(windArea.removeFromTop(18));
+                    const int targetWidth = 44;
+                    const int perRow = juce::jmax(1, windArea.getWidth() / targetWidth);
+                    for (int target = 0; target <= owner.manualCount; ++target)
+                        windTargetButtons[(size_t)manual][(size_t)target].setBounds(
+                            windArea.getX() + (target % perRow) * targetWidth,
+                            windArea.getY() + (target / perRow) * 25, targetWidth, 24);
+                }
+                // The space right of the wind sliders: which stops are on the grid. The
+                // list runs down to the audio tabs (the layout line stops before it).
+                row.removeFromLeft(16);
+                if (stopPools[(size_t)manual])
+                    stopPools[(size_t)manual]->setBounds(juce::Rectangle<int>(row.getX(), fullRow.getY(), row.getWidth(), fullRow.getHeight()).reduced(6));
+            }
+        }
+
+    private:
+        MainComponent& owner;
+        int onlyManual = -1;
+        juce::Array<juce::MidiDeviceInfo> devices;
+        std::array<juce::Label, SamplerEngine::maxManuals> labels;
+        std::array<juce::ComboBox, SamplerEngine::maxManuals> windowBoxes;   // "Window 1 / 2" of the division
+        std::array<std::unique_ptr<LearnKeyboard>, SamplerEngine::maxManuals> keyboards;
+        std::array<juce::ComboBox, SamplerEngine::maxManuals> deviceBoxes;
+        std::array<juce::Label, SamplerEngine::maxManuals> deviceLabels;
+        std::array<juce::ComboBox, SamplerEngine::maxManuals> channelBoxes;
+        std::array<juce::Label, SamplerEngine::maxManuals> channelLabels;
+        std::array<juce::Label, SamplerEngine::maxManuals> channelNotes;   // "Shared with <division>" under the MIDI channel
+        std::array<juce::ToggleButton, SamplerEngine::maxManuals> velocityButtons;
+        std::array<std::array<juce::ToggleButton, 4>, SamplerEngine::maxManuals> keyboardLayoutButtons;
+        std::array<juce::ComboBox, SamplerEngine::maxManuals> compassLowBoxes, compassHighBoxes;   // division compass (lowest, highest key)
+        std::array<juce::Label, SamplerEngine::maxManuals> compassLabels;
+        std::array<juce::ComboBox, SamplerEngine::maxManuals> transposeBoxes;   // MIDI transposition of the keyboard
+        std::array<juce::Label, SamplerEngine::maxManuals> transposeLabels;
+        std::array<juce::TextEditor, SamplerEngine::maxManuals> outputEditors;
+        std::array<juce::Label, SamplerEngine::maxManuals> outputLabels;
+        std::array<LearnableSlider, SamplerEngine::maxManuals> divisionVolumeSliders;
+        std::array<juce::Label, SamplerEngine::maxManuals> divisionVolumeLabels;
+        std::array<std::unique_ptr<LearnSlider>, SamplerEngine::maxManuals> expressionSliders;
+        std::array<LearnableSlider, SamplerEngine::maxManuals> attenuationSliders;
+        std::array<LearnableSlider, SamplerEngine::maxManuals> tremulantRateSliders, tremulantDepthSliders,
+            tremulantRankDriftSliders;
+        std::array<juce::ToggleButton, SamplerEngine::maxManuals> randomTuningButtons;
+        std::array<juce::ToggleButton, SamplerEngine::maxManuals> pipeCouplingButtons;
+        std::array<LearnableSlider, SamplerEngine::maxManuals> windDepthSliders, windFrequencySliders,
+            windOscillationSliders, windStrengthSliders;
+        std::array<LearnableSlider, SamplerEngine::maxManuals> windSmoothingSliders;
+        std::array<juce::Label, SamplerEngine::maxManuals> windDepthLabels, windFrequencyLabels,
+            windOscillationLabels, windStrengthLabels, windTargetLabels;
+        std::array<juce::Label, SamplerEngine::maxManuals> windSmoothingLabels;
+        std::array<juce::Label, SamplerEngine::maxManuals> tremulantRateLabels, tremulantDepthLabels,
+            tremulantRankDriftLabels;
+        std::array<std::array<juce::ToggleButton, SamplerEngine::maxManuals>, SamplerEngine::maxManuals> windTargetButtons;
+        std::array<SectionHeaderLabel, SamplerEngine::maxManuals> tremulantGroupHeaders, windGroupHeaders;   // "+ Tremulant" / "+ Wind model"
+        // "Stop pool": which stops of the division are shown on the stop grid.
+        struct StopPoolPanel final : public juce::Component
+        {
+            StopPoolPanel(MainComponent& ownerIn, int manualIn) : owner(ownerIn), manual(manualIn)
+            {
+                title.setText("Stops on the grid", juce::dontSendNotification);
+                title.setFont(juce::FontOptions(15.0f, juce::Font::bold));
+                addAndMakeVisible(title);
+                view.setViewedComponent(&content, false);
+                view.setScrollBarsShown(true, false);
+                addAndMakeVisible(view);
+                rebuildEntries();
+            }
+            void rebuildEntries()
+            {
+                boxes.clear();
+                // Entries: the division's own stops (unticked = in the pool, off
+                // the grid; a stop with transmissions stays in RAM for them) and the
+                // transmissions into this division (unticking deletes the
+                // transmission, the same as lowering the count in the stop's voicing).
+                // Sorted alphabetically by the caption shown; an alias is followed by
+                // the automatic name so the entry can still be found.
+                struct Entry { juce::String caption; Stop* stop; int index; };
+                std::vector<Entry> entries;
+                for (auto* stop : owner.engine.getStops())
+                {
+                    if (stop->primaryManual == manual)
+                        entries.push_back({ stop->alias.isNotEmpty() ? stop->alias + "  (" + footageDisplayName(stop->name) + ")"
+                            : footageDisplayName(stop->name), stop, -1 });
+                    for (int index = 0; index < (int)stop->transmissions.size(); ++index)
+                    {
+                        const auto& t = stop->transmissions[(size_t)index];
+                        if (t.manual != manual) continue;
+                        // An aliased transmission shows the name (or alias) of its source stop plus "ext." / "trsm." in brackets.
+                        const auto automatic = SamplerEngine::transmissionCaption(stop, t);
+                        const auto kind = t.manual == stop->primaryManual ? " ext.)" : " trsm.)";
+                        entries.push_back({ t.alias.isNotEmpty() ? t.alias + "  (" + stop->displayName() + kind : automatic, stop, index });
+                    }
+                }
+                std::stable_sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b)
+                { return a.caption.compareNatural(b.caption) < 0; });
+                for (const auto& entry : entries)
+                {
+                    auto* box = boxes.add(new juce::ToggleButton(entry.caption));
+                    if (entry.index < 0)
+                    {
+                        const auto key = entry.stop->name;
+                        box->setToggleState(owner.voicer == nullptr || !owner.voicer->isStopHidden(manual, key),
+                            juce::dontSendNotification);
+                        box->setTooltip(entry.stop->transmissions.empty()
+                            ? "Unticked: off the grid and out of RAM (its samples are released)"
+                            : "Unticked: off the grid; the stop stays in RAM while it has transmissions");
+                        box->onClick = [this, key, box]
+                        {
+                            if (owner.voicer) owner.voicer->setStopHidden(manual, key, !box->getToggleState());
+                        };
+                    }
+                    else
+                    {
+                        auto* stop = entry.stop;
+                        const int index = entry.index;
+                        box->setToggleState(true, juce::dontSendNotification);
+                        box->setTooltip("Transmission of " + stop->displayName() + ": unticking deletes it (like lowering the "
+                            "count in the stop's voicing)");
+                        box->onClick = [this, stop, index]
+                        {
+                            if (owner.voicer) owner.voicer->removeTransmission(stop, index);
+                            juce::Component::SafePointer<StopPoolPanel> safeThis(this);
+                            juce::MessageManager::callAsync([safeThis]
+                            {
+                                if (safeThis != nullptr) { safeThis->rebuildEntries(); safeThis->resized(); }
+                            });
+                        };
+                    }
+                    content.addAndMakeVisible(box);
+                }
+                resized();
+            }
+            void resized() override
+            {
+                auto r = getLocalBounds();
+                title.setBounds(r.removeFromTop(22));
+                view.setBounds(r);
+                const int width = juce::jmax(60, r.getWidth() - 12);
+                content.setSize(width, boxes.size() * 24);
+                int y = 0;
+                for (auto* box : boxes) { box->setBounds(0, y, width, 24); y += 24; }
+            }
+            MainComponent& owner;
+            int manual;
+            juce::Label title;
+            juce::Viewport view;
+            juce::Component content;
+            juce::OwnedArray<juce::ToggleButton> boxes;
+        };
+        std::array<std::unique_ptr<StopPoolPanel>, SamplerEngine::maxManuals> stopPools;
+        juce::Label status;
+        juce::Label bassLayoutLabel;
+        juce::Label swellHeader;
+        juce::Label attenuationHeader;
+        juce::TextButton doneButton;
+        juce::TextButton clearButton;
+        juce::TextButton closeButton;
+        juce::TabbedComponent audioTabs{ juce::TabbedButtonBar::TabsAtTop };
+        juce::OwnedArray<AudioTabPanel> audioPanels;
+        bool blinkState = false;
+        double completionHideTimeMs = -1.0;
+        int keyboardLearnTarget = -1;
+        int expressionLearnTarget = -1;
+
+        void timerCallback() override
+        {
+            refreshControls();
+            const double nowMs = juce::Time::getMillisecondCounterHiRes();
+            if (owner.listeningManual.load() < 0 && status.getText().startsWith("Listening"))
+                finishLearning("Keyboard Learn complete.");
+            if (completionHideTimeMs > 0.0 && nowMs >= completionHideTimeMs)
+            {
+                status.setText({}, juce::dontSendNotification);
+                doneButton.setVisible(false);
+                clearButton.setVisible(false);
+                keyboardLearnTarget = -1;
+                expressionLearnTarget = -1;
+                completionHideTimeMs = -1.0;
+            }
+            // MIDI Learn runs in its own dialog (like every other control): no blinking here.
+            if (completionHideTimeMs < 0.0)
+            {
+                status.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+                status.setAlpha(1.0f);
+            }
+        }
+
+        void refreshControls()
+        {
+            for (int manual = 0; manual < SamplerEngine::maxManuals; ++manual)
+            {
+                const auto& config = owner.manualConfigs[(size_t)manual];
+                int selectedDevice = 1;
+                for (int i = 0; i < devices.size(); ++i)
+                    if (devices[i].identifier == config.deviceIdentifier)
+                        selectedDevice = i + 2;
+                deviceBoxes[(size_t)manual].setSelectedId(selectedDevice, juce::dontSendNotification);
+                channelBoxes[(size_t)manual].setSelectedId(config.midiChannel, juce::dontSendNotification);
+                windowBoxes[(size_t)manual].setSelectedId(owner.twoWindows ? juce::jlimit(0, 1, owner.divisionScreen[(size_t)manual]) + 1 : 1,
+                    juce::dontSendNotification);
+                keyboards[(size_t)manual]->setMidiChannel(config.midiChannel);
+                velocityButtons[(size_t)manual].setToggleState(config.disableVelocity, juce::dontSendNotification);
+                const int keyboardLayout = juce::jlimit(0, 3, config.bassOctaveLayout);
+                for (int layout = 0; layout < 4; ++layout)
+                    keyboardLayoutButtons[(size_t)manual][(size_t)layout].setToggleState(
+                        layout == keyboardLayout, juce::dontSendNotification);
+                compassLowBoxes[(size_t)manual].setSelectedId(config.compassLow + 1, juce::dontSendNotification);
+                compassHighBoxes[(size_t)manual].setSelectedId(config.compassHigh + 1, juce::dontSendNotification);
+                transposeBoxes[(size_t)manual].setSelectedId(juce::jlimit(-24, 24, config.midiTranspose) + 25, juce::dontSendNotification);
+                juce::StringArray outputNames;
+                for (int channel : config.outputChannels) outputNames.add(juce::String(channel + 1));
+                outputEditors[(size_t)manual].setText(outputNames.joinIntoString(","), false);
+                expressionSliders[(size_t)manual]->setValue(config.expressionPosition,
+                    juce::dontSendNotification);
+                attenuationSliders[(size_t)manual].setValue(config.expressionMaxAttenuationDb,
+                    juce::dontSendNotification);
+                tremulantRateSliders[(size_t)manual].setValue(config.tremulantRateHz,
+                    juce::dontSendNotification);
+                tremulantDepthSliders[(size_t)manual].setValue(config.tremulantDepthCents,
+                    juce::dontSendNotification);
+                tremulantRankDriftSliders[(size_t)manual].setValue(config.tremulantRankDriftDegrees,
+                    juce::dontSendNotification);
+                divisionVolumeSliders[(size_t)manual].setValue(config.divisionVolumeDb,
+                    juce::dontSendNotification);
+                randomTuningButtons[(size_t)manual].setToggleState(config.allowRandomTuningError,
+                    juce::dontSendNotification);
+                pipeCouplingButtons[(size_t)manual].setToggleState(config.allowPipeCoupling,
+                    juce::dontSendNotification);
+                pipeCouplingButtons[(size_t)manual].setEnabled(config.allowRandomTuningError);
+                windDepthSliders[(size_t)manual].setValue(config.windDepthCents,
+                    juce::dontSendNotification);
+                windFrequencySliders[(size_t)manual].setValue(config.windFrequencyHz,
+                    juce::dontSendNotification);
+                windOscillationSliders[(size_t)manual].setValue(config.windOscillations,
+                    juce::dontSendNotification);
+                windStrengthSliders[(size_t)manual].setValue(config.windOscillationStrength,
+                    juce::dontSendNotification);
+                windSmoothingSliders[(size_t)manual].setValue(config.windSmoothingMs,
+                    juce::dontSendNotification);
+                const uint8_t windMask = (uint8_t)(config.windTargetMask | (1u << manual));
+                for (int target = 0; target < SamplerEngine::maxManuals; ++target)
+                {
+                    windTargetButtons[(size_t)manual][(size_t)target].setToggleState(
+                        (windMask & (1u << target)) != 0, juce::dontSendNotification);
+                    windTargetButtons[(size_t)manual][(size_t)target].setEnabled(target != manual);
+                }
+                expressionSliders[(size_t)manual]->setTooltip(
+                    config.expressionController >= 0
+                        ? "CC " + juce::String(config.expressionController)
+                            + ", Ch " + juce::String(config.expressionChannel)
+                            + ", learned " + juce::String(config.expressionMinimum)
+                            + "..." + juce::String(config.expressionMaximum)
+                        : "Right-click to learn expression controller");
+            }
+
+            // A small note under the MIDI channel when another division listens to the
+            // same device and channel (one key then plays both divisions).
+            for (int a = 0; a <= owner.manualCount && a < SamplerEngine::maxManuals; ++a)
+            {
+                juce::StringArray others;
+                const auto& ca = owner.manualConfigs[(size_t)a];
+                if (ca.deviceIdentifier.isNotEmpty())
+                    for (int b = 0; b <= owner.manualCount && b < SamplerEngine::maxManuals; ++b)
+                        if (b != a && owner.manualConfigs[(size_t)b].deviceIdentifier == ca.deviceIdentifier
+                            && owner.manualConfigs[(size_t)b].midiChannel == ca.midiChannel)
+                            others.add(labels[(size_t)b].getText().trim());
+                const juce::String note = others.isEmpty() ? juce::String()
+                    : "Shared with " + others.joinIntoString(", ");
+                if (channelNotes[(size_t)a].getText() != note)
+                    channelNotes[(size_t)a].setText(note, juce::dontSendNotification);
+            }
+            if (owner.listeningManual.load() < 0
+                && owner.listeningExpressionManual.load() < 0
+                && completionHideTimeMs < 0.0
+                && status.getText().isNotEmpty())
+            {
+                status.setText({}, juce::dontSendNotification);
+            }
+        }
+
+        void finishLearning(const juce::String& message, double visibleForMs = 2000.0)
+        {
+            owner.listeningManual.store(-1);
+            owner.listeningExpressionManual.store(-1);
+            owner.saveSettings();
+            status.setText(message, juce::dontSendNotification);
+            status.setColour(juce::Label::textColourId, juce::Colours::lightgreen);
+            status.setAlpha(1.0f);
+            doneButton.setVisible(true);
+            clearButton.setVisible(true);
+            completionHideTimeMs = juce::Time::getMillisecondCounterHiRes() + visibleForMs;
+        }
+
+        void clearCurrentLearning()
+        {
+            owner.listeningManual.store(-1);
+            owner.listeningExpressionManual.store(-1);
+            const int keyboardManual = keyboardLearnTarget;
+            const int expressionManual = expressionLearnTarget;
+
+            if (keyboardManual >= 0 && keyboardManual < SamplerEngine::maxManuals)
+            {
+                owner.manualConfigs[(size_t)keyboardManual].deviceIdentifier.clear();
+                owner.saveSettings();
+                finishLearning("Keyboard MIDI assignment cleared.", 700.0);
+                return;
+            }
+
+            if (expressionManual >= 0 && expressionManual < SamplerEngine::maxManuals)
+            {
+                auto& config = owner.manualConfigs[(size_t)expressionManual];
+                config.expressionDeviceIdentifier.clear();
+                config.expressionChannel = 1;
+                config.expressionController = -1;
+                config.expressionMinimum = 127;
+                config.expressionMaximum = 0;
+                config.expressionPosition = 1.0f;
+                owner.expressionTargetPositions[(size_t)expressionManual].store(1.0f);
+                owner.expressionInertiaStages[(size_t)expressionManual] = 1.0f;
+                owner.engine.setManualExpressionGain(expressionManual, 1.0f);
+                owner.saveSettings();
+                finishLearning("Swell MIDI assignment cleared.", 700.0);
+            }
+        }
+    };
+
+    class ModelessKeyboardWindow : public juce::DialogWindow
+    {
+    public:
+        float getDesktopScaleFactor() const override { return UIScale::factor(); }   // interface size, see UIScale.h
+        explicit ModelessKeyboardWindow(std::function<void()> close)
+            : juce::DialogWindow("Divisions", juce::Colours::darkgrey, true, true),
+              onClose(std::move(close))
+        {
+        }
+
+        void closeButtonPressed() override
+        {
+            if (onClose) onClose();
+            setVisible(false);
+        }
+
+    private:
+        std::function<void()> onClose;
+    };
+
+    auto* content = new KeyboardsDialog(*this, onlyManual);
+    const int dialogWidth = onlyManual >= 0 ? 1140 : 1320;
+    const int dialogHeight = onlyManual >= 0 ? 926 : 966;   // the division row (420) + the audio tabs (480) + margins
+    content->setSize(dialogWidth, dialogHeight);
+    keyboardsWindow = std::make_unique<ModelessKeyboardWindow>([this]
+    {
+        listeningManual.store(-1);
+        listeningExpressionManual.store(-1);
+        stopsContent.repaint();
+        repaint();
+    });
+    keyboardsWindow->setUsingNativeTitleBar(true);
+    keyboardsWindow->setResizable(true, true);
+    keyboardsWindow->setContentOwned(new ScrollableContent(content), true);   // scrollbars when the window is smaller
+    placeDialog(*keyboardsWindow, "divisions", dialogWidth, dialogHeight);   // one position for all divisions
+    keyboardsWindow->setVisible(true);
+    keyboardsWindow->toFront(true);
+}
+
+void MainComponent::loadBuiltInTemperaments()
+{
+    temperaments.clear();
+    // The temperament table is part of the executable: Source/temperaments.csv
+    // is turned into TemperamentsData.h by the pre-build step, so the program
+    // stays portable and never looks for the file at run time.
+    {
+        juce::StringArray lines;
+        lines.addLines(juce::String::fromUTF8(kTemperamentsCsv));
+        for (int line = 1; line < lines.size(); ++line)   // line 0 is the header
+        {
+            juce::StringArray fields;
+            fields.addTokens(lines[line], ";", "\"");
+            if (fields.size() < 13 || fields[0].trim().isEmpty()) continue;
+            Temperament temperament;
+            temperament.name = fields[0].trim().unquoted();
+            temperament.builtIn = true;
+            for (int pitch = 0; pitch < 12; ++pitch)
+                temperament.cents[(size_t)pitch] = (float)fields[pitch + 1].trim().getDoubleValue();
+            // Column 14 is the short description (a ';' inside it is kept); it
+            // always starts with a capital letter.
+            juce::StringArray rest;
+            for (int field = 13; field < fields.size(); ++field) rest.add(fields[field]);
+            auto description = rest.joinIntoString(";").trim().unquoted();
+            if (description.isNotEmpty())
+                description = description.substring(0, 1).toUpperCase() + description.substring(1);
+            temperament.description = description;
+            temperaments.push_back(std::move(temperament));
+        }
+    }
+
+    if (temperaments.empty())
+    {
+        Temperament equal;
+        equal.name = "Equal Tempered, Perfect Octave";
+        temperaments.push_back(equal);
+    }
+    baseTemperamentName = selectedTemperamentName = temperaments.front().name;
+    applyTemperamentTuning();
+}
+
+int MainComponent::findTemperament(const juce::String& name) const
+{
+    for (int i = 0; i < (int)temperaments.size(); ++i)
+        if (temperaments[(size_t)i].name.equalsIgnoreCase(name)) return i;
+    return -1;
+}
+
+float MainComponent::temperamentCentsAt(const Temperament& temperament, int pitchClass) const noexcept
+{
+    const int sourcePitch = (pitchClass - temperament.rotation + 24) % 12;
+    return temperament.cents[(size_t)sourcePitch];
+}
+
+juce::String MainComponent::describeRecordedTemperament(const Stop* stop, juce::String* bestName,
+    int* bestRotation, float* bestError) const
+{
+    if (bestName != nullptr) bestName->clear();
+    if (bestRotation != nullptr) *bestRotation = 0;
+    if (bestError != nullptr) *bestError = 0.0f;
+    if (stop == nullptr || !stop->measuredTemperamentValid) return "Temperament: no pitch data";
+    const auto& measured = stop->measuredTemperamentCents;
+    // Spread of the recorded deviations: below 2.5 cents it is simply equal temperament.
+    double spread = 0.0;
+    for (const float c : measured) spread += (double)c * c;
+    spread = std::sqrt(spread / 12.0);
+    juce::String name;
+    int rotation = 0;
+    double best = 1.0e9;
+    for (const auto& temperament : temperaments)
+        for (int r = 0; r < 12; ++r)
+        {
+            // Table rotated to start on pitch class r, mean removed like the measurement.
+            std::array<double, 12> table{};
+            double mean = 0.0;
+            for (int pc = 0; pc < 12; ++pc)
+            {
+                table[(size_t)pc] = temperament.cents[(size_t)((pc - r + 24) % 12)];
+                mean += table[(size_t)pc];
+            }
+            mean /= 12.0;
+            double error = 0.0;
+            for (int pc = 0; pc < 12; ++pc)
+            {
+                const double d = table[(size_t)pc] - mean - measured[(size_t)pc];
+                error += d * d;
+            }
+            error = std::sqrt(error / 12.0);
+            // Prefer the table's own rotation when several rotations of the same
+            // table tie (regular temperaments); between tables the first listed wins.
+            if (error < best - 0.05
+                || (std::abs(error - best) <= 0.05 && r == temperament.rotation && temperament.name == name))
+            {
+                best = error;
+                name = temperament.name;
+                rotation = r;
+            }
+        }
+    // Neidhardt Hof is equal temperament under another name: say "Equal".
+    if (name.startsWithIgnoreCase("Neidhardt Hof") && findTemperament("Equal") >= 0) name = "Equal";
+    // Always the closest table of the Temperaments list; "unknown" only when
+    // nothing fits within 4 cents RMS.
+    juce::String text;
+    if (name.isEmpty() || best > 4.0)
+    {
+        text = "Temperament: unknown (spread " + juce::String(spread, 1) + " c)";
+        if (bestName != nullptr) *bestName = name;   // the closest table is still reported to the caller
+    }
+    else
+    {
+        static const char* pitchNames[12]{ "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+        text = "Temperament: " + name;
+        const int tableRotation = temperaments[(size_t)findTemperament(name)].rotation;
+        if (rotation != tableRotation) text << " (rotation " << pitchNames[rotation] << ")";
+        text << ", error " << juce::String(best, 1) << " c";
+        if (bestName != nullptr) *bestName = name;
+    }
+    if (bestRotation != nullptr) *bestRotation = rotation;
+    if (bestError != nullptr) *bestError = (float)best;
+    return text;
+}
+
+void MainComponent::autoDetectBaseTemperament()
+{
+    // Vote over all ranks with usable data; act only on a clear majority.
+    std::map<std::pair<juce::String, int>, int> votes;
+    int total = 0;
+    for (const auto* stop : engine.getStops())
+    {
+        auto count = [&](const Stop* rank)
+        {
+            // Reasoning for every rank goes to the activity log: the measured
+            // deviations, the recorded a1 and the closest table with its error.
+            juce::String line = "Tuning " + stop->name + " [" + rank->perspective + "]: ";
+            if (!rank->tuningInfoAvailable) { CrashHandler::note(line + "no usable smpl pitch data"); return; }
+            line << "orig a1 " << juce::String(rank->measuredDiapasonHz, 2) << " Hz";
+            if (rank->footageBreaks.isNotEmpty())
+                line << ", footage with breaks " << rank->footageBreaks;
+            else if (rank->footageKnown)
+                line << ", footage " << SamplerEngine::footageName(rank->footageSemitones)
+                     << " (deviations taken per key, so mutations show no rotation)";
+            if (std::abs(rank->detectedCelesteBeats) >= 1.0e-3f)
+                line << ", celeste " << juce::String(rank->detectedCelesteBeats, 2) << " beats/s at a1";
+            if (!rank->measuredTemperamentValid) { CrashHandler::note(line + ", temperament: too few pitch classes"); return; }
+            static const char* pitchNames[12]{ "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+            line << "; cents vs equal (mean removed):";
+            for (int pc = 0; pc < 12; ++pc)
+                line << " " << pitchNames[pc] << juce::String(rank->measuredTemperamentCents[(size_t)pc], 1);
+            juce::String name;
+            int rotation = 0;
+            float error = 0.0f;
+            const auto verdict = describeRecordedTemperament(rank, &name, &rotation, &error);
+            line << "; closest table " << (name.isEmpty() ? juce::String("none") : name)
+                 << " rotated to " << pitchNames[juce::jlimit(0, 11, rotation)]
+                 << ", RMS error " << juce::String(error, 2) << " c -> " << verdict.replace("Temperament: ", "");
+            CrashHandler::note(line);
+            if (name.isEmpty() || error > 4.0f) return;
+            ++votes[{ name, rotation }];
+            ++total;
+        };
+        count(stop);
+        for (const auto& rank : stop->ranks) count(rank.get());
+    }
+    if (total < 3) return;
+    std::pair<juce::String, int> winner;
+    int winnerVotes = 0;
+    for (const auto& entry : votes)
+        if (entry.second > winnerVotes) { winner = entry.first; winnerVotes = entry.second; }
+    if (winnerVotes * 3 < total * 2) return;   // ranks disagree: leave the base temperament alone
+    const int index = findTemperament(winner.first);
+    if (index < 0) return;
+    const bool sameName = baseTemperamentName.equalsIgnoreCase(winner.first);
+    const bool sameRotation = temperaments[(size_t)index].rotation == winner.second;
+    if (sameName && sameRotation) return;
+    temperaments[(size_t)index].rotation = winner.second;
+    CrashHandler::note("Base temperament set from the samples: " + winner.first + " (rotation "
+        + juce::String(winner.second) + "), " + juce::String(winnerVotes) + " of " + juce::String(total) + " ranks");
+    setBaseTemperament(winner.first);
+}
+
+void MainComponent::applyTemperamentTuning()
+{
+    std::array<float, 12> selectedCents{}, baseCents{};
+    const int base = findTemperament(baseTemperamentName);
+    const int selected = findTemperament(selectedTemperamentName);
+    if (base >= 0 && selected >= 0)
+        for (int pitch = 0; pitch < 12; ++pitch)
+        {
+            selectedCents[(size_t)pitch] = temperamentCentsAt(temperaments[(size_t)selected], pitch);
+            baseCents[(size_t)pitch] = temperamentCentsAt(temperaments[(size_t)base], pitch);
+        }
+    // Ranks with a measured recorded temperament retune from that measurement,
+    // normalised (440 Hz) ranks from equal temperament, all others from the base table.
+    engine.setTemperaments(selectedCents, baseCents);
+}
+
+void MainComponent::selectTemperament(const juce::String& name)
+{
+    const int index = findTemperament(name);
+    if (index < 0) return;
+    selectedTemperamentName = temperaments[(size_t)index].name;
+    if (selectedTemperamentName.equalsIgnoreCase(baseTemperamentName))
+        coincidentTemperamentShowsTarget = true;
+    applyTemperamentTuning();
+    saveSettings();
+    if (temperamentsWindow) temperamentsWindow->repaint();
+}
+
+void MainComponent::setBaseTemperament(const juce::String& name)
+{
+    const int index = findTemperament(name);
+    if (index < 0) return;
+    baseTemperamentName = temperaments[(size_t)index].name;
+    if (baseTemperamentName.equalsIgnoreCase(selectedTemperamentName))
+        coincidentTemperamentShowsTarget = false;
+    applyTemperamentTuning();
+    saveSettings();
+    if (temperamentsWindow) temperamentsWindow->repaint();
+}
+
+void MainComponent::deleteCustomTemperament(const juce::String& name)
+{
+    const int index = findTemperament(name);
+    if (index < 0 || temperaments[(size_t)index].builtIn) return;
+    const bool deletedBase = baseTemperamentName.equalsIgnoreCase(name);
+    const bool deletedSelected = selectedTemperamentName.equalsIgnoreCase(name);
+    temperaments.erase(temperaments.begin() + index);
+    if (temperaments.empty()) return;
+    if (deletedBase) baseTemperamentName = temperaments.front().name;
+    if (deletedSelected) selectedTemperamentName = temperaments.front().name;
+    coincidentTemperamentShowsTarget = true;
+    {
+        const juce::ScopedLock lock(midiButtonBindingLock);
+        midiButtonBindings.erase(("temperament:" + name).toStdString());
+    }
+    applyTemperamentTuning();
+    saveSettings();
+}
+
+void MainComponent::showTemperamentsDialog()
+{
+    if (temperamentsWindow != nullptr)
+    {
+        temperamentsWindow->setVisible(true);
+        temperamentsWindow->toFront(true);
+        temperamentsWindow->grabKeyboardFocus();
+        return;
+    }
+
+    class TemperamentsContent final : public juce::Component, private juce::Timer
+    {
+    public:
+        class TemperamentButton final : public LeftOnlyTextButton, private juce::Timer
+        {
+        public:
+            explicit TemperamentButton(const juce::String& text) : LeftOnlyTextButton(text) {}
+            std::function<void()> onSingleClick;
+            std::function<void()> onDoubleClick;
+            void mouseDoubleClick(const juce::MouseEvent& event) override
+            {
+                if (!event.mods.isLeftButtonDown()) return;
+                stopTimer();
+                suppressNextClick = true;
+                if (onDoubleClick) onDoubleClick();
+            }
+        protected:
+            void clicked() override
+            {
+                if (suppressNextClick) { suppressNextClick = false; return; }
+                startTimer(juce::MouseEvent::getDoubleClickTimeout() + 20);
+            }
+        private:
+            void timerCallback() override
+            {
+                stopTimer();
+                if (onSingleClick) onSingleClick();
+            }
+            bool suppressNextClick = false;
+        };
+
+        class Row final : public juce::Component
+        {
+        public:
+            Row(TemperamentsContent& content, const Temperament& temperament)
+                : content(content), name(temperament.name), builtIn(temperament.builtIn),
+                  selectButton(temperament.name)
+            {
+                // Short description from temperaments.csv, shown right of the button
+                // while the details are open (empty when the table has none).
+                descriptionLabel.setText(temperament.description, juce::dontSendNotification);
+                descriptionLabel.setJustificationType(juce::Justification::centredLeft);
+                descriptionLabel.setMinimumHorizontalScale(1.0f);
+                descriptionLabel.setVisible(false);
+                addAndMakeVisible(descriptionLabel);
+                selectButton.onSingleClick = [this] { this->content.owner.selectTemperament(name); };
+                selectButton.onDoubleClick = [this] { this->content.owner.setBaseTemperament(name); };
+                selectButton.getProperties().set("midiTarget", "temperament:" + name);
+                selectButton.addMouseListener(&content.owner, false);
+                addAndMakeVisible(selectButton);
+                detailsButton.setButtonText("+");
+                detailsButton.setTooltip("Show cent deviations");
+                detailsButton.onClick = [this]
+                {
+                    setExpanded(!expanded);
+                    this->content.layoutRows();
+                };
+                addAndMakeVisible(detailsButton);
+                static const juce::String pitchNames[12]
+                    { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+                for (int pitch = 0; pitch < 12; ++pitch)
+                {
+                    auto& label = pitchLabels[(size_t)pitch];
+                    label.setText(pitchNames[pitch], juce::dontSendNotification);
+                    label.setJustificationType(juce::Justification::centred);
+                    label.setVisible(false);
+                    addAndMakeVisible(label);
+                    auto& editor = editors[(size_t)pitch];
+                    editor.setJustification(juce::Justification::centred);
+                    editor.setReadOnly(builtIn);
+                    editor.setColour(juce::TextEditor::backgroundColourId,
+                        builtIn ? juce::Colours::darkgrey : juce::Colours::black);
+                    editor.setTooltip(builtIn ? "Built-in temperament (read-only)"
+                                              : "Editable cent deviation");
+                    editor.setVisible(false);
+                    editor.onFocusLost = [this, pitch] { applyEdit(pitch); };
+                    editor.onReturnKey = [this, pitch] { applyEdit(pitch); };
+                    addAndMakeVisible(editor);
+                }
+                rotationLabel.setText("Rotation", juce::dontSendNotification);
+                rotationLabel.setJustificationType(juce::Justification::centredLeft);
+                rotationLabel.setVisible(false);
+                addAndMakeVisible(rotationLabel);
+                static const juce::String rotationNames[12]
+                    { "C (def.)", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+                for (int pitch = 0; pitch < 12; ++pitch)
+                    rotationBox.addItem(rotationNames[pitch], pitch + 1);
+                rotationBox.setSelectedId(temperament.rotation + 1, juce::dontSendNotification);
+                rotationBox.setVisible(false);
+                rotationBox.onChange = [this]
+                {
+                    const int index = this->content.owner.findTemperament(name);
+                    if (index < 0) return;
+                    this->content.owner.temperaments[(size_t)index].rotation = juce::jlimit(0, 11,
+                        rotationBox.getSelectedId() - 1);
+                    refreshDisplayedValues();
+                    this->content.owner.applyTemperamentTuning();
+                    this->content.owner.saveSettings();
+                };
+                addAndMakeVisible(rotationBox);
+                deleteButton.setButtonText("Delete custom");
+                deleteButton.setVisible(false);
+                deleteButton.onClick = [this]
+                {
+                    juce::Component::SafePointer<TemperamentsContent> safeContent(&this->content);
+                    const auto temperamentName = name;
+                    juce::MessageManager::callAsync([safeContent, temperamentName]
+                    {
+                        if (safeContent == nullptr) return;
+                        safeContent->owner.deleteCustomTemperament(temperamentName);
+                        safeContent->rebuildRows();
+                    });
+                };
+                addAndMakeVisible(deleteButton);
+                refreshDisplayedValues();
+                updateColour();
+            }
+
+            bool isExpanded() const noexcept { return expanded; }
+            void setExpanded(bool shouldExpand)
+            {
+                expanded = shouldExpand;
+                detailsButton.setButtonText(expanded ? "-" : "+");
+                for (auto& label : pitchLabels) label.setVisible(expanded);
+                for (auto& editor : editors) editor.setVisible(expanded);
+                rotationLabel.setVisible(expanded);
+                rotationBox.setVisible(expanded);
+                deleteButton.setVisible(expanded && !builtIn);
+                descriptionLabel.setVisible(expanded && descriptionLabel.getText().isNotEmpty());
+            }
+            int preferredHeight() const noexcept { return expanded ? 126 : 50; }
+            void updateColour()
+            {
+                const bool isBase = content.owner.baseTemperamentName.equalsIgnoreCase(name);
+                const bool isSelected = content.owner.selectedTemperamentName.equalsIgnoreCase(name);
+                const bool showSelected = isSelected && (!isBase
+                    || content.owner.coincidentTemperamentShowsTarget);
+                selectButton.setColour(juce::TextButton::buttonColourId,
+                    showSelected ? onColour()
+                                 : (isBase ? juce::Colours::black : juce::Colours::darkgrey));
+                selectButton.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+                selectButton.repaint();
+            }
+            void resized() override
+            {
+                selectButton.setBounds(5, 0, 200, 50);
+                detailsButton.setBounds(5 + 200 - 15, 50 - 15, 13, 13);
+                detailsButton.toFront(false);
+                if (!expanded) return;
+                // The description sits right of the button on the button's line and may
+                // run (wrapping) as far as the rotation controls' column.
+                descriptionLabel.setBounds(5 + 200 + 10, 0, juce::jmax(50, getWidth() - (5 + 200 + 10) - 155), 50);
+                auto area = getLocalBounds().withTrimmedTop(55).reduced(5, 0);
+                auto controls = area.removeFromRight(145).reduced(5, 0);
+                rotationLabel.setBounds(controls.removeFromTop(20));
+                rotationBox.setBounds(controls.removeFromTop(28));
+                controls.removeFromTop(5);
+                deleteButton.setBounds(controls.removeFromTop(28));
+                const int width = juce::jmax(42, area.getWidth() / 12);
+                for (int pitch = 0; pitch < 12; ++pitch)
+                {
+                    auto cell = area.removeFromLeft(width).reduced(2, 0);
+                    pitchLabels[(size_t)pitch].setBounds(cell.removeFromTop(20));
+                    editors[(size_t)pitch].setBounds(cell.removeFromTop(28));
+                }
+            }
+        private:
+            void refreshDisplayedValues()
+            {
+                const int index = content.owner.findTemperament(name);
+                if (index < 0) return;
+                const auto& temperament = content.owner.temperaments[(size_t)index];
+                for (int pitch = 0; pitch < 12; ++pitch)
+                    editors[(size_t)pitch].setText(juce::String(
+                        content.owner.temperamentCentsAt(temperament, pitch), 3), false);
+            }
+            void applyEdit(int pitch)
+            {
+                if (builtIn) return;
+                const int index = content.owner.findTemperament(name);
+                if (index < 0) return;
+                auto& temperament = content.owner.temperaments[(size_t)index];
+                const int sourcePitch = (pitch - temperament.rotation + 24) % 12;
+                auto& value = temperament.cents[(size_t)sourcePitch];
+                value = juce::jlimit(-1200.0f, 1200.0f,
+                    (float)editors[(size_t)pitch].getText().getDoubleValue());
+                editors[(size_t)pitch].setText(juce::String(value, 3), false);
+                content.owner.applyTemperamentTuning();
+                content.owner.saveSettings();
+            }
+            TemperamentsContent& content;
+            juce::String name;
+            bool builtIn = true, expanded = false;
+            TemperamentButton selectButton;
+            juce::TextButton detailsButton;
+            juce::Label rotationLabel;
+            juce::ComboBox rotationBox;
+            juce::TextButton deleteButton;
+            juce::Label descriptionLabel;
+            std::array<juce::Label, 12> pitchLabels;
+            std::array<juce::TextEditor, 12> editors;
+        };
+
+        explicit TemperamentsContent(MainComponent& owner) : owner(owner)
+        {
+            legend.setText("Single click: select target temperament (orange).  Double-click: set the samples' base temperament (black).  Right-click: MIDI Learn for target selection only.",
+                juce::dontSendNotification);
+            legend.setJustificationType(juce::Justification::centredLeft);
+            legend.setFont(juce::FontOptions(16.0f, juce::Font::bold));
+            addAndMakeVisible(legend);
+            addButton.setButtonText("Add custom temperament");
+            addButton.onClick = [this] { addCustomTemperament(); };
+            addAndMakeVisible(addButton);
+            hideDetailsButton.setButtonText("Hide all details");
+            hideDetailsButton.onClick = [this]
+            {
+                for (auto* row : rows) row->setExpanded(false);
+                layoutRows();
+            };
+            addAndMakeVisible(hideDetailsButton);
+            // Global normalisation of every stop from its recorded smpl pitches.
+            equalButton.setButtonText("Set diapason a1 = 440 Hz (all stops)");
+            equalButton.setTooltip("Retunes every pipe of every stop from its recorded smpl pitch to a1 = 440 Hz; the "
+                "selected temperament (orange) then applies as usual. Footages, fifths, thirds and breaks are kept, the "
+                "recorded diapason and temperament are removed. Stops without pitch data are unaffected. Not touched by Global Reset.");
+            equalButton.setToggleState(owner.equalAt440, juce::dontSendNotification);
+            equalButton.onClick = [this]
+            {
+                this->owner.equalAt440 = equalButton.getToggleState();
+                this->owner.engine.setAllStopsTuneTo440(this->owner.equalAt440);
+                if (this->owner.voicer) this->owner.voicer->rebuildUI(this->owner.stopsContent, this->owner.stopsViewport);
+                this->owner.saveSettings();
+            };
+            addAndMakeVisible(equalButton);
+            viewport.setViewedComponent(&list, false);
+            viewport.setScrollBarsShown(true, false);
+            addAndMakeVisible(viewport);
+            rebuildRows();
+            startTimerHz(10);
+        }
+        void resized() override
+        {
+            auto area = getLocalBounds().reduced(10);
+            legend.setBounds(area.removeFromTop(48));
+            auto buttonRow = area.removeFromTop(36);
+            addButton.setBounds(buttonRow.removeFromLeft(220).reduced(2));
+            hideDetailsButton.setBounds(buttonRow.removeFromLeft(160).reduced(2));
+            buttonRow.removeFromLeft(24);
+            equalButton.setBounds(buttonRow.removeFromLeft(360).reduced(2));
+            area.removeFromTop(6);
+            viewport.setBounds(area);
+            layoutRows();
+        }
+        void layoutRows()
+        {
+            const int width = juce::jmax(760, viewport.getWidth() - viewport.getScrollBarThickness());
+            constexpr int drawWidth = 215;
+            constexpr int collapsedHeight = 50;
+            const int columns = juce::jmax(1, width / drawWidth);
+            int y = 0, gridIndex = 0;
+            for (auto* row : rows)
+            {
+                if (row->isExpanded())
+                {
+                    if (gridIndex > 0) { y += collapsedHeight + 4; gridIndex = 0; }
+                    row->setBounds(0, y, width, row->preferredHeight());
+                    y += row->preferredHeight() + 4;
+                    continue;
+                }
+                const int column = gridIndex % columns;
+                row->setBounds(column * drawWidth, y, drawWidth, collapsedHeight);
+                ++gridIndex;
+                if (gridIndex >= columns)
+                {
+                    y += collapsedHeight + 4;
+                    gridIndex = 0;
+                }
+            }
+            if (gridIndex > 0) y += collapsedHeight + 4;
+            list.setSize(width, juce::jmax(y, viewport.getHeight()));
+        }
+    private:
+        void timerCallback() override
+        {
+            for (auto* row : rows) row->updateColour();
+        }
+        void rebuildRows()
+        {
+            list.removeAllChildren();
+            rows.clear();
+            for (const auto& temperament : owner.temperaments)
+            {
+                auto row = std::make_unique<Row>(*this, temperament);
+                list.addAndMakeVisible(row.get());
+                rows.add(std::move(row));
+            }
+            layoutRows();
+        }
+        void addCustomTemperament()
+        {
+            auto* alert = new juce::AlertWindow("Add custom temperament",
+                "Enter a unique name. Its twelve cent deviations can then be edited in the expanded row.",
+                juce::MessageBoxIconType::NoIcon, this);
+            alert->addTextEditor("name", "Custom temperament", "Name:");
+            alert->addButton("Add", 1);
+            alert->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+            juce::Component::SafePointer<TemperamentsContent> safeThis(this);
+            juce::Component::SafePointer<juce::AlertWindow> safeAlert(alert);
+            alert->enterModalState(true, juce::ModalCallbackFunction::create(
+                [safeThis, safeAlert](int result)
+                {
+                    if (safeThis == nullptr || safeAlert == nullptr || result != 1) return;
+                    auto name = safeAlert->getTextEditorContents("name").trim();
+                    if (name.isEmpty() || safeThis->owner.findTemperament(name) >= 0)
+                    {
+                        juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,
+                            "Add custom temperament", "Please use a non-empty, unique name.");
+                        return;
+                    }
+                    Temperament temperament;
+                    temperament.name = name;
+                    temperament.builtIn = false;
+                    safeThis->owner.temperaments.push_back(std::move(temperament));
+                    safeThis->owner.saveSettings();
+                    safeThis->rebuildRows();
+                }), true);
+        }
+        MainComponent& owner;
+        juce::Label legend;
+        juce::TextButton addButton;
+        juce::TextButton hideDetailsButton;
+        juce::ToggleButton equalButton;
+        juce::Viewport viewport;
+        juce::Component list;
+        juce::OwnedArray<Row> rows;
+    };
+
+    class ModelessTemperamentsWindow final : public juce::DialogWindow
+    {
+    public:
+        ModelessTemperamentsWindow()
+            : juce::DialogWindow("Temperaments", juce::Colours::darkgrey, true, true) {}
+        float getDesktopScaleFactor() const override { return UIScale::factor(); }
+        void closeButtonPressed() override
+        {
+            setVisible(false);
+        }
+    };
+
+    auto* content = new TemperamentsContent(*this);
+    content->setSize(980, 720);
+    temperamentsWindow = std::make_unique<ModelessTemperamentsWindow>();
+    temperamentsWindow->setUsingNativeTitleBar(true);
+    temperamentsWindow->setResizable(true, true);
+    temperamentsWindow->setContentOwned(new ScrollableContent(content), true);
+    placeDialog(*temperamentsWindow, "temperaments", 980, 720);
+    temperamentsWindow->setVisible(true);
+    temperamentsWindow->toFront(true);
+}
+
+//==============================================================================
+// General crescendo
+//==============================================================================
+bool MainComponent::isCrescendoStepStored(int step) const
+{
+    if (step < 1 || step > (int)crescendoSteps.size()) return false;
+    const auto& slot = crescendoSteps[(size_t)step - 1];
+    return !slot.stopData.isEmpty() || !slot.couplerData.isEmpty();
+}
+
+void MainComponent::setCrescendoPosition(float normalized)
+{
+    crescendoPosition = juce::jlimit(0.0f, 1.0f, normalized);
+    const int step = juce::jlimit(0, crescendoStepCount, juce::roundToInt(crescendoPosition * (float)crescendoStepCount));
+    if (step != crescendoStep) applyCrescendoStep(step);
+    if (crescendoDisplay != nullptr) crescendoDisplay->repaint();
+}
+
+void MainComponent::applyCrescendoStep(int step)
+{
+    crescendoStep = juce::jlimit(0, crescendoStepCount, step);
+    if (crescendoEnabled)
+    {
+        // The taught step in force: the step itself or, for an untaught one, the
+        // nearest taught step below it (nothing at step 0).
+        const MemorySlot* taught = nullptr;
+        for (int candidate = crescendoStep; candidate >= 1 && taught == nullptr; --candidate)
+            if (isCrescendoStepStored(candidate)) taught = &crescendoSteps[(size_t)candidate - 1];
+        if (crescendoCancelsHandStops)
+        {
+            // The step is the whole registration - but only the difference is
+            // switched: what is on and not in the step goes off, what the step has
+            // and is off goes on. Everything the steps have in common stays as it
+            // sounds, so held notes never restart between the steps.
+            const auto wanted = taught != nullptr ? registrationOnSet(*taught) : std::set<std::string>();
+            const auto current = registrationOnSet(captureCurrentState());
+            for (const auto& key : current)
+                if (wanted.count(key) == 0) setRegistrationItem(key, false);
+            for (const auto& key : wanted)
+                if (!isRegistrationItemOn(key)) setRegistrationItem(key, true);
+            refreshCouplerRailState();
+        }
+        else
+        {
+            // Hand-registered stops, transmissions and couplers are never touched:
+            // only what the crescendo switched on itself goes off again.
+            const auto wanted = taught != nullptr ? registrationOnSet(*taught) : std::set<std::string>();
+            for (auto it = crescendoAdded.begin(); it != crescendoAdded.end();)
+            {
+                if (wanted.count(*it) == 0) { setRegistrationItem(*it, false); it = crescendoAdded.erase(it); }
+                else ++it;
+            }
+            for (const auto& key : wanted)
+                if (!isRegistrationItemOn(key))
+                {
+                    setRegistrationItem(key, true);
+                    crescendoAdded.insert(key);
+                }
+            refreshCouplerRailState();
+        }
+        if (voicer) voicer->updateStopStates();
+        updateCombinationLights();
+    }
+    if (crescendoDisplay != nullptr) crescendoDisplay->repaint();
+    if (crescendoDialogRefresh) crescendoDialogRefresh();
+}
+
+void MainComponent::setCrescendoEnabled(bool enabled)
+{
+    if (enabled != crescendoEnabled)
+    {
+        if (enabled)
+        {
+            // Remember the hand registration; the current step takes effect at once.
+            crescendoRestore = captureCurrentState();
+            crescendoRestoreValid = true;
+            crescendoAdded.clear();
+            crescendoEnabled = true;
+            applyCrescendoStep(crescendoStep);
+        }
+        else
+        {
+            crescendoEnabled = false;
+            if (crescendoCancelsHandStops)
+            {
+                if (crescendoRestoreValid) applyRegistrationState(crescendoRestore, false);
+            }
+            else
+            {
+                // Only the crescendo's own additions go; hand changes made meanwhile stay.
+                for (const auto& key : crescendoAdded) setRegistrationItem(key, false);
+                refreshCouplerRailState();
+            }
+            crescendoAdded.clear();
+            crescendoRestoreValid = false;
+            if (voicer) voicer->updateStopStates();
+            updateCombinationLights();
+        }
+    }
+    crescendoButton.setToggleState(crescendoEnabled, juce::dontSendNotification);
+    if (crescendoDisplay != nullptr) crescendoDisplay->repaint();
+    if (crescendoDialogRefresh) crescendoDialogRefresh();
+}
+
+namespace
+{
+    // Transmissions switched on in a stored stop state, as (target division,
+    // ordinal within that division). Older memories store a bit mask (ordinal 0).
+    std::vector<std::pair<int, int>> storedTransmissionsOn(const juce::var& stopObj)
+    {
+        std::vector<std::pair<int, int>> result;
+        if (const auto* array = stopObj.getProperty("transmissions", juce::var()).getArray())
+        {
+            std::array<int, SamplerEngine::maxManuals> ordinals{};
+            for (const auto& item : *array)
+            {
+                const int manual = juce::jlimit(0, SamplerEngine::maxManuals - 1, (int)item.getProperty("manual", 0));
+                const int ordinal = ordinals[(size_t)manual]++;
+                if ((bool)item.getProperty("enabled", false)) result.push_back({ manual, ordinal });
+            }
+            return result;
+        }
+        const int mask = (int)stopObj.getProperty("transmissionEnabledMask", 0);
+        for (int target = 0; target < SamplerEngine::maxManuals; ++target)
+            if ((mask & (1 << target)) != 0) result.push_back({ target, 0 });
+        return result;
+    }
+}
+
+// Registration item keys: "stop|manual|perspective|name", "trans|manual|perspective|name|target[|ordinal]", "coupler|id".
+std::set<std::string> MainComponent::registrationOnSet(const MemorySlot& memory) const
+{
+    std::set<std::string> keys;
+    for (const auto& stopObj : memory.stopData)
+    {
+        if (!stopObj.isObject()) continue;
+        const auto name = stopObj.getProperty("name", "").toString();
+        const int manual = juce::jlimit(0, SamplerEngine::maxManuals - 1, (int)stopObj.getProperty("primaryManual", 0));
+        const auto perspective = canonicalPerspectiveName(stopObj.getProperty("perspective", "").toString()).toLowerCase();
+        const auto base = juce::String(manual) + "|" + perspective + "|" + name;
+        if ((bool)stopObj.getProperty("enabled", false)) keys.insert(("stop|" + base).toStdString());
+        for (const auto& [target, ordinal] : storedTransmissionsOn(stopObj))
+            keys.insert(("trans|" + base + "|" + juce::String(target)
+                + (ordinal > 0 ? "|" + juce::String(ordinal) : juce::String())).toStdString());
+    }
+    for (const auto& state : memory.couplerData)
+        if (state.isObject() && (bool)state.getProperty("enabled", false))
+            keys.insert(("coupler|" + state.getProperty("id", "").toString()).toStdString());
+    return keys;
+}
+
+namespace
+{
+    Stop* findStopForKey(juce::OwnedArray<Stop>& stops, const juce::StringArray& fields)
+    {
+        // fields: kind, manual, perspective, name[, target]
+        if (fields.size() < 4) return nullptr;
+        const int manual = fields[1].getIntValue();
+        for (auto* stop : stops)
+            if (stop->primaryManual == manual && stop->name == fields[3]
+                && (fields[2].isEmpty() || stop->perspective.equalsIgnoreCase(fields[2])))
+                return stop;
+        return nullptr;
+    }
+}
+
+bool MainComponent::isRegistrationItemOn(const std::string& key) const
+{
+    const auto fields = juce::StringArray::fromTokens(juce::String(key), "|", "");
+    if (fields.isEmpty()) return false;
+    if (fields[0] == "coupler")
+    {
+        const juce::ScopedLock lock(couplerLock);
+        for (const auto& coupler : couplers) if (coupler.id == fields[1]) return coupler.enabled;
+        return false;
+    }
+    auto* stop = findStopForKey(const_cast<SamplerEngine&>(engine).getStops(), fields);
+    if (stop == nullptr) return false;
+    if (fields[0] == "stop") return stop->enabled;
+    if (fields[0] == "trans" && fields.size() >= 5)
+    {
+        const int index = stop->transmissionIndex(juce::jlimit(0, SamplerEngine::maxManuals - 1, fields[4].getIntValue()),
+            fields.size() >= 6 ? fields[5].getIntValue() : 0);
+        return index >= 0 && stop->transmissions[(size_t)index].enabled;
+    }
+    return false;
+}
+
+void MainComponent::setRegistrationItem(const std::string& key, bool on)
+{
+    const auto fields = juce::StringArray::fromTokens(juce::String(key), "|", "");
+    if (fields.isEmpty()) return;
+    if (fields[0] == "coupler")
+    {
+        const juce::ScopedLock lock(couplerLock);
+        if (auto* coupler = findCoupler(fields[1]))
+        {
+            coupler->enabled = on;
+            for (int source = 0; source <= manualCount; ++source) recomputeCouplersForSource(source);
+        }
+        return;
+    }
+    auto* stop = findStopForKey(engine.getStops(), fields);
+    if (stop == nullptr) return;
+    if (fields[0] == "stop") engine.setStopEnabled(stop, on);
+    else if (fields[0] == "trans" && fields.size() >= 5)
+    {
+        const int index = stop->transmissionIndex(juce::jlimit(0, SamplerEngine::maxManuals - 1, fields[4].getIntValue()),
+            fields.size() >= 6 ? fields[5].getIntValue() : 0);
+        if (index >= 0) engine.setTransmissionEnabled(stop, index, on);
+    }
+}
+
+void MainComponent::allStopsAndCouplersOff()
+{
+    for (auto* stop : engine.getStops())
+    {
+        engine.setStopEnabled(stop, false);
+        for (int index = 0; index < (int)stop->transmissions.size(); ++index)
+            engine.setTransmissionEnabled(stop, index, false);
+    }
+    {
+        const juce::ScopedLock lock(couplerLock);
+        for (auto& coupler : couplers) coupler.enabled = false;
+        for (int source = 0; source <= manualCount; ++source) recomputeCouplersForSource(source);
+    }
+    refreshCouplerRailState();
+}
+
+void MainComponent::applyRegistrationAdditive(const MemorySlot& memory)
+{
+    auto& stops = engine.getStops();
+    for (const auto& stopObj : memory.stopData)
+    {
+        if (!stopObj.isObject()) continue;
+        const auto name = stopObj.getProperty("name", "").toString();
+        const int savedManual = juce::jlimit(0, SamplerEngine::maxManuals - 1, (int)stopObj.getProperty("primaryManual", 0));
+        const auto savedPerspective = canonicalPerspectiveName(stopObj.getProperty("perspective", "").toString());
+        for (auto* stop : stops)
+        {
+            if (stop->name != name || stop->primaryManual != savedManual
+                || (savedPerspective.isNotEmpty() && !stop->perspective.equalsIgnoreCase(savedPerspective)))
+                continue;
+            if ((bool)stopObj.getProperty("enabled", false)) engine.setStopEnabled(stop, true);
+            for (const auto& [target, ordinal] : storedTransmissionsOn(stopObj))
+            {
+                const int index = stop->transmissionIndex(target, ordinal);
+                if (index >= 0) engine.setTransmissionEnabled(stop, index, true);
+            }
+            break;
+        }
+    }
+    {
+        const juce::ScopedLock lock(couplerLock);
+        for (const auto& state : memory.couplerData)
+            if (state.isObject() && (bool)state.getProperty("enabled", false))
+                if (auto* coupler = findCoupler(state.getProperty("id", "").toString())) coupler->enabled = true;
+        for (int source = 0; source <= manualCount; ++source) recomputeCouplersForSource(source);
+    }
+    refreshCouplerRailState();
+}
+
+void MainComponent::storeCrescendoStep(int step)
+{
+    if (step < 1 || step > (int)crescendoSteps.size()) return;
+    auto slot = captureCurrentState();
+    slot.tremulantData.clear();   // the crescendo switches stops and couplers only
+    crescendoSteps[(size_t)step - 1] = std::move(slot);
+    saveSettings();
+    if (crescendoDialogRefresh) crescendoDialogRefresh();
+}
+
+void MainComponent::setCrescendoStepCount(int count)
+{
+    count = juce::jlimit(minCrescendoSteps, maxCrescendoSteps, count);
+    if (count == crescendoStepCount) return;
+    if (crescendoStep != 0) applyCrescendoStep(0);   // the step positions change: switch off first
+    crescendoPosition = 0.0f;
+    crescendoStepCount = count;
+    crescendoSteps.resize((size_t)count);   // taught steps keep their numbers
+    saveSettings();
+    if (crescendoDisplay != nullptr) crescendoDisplay->repaint();
+    if (crescendoDialogRefresh) crescendoDialogRefresh();
+}
+
+void MainComponent::voidCrescendo()
+{
+    if (crescendoStep != 0) applyCrescendoStep(0);
+    for (auto& slot : crescendoSteps) slot = MemorySlot();
+    saveSettings();
+    if (crescendoDialogRefresh) crescendoDialogRefresh();
+}
+
+juce::var MainComponent::crescendoToVar() const
+{
+    juce::DynamicObject::Ptr root = new juce::DynamicObject();
+    root->setProperty("stepCount", crescendoStepCount);
+    root->setProperty("cancelsHandStops", crescendoCancelsHandStops);
+    juce::Array<juce::var> steps;
+    for (int step = 1; step <= (int)crescendoSteps.size(); ++step)
+    {
+        if (!isCrescendoStepStored(step)) continue;
+        const auto& slot = crescendoSteps[(size_t)step - 1];
+        juce::DynamicObject::Ptr item = new juce::DynamicObject();
+        item->setProperty("step", step);
+        item->setProperty("stops", slot.stopData);
+        item->setProperty("couplers", slot.couplerData);
+        steps.add(juce::var(item.get()));
+    }
+    root->setProperty("steps", steps);
+    return juce::var(root.get());
+}
+
+void MainComponent::crescendoFromVar(const juce::var& data)
+{
+    if (!data.isObject()) return;
+    crescendoStepCount = juce::jlimit(minCrescendoSteps, maxCrescendoSteps, (int)data.getProperty("stepCount", 30));
+    crescendoCancelsHandStops = (bool)data.getProperty("cancelsHandStops", true);
+    crescendoSteps.assign((size_t)crescendoStepCount, MemorySlot());
+    crescendoStep = 0;
+    crescendoPosition = 0.0f;
+    crescendoEnabled = false;   // a loaded crescendo starts switched off
+    crescendoRestoreValid = false;
+    crescendoButton.setToggleState(false, juce::dontSendNotification);
+    if (auto* steps = data.getProperty("steps", juce::var()).getArray())
+        for (const auto& item : *steps)
+        {
+            const int step = (int)item.getProperty("step", 0);
+            if (step < 1 || step > crescendoStepCount) continue;
+            auto& slot = crescendoSteps[(size_t)step - 1];
+            if (auto* stops = item.getProperty("stops", juce::var()).getArray())
+                for (const auto& stop : *stops) if (stop.isObject()) slot.stopData.add(stop);
+            if (auto* couplerStates = item.getProperty("couplers", juce::var()).getArray())
+                for (const auto& state : *couplerStates) if (state.isObject()) slot.couplerData.add(state);
+        }
+    if (crescendoDisplay != nullptr) crescendoDisplay->repaint();
+    if (crescendoDialogRefresh) crescendoDialogRefresh();
+}
+
+void MainComponent::showCrescendoMenu()
+{
+    bool hasBinding = false;
+    {
+        const juce::ScopedLock lock(midiButtonBindingLock);
+        hasBinding = midiButtonBindings.count("slider:crescendo") != 0;
+    }
+    juce::PopupMenu menu;
+    menu.addItem(1, "Learn MIDI continuous controller");
+    menu.addItem(2, "Clear MIDI assignment", hasBinding);
+    menu.addSeparator();
+    menu.addItem(3, "Crescendo settings...");
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    menu.showMenuAsync(menuOptionsAtMouse(this),[safeThis](int result)
+    {
+        if (safeThis == nullptr) return;
+        if (result == 1) safeThis->beginMidiLearn("slider:crescendo", false, true);
+        else if (result == 2) safeThis->clearMidiBinding("slider:crescendo");
+        else if (result == 3) safeThis->showCrescendoDialog();
+    });
+}
+
+void MainComponent::showCrescendoDialog()
+{
+    if (crescendoWindow != nullptr)
+    {
+        crescendoWindow->setVisible(true);
+        crescendoWindow->toFront(true);
+        return;
+    }
+
+    // Non-modal editor: step buttons (taught steps amber, the active step orange),
+    // "Set" teaches the clicked step the current stops and couplers.
+    class CrescendoContent final : public juce::Component
+    {
+    public:
+        explicit CrescendoContent(MainComponent& ownerIn) : owner(ownerIn)
+        {
+            legend.setText("Set + click a step: store the current stops and couplers in it.  Click a step: move the crescendo there.  "
+                "The steps act while the Cresc. button is on; switching it off brings the registration from before back. "
+                "Step 0 = all stops and couplers off (or only the hand registration, see below).",
+                juce::dontSendNotification);
+            legend.setJustificationType(juce::Justification::topLeft);
+            addAndMakeVisible(legend);
+            cancelBox.setButtonText("Crescendo may switch off hand-registered stops and couplers (off: the steps only add, "
+                "and only what the crescendo switched on goes off again)");
+            cancelBox.setToggleState(owner.crescendoCancelsHandStops, juce::dontSendNotification);
+            cancelBox.onClick = [this]
+            {
+                this->owner.crescendoCancelsHandStops = cancelBox.getToggleState();
+                this->owner.saveSettings();
+                if (this->owner.crescendoEnabled) this->owner.applyCrescendoStep(this->owner.crescendoStep);
+            };
+            addAndMakeVisible(cancelBox);
+            stepsLabel.setText("Steps:", juce::dontSendNotification);
+            stepsLabel.setJustificationType(juce::Justification::centredRight);
+            addAndMakeVisible(stepsLabel);
+            for (int count = minCrescendoSteps; count <= maxCrescendoSteps; ++count)
+                stepsBox.addItem(juce::String(count), count);
+            stepsBox.setSelectedId(owner.crescendoStepCount, juce::dontSendNotification);
+            stepsBox.onChange = [this]
+            {
+                this->owner.setCrescendoStepCount(stepsBox.getSelectedId());
+                rebuildButtons();
+            };
+            addAndMakeVisible(stepsBox);
+            setButton.setButtonText("Set");
+            setButton.setClickingTogglesState(true);
+            setButton.setColour(juce::ToggleButton::tickColourId, juce::Colours::orange);
+            setButton.setTooltip("While on, clicking a step stores the current stops and couplers in it");
+            addAndMakeVisible(setButton);
+            saveButton.setButtonText("Save...");
+            saveButton.onClick = [this] { chooseFile(true); };
+            addAndMakeVisible(saveButton);
+            loadButton.setButtonText("Load...");
+            loadButton.onClick = [this] { chooseFile(false); };
+            addAndMakeVisible(loadButton);
+            voidButton.setButtonText("Void everything");
+            voidButton.setColour(juce::TextButton::buttonColourId, juce::Colours::darkred);
+            voidButton.onClick = [this]
+            {
+                juce::Component::SafePointer<CrescendoContent> safeThis(this);
+                juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+                    .withIconType(juce::MessageBoxIconType::QuestionIcon)
+                    .withTitle("General Crescendo")
+                    .withMessage("Clear all " + juce::String(this->owner.crescendoStepCount) + " crescendo steps?")
+                    .withButton("Void everything").withButton("Cancel"),
+                    [safeThis](int result)
+                    {
+                        if (safeThis != nullptr && result == 1) safeThis->owner.voidCrescendo();
+                    });
+            };
+            addAndMakeVisible(voidButton);
+            closeButton.setButtonText("Close");
+            closeButton.onClick = [this]
+            {
+                if (auto* window = findParentComponentOfClass<juce::DialogWindow>()) window->closeButtonPressed();
+            };
+            addAndMakeVisible(closeButton);
+            rebuildButtons();
+            owner.crescendoDialogRefresh = [this] { refreshButtons(); };
+        }
+        ~CrescendoContent() override { owner.crescendoDialogRefresh = nullptr; }
+
+        void rebuildButtons()
+        {
+            stepButtons.clear();
+            for (int step = 1; step <= owner.crescendoStepCount; ++step)
+            {
+                auto* button = stepButtons.add(new LeftOnlyTextButton(juce::String(step)));
+                button->onClick = [this, step]
+                {
+                    if (setButton.getToggleState()) this->owner.storeCrescendoStep(step);
+                    else this->owner.setCrescendoPosition((float)step / (float)this->owner.crescendoStepCount);
+                };
+                addAndMakeVisible(button);
+            }
+            stepsBox.setSelectedId(owner.crescendoStepCount, juce::dontSendNotification);
+            refreshButtons();
+            resized();
+        }
+        void refreshButtons()
+        {
+            cancelBox.setToggleState(owner.crescendoCancelsHandStops, juce::dontSendNotification);
+            for (int i = 0; i < stepButtons.size(); ++i)
+            {
+                const int step = i + 1;
+                const bool active = step == owner.crescendoStep;
+                const bool stored = owner.isCrescendoStepStored(step);
+                stepButtons[i]->setColour(juce::TextButton::buttonColourId,
+                    active ? onColour() : (stored ? juce::Colour(0xff7a5a1e) : juce::Colours::darkgrey));
+                stepButtons[i]->setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+                stepButtons[i]->setTooltip(stored ? "Taught step" : "Empty step (changes nothing)");
+            }
+        }
+        void resized() override
+        {
+            auto area = getLocalBounds().reduced(10);
+            legend.setBounds(area.removeFromTop(56));
+            cancelBox.setBounds(area.removeFromTop(26));
+            area.removeFromTop(6);
+            auto row = area.removeFromTop(34);
+            stepsLabel.setBounds(row.removeFromLeft(54));
+            stepsBox.setBounds(row.removeFromLeft(70).reduced(0, 3));
+            row.removeFromLeft(16);
+            setButton.setBounds(row.removeFromLeft(64));
+            closeButton.setBounds(row.removeFromRight(90).reduced(0, 3));
+            row.removeFromRight(16);
+            voidButton.setBounds(row.removeFromRight(130).reduced(0, 3));
+            row.removeFromRight(16);
+            loadButton.setBounds(row.removeFromRight(80).reduced(0, 3));
+            saveButton.setBounds(row.removeFromRight(80).reduced(0, 3));
+            area.removeFromTop(10);
+            const int perRow = 10;
+            const int rows = (stepButtons.size() + perRow - 1) / perRow;
+            const int cellWidth = area.getWidth() / perRow;
+            const int cellHeight = juce::jlimit(30, 56, rows > 0 ? area.getHeight() / rows : 56);
+            for (int i = 0; i < stepButtons.size(); ++i)
+                stepButtons[i]->setBounds(juce::Rectangle<int>(area.getX() + (i % perRow) * cellWidth,
+                    area.getY() + (i / perRow) * cellHeight, cellWidth, cellHeight).reduced(3));
+        }
+    private:
+        void chooseFile(bool save)
+        {
+            const auto start = (owner.lastSettingsDirectory.isDirectory() ? owner.lastSettingsDirectory
+                : juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)).getChildFile("Organ crescendo.json");
+            owner.crescendoFileChooser = std::make_unique<juce::FileChooser>(
+                save ? "Save the crescendo steps" : "Load crescendo steps", start, "*.json");
+            juce::Component::SafePointer<MainComponent> safeOwner(&owner);
+            const int flags = save ? (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
+                                      | juce::FileBrowserComponent::warnAboutOverwriting)
+                                   : (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles);
+            owner.crescendoFileChooser->launchAsync(flags, [safeOwner, save](const juce::FileChooser& chooser)
+            {
+                if (safeOwner == nullptr) return;
+                auto file = chooser.getResult();
+                if (file == juce::File()) return;
+                if (save && !file.hasFileExtension("json")) file = file.withFileExtension("json");
+                safeOwner->lastSettingsDirectory = file.getParentDirectory();
+                safeOwner->saveLastDirectory();
+                if (save)
+                {
+                    if (!file.replaceWithText(juce::JSON::toString(safeOwner->crescendoToVar(), true)))
+                        juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,
+                            "General Crescendo", "The crescendo file could not be written.");
+                }
+                else
+                {
+                    const auto parsed = juce::JSON::parse(file.loadFileAsString());
+                    if (!parsed.isObject() || !parsed.hasProperty("steps"))
+                    {
+                        juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,
+                            "General Crescendo", "This is not a crescendo file.");
+                        return;
+                    }
+                    if (safeOwner->crescendoStep != 0) safeOwner->applyCrescendoStep(0);
+                    safeOwner->crescendoFromVar(parsed);
+                    safeOwner->saveSettings();
+                }
+            });
+        }
+        MainComponent& owner;
+        juce::Label legend, stepsLabel;
+        juce::ComboBox stepsBox;
+        juce::ToggleButton setButton, cancelBox;
+        juce::TextButton saveButton, loadButton, voidButton, closeButton;
+        juce::OwnedArray<LeftOnlyTextButton> stepButtons;
+    };
+
+    class ModelessCrescendoWindow final : public juce::DialogWindow
+    {
+    public:
+        ModelessCrescendoWindow()
+            : juce::DialogWindow("General Crescendo", juce::Colours::darkgrey, true, true) {}
+        float getDesktopScaleFactor() const override { return UIScale::factor(); }
+        void closeButtonPressed() override { setVisible(false); }
+    };
+
+    auto* content = new CrescendoContent(*this);
+    content->setSize(780, 470);
+    crescendoWindow = std::make_unique<ModelessCrescendoWindow>();
+    crescendoWindow->setUsingNativeTitleBar(true);
+    crescendoWindow->setResizable(true, true);
+    crescendoWindow->setContentOwned(new ScrollableContent(content), true);
+    placeDialog(*crescendoWindow, "crescendo", 780, 470);
+    crescendoWindow->setVisible(true);
+    crescendoWindow->toFront(true);
+}
+
+void MainComponent::saveLastDirectory()
+{
+    juce::DynamicObject::Ptr obj = new juce::DynamicObject();
+    obj->setProperty("lastDir", lastSettingsDirectory.getFullPathName());
+
+    juce::String json = juce::JSON::toString(juce::var(obj.get()), true);
+    DBG("Saving lastDir: " << json);
+    DBG("Target file: " << lastDirFile.getFullPathName());
+
+    if (lastDirFile.replaceWithText(json))
+        DBG("File saved successfully.");
+    else
+        DBG("ERROR: Failed to write file.");
+}
+
+void MainComponent::selectTopFolder()
+{
+    // Legacy main-window button now uses the same safe asynchronous loader as
+    // the Pedal division instead of blocking the audio callback.
+    selectManualFolder(0);
+}
+
+//==============================================================================
+class MergerThread : public juce::ThreadWithProgressWindow
+{
+public:
+    // A transmission to merge: the stop and the index of its transmission. Its
+    // keys play the stop's pipes shifted; the samples come from the engine (real
+    // pipes as loaded, filled pipes from their generated copies) and are written
+    // with a smpl chunk (pitch, loops) and the release layers in "rel" folders.
+    using MergedTransmission = std::pair<Stop*, int>;
+    MergerThread(const juce::Array<Stop*>& stops, std::vector<MergedTransmission> transmissions, const juce::File& outFolder,
+        SamplerEngine& eng, juce::StringArray names)
+        : ThreadWithProgressWindow("Merging Stops", true, true),
+        enabledStops(stops), mergedTransmissions(std::move(transmissions)), mergedFolder(outFolder), engine(eng), mergedNames(std::move(names))
+    {
+        setStatusMessage("Initializing...");
+    }
+
+    void run() override
+    {
+        juce::AudioFormatManager formatManager;
+        formatManager.registerBasicFormats();
+
+        // Lambda pro nalezení společného suffixu (např. _1_C4.wav -> C4)
+        auto findCommonSuffix = [](const juce::Array<juce::File>& files) -> juce::String {
+            if (files.isEmpty()) return {};
+            juce::String common = files[0].getFileNameWithoutExtension();
+            for (int i = 1; i < files.size(); ++i) {
+                juce::String name = files[i].getFileNameWithoutExtension();
+                int maxLen = juce::jmin(common.length(), name.length());
+                int suffixLen = 0;
+                for (int l = 1; l <= maxLen; ++l) {
+                    if (common.substring(common.length() - l) == name.substring(name.length() - l))
+                        suffixLen = l;
+                    else break;
+                }
+                common = common.substring(common.length() - suffixLen);
+            }
+            return common;
+            };
+
+        struct StopData {
+            Stop* owner;
+            Stop* rank;
+            std::unordered_map<juce::String, juce::File> baseMap;
+        };
+        struct PerspectiveData {
+            juce::String name;
+            std::vector<StopData> stops;
+            std::set<juce::String> baseNames;
+        };
+        std::map<juce::String, PerspectiveData> perspectives;
+
+        auto perspectiveKey = [](juce::String name) {
+            name = canonicalPerspectiveName(name.trim());
+            return name.removeCharacters("-_ \t\r\n").toLowerCase();
+        };
+        auto addRank = [&](Stop* owner, Stop* rank) {
+            if (rank == nullptr || !rank->rankEnabled) return;
+            auto perspectiveName = canonicalPerspectiveName(rank->perspective.trim());
+            if (perspectiveName.isEmpty()) perspectiveName = "default";
+            auto& perspective = perspectives[perspectiveKey(perspectiveName)];
+            if (perspective.name.isEmpty()) perspective.name = perspectiveName;
+
+            juce::Array<juce::File> wavs;
+            for (const auto& e : juce::RangedDirectoryIterator(rank->folder, false, "*.wav", juce::File::findFiles))
+                wavs.add(e.getFile());
+
+            const juce::String suffix = findCommonSuffix(wavs);
+            StopData sd{ owner, rank, {} };
+            for (auto& f : wavs) {
+                juce::String base = f.getFileNameWithoutExtension();
+                if (suffix.isNotEmpty() && base.endsWith(suffix))
+                    base = base.substring(0, base.length() - suffix.length());
+                sd.baseMap[base] = f;
+                perspective.baseNames.insert(base);
+            }
+            if (!sd.baseMap.empty()) perspective.stops.push_back(std::move(sd));
+        };
+
+        for (auto* stop : enabledStops) {
+            addRank(stop, stop);
+            for (auto& rank : stop->ranks) addRank(stop, rank.get());
+        }
+
+        // Transmissions: one entry per rank (perspective), with a base name for
+        // every key that plays a pipe (real or filled) unless a file of the merged
+        // stops names that key already.
+        struct TransmissionRank { Stop* owner; Stop* rank; int index; };
+        std::map<juce::String, std::vector<TransmissionRank>> transmissionRanks;
+        auto keyBaseName = [](int key)
+        {
+            juce::String name = juce::MidiMessage::getMidiNoteName(key, true, false, 3);
+            return juce::String::formatted("%03d-", key) + name;
+        };
+        for (const auto& [stop, index] : mergedTransmissions)
+        {
+            if (stop == nullptr || index < 0 || index >= (int)stop->transmissions.size()) continue;
+            const auto& t = stop->transmissions[(size_t)index];
+            auto addTransmissionRank = [&](Stop* rank)
+            {
+                if (rank == nullptr || !rank->rankEnabled || rank->samplesUnloaded) return;
+                auto perspectiveName = canonicalPerspectiveName(rank->perspective.trim());
+                if (perspectiveName.isEmpty()) perspectiveName = "default";
+                const auto key = perspectiveKey(perspectiveName);
+                auto& perspective = perspectives[key];
+                if (perspective.name.isEmpty()) perspective.name = perspectiveName;
+                transmissionRanks[key].push_back({ stop, rank, index });
+                for (int played = 0; played < 128; ++played)
+                {
+                    const int pipe = played + t.shift;
+                    if (pipe < 0 || pipe >= 128 || t.keyDisabled.test((size_t)played)) continue;
+                    if (!(rank->hasNote(pipe) || rank->isFilled(pipe)) || stop->isPipeDisabled(pipe)) continue;
+                    bool covered = false;
+                    for (const auto& base : perspective.baseNames)
+                        if (SamplerEngine::extractMidiFromFilename(base) == played) { covered = true; break; }
+                    if (!covered) perspective.baseNames.insert(keyBaseName(played));
+                }
+            };
+            addTransmissionRank(stop);
+            for (auto& rank : stop->ranks) addTransmissionRank(rank.get());
+        }
+
+        // A sample of the engine as a buffer: a real pipe as loaded, a filled pipe
+        // from its generated copy. Resampling copies (method 0) are stored at the
+        // source's rate and played faster or slower: they are resampled here so the
+        // file sounds at the pipe's pitch like the pitch-shifted ones do.
+        auto fetchSample = [&](Stop* rank, int pipe, const Stop::ReleaseLayer* layer, juce::AudioBuffer<float>& out,
+            double& rate, float& pitch, std::vector<LoopPoints>& loops) -> bool
+        {
+            SamplerEngine::BuildPause pause(engine);
+            const juce::ScopedLock sl(engine.getLock());
+            const auto& byNote = layer != nullptr ? layer->samplesByNote : rank->samplesByNote;
+            const auto& aliasFree = layer != nullptr ? layer->aliasFree : rank->aliasFree;
+            const Sample* s = nullptr;
+            int source = pipe;
+            if (pipe < 0 || pipe >= 128) return false;
+            if (!byNote[(size_t)pipe].empty()) s = byNote[(size_t)pipe][0].get();
+            else if (rank->isFilled(pipe))
+            {
+                if (auto it = aliasFree.find(pipe); it != aliasFree.end() && !it->second.empty()) s = it->second[0].get();
+                source = rank->sourceNoteFor(pipe);
+            }
+            if (s == nullptr || s->numFrames <= 0) return false;
+            const int frames = (int)s->numFrames;
+            out.setSize(s->numChannels, frames);
+            for (int ch = 0; ch < s->numChannels; ++ch)
+            {
+                float* d = out.getWritePointer(ch);
+                if (s->storesFloat) std::memcpy(d, s->channel32(ch), (size_t)frames * sizeof(float));
+                else { const int16_t* p = s->channel16(ch); for (int i = 0; i < frames; ++i) d[i] = (float)p[i] / 32768.0f; }
+            }
+            rate = s->sampleRate;
+            loops = s->loops;
+            pitch = std::isnan(s->smplPitch) ? std::numeric_limits<float>::quiet_NaN() : s->smplPitch + (float)(pipe - source);
+            const bool resampledCopy = source != pipe && engine.getTransposeMethod() == 0;
+            if (resampledCopy)
+            {
+                // Played at ratio 2^((pipe - source) / 12): the same frames, fewer or more of them.
+                const double ratio = std::pow(2.0, (double)(pipe - source) / 12.0);
+                const int outFrames = juce::jmax(1, (int)std::llround((double)frames / ratio));
+                juce::AudioBuffer<float> resampled(out.getNumChannels(), outFrames);
+                for (int ch = 0; ch < out.getNumChannels(); ++ch)
+                {
+                    const float* src = out.getReadPointer(ch);
+                    float* d = resampled.getWritePointer(ch);
+                    for (int i = 0; i < outFrames; ++i)
+                    {
+                        const double position = (double)i * ratio;
+                        const int i1 = juce::jlimit(0, frames - 1, (int)position);
+                        const int i0 = juce::jmax(0, i1 - 1), i2 = juce::jmin(frames - 1, i1 + 1), i3 = juce::jmin(frames - 1, i1 + 2);
+                        const float f = (float)(position - i1);
+                        const float y0 = src[i0], y1 = src[i1], y2 = src[i2], y3 = src[i3];
+                        const float c1 = 0.5f * (y2 - y0), c2 = y0 - 2.5f * y1 + 2.0f * y2 - 0.5f * y3, c3 = 0.5f * (y3 - y0) + 1.5f * (y1 - y2);
+                        d[i] = ((c3 * f + c2) * f + c1) * f + y1;
+                    }
+                }
+                out = std::move(resampled);
+                for (auto& loop : loops) { loop.start = (int64_t)std::llround((double)loop.start / ratio); loop.end = (int64_t)std::llround((double)loop.end / ratio); }
+            }
+            return true;
+        };
+        // The smpl chunk of a generated file: the pitch and the loops.
+        auto buildSmpl = [](double rate, float pitch, const std::vector<LoopPoints>& loops)
+        {
+            juce::MemoryOutputStream m;
+            m.writeInt(0); m.writeInt(0);                                   // manufacturer, product
+            m.writeInt((int)std::llround(1.0e9 / juce::jmax(1.0, rate)));   // sample period (ns)
+            const double p = std::isfinite(pitch) ? (double)pitch : 60.0;
+            const int unity = juce::jlimit(0, 127, (int)std::floor(p));
+            m.writeInt(unity);
+            m.writeInt((int)(uint32_t)juce::jlimit<int64_t>(0, 4294967295LL, (int64_t)std::llround((p - unity) * 4294967296.0)));
+            m.writeInt(0); m.writeInt(0);                                   // SMPTE format, offset
+            m.writeInt((int)loops.size()); m.writeInt(0);                   // loops, sampler data
+            int id = 0;
+            for (const auto& loop : loops)
+            {
+                m.writeInt(id++); m.writeInt(0);                            // cue id, forward loop
+                m.writeInt((int)loop.start); m.writeInt((int)loop.end);
+                m.writeInt(0); m.writeInt(0);                               // fraction, play count (infinite)
+            }
+            return m.getMemoryBlock();
+        };
+        // One file: 24-bit WAV from the buffer, the smpl chunk right after "fmt ".
+        auto writeWav = [](const juce::File& outFile, const juce::AudioBuffer<float>& mix, double sr, const juce::MemoryBlock& smplData)
+        {
+            juce::MemoryBlock wavInMem;
+            {
+                std::unique_ptr<juce::OutputStream> mos(new juce::MemoryOutputStream(wavInMem, false));
+                juce::WavAudioFormat wavFmt;
+                // On success the writer takes the stream (mos becomes null) and deletes it with itself.
+                if (auto writer = wavFmt.createWriterFor(mos, juce::AudioFormatWriterOptions{}
+                        .withSampleRate(sr).withNumChannels(mix.getNumChannels()).withBitsPerSample(24)))
+                {
+                    writer->writeFromAudioSampleBuffer(mix, 0, mix.getNumSamples());
+                }
+            }
+            if (auto fos = std::unique_ptr<juce::FileOutputStream>(outFile.createOutputStream())) {
+                if (fos->openedOk()) {
+                    fos->write(wavInMem.getData(), 12);
+                    size_t pos = 12;
+                    const char* dataPtr = static_cast<const char*>(wavInMem.getData());
+                    while (pos + 8 <= wavInMem.getSize()) {
+                        char cid[4]; memcpy(cid, dataPtr + pos, 4);
+                        uint32_t csize = *reinterpret_cast<const uint32_t*>(dataPtr + pos + 4);
+                        size_t fullChunk = 8 + (size_t)csize + (csize % 2);
+                        fos->write(dataPtr + pos, fullChunk);
+                        if (std::strncmp(cid, "fmt ", 4) == 0 && smplData.getSize() > 0) {
+                            fos->write("smpl", 4);
+                            uint32_t s = (uint32_t)smplData.getSize();
+                            fos->write(&s, 4);
+                            fos->write(smplData.getData(), (int)s);
+                            if (s % 2 != 0) fos->writeByte(0);
+                        }
+                        pos += fullChunk;
+                    }
+                    uint32_t riffSz = (uint32_t)(outFile.getSize() - 8);
+                    fos->setPosition(4); fos->write(&riffSz, 4);
+                }
+            }
+        };
+        // The voicing of a transmission's key: the stop's level and per-pipe level,
+        // the transmission's level and per-key level; the tone shelf likewise.
+        auto transmissionGainDb = [](const TransmissionRank& tr, int key, int pipe)
+        {
+            const auto& t = tr.owner->transmissions[(size_t)tr.index];
+            return tr.owner->db + tr.owner->getNoteDb(pipe) + t.db + t.keyDb[(size_t)key];
+        };
+        auto transmissionToneDb = [](const TransmissionRank& tr, int key, int pipe)
+        {
+            const auto& t = tr.owner->transmissions[(size_t)tr.index];
+            return tr.owner->getNoteToneDb(pipe) + t.keyTone[(size_t)key];
+        };
+
+        size_t totalFiles = 0;
+        for (const auto& entry : perspectives) totalFiles += entry.second.baseNames.size();
+
+        int processedCount = 0;
+        for (auto& perspectiveEntry : perspectives)
+        {
+            auto& perspective = perspectiveEntry.second;
+            const auto& perspectiveTransmissions = transmissionRanks[perspectiveEntry.first];
+            if (perspective.stops.empty() && perspectiveTransmissions.empty()) continue;
+
+            // Each perspective becomes a separate rank directory named like the
+            // merged folder (the stop's name once loaded); other perspectives get
+            // their prefix, directly loadable by the normal perspective-prefix loader.
+            juce::String rankFolderName = mergedFolder.getFileName();
+            if (!perspective.name.equalsIgnoreCase("default"))
+            {
+                auto prefix = perspective.name.removeCharacters("\\/:*?\"<>|").trim();
+                if (!prefix.isEmpty() && !prefix.endsWithChar('-') && !prefix.endsWithChar('_')
+                    && !juce::CharacterFunctions::isWhitespace(prefix.getLastCharacter()))
+                    prefix += "-";
+                rankFolderName = prefix + rankFolderName;
+            }
+            const auto perspectiveFolder = mergedFolder.getChildFile(rankFolderName);
+            perspectiveFolder.createDirectory();
+
+            StopData* smplSourceStop = nullptr;
+            for (auto& sd : perspective.stops)
+                if (smplSourceStop == nullptr
+                    || sd.rank->folder.getFullPathName() > smplSourceStop->rank->folder.getFullPathName())
+                    smplSourceStop = &sd;
+
+            for (const auto& baseName : perspective.baseNames)
+            {
+                if (threadShouldExit()) break;
+                setProgress(totalFiles == 0 ? 1.0 : processedCount / (double)totalFiles);
+                setStatusMessage("Processing " + perspective.name + ": " + baseName);
+
+                struct MergeFile { Stop* owner; Stop* rank; juce::File file; };
+                std::vector<MergeFile> filesToMerge;
+                juce::File smplSourceFile;
+
+                for (auto& sd : perspective.stops) {
+                    if (sd.baseMap.count(baseName)) {
+                        filesToMerge.push_back({ sd.owner, sd.rank, sd.baseMap[baseName] });
+                        if (&sd == smplSourceStop) smplSourceFile = sd.baseMap[baseName];
+                    }
+                }
+
+            int64_t maxLen = 0; double sr = 48000; int chans = 1;
+            for (auto& p : filesToMerge) {
+                if (auto r = std::unique_ptr<juce::AudioFormatReader>(formatManager.createReaderFor(p.file))) {
+                    maxLen = juce::jmax(maxLen, r->lengthInSamples);
+                    sr = r->sampleRate;
+                    chans = juce::jmax(chans, (int)r->numChannels);
+                }
+            }
+            // The transmissions' samples of this key (fetched once: the length, rate
+            // and channels of the mix depend on them too).
+            const int playedKey = SamplerEngine::extractMidiFromFilename(baseName);
+            struct FetchedSample { const TransmissionRank* tr; int pipe; juce::AudioBuffer<float> data; double rate; float pitch; std::vector<LoopPoints> loops; };
+            std::vector<FetchedSample> transmissionSamples;
+            juce::MemoryBlock generatedSmpl;
+            if (playedKey >= 0)
+                for (const auto& tr : perspectiveTransmissions)
+                {
+                    const auto& t = tr.owner->transmissions[(size_t)tr.index];
+                    const int pipe = playedKey + t.shift;
+                    if (pipe < 0 || pipe >= 128 || t.keyDisabled.test((size_t)playedKey) || tr.owner->isPipeDisabled(pipe)) continue;
+                    FetchedSample fetched{ &tr, pipe, {}, 48000.0, std::numeric_limits<float>::quiet_NaN(), {} };
+                    if (!fetchSample(tr.rank, pipe, nullptr, fetched.data, fetched.rate, fetched.pitch, fetched.loops)) continue;
+                    if (filesToMerge.empty() && transmissionSamples.empty()) sr = fetched.rate;
+                    maxLen = juce::jmax(maxLen, (int64_t)fetched.data.getNumSamples());
+                    chans = juce::jmax(chans, fetched.data.getNumChannels());
+                    if (generatedSmpl.getSize() == 0) generatedSmpl = buildSmpl(fetched.rate, fetched.pitch, fetched.loops);
+                    transmissionSamples.push_back(std::move(fetched));
+                }
+
+            juce::AudioBuffer<float> mix(chans, (int)maxLen);
+            mix.clear();
+
+            // The transmissions' samples go in with the key's voicing (level, per-key
+            // level, tone, attack envelope), like the files below.
+            for (auto& fetched : transmissionSamples)
+            {
+                auto& tmp = fetched.data;
+                SamplerEngine::applyToneShelf(tmp, fetched.rate, transmissionToneDb(*fetched.tr, playedKey, fetched.pipe),
+                    SamplerEngine::toneStartHzFor(fetched.tr->rank, fetched.pipe, engine.getToneStartHz()));
+                const float attackBoost = juce::Decibels::decibelsToGain(fetched.tr->owner->gainDb);
+                const double attackSeconds = fetched.tr->owner->attackMs / 1000.0;
+                const double fadeoutSeconds = fetched.tr->owner->attackFadeoutMs / 1000.0;
+                const float level = juce::Decibels::decibelsToGain(transmissionGainDb(*fetched.tr, playedKey, fetched.pipe));
+                for (int sampleIdx = 0; sampleIdx < tmp.getNumSamples(); ++sampleIdx)
+                {
+                    const double tSec = (double)sampleIdx / fetched.rate;
+                    double env = 1.0;
+                    if (tSec < attackSeconds) env = attackBoost;
+                    else if (tSec < attackSeconds + fadeoutSeconds) env = attackBoost + (1.0 - attackBoost) * (tSec - attackSeconds) / fadeoutSeconds;
+                    for (int c = 0; c < chans; ++c)
+                        mix.addSample(c, sampleIdx, tmp.getSample(c % tmp.getNumChannels(), sampleIdx) * level * (float)env);
+                }
+            }
+
+            // Mix all stops with attack envelope applied
+            for (auto& p : filesToMerge) {
+                if (auto r = std::unique_ptr<juce::AudioFormatReader>(formatManager.createReaderFor(p.file))) {
+                    juce::AudioBuffer<float> tmp(r->numChannels, (int)r->lengthInSamples);
+                    r->read(&tmp, 0, (int)r->lengthInSamples, 0, true, true);
+                    int note = SamplerEngine::extractMidiFromFilename(p.file.getFileName());
+
+                    // Per-key tone ("Treble per key") of the stop, rendered into the file.
+                    SamplerEngine::applyToneShelf(tmp, sr, p.owner->getNoteToneDb(note),
+                        SamplerEngine::toneStartHzFor(p.rank, note, engine.getToneStartHz()));
+
+                    // Attack envelope parameters
+                    float attackBoost = juce::Decibels::decibelsToGain(p.owner->gainDb);
+                    double attackSeconds = p.owner->attackMs / 1000.0;
+                    double fadeoutSeconds = p.owner->attackFadeoutMs / 1000.0;
+
+                    for (int sampleIdx = 0; sampleIdx < tmp.getNumSamples(); ++sampleIdx)
+                    {
+                        double t = (double)sampleIdx / sr;
+                        double env = 1.0;
+
+                        // New envelope: start at full gain, constant boost, then linear decay
+                        if (t < attackSeconds)
+                            env = attackBoost;
+                        else if (t < attackSeconds + fadeoutSeconds)
+                        {
+                            double u = (t - attackSeconds) / fadeoutSeconds;
+                            env = attackBoost + (1.0 - attackBoost) * u;
+                        }
+                        // else env = 1.0
+
+                        float gain = juce::Decibels::decibelsToGain(p.owner->db + p.owner->getNoteDb(note)) * (float)env;
+                        for (int c = 0; c < chans; ++c)
+                        {
+                            int srcChan = c % tmp.getNumChannels();
+                            mix.addSample(c, sampleIdx, tmp.getSample(srcChan, sampleIdx) * gain);
+                        }
+                    }
+                }
+            }
+
+            // The smpl chunk of the file-based merge: taken from one of the source files.
+            juce::MemoryBlock smplData;
+            if (smplSourceFile.existsAsFile()) {
+                juce::FileInputStream fis(smplSourceFile);
+                if (fis.openedOk()) {
+                    fis.setPosition(12);
+                    while (!fis.isExhausted()) {
+                        char id[4]; fis.read(id, 4);
+                        uint32_t sz; fis.read(&sz, 4);
+                        if (std::strncmp(id, "smpl", 4) == 0) {
+                            smplData.setSize(sz);
+                            fis.read(smplData.getData(), (int)sz);
+                            break;
+                        }
+                        fis.setPosition(fis.getPosition() + (int64_t)sz + (sz % 2));
+                    }
+                }
+            }
+
+            // Without a file to take the smpl chunk from, the generated one (the
+            // transmission sample's pitch and loops) goes in.
+            if (smplData.getSize() == 0 && generatedSmpl.getSize() > 0) smplData = generatedSmpl;
+            writeWav(perspectiveFolder.getChildFile(baseName + ".wav"), mix, sr, smplData);
+
+            // The release layers of the transmissions' pipes: one "rel" folder per
+            // layer (the hold time in its name as the loader expects), the key's
+            // release with the same level, no attack envelope, no loops.
+            for (const auto& fetched : transmissionSamples)
+            {
+                Stop* rank = fetched.tr->rank;
+                for (size_t layerIndex = 0; layerIndex < rank->releaseLayers.size(); ++layerIndex)
+                {
+                    const Stop::ReleaseLayer* layer = nullptr;
+                    int maxHoldMs = 99999;
+                    {
+                        const juce::ScopedLock sl(engine.getLock());
+                        if (layerIndex >= rank->releaseLayers.size()) break;
+                        layer = &rank->releaseLayers[layerIndex];
+                        maxHoldMs = layer->maxHoldMs;
+                    }
+                    juce::AudioBuffer<float> release;
+                    double releaseRate = 48000.0; float releasePitch = std::numeric_limits<float>::quiet_NaN(); std::vector<LoopPoints> releaseLoops;
+                    if (!fetchSample(rank, fetched.pipe, layer, release, releaseRate, releasePitch, releaseLoops)) continue;
+                    const juce::String relName = maxHoldMs >= 99999 ? juce::String("rel") : "rel" + juce::String(maxHoldMs);
+                    const auto relFolder = perspectiveFolder.getChildFile(relName);
+                    relFolder.createDirectory();
+                    SamplerEngine::applyToneShelf(release, releaseRate, transmissionToneDb(*fetched.tr, playedKey, fetched.pipe),
+                        SamplerEngine::toneStartHzFor(rank, fetched.pipe, engine.getToneStartHz()));
+                    release.applyGain(juce::Decibels::decibelsToGain(transmissionGainDb(*fetched.tr, playedKey, fetched.pipe)));
+                    writeWav(relFolder.getChildFile(baseName + ".wav"), release, releaseRate, buildSmpl(releaseRate, releasePitch, {}));
+                }
+            }
+            processedCount++;
+            }
+            if (threadShouldExit()) break;
+        }
+
+        const juce::String summary = "Done: " + juce::String(processedCount) + " files written to\n"
+            + mergedFolder.getFullPathName() + "\n\nMerged stops (" + juce::String(mergedNames.size()) + "):\n"
+            + mergedNames.joinIntoString("\n");
+        juce::MessageManager::callAsync([summary] {
+            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, "Merge", summary);
+            });
+    }
+
+private:
+    juce::Array<Stop*> enabledStops;
+    std::vector<MergedTransmission> mergedTransmissions;
+    juce::File mergedFolder;
+    SamplerEngine& engine;
+    juce::StringArray mergedNames;
+};
+
+void MainComponent::mergeStops()
+{
+    // 1. Validace
+    juce::Array<Stop*> enabledStops;
+    for (auto* s : engine.getStops())
+        if (s->enabled) enabledStops.add(s);
+    // Enabled transmissions merge too: their samples (the generated copies of
+    // the filled pipes included) are written from the engine.
+    std::vector<std::pair<Stop*, int>> enabledTransmissions;
+    for (auto* s : engine.getStops())
+        for (int i = 0; i < (int)s->transmissions.size(); ++i)
+            if (s->transmissions[(size_t)i].enabled) enabledTransmissions.push_back({ s, i });
+
+    if (enabledStops.isEmpty() && enabledTransmissions.empty()) {
+        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, "Merge", "No stops or transmissions enabled.");
+        return;
+    }
+    // Filled pipes of the transmissions need their copies first (a build still
+    // running in the background would leave holes).
+    for (const auto& [stop, index] : enabledTransmissions)
+        if (engine.countMissingCopies(stop) > 0)
+        {
+            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, "Merge",
+                "The copies of the filled pipes of " + SamplerEngine::transposedStopName(stop, stop->transmissions[(size_t)index].shift)
+                + " are still being built. Please wait until the strip on its button is gone.");
+            return;
+        }
+
+    // Destination: the loaded folder tree the enabled stops come from. With
+    // stops from several trees the tree holding most of them wins; the result
+    // message names it, so nothing is written to an unexpected place.
+    juce::File destinationRoot;
+    {
+        std::vector<juce::File> trees;
+        for (int manual = 0; manual <= manualCount && manual < SamplerEngine::maxManuals; ++manual)
+        {
+            const auto& config = manualConfigs[(size_t)manual];
+            if (config.folderPath.isNotEmpty()) trees.emplace_back(config.folderPath);
+            for (const auto& extra : config.extraFolderPaths) trees.emplace_back(extra);
+        }
+        int best = 0;
+        for (const auto& tree : trees)
+        {
+            int inside = 0;
+            for (auto* stop : enabledStops)
+                if (stop->folder == tree || stop->folder.isAChildOf(tree)) ++inside;
+            for (const auto& [stop, index] : enabledTransmissions)
+                if (stop->folder == tree || stop->folder.isAChildOf(tree)) ++inside;
+            if (inside > best) { best = inside; destinationRoot = tree; }
+        }
+        if (destinationRoot == juce::File()) destinationRoot = topFolder;
+    }
+    if (destinationRoot == juce::File()) {
+        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Merge", "No folder selected.");
+        return;
+    }
+
+    // The folder is named after the merged stops: "StopMerged_Principal_8_Octava_4"
+    // (no spaces, no characters a file name may not contain; a long list is cut).
+    static const juce::String divisionNames[8]{ "Pedal", "I.", "II.", "III.", "IV.", "V.", "VI.", "VII." };
+    juce::StringArray mergedNames;
+    juce::String folderName = "StopMerged";
+    // The names: the stops, then the transmissions ("Principal 16' (Trsm.)" / "(Ext.)" in the receiving division).
+    std::vector<std::pair<juce::String, int>> captions;
+    for (auto* stop : enabledStops) captions.push_back({ stop->displayName(), stop->primaryManual });
+    for (const auto& [stop, index] : enabledTransmissions)
+        captions.push_back({ SamplerEngine::transmissionCaption(stop, stop->transmissions[(size_t)index]),
+            stop->transmissions[(size_t)index].manual });
+    for (const auto& [caption, manual] : captions)
+    {
+        mergedNames.add(caption + " (" + divisionNames[juce::jlimit(0, SamplerEngine::maxManuals - 1, manual)] + ")");
+        juce::String part;
+        for (const auto c : caption.trim())
+            part << (juce::CharacterFunctions::isLetterOrDigit(c) || c == '-' ? juce::String::charToString(c)
+                : (juce::CharacterFunctions::isWhitespace(c) || c == '_' ? juce::String("_") : juce::String()));
+        while (part.contains("__")) part = part.replace("__", "_");
+        part = part.trimCharactersAtStart("_").trimCharactersAtEnd("_");
+        if (part.isEmpty()) continue;
+        if (folderName.length() + 1 + part.length() > 120) { folderName << "_etc"; break; }
+        folderName << "_" << part;
+    }
+    juce::File mergedFolder = destinationRoot.getChildFile(folderName);
+
+    // 2. Lambda pro start procesu
+    auto startProcess = [this, enabledStops, enabledTransmissions, mergedFolder, mergedNames]() mutable
+        {
+            if (mergedFolder.exists()) {
+                mergedFolder.deleteRecursively();
+                juce::Thread::sleep(100);
+            }
+            mergedFolder.createDirectory();
+
+            // activeMerger musí být std::unique_ptr<juce::ThreadWithProgressWindow> v MainComponent.h
+            activeMerger = std::make_unique<MergerThread>(enabledStops, enabledTransmissions, mergedFolder, engine, mergedNames);
+
+            // OPRAVA: V JUCE 8 stačí volat bez parametrů (default priorita)
+            activeMerger->launchThread();
+        };
+
+    // 3. Spuštění s asynchronním dialogem
+    if (mergedFolder.exists())
+    {
+        juce::AlertWindow::showOkCancelBox(juce::AlertWindow::WarningIcon, "Merge Stops",
+            "The folder\n" + mergedFolder.getFullPathName() + "\nalready exists. Overwrite?", "Overwrite", "Cancel", nullptr,
+            juce::ModalCallbackFunction::create([this, startProcess](int result) mutable {
+                if (result != 0)
+                    juce::MessageManager::callAsync([startProcess]() mutable { startProcess(); });
+                }));
+    }
+    else
+    {
+        startProcess();
+    }
+}
+
+void MainComponent::saveStopSettings()
+{
+    auto startDir = lastSettingsDirectory.exists()
+        ? lastSettingsDirectory
+        : juce::File::getSpecialLocation(juce::File::userDocumentsDirectory);
+
+    auto chooser = std::make_shared<juce::FileChooser>(
+        "Save Voicing",
+        startDir,
+        "*.json");
+    chooser->launchAsync(juce::FileBrowserComponent::saveMode,
+        [this, chooser](const juce::FileChooser& fc)
+        {
+            auto file = fc.getResult();
+            if (file == juce::File()) return;
+            lastSettingsDirectory = file.getParentDirectory();
+            DBG("saveStopSettings: lastSettingsDirectory set to " << lastSettingsDirectory.getFullPathName());
+            saveLastDirectory();
+
+            if (!file.hasFileExtension("json"))
+                file = file.withFileExtension("json");
+
+            juce::DynamicObject::Ptr root = new juce::DynamicObject();
+            juce::Array<juce::var> stopsArray;
+
+            for (auto* stop : engine.getStops())
+            {
+                juce::DynamicObject::Ptr stopObj = new juce::DynamicObject();
+                stopObj->setProperty(juce::Identifier("name"), stop->name);
+                stopObj->setProperty("perspective", stop->perspective);
+                stopObj->setProperty("alias", stop->alias);
+                stopObj->setProperty(juce::Identifier("globalDb"), stop->db);
+                stopObj->setProperty(juce::Identifier("gainDb"), stop->gainDb);
+                stopObj->setProperty(juce::Identifier("attackMs"), stop->attackMs);
+                stopObj->setProperty(juce::Identifier("attackFadeoutMs"), stop->attackFadeoutMs);
+                stopObj->setProperty("randomPitchErrorCents", stop->randomPitchErrorCents);
+                stopObj->setProperty(juce::Identifier("primaryManual"), stop->primaryManual);
+                stopObj->setProperty("transmissions", Voicer::transmissionsToVar(stop));
+                juce::Array<juce::var> rankStates;
+                auto addRank = [&rankStates](const Stop* rank)
+                {
+                    juce::DynamicObject::Ptr state = new juce::DynamicObject();
+                    state->setProperty("perspective", rank->perspective);
+                    state->setProperty("enabled", rank->rankEnabled);
+                    rankStates.add(juce::var(state.get()));
+                };
+                addRank(stop);
+                for (const auto& rank : stop->ranks) addRank(rank.get());
+                stopObj->setProperty("ranks", rankStates);
+
+                juce::DynamicObject::Ptr perNoteObj = new juce::DynamicObject();
+                juce::DynamicObject::Ptr perNoteToneObj = new juce::DynamicObject();
+                for (const int note : stop->voicedNotes())
+                {
+                    perNoteObj->setProperty(juce::Identifier(juce::String(note)), stop->getNoteDb(note));
+                    perNoteToneObj->setProperty(juce::Identifier(juce::String(note)), stop->getNoteToneDb(note));
+                }
+                stopObj->setProperty(juce::Identifier("perNoteDb"), juce::var(perNoteObj.get()));
+                stopObj->setProperty("perNoteTone", juce::var(perNoteToneObj.get()));
+                {
+                    juce::Array<juce::var> off;
+                    for (int pipe = 0; pipe < 128; ++pipe) if (stop->pipeDisabled.test((size_t)pipe)) off.add(pipe);
+                    if (!off.isEmpty()) stopObj->setProperty("disabledPipes", off);
+                }
+                stopsArray.add(juce::var(stopObj.get()));
+            }
+
+            root->setProperty(juce::Identifier("stops"), stopsArray);
+            file.replaceWithText(juce::JSON::toString(root.get(), true));
+            DBG("Stop settings saved to: " << file.getFullPathName());
+            if (file.existsAsFile())
+                DBG("File successfully written and exists at: " << file.getFullPathName());
+            else
+                DBG("ERROR: File was not written or does not exist at: " << file.getFullPathName());
+
+        });
+}
+
+void MainComponent::loadStopSettings()
+{
+    auto startDir = lastSettingsDirectory.exists()
+        ? lastSettingsDirectory
+        : juce::File::getSpecialLocation(juce::File::userDocumentsDirectory);
+
+    auto chooser = std::make_shared<juce::FileChooser>(
+        "Load Voicing",
+        startDir,
+        "*.json");
+    chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+        [this, chooser](const juce::FileChooser& fc)
+        {
+            auto file = fc.getResult();
+
+            if (file == juce::File()) return;
+            lastSettingsDirectory = file.getParentDirectory();
+            DBG("loadStopSettings: lastSettingsDirectory set to " << lastSettingsDirectory.getFullPathName());
+            saveLastDirectory();
+
+            DBG("Attempting to load from: " << file.getFullPathName() << " exists=" << (file.existsAsFile() ? "YES" : "NO"));
+            if (!file.existsAsFile()) return;
+
+            auto text = file.loadFileAsString();
+            auto parsed = juce::JSON::parse(text);
+            if (!parsed.isObject()) return;
+
+            auto stopsArray = parsed.getProperty(juce::Identifier("stops"), juce::var());
+            if (!stopsArray.isArray()) return;
+
+            for (const auto& stopVar : *stopsArray.getArray())
+            {
+                if (!stopVar.isObject()) continue;
+                auto stopObj = stopVar.getDynamicObject();
+                if (!stopObj) continue;
+
+                juce::String name;
+                if (stopObj->hasProperty(juce::Identifier("name")))
+                    name = stopObj->getProperty(juce::Identifier("name")).toString();
+                const auto savedPerspective = stopObj->hasProperty("perspective")
+                    ? canonicalPerspectiveName(stopObj->getProperty("perspective").toString()) : juce::String();
+
+                double globalDb = 0.0;
+                if (stopObj->hasProperty(juce::Identifier("globalDb")))
+                    globalDb = stopObj->getProperty(juce::Identifier("globalDb"));
+
+                double gainDb = 0.0;
+                if (stopObj->hasProperty(juce::Identifier("gainDb")))
+                    gainDb = stopObj->getProperty(juce::Identifier("gainDb"));
+
+                double attackMs = 0.0;
+                if (stopObj->hasProperty(juce::Identifier("attackMs")))
+                    attackMs = stopObj->getProperty(juce::Identifier("attackMs"));
+
+                double attackFadeoutMs = 0.0;
+                if (stopObj->hasProperty(juce::Identifier("attackFadeoutMs")))
+                    attackFadeoutMs = stopObj->getProperty(juce::Identifier("attackFadeoutMs"));
+                const float randomPitchErrorCents = stopObj->hasProperty("randomPitchErrorCents")
+                    ? (float)(double)stopObj->getProperty("randomPitchErrorCents") : 4.0f;
+                int legacyMask = stopObj->hasProperty(juce::Identifier("manualMask"))
+                    ? (int)stopObj->getProperty(juce::Identifier("manualMask")) : 1;
+                int primaryManual = stopObj->hasProperty(juce::Identifier("primaryManual"))
+                    ? (int)stopObj->getProperty(juce::Identifier("primaryManual"))
+                    : [legacyMask]
+                      {
+                          for (int i = 0; i < SamplerEngine::maxManuals; ++i)
+                              if ((legacyMask & (1 << i)) != 0) return i;
+                          return 0;
+                      }();
+                juce::DynamicObject::Ptr perNoteObj = nullptr;
+                if (stopObj->hasProperty(juce::Identifier("perNoteDb")))
+                {
+                    auto perNoteVar = stopObj->getProperty(juce::Identifier("perNoteDb"));
+                    if (perNoteVar.isObject())
+                        perNoteObj = perNoteVar.getDynamicObject();
+                }
+
+                for (auto* stop : engine.getStops())
+                {
+                    if (stop->name == name && stop->primaryManual == juce::jlimit(0, SamplerEngine::maxManuals - 1, primaryManual)
+                        && (savedPerspective.isEmpty()
+                            || stop->perspective.equalsIgnoreCase(savedPerspective)))
+                    {
+                        stop->setDb((float)globalDb);
+                        stop->gainDb = (float)gainDb;
+                        stop->attackMs = (float)attackMs;
+                        stop->attackFadeoutMs = (float)attackFadeoutMs;
+                        stop->alias = stopObj->getProperty("alias").toString();
+                        engine.setStopRandomPitchError(stop, randomPitchErrorCents, true);
+                        engine.replaceTransmissions(stop, Voicer::transmissionsFromVar(stopVar, stop->primaryManual));
+                        if (stopObj->hasProperty("ranks"))
+                            for (const auto& state : *stopObj->getProperty("ranks").getArray())
+                            {
+                                const auto perspective = canonicalPerspectiveName(
+                                    state.getProperty("perspective", "").toString());
+                                auto apply = [&](Stop* rank)
+                                {
+                                    if (rank->perspective.equalsIgnoreCase(perspective))
+                                        rank->rankEnabled = state.getProperty("enabled", true);
+                                };
+                                apply(stop);
+                                for (auto& rank : stop->ranks) apply(rank.get());
+                            }
+                        if (perNoteObj)
+                        {
+                            for (const auto& prop : perNoteObj->getProperties())
+                            {
+                                int note = prop.name.toString().getIntValue();
+                                float db = (float)(double)prop.value;
+                                {
+                                    juce::ScopedLock sl(engine.getLock());
+                                    stop->setNoteDb(note, db);
+                                }
+                            }
+                        }
+                        {
+                            // Per-key tone (files from before it have none: 0 dB everywhere).
+                            juce::ScopedLock sl(engine.getLock());
+                            stop->resetNoteTone();
+                            if (auto* toneObj = stopObj->getProperty("perNoteTone").getDynamicObject())
+                                for (const auto& prop : toneObj->getProperties())
+                                    stop->setNoteToneDb(prop.name.toString().getIntValue(), (float)(double)prop.value);
+                        }
+                        {
+                            std::bitset<128> wanted;
+                            if (auto* off = stopObj->getProperty("disabledPipes").getArray())
+                                for (const auto& pipe : *off)
+                                    if ((int)pipe >= 0 && (int)pipe < 128) wanted.set((size_t)(int)pipe);
+                            for (int pipe = 0; pipe < 128; ++pipe)
+                                if (wanted.test((size_t)pipe) != stop->pipeDisabled.test((size_t)pipe))
+                                    engine.setPipeEnabled(stop, pipe, !wanted.test((size_t)pipe));
+                        }
+                        break;
+                    }
+                }
+            }
+
+            voicer->updateStopStates();
+            repaint();
+            DBG("Stop settings loaded from: " << file.getFullPathName());
+        });
+}
+
+void MainComponent::saveMemories()
+{
+    saveMemoriesToFile(memoriesJsonFile);
+}
+
+bool MainComponent::saveMemoriesToFile(const juce::File& file)
+{
+    const bool ok = file.replaceWithText(juce::JSON::toString(combinationsToVar(), true));
+    DBG((ok ? "Memories saved to: " : "ERROR: Failed to save memories to: ")
+        << file.getFullPathName());
+    return ok;
+}
+
+juce::var MainComponent::combinationsToVar() const
+{
+    juce::DynamicObject::Ptr root = new juce::DynamicObject();
+    root->setProperty("version", 2);
+    root->setProperty("pistonCount", pistonCount);
+    root->setProperty("currentBank", currentBank);
+    juce::Array<juce::var> scenes;
+
+    for (const auto& entry : combinations)
+    {
+        const int bank = entry.first / maxPistons;
+        const int piston = entry.first % maxPistons;
+        const auto& memory = entry.second;
+        juce::DynamicObject::Ptr scene = new juce::DynamicObject();
+        scene->setProperty("bank", bank);
+        scene->setProperty("piston", piston);
+        scene->setProperty("masterDb", memory.masterDb);
+        scene->setProperty("stops", memory.stopData);
+        scene->setProperty("couplers", memory.couplerData);
+        scene->setProperty("tremulants", memory.tremulantData);
+        scenes.add(juce::var(scene.get()));
+    }
+
+    root->setProperty("combinations", scenes);
+    return juce::var(root.get());
+}
+
+void MainComponent::loadMemories()
+{
+    loadMemoriesFromFile(memoriesJsonFile);
+}
+
+bool MainComponent::loadMemoriesFromFile(const juce::File& file)
+{
+    if (!file.existsAsFile()) return false;
+    return combinationsFromVar(juce::JSON::parse(file.loadFileAsString()));
+}
+
+bool MainComponent::combinationsFromVar(const juce::var& parsed)
+{
+    if (!parsed.isObject()) return false;
+
+    pistonCount = juce::jlimit(0, maxPistons, (int)parsed.getProperty("pistonCount", maxPistons));
+    currentBank = juce::jlimit(0, maxBank, (int)parsed.getProperty("currentBank", 0));
+    auto memoriesArray = parsed.getProperty("combinations", juce::var());
+    const bool legacyFormat = !memoriesArray.isArray();
+    if (legacyFormat)
+        memoriesArray = parsed.getProperty("memories", juce::var());
+    if (!memoriesArray.isArray()) return false;
+
+    combinations.clear();
+    for (int i = 0; i < memoriesArray.size(); ++i)
+    {
+        auto scene = memoriesArray[i];
+        if (!scene.isObject()) continue;
+        const int bank = legacyFormat ? 0 : (int)scene.getProperty("bank", 0);
+        const int piston = legacyFormat ? i : (int)scene.getProperty("piston", -1);
+        if (bank < 0 || bank > maxBank || piston < 0 || piston >= maxPistons) continue;
+
+        MemorySlot memory;
+        memory.masterDb = scene.getProperty("masterDb", 0.0);
+
+        auto stopsArray = scene.getProperty("stops", juce::var());
+        if (stopsArray.isArray())
+        {
+            for (auto& item : *stopsArray.getArray())
+                if (item.isObject())
+                    memory.stopData.add(item);
+        }
+        auto couplersArray = scene.getProperty("couplers", juce::var());
+        if (couplersArray.isArray())
+            for (const auto& item : *couplersArray.getArray())
+                if (item.isObject()) memory.couplerData.add(item);
+        auto tremulantsArray = scene.getProperty("tremulants", juce::var());
+        if (tremulantsArray.isArray())
+            for (const auto& item : *tremulantsArray.getArray())
+                if (item.isObject()) memory.tremulantData.add(item);
+        if (!memory.stopData.isEmpty() || !memory.couplerData.isEmpty())
+            combinations[combinationKey(bank, piston)] = std::move(memory);
+    }
+    return true;
+}
+
+void MainComponent::chooseCombinationsFileToSave()
+{
+    auto start = lastSettingsDirectory.isDirectory()
+        ? lastSettingsDirectory.getChildFile("Organ combinations.json")
+        : juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
+            .getChildFile("Organ combinations.json");
+    combinationsFileChooser = std::make_unique<juce::FileChooser>(
+        "Save all combination banks", start, "*.json");
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    combinationsFileChooser->launchAsync(juce::FileBrowserComponent::saveMode
+        | juce::FileBrowserComponent::canSelectFiles
+        | juce::FileBrowserComponent::warnAboutOverwriting,
+        [safeThis](const juce::FileChooser& chooser)
+        {
+            if (safeThis == nullptr) return;
+            auto file = chooser.getResult();
+            if (file == juce::File()) return;
+            if (!file.hasFileExtension("json")) file = file.withFileExtension("json");
+            safeThis->lastSettingsDirectory = file.getParentDirectory();
+            safeThis->saveLastDirectory();
+            if (!safeThis->saveMemoriesToFile(file))
+                juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,
+                    "Save combinations", "The combinations file could not be written.");
+        });
+}
+
+void MainComponent::chooseCombinationsFileToLoad()
+{
+    const auto start = lastSettingsDirectory.isDirectory() ? lastSettingsDirectory
+        : juce::File::getSpecialLocation(juce::File::userDocumentsDirectory);
+    combinationsFileChooser = std::make_unique<juce::FileChooser>(
+        "Load all combination banks", start, "*.json");
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    combinationsFileChooser->launchAsync(juce::FileBrowserComponent::openMode
+        | juce::FileBrowserComponent::canSelectFiles,
+        [safeThis](const juce::FileChooser& chooser)
+        {
+            if (safeThis == nullptr) return;
+            const auto file = chooser.getResult();
+            if (file == juce::File()) return;
+            if (!safeThis->loadMemoriesFromFile(file))
+            {
+                juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,
+                    "Load combinations", "This is not a valid combinations file.");
+                return;
+            }
+            safeThis->lastSettingsDirectory = file.getParentDirectory();
+            safeThis->saveLastDirectory();
+            safeThis->activePiston = -1;
+            safeThis->pistonCountBox.setSelectedId(safeThis->pistonCount + 1,
+                juce::dontSendNotification);
+            safeThis->updateCombinationControls();
+            safeThis->saveMemories();
+            safeThis->resized();
+        });
+}
+
+void MainComponent::chooseConfigurationToSave(std::function<void(bool saved)> then)
+{
+    auto* alert = new juce::AlertWindow("Save Configuration",
+        "The configuration will include folders, voicing, transmissions, couplers, audio routing and all control values.",
+        juce::MessageBoxIconType::QuestionIcon, this);
+    auto* includeMidi = new juce::ToggleButton("Include learned MIDI devices and controller assignments");
+    includeMidi->setName({});
+    includeMidi->setToggleState(true, juce::dontSendNotification);
+    includeMidi->setSize(470, 28);
+    alert->addCustomComponent(includeMidi);
+    alert->addButton("Save", 1);
+    alert->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    alert->enterModalState(true, juce::ModalCallbackFunction::create(
+        [safeThis, includeMidi, then](int result)
+        {
+            const bool withMidi = includeMidi->getToggleState();
+            delete includeMidi;
+            if (safeThis == nullptr || result != 1) { if (then) then(false); return; }
+            const auto start = safeThis->lastSettingsDirectory.isDirectory()
+                ? safeThis->lastSettingsDirectory.getChildFile("Organ configuration.json")
+                : juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
+                    .getChildFile("Organ configuration.json");
+            safeThis->configurationFileChooser = std::make_unique<juce::FileChooser>(
+                "Save portable organ configuration", start, "*.json");
+            safeThis->configurationFileChooser->launchAsync(
+                juce::FileBrowserComponent::saveMode
+                    | juce::FileBrowserComponent::canSelectFiles
+                    | juce::FileBrowserComponent::warnAboutOverwriting,
+                [safeThis, withMidi, then](const juce::FileChooser& chooser)
+                {
+                    if (safeThis == nullptr) return;
+                    auto file = chooser.getResult();
+                    if (file == juce::File()) { if (then) then(false); return; }
+                    if (!file.hasFileExtension("json")) file = file.withFileExtension("json");
+                    safeThis->savePortableConfiguration(file, withMidi);
+                    if (then) then(true);
+                });
+        }), true);
+}
+
+void MainComponent::chooseConfigurationToLoad()
+{
+    // The instrument in use first: its unsaved changes are offered for saving.
+    juce::Component::SafePointer<MainComponent> guard(this);
+    askToKeepChanges("Load Configuration", "load", [guard] { if (guard != nullptr) guard->launchConfigurationLoadChooser(); });
+}
+
+void MainComponent::launchConfigurationLoadChooser()
+{
+    const auto start = lastSettingsDirectory.isDirectory() ? lastSettingsDirectory
+        : juce::File::getSpecialLocation(juce::File::userDocumentsDirectory);
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    // ORGAN_LOAD_CONFIGURATION=<file> (tests): the file is taken as chosen, the
+    // native dialog is skipped (typing a path into it is not reliable on every
+    // keyboard layout); everything after the choice is the same.
+    if (const char* env = std::getenv("ORGAN_LOAD_CONFIGURATION"))
+    {
+        const juce::File chosen(juce::String::fromUTF8(env));
+        if (chosen.existsAsFile())
+        {
+            CrashHandler::note("Load Configuration: file taken from ORGAN_LOAD_CONFIGURATION");
+            juce::MessageManager::callAsync([safeThis, chosen] { if (safeThis != nullptr) safeThis->loadConfigurationFile(chosen); });
+            return;
+        }
+    }
+    configurationFileChooser = std::make_unique<juce::FileChooser>(
+        "Load portable organ configuration", start, "*.json");
+    configurationFileChooser->launchAsync(juce::FileBrowserComponent::openMode
+        | juce::FileBrowserComponent::canSelectFiles,
+        [safeThis](const juce::FileChooser& chooser)
+        {
+            if (safeThis == nullptr) return;
+            safeThis->loadConfigurationFile(chooser.getResult());
+        });
+}
+
+void MainComponent::loadConfigurationFile(const juce::File& file)
+{
+    // The chosen configuration file (Load Configuration): parsed, checked, applied.
+    if (!file.existsAsFile()) return;
+    auto configuration = juce::JSON::parse(file.loadFileAsString());
+    if (!configuration.isObject()
+        || !configuration.getProperty("manualKeyboards", juce::var()).isArray())
+    {
+        juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,
+            "Load Configuration", "The selected file is not a valid OrganSampler configuration.");
+        return;
+    }
+    resolveAndApplyPortableConfiguration(configuration, file);
+}
+
+void MainComponent::savePortableConfiguration(const juce::File& file, bool includeMidi)
+{
+    saveSettings();
+    auto configuration = juce::JSON::parse(settingsFile.loadFileAsString());
+    auto* root = configuration.getDynamicObject();
+    if (root == nullptr) return;
+    root->setProperty("portableConfigurationVersion", 1);
+    root->setProperty("containsMidiMappings", includeMidi);
+
+    const auto registration = captureCurrentState();
+    root->setProperty("registrationMasterDb", registration.masterDb);
+    root->setProperty("registrationStops", registration.stopData);
+    root->setProperty("registrationCouplers", registration.couplerData);
+    root->setProperty("registrationTremulants", registration.tremulantData);
+    // The combination banks travel with the configuration (the crescendo steps
+    // are already part of the settings it was built from).
+    root->setProperty("combinationMemory", combinationsToVar());
+
+    // The folder trees are taken from the settings just written, i.e. from what
+    // is really loaded now (the same items that are rewritten below). The library
+    // root is the deepest folder that contains as many of them as possible: the
+    // common ancestor of all trees on the drive holding most of them.
+    auto manuals = root->getProperty("manualKeyboards");
+    std::vector<juce::File> folders;
+    if (auto* array = manuals.getArray())
+        for (const auto& itemVar : *array)
+        {
+            const juce::File folder(itemVar.getProperty("folderPath", "").toString());
+            if (folder.isDirectory()) folders.push_back(folder);
+            if (auto* extras = itemVar.getProperty("extraFolderPaths", juce::var()).getArray())
+                for (const auto& extra : *extras)
+                    if (juce::File(extra.toString()).isDirectory()) folders.push_back(juce::File(extra.toString()));
+        }
+    juce::File libraryRoot;
+    if (!folders.empty())
+    {
+        std::map<juce::String, int> perDrive;
+        for (const auto& folder : folders) ++perDrive[folder.getFullPathName().upToFirstOccurrenceOf("\\", false, false).toLowerCase()];
+        juce::String mainDrive;
+        int best = -1;
+        for (const auto& entry : perDrive) if (entry.second > best) { best = entry.second; mainDrive = entry.first; }
+        for (const auto& folder : folders)
+        {
+            if (folder.getFullPathName().upToFirstOccurrenceOf("\\", false, false).toLowerCase() != mainDrive) continue;
+            if (libraryRoot == juce::File()) { libraryRoot = folder.getParentDirectory(); continue; }
+            while (folder != libraryRoot && !folder.isAChildOf(libraryRoot))
+            {
+                const auto parent = libraryRoot.getParentDirectory();
+                if (parent == libraryRoot) break;
+                libraryRoot = parent;
+            }
+        }
+        root->setProperty("sampleLibraryRootName", libraryRoot.getFileName());
+        // Where the library root lies relative to this configuration file
+        // ("..\..\Samples" and the like). When the configuration travels
+        // together with the library, the folders are found without asking.
+        const auto rootRelative = libraryRoot.getRelativePathFrom(file.getParentDirectory());
+        root->setProperty("sampleLibraryRootRelative",
+            juce::File::isAbsolutePath(rootRelative) ? juce::String() : rootRelative);
+    }
+
+    // Every tree gets a path relative to the library root when it lies below it;
+    // a tree elsewhere (another drive) keeps its absolute path. Nothing prevents
+    // the configuration from being saved; a missing folder is asked for at load.
+    juce::StringArray absoluteOnly;
+    if (auto* array = manuals.getArray())
+        for (int manual = 0; manual < array->size(); ++manual)
+            if (auto* item = array->getReference(manual).getDynamicObject())
+            {
+                const juce::File folder(item->getProperty("folderPath").toString());
+                bool folderRelativeWritten = false;
+                item->removeProperty("folderRelativePath");
+                if (folder.isDirectory() && libraryRoot != juce::File())
+                {
+                    const auto relative = folder.getRelativePathFrom(libraryRoot);
+                    if (!juce::File::isAbsolutePath(relative))
+                    {
+                        item->setProperty("folderRelativePath", relative);
+                        folderRelativeWritten = true;
+                    }
+                    else absoluteOnly.add(folder.getFullPathName());
+                }
+                // Further trees of the division: relative where possible, else absolute.
+                juce::Array<juce::var> extraRelative, extraAbsolute;
+                if (auto* extras = item->getProperty("extraFolderPaths").getArray())
+                    for (const auto& extra : *extras)
+                    {
+                        const juce::File extraFolder(extra.toString());
+                        if (!extraFolder.isDirectory()) continue;
+                        const auto relative = libraryRoot != juce::File() ? extraFolder.getRelativePathFrom(libraryRoot) : juce::String();
+                        if (relative.isNotEmpty() && !juce::File::isAbsolutePath(relative)) extraRelative.add(relative);
+                        else { extraAbsolute.add(extraFolder.getFullPathName()); absoluteOnly.add(extraFolder.getFullPathName()); }
+                    }
+                item->setProperty("extraFolderRelativePaths", extraRelative);
+                item->setProperty("extraFolderPaths", extraAbsolute);
+                // Impulse responses of the perspectives: relative to the configuration file
+                // when they lie on the same drive, so a moved library keeps its reverbs.
+                if (auto* routes = item->getProperty("perspectiveAudio").getArray())
+                    for (auto& routeVar : *routes)
+                        if (auto* routeObject = routeVar.getDynamicObject())
+                        {
+                            const juce::File ir(routeObject->getProperty("reverbIr").toString());
+                            if (!ir.existsAsFile()) continue;
+                            const auto relative = ir.getRelativePathFrom(file.getParentDirectory());
+                            routeObject->setProperty("reverbIrRelative", juce::File::isAbsolutePath(relative) ? juce::String() : relative);
+                        }
+                // A tree below the library root travels as a relative path only;
+                // one elsewhere keeps its absolute path (found again on this
+                // machine, asked for on another).
+                if (folderRelativeWritten) item->setProperty("folderPath", "");
+                if (!includeMidi)
+                {
+                    item->setProperty("deviceIdentifier", "");
+                    item->setProperty("channel", 1);
+                    item->setProperty("expressionDeviceIdentifier", "");
+                    item->setProperty("expressionChannel", 1);
+                    item->setProperty("expressionController", -1);
+                    item->setProperty("expressionMinimum", 127);
+                    item->setProperty("expressionMaximum", 0);
+                }
+            }
+    if (!absoluteOnly.isEmpty())
+        CrashHandler::note("Save configuration: " + juce::String(absoluteOnly.size()) + " folder tree(s) outside the library root '"
+            + libraryRoot.getFullPathName() + "' saved with absolute paths: " + absoluteOnly.joinIntoString(" | "));
+    if (!includeMidi) root->setProperty("midiButtonBindings", juce::Array<juce::var>());
+
+    if (!file.replaceWithText(juce::JSON::toString(configuration, true)))
+        juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,
+            "Save Configuration", "The configuration file could not be written.");
+    else
+    {
+        lastSettingsDirectory = file.getParentDirectory();
+        saveLastDirectory();
+        setCurrentConfigurationName(file.getFileNameWithoutExtension());
+        currentConfigurationFile = file;
+        configurationUsedThisSession = true;
+        saveSettings();
+        markConfigurationClean();   // the configuration now matches the settings
+    }
+}
+
+namespace
+{
+    // Where a folder tree of a portable configuration may be on this machine:
+    // under the library root the user pointed to, under the root recorded
+    // relative to the configuration file (".." segments included), next to the
+    // configuration file, or at the absolute path the file still carries.
+    juce::Array<juce::File> portableFolderCandidates(const juce::var& configuration, const juce::File& configurationFile,
+        const juce::File& selectedLibraryRoot, const juce::String& relative, const juce::String& absolute)
+    {
+        const auto rootName = configuration.getProperty("sampleLibraryRootName", "").toString();
+        const auto rootRelative = configuration.getProperty("sampleLibraryRootRelative", "").toString();
+        const auto configDir = configurationFile.getParentDirectory();
+        juce::Array<juce::File> candidates;
+        if (relative.isEmpty())
+        {
+            // A tree saved with an absolute path only (it lay outside the library
+            // root): the path itself, then the tail of that path under the root the
+            // user pointed to (its last one, two or three components).
+            if (absolute.isNotEmpty()) candidates.add(juce::File(absolute));
+            if (selectedLibraryRoot != juce::File() && absolute.isNotEmpty())
+            {
+                juce::StringArray parts;
+                parts.addTokens(absolute.replaceCharacter('/', '\\'), "\\", "");
+                parts.removeEmptyStrings();
+                for (int keep = 1; keep <= 3 && keep <= parts.size(); ++keep)
+                {
+                    juce::File candidate = selectedLibraryRoot;
+                    for (int i = parts.size() - keep; i < parts.size(); ++i) candidate = candidate.getChildFile(parts[i]);
+                    candidates.add(candidate);
+                }
+            }
+            return candidates;
+        }
+        if (selectedLibraryRoot != juce::File())
+        {
+            candidates.add(selectedLibraryRoot.getChildFile(relative));
+            if (rootName.isNotEmpty() && selectedLibraryRoot.getFileName() != rootName)
+                candidates.add(selectedLibraryRoot.getChildFile(rootName).getChildFile(relative));
+        }
+        else
+        {
+            if (rootRelative.isNotEmpty()) candidates.add(configDir.getChildFile(rootRelative).getChildFile(relative));
+            if (rootName.isNotEmpty()) candidates.add(configDir.getChildFile(rootName).getChildFile(relative));
+            candidates.add(configDir.getChildFile(relative));
+            if (absolute.isNotEmpty()) candidates.add(juce::File(absolute));
+        }
+        return candidates;
+    }
+    juce::File firstExistingDirectory(const juce::Array<juce::File>& candidates)
+    {
+        for (const auto& candidate : candidates)
+            if (candidate.isDirectory()) return candidate;
+        return {};
+    }
+}
+
+void MainComponent::resolveAndApplyPortableConfiguration(juce::var configuration,
+    const juce::File& configurationFile, const juce::File& selectedLibraryRoot)
+{
+    auto manuals = configuration.getProperty("manualKeyboards", juce::var());
+    // What is missing, by name: the user must know what to look for before a
+    // folder dialog asks for "the root". Paths relative to the library root are
+    // shown under its name ("Samples\Stralsund\pipe\HW"), trees saved with an
+    // absolute path as they were.
+    static const juce::String divisionNames[8]{ "Pedal", "I.", "II.", "III.", "IV.", "V.", "VI.", "VII." };
+    const auto rootName = configuration.getProperty("sampleLibraryRootName", "").toString();
+    juce::StringArray missing;
+    if (auto* array = manuals.getArray())
+        for (int manual = 0; manual < array->size(); ++manual)
+        {
+            const auto item = array->getReference(manual);
+            const auto division = divisionNames[juce::jlimit(0, 7, manual)];
+            const auto absolute = item.getProperty("folderPath", "").toString();
+            juce::StringArray relatives;
+            const auto relative = item.getProperty("folderRelativePath", "").toString();
+            if (relative.isNotEmpty()) relatives.add(relative);
+            if (auto* extras = item.getProperty("extraFolderRelativePaths", juce::var()).getArray())
+                for (const auto& extra : *extras) if (extra.toString().isNotEmpty()) relatives.add(extra.toString());
+            for (const auto& path : relatives)
+                if (firstExistingDirectory(portableFolderCandidates(configuration, configurationFile, selectedLibraryRoot,
+                        path, absolute)) == juce::File())
+                    missing.add(division + ":  " + (rootName.isNotEmpty() ? rootName + juce::File::getSeparatorString() : juce::String()) + path);
+            // Trees saved with absolute paths only (outside the library root).
+            if (relative.isEmpty() && absolute.isNotEmpty()
+                && firstExistingDirectory(portableFolderCandidates(configuration, configurationFile, selectedLibraryRoot, {}, absolute)) == juce::File())
+                missing.add(division + ":  " + absolute);
+            if (auto* extras = item.getProperty("extraFolderPaths", juce::var()).getArray())
+                for (const auto& extra : *extras)
+                    if (extra.toString().isNotEmpty()
+                        && firstExistingDirectory(portableFolderCandidates(configuration, configurationFile, selectedLibraryRoot, {}, extra.toString())) == juce::File())
+                        missing.add(division + ":  " + extra.toString());
+        }
+    // Never refused: the configuration loads with the trees that are here, the
+    // missing ones stay in its tree pool as they were saved and every division
+    // that uses one shows an orange notice under its header until the tree is
+    // loaded again in the Stop List (a folder of the same name takes its place,
+    // the stops keep their samples) or unloaded there. Up to 0.8.48 a folder
+    // dialog asked for "the root" without saying what was missing, and Cancel
+    // dropped the whole configuration.
+    if (!missing.isEmpty())
+        CrashHandler::note("Load Configuration: " + juce::String(missing.size()) + " sample folder tree(s) not on this computer, loaded without them: "
+            + missing.joinIntoString(" | ") + (rootName.isNotEmpty() ? "  (library root \"" + rootName + "\")" : juce::String()));
+    applyPortableConfiguration(configuration, configurationFile, selectedLibraryRoot);
+}
+
+void MainComponent::applyPortableConfiguration(juce::var configuration,
+    const juce::File& configurationFile, const juce::File& libraryRoot)
+{
+    saveSettings();
+    const auto localConfiguration = juce::JSON::parse(settingsFile.loadFileAsString());
+    auto* root = configuration.getDynamicObject();
+    if (root == nullptr) return;
+    auto manuals = root->getProperty("manualKeyboards");
+    if (auto* array = manuals.getArray())
+        for (int manual = 0; manual < array->size(); ++manual)
+            if (auto* item = array->getReference(manual).getDynamicObject())
+            {
+                const auto absolute = item->getProperty("folderPath").toString();
+                const auto relative = item->getProperty("folderRelativePath").toString();
+                if (relative.isNotEmpty())
+                {
+                    const auto candidates = portableFolderCandidates(configuration, configurationFile, libraryRoot, relative, absolute);
+                    const auto found = firstExistingDirectory(candidates);
+                    if (found != juce::File()) item->setProperty("folderPath", found.getFullPathName());
+                    // Not here: the path where the configuration expects it (beside the
+                    // file), so the division's tree list names it and the notice can say so.
+                    else if (absolute.isEmpty() && !candidates.isEmpty()) item->setProperty("folderPath", candidates.getFirst().getFullPathName());
+                }
+                else if (absolute.isNotEmpty())
+                {
+                    // Saved with an absolute path only: use it when it exists, otherwise
+                    // look for its tail under the root the user pointed to.
+                    const auto found = firstExistingDirectory(portableFolderCandidates(configuration, configurationFile,
+                        libraryRoot, {}, absolute));
+                    if (found != juce::File()) item->setProperty("folderPath", found.getFullPathName());
+                }
+                // Further trees of a composite division: relative ones first, then the
+                // absolute ones (kept when they exist or are found under the chosen root).
+                {
+                    juce::Array<juce::var> resolved;
+                    if (auto* extras = item->getProperty("extraFolderRelativePaths").getArray())
+                        for (const auto& extra : *extras)
+                        {
+                            if (extra.toString().isEmpty()) continue;
+                            const auto found = firstExistingDirectory(portableFolderCandidates(configuration, configurationFile,
+                                libraryRoot, extra.toString(), {}));
+                            if (found != juce::File()) resolved.add(found.getFullPathName());
+                        }
+                    if (auto* extras = item->getProperty("extraFolderPaths").getArray())
+                        for (const auto& extra : *extras)
+                        {
+                            if (extra.toString().isEmpty()) continue;
+                            const auto found = firstExistingDirectory(portableFolderCandidates(configuration, configurationFile,
+                                libraryRoot, {}, extra.toString()));
+                            if (found != juce::File()) resolved.add(found.getFullPathName());
+                        }
+                    item->setProperty("extraFolderPaths", resolved);
+                }
+                // Impulse responses: the path relative to the configuration file wins
+                // when it exists, otherwise the absolute path the file still carries.
+                if (auto* routes = item->getProperty("perspectiveAudio").getArray())
+                    for (auto& routeVar : *routes)
+                        if (auto* routeObject = routeVar.getDynamicObject())
+                        {
+                            const auto irRelative = routeObject->getProperty("reverbIrRelative").toString();
+                            if (irRelative.isEmpty()) continue;
+                            const auto candidate = configurationFile.getParentDirectory().getChildFile(irRelative);
+                            if (candidate.existsAsFile()) routeObject->setProperty("reverbIr", candidate.getFullPathName());
+                        }
+            }
+
+    if (!root->getProperty("containsMidiMappings"))
+    {
+        const auto localManuals = localConfiguration.getProperty("manualKeyboards", juce::var());
+        if (auto* imported = manuals.getArray())
+            if (auto* local = localManuals.getArray())
+                for (int i = 0; i < juce::jmin(imported->size(), local->size()); ++i)
+                    if (auto* target = imported->getReference(i).getDynamicObject())
+                    {
+                        const auto source = local->getReference(i);
+                        for (const auto& property : { "deviceIdentifier", "channel",
+                            "expressionDeviceIdentifier", "expressionChannel", "expressionController",
+                            "expressionMinimum", "expressionMaximum" })
+                            target->setProperty(property, source.getProperty(property, juce::var()));
+                    }
+        root->setProperty("midiButtonBindings",
+            localConfiguration.getProperty("midiButtonBindings", juce::var()));
+    }
+
+    auto registration = std::make_unique<MemorySlot>();
+    registration->masterDb = root->getProperty("registrationMasterDb");
+    const auto stops = root->getProperty("registrationStops");
+    if (stops.isArray()) for (const auto& item : *stops.getArray()) registration->stopData.add(item);
+    const auto couplerStates = root->getProperty("registrationCouplers");
+    if (couplerStates.isArray())
+        for (const auto& item : *couplerStates.getArray()) registration->couplerData.add(item);
+    const auto tremulantStates = root->getProperty("registrationTremulants");
+    if (tremulantStates.isArray())
+        for (const auto& item : *tremulantStates.getArray()) registration->tremulantData.add(item);
+    pendingConfigurationRegistration = std::move(registration);
+    // Combination banks saved with the configuration replace the current ones.
+    if (combinationsFromVar(root->getProperty("combinationMemory")))
+    {
+        activePiston = -1;
+        pistonCountBox.setSelectedId(pistonCount + 1, juce::dontSendNotification);
+        updateCombinationControls();
+        saveMemories();
+    }
+
+    audioMuted.store(true);
+    panic();
+    if (keyboardsWindow != nullptr) keyboardsWindow.reset();
+    for (int manual = 0; manual < SamplerEngine::maxManuals; ++manual)
+    {
+        removePerspectiveAudioRoutesForManual(manual);
+        engine.unloadManual(manual);
+    }
+    settingsFile.replaceWithText(juce::JSON::toString(configuration, true));
+    loadSettings();
+    manualCountBox.setSelectedId(manualCount, juce::dontSendNotification);
+    rebuildCouplerCatalog();
+    rebuildCouplerRail();
+    if (voicer)
+    {
+        voicer->setActiveManualCount(manualCount + 1);
+        voicer->rebuildUI(stopsContent, stopsViewport);
+    }
+    lastSettingsDirectory = configurationFile.getParentDirectory();
+    saveLastDirectory();
+    setCurrentConfigurationName(configurationFile.getFileNameWithoutExtension());
+    currentConfigurationFile = configurationFile;
+    configurationUsedThisSession = true;
+    saveSettings();
+    markConfigurationClean();
+    beginStartupFolderLoading();
+}
+
+class DivisionFolderLoader final : public juce::ThreadWithProgressWindow
+{
+public:
+    DivisionFolderLoader(SamplerEngine& engine, juce::File folder, int manual, double sampleRate,
+        std::function<void(bool)> finished, bool append = false,
+        std::shared_ptr<std::vector<SamplerEngine::FolderAssignment>> map = nullptr)
+        : ThreadWithProgressWindow("Loading division samples...", true, false), engine(engine),
+          folder(std::move(folder)), manual(manual), sampleRate(sampleRate), finished(std::move(finished)),
+          append(append), map(std::move(map))
+    {
+        setStatusMessage("Scanning folders...");
+    }
+    void run() override
+    {
+        CrashHandler::note((append ? "Adding folder tree to division " : "Loading division ")
+            + juce::String(manual) + ": " + folder.getFullPathName() + (map != nullptr ? " (stop building map)" : ""));
+        engine.loadManualFolder(folder, manual, sampleRate, [this](double value)
+        {
+            setProgress(value);
+            setStatusMessage("Loading samples: " + juce::String(juce::roundToInt(value * 100.0)) + "%");
+        }, append, map.get());
+    }
+    void threadComplete(bool cancelled) override
+    {
+        // Message thread: swap the prepared division into the live engine.
+        CrashHandler::note("Committing division " + juce::String(manual));
+        engine.commitPendingDivisions();
+        const auto error = engine.takeLastLoadError();
+        if (error.isNotEmpty())
+            juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Loading samples", error);
+        if (finished) finished(cancelled);
+    }
+private:
+    SamplerEngine& engine;
+    juce::File folder;
+    int manual;
+    double sampleRate;
+    std::function<void(bool)> finished;
+    bool append = false;
+    std::shared_ptr<std::vector<SamplerEngine::FolderAssignment>> map;   // Stop building map of the division (or none)
+};
+
+// juce::Timer::callAfterDelay seen from outside ThreadWithProgressWindow, whose
+// private Timer base hides it inside the loader class.
+static void callOnMessageThreadAfter(int milliseconds, std::function<void()> callback)
+{
+    juce::Timer::callAfterDelay(milliseconds, std::move(callback));
+}
+
+class StartupFolderLoader final : public juce::ThreadWithProgressWindow
+{
+public:
+    struct Job
+    {
+        int manual = 0;
+        juce::File folder;
+        bool append = false;   // a further tree of the same division
+        std::shared_ptr<std::vector<SamplerEngine::FolderAssignment>> map;   // Stop building map (or none)
+        std::shared_ptr<std::set<int>> replacing;   // divisions whose stops the commit replaces (their samples are adopted)
+    };
+    // A step of "Compiling the Stop List" after the samples are loaded: shown in
+    // the same progress dialog with its percentage, run on its own message-loop
+    // turn so that the text and the bar reach the screen before it blocks.
+    using Phase = LoadStep;
+    StartupFolderLoader(SamplerEngine& engine, std::vector<Job> jobs, double sampleRate,
+        std::function<void(bool)> finished, juce::Component* centreAround)
+        : ThreadWithProgressWindow("Loading saved divisions...", true, false, 10000, {}, centreAround), engine(engine),
+          jobs(std::move(jobs)), sampleRate(sampleRate), finished(std::move(finished))
+    {
+        setStatusMessage("Preparing sample folders...");
+    }
+    std::vector<Phase> phases;   // set by the owner before launchThread()
+    // Runs right after the commit, before anything can paint: a reload retires
+    // the old stops there, and the grid's rows must stop pointing at them.
+    std::function<void()> afterCommit;
+    // A phase may split itself: the phases given here run right after it (its
+    // own progress value is the first of theirs).
+    void addPhasesNext(std::vector<Phase> more)
+    {
+        const size_t at = juce::jmin(phases.size(), currentPhase + 1);
+        phases.insert(phases.begin() + (long)at, std::make_move_iterator(more.begin()), std::make_move_iterator(more.end()));
+    }
+
+    void run() override
+    {
+        static const juce::String names[8]{ "Pedal", "I.", "II.", "III.", "IV.", "V.", "VI.", "VII." };
+        const double count = (double)juce::jmax(1, (int)jobs.size());
+        // The phases after decoding (analysis, fills) report themselves here too.
+        engine.setLoadStatusCallback([this](const juce::String& text) { setStatusMessage(text); });
+        for (size_t index = 0; index < jobs.size(); ++index)
+        {
+            const auto manual = jobs[index].manual;   // -1: a pool tree whose folders name their divisions
+            const juce::String who = manual >= 0 && manual < SamplerEngine::maxManuals ? names[manual] : jobs[index].folder.getFileName();
+            setStatusMessage(who + ": scanning samples (folder tree "
+                + juce::String((int)index + 1) + "/" + juce::String((int)jobs.size()) + ")...");
+            engine.loadManualFolder(jobs[index].folder, juce::jmax(0, manual), sampleRate,
+                [this, index, count, who](double localProgress)
+                {
+                    const double overall = ((double)index + localProgress) / count;
+                    setProgress(overall);
+                    setStatusMessage(who + ": "
+                        + juce::String(juce::roundToInt(localProgress * 100.0))
+                        + "%   |   total "
+                        + juce::String(juce::roundToInt(overall * 100.0)) + "%");
+                }, jobs[index].append, jobs[index].map.get(), jobs[index].replacing.get());
+        }
+        setProgress(1.0);
+        setStatusMessage("Compiling the Stop List ...");
+        engine.setLoadStatusCallback(nullptr);
+    }
+
+    void threadComplete(bool cancelled) override
+    {
+        engine.setLoadStatusCallback(nullptr);
+        if (cancelled || phases.empty()) { commit(); if (finished) finished(cancelled); return; }
+        // The progress dialog stays for the compile (JUCE hid it when the thread
+        // ended: shown again, no longer modal). The window paints on the next
+        // vertical blanks only, so every step runs on a later message-loop turn,
+        // after its text and percentage were painted. The owner keeps this loader
+        // alive until "finished" ran.
+        if (auto* window = getAlertWindow())
+        {
+            // The percentage is in the message; the bar's own (smoothed) number would contradict it.
+            for (auto* child : window->getChildren())
+                if (auto* bar = dynamic_cast<juce::ProgressBar*>(child)) bar->setPercentageDisplay(false);
+            window->setVisible(true);
+            window->toFront(false);
+        }
+        report("Compiling the Stop List: committing the loaded divisions", 0.05);
+        juce::WeakReference<StartupFolderLoader> weakThis(this);
+        callOnMessageThreadAfter(60, [weakThis] { if (weakThis != nullptr) weakThis->runStep(0); });
+    }
+
+private:
+    void commit()
+    {
+        CrashHandler::note("Committing " + juce::String((int)jobs.size()) + " loaded divisions");
+        engine.commitPendingDivisions();
+        const auto error = engine.takeLastLoadError();
+        if (error.isNotEmpty())
+            juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Loading samples", error);
+    }
+    void report(const juce::String& text, double fraction)
+    {
+        setProgress(fraction);
+        if (auto* window = getAlertWindow())
+            window->setMessage(text + "   (" + juce::String(juce::roundToInt(fraction * 100.0)) + " %)");
+    }
+    // Step 0 commits the divisions, step k runs phase k-1; the next phase's text is
+    // shown and painted before it runs.
+    size_t currentPhase = 0;   // the phase running now (for addPhasesNext)
+    void runStep(size_t index)
+    {
+        // No copy build launches before the last phase (launchCopyBuilds): a build
+        // running meanwhile would make every step that needs the build lock wait.
+        const double started = juce::Time::getMillisecondCounterHiRes();
+        juce::String what;
+        if (index == 0) { what = "committing"; engine.holdCopyBuilds(); commit(); if (afterCommit) afterCommit(); }
+        else if (index - 1 < phases.size() && phases[index - 1].work)
+        {
+            currentPhase = index - 1;
+            what = phases[index - 1].text.fromFirstOccurrenceOf("Compiling the Stop List: ", false, false);
+            try { phases[index - 1].work(); }
+            catch (const std::exception& e) { CrashHandler::note("Compiling the Stop List: phase failed: " + juce::String(e.what())); }
+            catch (...) { CrashHandler::note("Compiling the Stop List: phase failed"); }
+        }
+        // Slow steps go to the activity log (which one stood, and for how long).
+        const int tookMs = juce::roundToInt(juce::Time::getMillisecondCounterHiRes() - started);
+        if (tookMs >= 500 && what.isNotEmpty())
+            CrashHandler::note("Compiling the Stop List: step '" + what + "' took " + juce::String(tookMs) + " ms");
+        const size_t next = index + 1;
+        if (next - 1 < phases.size())
+        {
+            report(phases[next - 1].text, phases[next - 1].progress);
+            juce::WeakReference<StartupFolderLoader> weakThis(this);
+            callOnMessageThreadAfter(60, [weakThis, next] { if (weakThis != nullptr) weakThis->runStep(next); });
+            return;
+        }
+        report("Compiling the Stop List: done", 1.0);
+        if (auto* window = getAlertWindow()) window->setVisible(false);
+        if (finished) finished(false);
+    }
+
+    SamplerEngine& engine;
+    std::vector<Job> jobs;
+    double sampleRate;
+    std::function<void(bool)> finished;
+    JUCE_DECLARE_WEAK_REFERENCEABLE(StartupFolderLoader)
+};
+
+void MainComponent::beginStartupFolderLoading()
+{
+    std::vector<StartupFolderLoader::Job> jobs;
+    std::vector<juce::File> folders;
+    // Divisions with a table: every pool tree they use is loaded once, its
+    // folders go to their divisions. Divisions without a table: the old way.
+    std::set<int> mapped;
+    for (int manual = 0; manual <= manualCount; ++manual)
+    {
+        if (manualConfigs[(size_t)manual].stopBuild.active) { mapped.insert(manual); continue; }
+        const juce::File folder(manualConfigs[(size_t)manual].folderPath);
+        if (folder.isDirectory()) { jobs.push_back({ manual, folder, false, nullptr }); folders.push_back(folder); }
+        for (const auto& extra : manualConfigs[(size_t)manual].extraFolderPaths)
+        {
+            const juce::File extraFolder(extra);
+            if (!extraFolder.isDirectory()) continue;
+            const bool hasPreviousTree = !jobs.empty() && jobs.back().manual == manual;
+            jobs.push_back({ manual, extraFolder, hasPreviousTree, nullptr });
+            folders.push_back(extraFolder);
+        }
+    }
+    if (!mapped.empty())
+    {
+        auto map = stopMapForDivisions(mapped);
+        std::set<juce::String> treesUsed;
+        for (int manual : mapped)
+        {
+            for (const auto& path : divisionTrees(manual)) treesUsed.insert(path);
+            for (const auto& entry : manualConfigs[(size_t)manual].stopBuild.entries)
+                if (entry.folders.empty() && !sampleTrees.empty() && divisionTrees(manual).empty()) treesUsed.insert(sampleTrees.front());
+        }
+        for (const auto& path : sampleTrees)
+        {
+            const juce::File tree(path);
+            if (treesUsed.count(path) == 0 || !tree.isDirectory()) continue;
+            jobs.push_back({ -1, tree, true, map });
+            folders.push_back(tree);
+        }
+    }
+    if (!jobs.empty() && !checkMemoryForFolders(folders)) jobs.clear();
+    if (jobs.empty())
+    {
+        if (pendingConfigurationRegistration != nullptr)
+        {
+            applyRegistrationState(*pendingConfigurationRegistration);
+            pendingConfigurationRegistration.reset();
+        }
+        audioMuted.store(false);
+        return;
+    }
+    // Stop merging needs a concrete destination root. Prefer Pedal; otherwise
+    // use the first loaded tree.
+    topFolder = jobs.front().folder;
+    for (const auto& job : jobs)
+        if (job.manual == 0) { topFolder = job.folder; break; }
+    if (juce::File(manualConfigs[0].folderPath).isDirectory()) topFolder = juce::File(manualConfigs[0].folderPath);
+
+    audioMuted.store(true);
+    auto loader = std::make_unique<StartupFolderLoader>(engine, std::move(jobs),
+        currentSampleRate, [this](bool)
+        {
+            engine.noteOffAll();
+            audioMuted.store(false);
+            juce::MessageManager::callAsync([this] { activeFolderLoader.reset(); });
+        }, this);
+    // "Compiling the Stop List" in the loading dialog, step by step with its percentage.
+    loader->phases =
+    {
+        { "Compiling the Stop List: audio routes", 0.1, [this]
+            {
+                // One step per route (each opens a device, up to seconds): the
+                // dialog's percentage moves from 10 % to 35 % across them.
+                for (auto* stop : engine.getStops()) stop->enabled = false;
+                if (auto* loader = dynamic_cast<StartupFolderLoader*>(activeFolderLoader.get()))
+                    loader->addPhasesNext(audioRouteSteps(0.1, 0.35, nullptr));
+            } },
+        { "Compiling the Stop List: stop folders and the stop grid", 0.4, [this]
+            {
+                applyStopGroups();
+                if (keyboardsWindow != nullptr) keyboardsWindow.reset();
+                if (voicer)
+                {
+                    voicer->setActiveManualCount(manualCount + 1);
+                    voicer->rebuildUI(stopsContent, stopsViewport);
+                }
+                CrashHandler::note("Compiling the Stop List: stop grid built");
+            } },
+        { "Compiling the Stop List: voicing state", 0.65, [this]
+            {
+                if (voicer == nullptr) return;
+                if (voicerStateFile.existsAsFile()) voicer->loadState(voicerStateFile);
+                // Ordinary folder loading starts silent. An explicit configuration
+                // load, however, restores its saved live registration after all
+                // stop objects exist (the next phase).
+                if (pendingConfigurationRegistration == nullptr)
+                    for (auto* stop : engine.getStops())
+                    {
+                        stop->enabled = false;
+                        for (int index = 0; index < (int)stop->transmissions.size(); ++index)
+                            engine.setTransmissionEnabled(stop, index, false);
+                    }
+                voicer->updateStopStates();
+                CrashHandler::note("Compiling the Stop List: voicing state loaded");
+            } },
+        { "Compiling the Stop List: the configuration's registration", 0.8, [this]
+            {
+                if (pendingConfigurationRegistration == nullptr) return;
+                applyRegistrationState(*pendingConfigurationRegistration);
+                pendingConfigurationRegistration.reset();
+                if (voicer) voicer->updateStopStates();
+                CrashHandler::note("Compiling the Stop List: registration restored");
+            } },
+        { "Compiling the Stop List: temperament and settings", 0.92, [this]
+            {
+                // The copies of the filled pipes: every stop that still misses them
+                // (the voicing state launched most of them already).
+                engine.launchCopyBuilds();
+                autoDetectBaseTemperament();
+                const bool haveStops = !engine.getStops().isEmpty();
+                saveStopSettingsButton.setEnabled(haveStops);
+                loadStopSettingsButton.setEnabled(haveStops);
+                mergeStopsButton.setEnabled(haveStops && topFolder.isDirectory());
+                resized();
+                showGeneratingMessage(false);
+                CrashHandler::note("Compiling the Stop List: done");
+                // Loading writes device states, tuning and folders into the settings:
+                // that is what the configuration means, not a change to ask about.
+                if (currentConfigurationName.isNotEmpty())
+                {
+                    saveSettings();
+                    markConfigurationClean();
+                }
+                // ORGAN_RELOAD_AFTER_START=<division> (tests): that division is loaded
+                // again 15 s after the stop list - the reload must adopt the samples
+                // and copies it already has instead of decoding and building them again.
+                if (const char* env = std::getenv("ORGAN_RELOAD_AFTER_START"))
+                {
+                    const int manual = juce::jlimit(0, SamplerEngine::maxManuals - 1, juce::String(env).getIntValue());
+                    juce::Component::SafePointer<MainComponent> safeThis(this);
+                    juce::Timer::callAfterDelay(15000, [safeThis, manual]
+                    {
+                        if (safeThis == nullptr) return;
+                        CrashHandler::note("Reload after start (test): division " + juce::String(manual));
+                        safeThis->reloadDivisionTrees(manual);
+                    });
+                }
+                // ORGAN_MERGE_ON_START=1 (tests): the transmission with the largest
+                // shift is switched on and Stop-Merging starts once the copies are in.
+                if (const char* env = std::getenv("ORGAN_MERGE_ON_START"); env != nullptr && juce::String(env).getIntValue() != 0)
+                {
+                    Stop* chosen = nullptr;
+                    int chosenIndex = -1;
+                    for (auto* stop : engine.getStops())
+                        for (int i = 0; i < (int)stop->transmissions.size(); ++i)
+                            if (chosen == nullptr || std::abs(stop->transmissions[(size_t)i].shift) > std::abs(chosen->transmissions[(size_t)chosenIndex].shift))
+                            { chosen = stop; chosenIndex = i; }
+                    if (chosen != nullptr)
+                    {
+                        engine.setTransmissionEnabled(chosen, chosenIndex, true);
+                        if (voicer) voicer->updateStopStates();
+                        CrashHandler::note("Merge on start: " + SamplerEngine::transposedStopName(chosen, chosen->transmissions[(size_t)chosenIndex].shift));
+                        juce::Component::SafePointer<MainComponent> safeThis(this);
+                        juce::Timer::callAfterDelay(10000, [safeThis] { if (safeThis != nullptr) safeThis->mergeStops(); });
+                    }
+                }
+            } },
+    };
+    activeFolderLoader = std::move(loader);
+    activeFolderLoader->launchThread();
+}
+
+void MainComponent::selectManualFolder(int manualIndex)
+{
+    if (manualIndex < 0 || manualIndex > manualCount) return;
+    folderChooser = std::make_unique<juce::FileChooser>(
+        "Select sample folder for this division",
+        manualConfigs[(size_t)manualIndex].folderPath.isNotEmpty()
+            ? juce::File(manualConfigs[(size_t)manualIndex].folderPath) : juce::File(), "", true);
+    folderChooser->launchAsync(juce::FileBrowserComponent::openMode
+        | juce::FileBrowserComponent::canSelectDirectories,
+        [this, manualIndex](const juce::FileChooser& chooser)
+        {
+            const auto folder = chooser.getResult();
+            if (!folder.isDirectory()) return;
+            // The tree joins the pool (once for the whole organ); its stops go to
+            // this division's table and only this tree is loaded.
+            loadTreeIntoDivision(folder, manualIndex);
+        });
+}
+
+void MainComponent::unloadManualTree(int manualIndex, const juce::String& treePath)
+{
+    if (manualIndex < 0 || manualIndex > manualCount) return;
+    auto& config = manualConfigs[(size_t)manualIndex];
+    audioMuted.store(true);
+    panic();
+    if (keyboardsWindow != nullptr && keyboardsWindowManual == manualIndex) keyboardsWindow.reset();
+    if (stopBuildWindow != nullptr && stopBuildWindowManual == manualIndex) stopBuildWindow.reset();
+    engine.unloadManualTree(manualIndex, juce::File(treePath));
+    // The Stop building table loses the folders of this tree; the later trees move up one index.
+    const auto trees = divisionTrees(manualIndex);
+    const int removedIndex = (int)(std::find(trees.begin(), trees.end(), treePath) - trees.begin());
+    if (config.stopBuild.active && removedIndex < (int)trees.size())
+    {
+        for (auto& entry : config.stopBuild.entries)
+            for (auto it = entry.folders.begin(); it != entry.folders.end();)
+            {
+                if (it->second.tree == removedIndex) { it = entry.folders.erase(it); continue; }
+                if (it->second.tree > removedIndex) --it->second.tree;
+                ++it;
+            }
+        // The rows that lost their folders stay as empty stops ("Remove empty stops" clears them).
+    }
+    // Bookkeeping of the trees: the first remaining one becomes the division's main tree.
+    config.extraFolderPaths.erase(std::remove(config.extraFolderPaths.begin(), config.extraFolderPaths.end(), treePath),
+        config.extraFolderPaths.end());
+    if (config.folderPath == treePath)
+    {
+        config.folderPath = config.extraFolderPaths.empty() ? juce::String() : config.extraFolderPaths.front();
+        if (!config.extraFolderPaths.empty()) config.extraFolderPaths.erase(config.extraFolderPaths.begin());
+    }
+    if (manualIndex == 0) topFolder = juce::File(config.folderPath);
+    if (config.stopBuild.active)
+    {
+        // Stops built from several trees keep their other perspectives only when
+        // the division is built again from the remaining trees.
+        saveSettings();
+        audioMuted.store(false);
+        reloadDivisionTrees(manualIndex);
+        return;
+    }
+    rebuildPerspectiveAudioRoutes();
+    if (voicer)
+    {
+        voicer->setActiveManualCount(manualCount + 1);
+        voicer->rebuildUI(stopsContent, stopsViewport);
+    }
+    saveSettings();
+    resized();
+    audioMuted.store(false);
+}
+
+void MainComponent::unloadManualFolder(int manualIndex)
+{
+    if (manualIndex < 0 || manualIndex > manualCount) return;
+    // The menu lists every loaded folder tree, also a single one: the user sees
+    // what is loaded before unloading it. A composite division may drop one tree.
+    const auto& config = manualConfigs[(size_t)manualIndex];
+    if (config.folderPath.isNotEmpty())
+    {
+        juce::PopupMenu menu;
+        juce::StringArray trees;
+        trees.add(config.folderPath);
+        for (const auto& extra : config.extraFolderPaths) trees.add(extra);
+        for (int i = 0; i < trees.size(); ++i)
+            menu.addItem(i + 1, "Unload " + juce::File(trees[i]).getFileName() + "   (" + trees[i] + ")");
+        if (trees.size() > 1)
+        {
+            menu.addSeparator();
+            menu.addItem(1000, "Unload all " + juce::String(trees.size()) + " folder trees");
+        }
+        juce::Component::SafePointer<MainComponent> safeThis(this);
+        menu.showMenuAsync(menuOptionsAtMouse(this),[safeThis, manualIndex, trees](int result)
+        {
+            if (safeThis == nullptr || result == 0) return;
+            if (result == 1000 || trees.size() == 1)
+            {
+                safeThis->manualConfigs[(size_t)manualIndex].extraFolderPaths.clear();
+                safeThis->unloadWholeManualFolder(manualIndex);
+            }
+            else if (result >= 1 && result <= trees.size())
+                safeThis->unloadManualTree(manualIndex, trees[result - 1]);
+        });
+        return;
+    }
+    unloadWholeManualFolder(manualIndex);
+}
+
+//==============================================================================
+// Stop building: the table "stop | alias | folder per perspective" of a division.
+// Names compare like folder names do in the engine: case, spaces and
+// separators do not count.
+juce::String MainComponent::stopBuildKey(const juce::String& name)
+{
+    return name.removeCharacters("-_ \t\r\n").toLowerCase();
+}
+
+juce::String MainComponent::uniqueStopBuildName(const std::vector<ManualConfig::StopBuild::Entry>& entries,
+    const juce::String& wanted, const ManualConfig::StopBuild::Entry* except)
+{
+    juce::String name = wanted.trim().isEmpty() ? juce::String("Stop") : wanted.trim();
+    for (int suffix = 2; ; ++suffix)
+    {
+        bool taken = false;
+        for (const auto& entry : entries)
+            if (&entry != except && stopBuildKey(entry.name) == stopBuildKey(name)) taken = true;
+        if (!taken) return name;
+        name = wanted.trim() + " (" + juce::String(suffix) + ")";
+    }
+}
+
+std::vector<MainComponent::HeaderButtonInfo> MainComponent::headerButtons()
+{
+    return {
+        { &panicButton, 110, "panic", "PANIC", true }, { &recordButton, 55, "record", "Record", true },
+        { &stopListButton, 120, "stopList", "Stop List", true },
+        { &couplersButton, 125, "couplers", "Couplers", true }, { &temperamentsButton, 145, "temperaments", "Temperaments", true },
+        { &toggleAllVoicingButton, 145, "voicing", "Hide/Show all voicing", true },
+        { &perspectivePatternsButton, 190, "perspectivePatterns", "Perspective Patterns", true },
+        { &ignoredPatternsButton, 160, "ignoredPatterns", "Ignored Patterns", true },
+        { &oneShotPatternsButton, 160, "oneShotPatterns", "One-shot Patterns", true },
+        { &mergeStopsButton, 140, "stopMerging", "Stop-Merging", false },
+        { &loadStopSettingsButton, 140, "loadVoicing", "Load Voicing", false },
+        { &saveStopSettingsButton, 140, "saveVoicing", "Save Voicing", false },
+        { &loadConfigurationButton, 170, "loadConfiguration", "Load Configuration", true },
+        { &saveConfigurationButton, 170, "saveConfiguration", "Save Configuration", true },
+        { &configurationEditorButton, 175, "configurationEditor", "Configuration Editor", true },
+        { &shutdownButton, 130, "shutdown", "Shut down PC", false },
+        { &resetButton, 180, "globalReset", "GLOBAL RESET", true }
+    };
+}
+
+bool MainComponent::isHeaderButtonShown(const juce::String& key) const
+{
+    const auto found = headerButtonShown.find(key);
+    if (found != headerButtonShown.end()) return found->second;
+    return !(key == "stopMerging" || key == "loadVoicing" || key == "saveVoicing" || key == "shutdown");
+}
+
+void MainComponent::clearSampleLibraryInMemory()
+{
+    sampleTrees.clear();
+    for (auto& config : manualConfigs)
+    {
+        config.stopBuild = {};
+        config.folderPath.clear();
+        config.extraFolderPaths.clear();
+    }
+    topFolder = {};
+}
+
+void MainComponent::shutdownComputer()
+{
+    // No confirmation: the button (or its MIDI control) is meant for headless
+    // consoles - it saves, quits and shuts Windows down at once.
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    juce::MessageManager::callAsync([safeThis]
+        {
+            if (safeThis == nullptr) return;
+            auto doShutdown = [safeThis]
+            {
+                if (safeThis == nullptr) return;
+                safeThis->saveSettings();
+                if (safeThis->voicer != nullptr) safeThis->voicer->saveState(safeThis->voicerStateFile);
+                CrashHandler::note("Shut down PC: configuration saved, shutting the computer down");
+                juce::ChildProcess shutdown;
+               #if JUCE_WINDOWS
+                const bool started = shutdown.start("shutdown.exe /s /t 5 /c \"OrganSampler: shutting down\"");
+               #elif JUCE_MAC
+                const bool started = shutdown.start("osascript -e \"tell application \\\"System Events\\\" to shut down\"");
+               #else
+                // systemd first (no password for the console user on a desktop session), then the classic command.
+                const bool started = shutdown.start("systemctl poweroff") || shutdown.start("shutdown -h now");
+               #endif
+                if (!started)
+                {
+                    juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Shut down the computer",
+                        "The system did not accept the shutdown command. The configuration is saved.");
+                    return;
+                }
+                juce::MessageManager::callAsync([] { juce::JUCEApplication::getInstance()->quit(); });
+            };
+            // Quiet save into the open configuration file; an instrument built without
+            // one is offered for a new file first (nothing is dropped silently).
+            const bool configurationOpen = safeThis->configurationUsedThisSession && safeThis->currentConfigurationName.isNotEmpty()
+                && safeThis->currentConfigurationFile.existsAsFile();
+            if (configurationOpen) safeThis->savePortableConfiguration(safeThis->currentConfigurationFile, true);
+            else if (!safeThis->sampleTrees.empty() || !safeThis->engine.getStops().isEmpty())
+            {
+                // No configuration file open: the instrument is kept in a rescue file
+                // beside the settings, so nothing is lost and nobody has to answer a question.
+                const auto rescue = safeThis->settingsFile.getSiblingFile("Shutdown rescue configuration.json");
+                safeThis->savePortableConfiguration(rescue, true);
+                CrashHandler::note("Shut down PC without an open configuration: instrument saved to " + rescue.getFullPathName());
+            }
+            doShutdown();
+        });
+}
+
+int MainComponent::poolIndexOf(const juce::String& path) const
+{
+    for (int i = 0; i < (int)sampleTrees.size(); ++i)
+        if (juce::File(sampleTrees[(size_t)i]) == juce::File(path)) return i;
+    return -1;
+}
+
+int MainComponent::addTreeToPool(const juce::String& path)
+{
+    const int existing = poolIndexOf(path);
+    if (existing >= 0) return existing;
+    sampleTrees.push_back(juce::File(path).getFullPathName());
+    return (int)sampleTrees.size() - 1;
+}
+
+std::vector<juce::String> MainComponent::divisionTrees(int manual) const
+{
+    std::vector<juce::String> trees;
+    if (manual < 0 || manual >= SamplerEngine::maxManuals) return trees;
+    const auto& config = manualConfigs[(size_t)manual];
+    if (!config.stopBuild.active)
+    {
+        // No table yet: the trees loaded into the division the old way.
+        if (config.folderPath.isNotEmpty()) trees.push_back(config.folderPath);
+        for (const auto& extra : config.extraFolderPaths) trees.push_back(extra);
+        return trees;
+    }
+    // The pool trees the table uses, in pool order.
+    std::set<int> used;
+    for (const auto& entry : config.stopBuild.entries)
+        for (const auto& [perspective, ref] : entry.folders)
+            if (ref.tree >= 0 && ref.tree < (int)sampleTrees.size()) used.insert(ref.tree);
+    for (int index : used) trees.push_back(sampleTrees[(size_t)index]);
+    return trees;
+}
+
+void MainComponent::syncDivisionTreeLists()
+{
+    // The per-division lists (portable configurations, stop merging, older code)
+    // mirror what the tables use; topFolder is the pedal's first tree or the pool's.
+    for (int manual = 0; manual < SamplerEngine::maxManuals; ++manual)
+    {
+        auto& config = manualConfigs[(size_t)manual];
+        if (!config.stopBuild.active) continue;
+        const auto trees = divisionTrees(manual);
+        config.folderPath = trees.empty() ? juce::String() : trees.front();
+        config.extraFolderPaths.assign(trees.size() > 1 ? trees.begin() + 1 : trees.end(), trees.end());
+    }
+    juce::File root(manualConfigs[0].folderPath);
+    if (!root.isDirectory() && !sampleTrees.empty()) root = juce::File(sampleTrees.front());
+    if (root.isDirectory()) topFolder = root;
+}
+
+juce::File MainComponent::resolveStopBuildFolder(int manual, const ManualConfig::StopBuild::FolderRef& ref) const
+{
+    juce::ignoreUnused(manual);
+    if (ref.tree < 0 || ref.tree >= (int)sampleTrees.size()) return {};
+    const juce::File tree(sampleTrees[(size_t)ref.tree]);
+    if (ref.relativePath.isEmpty() || ref.relativePath == ".") return tree;
+    return tree.getChildFile(ref.relativePath);
+}
+
+std::shared_ptr<std::vector<SamplerEngine::FolderAssignment>> MainComponent::stopBuildMap(int manual) const
+{
+    if (manual < 0 || manual >= SamplerEngine::maxManuals || !manualConfigs[(size_t)manual].stopBuild.active) return nullptr;
+    auto map = std::make_shared<std::vector<SamplerEngine::FolderAssignment>>();
+    const auto trees = divisionTrees(manual);
+    for (const auto& entry : manualConfigs[(size_t)manual].stopBuild.entries)
+    {
+        if (entry.folders.empty())
+        {
+            // A row without folders is an empty container stop (a stop folder's
+            // master); it is created together with the first tree the division uses
+            // (or the pool's first tree).
+            const juce::String tree = !trees.empty() ? trees.front() : (sampleTrees.empty() ? juce::String() : sampleTrees.front());
+            if (tree.isNotEmpty()) map->push_back({ juce::File(tree), entry.name, "default", true, true, manual });
+            continue;
+        }
+        for (const auto& [perspective, ref] : entry.folders)
+        {
+            const auto folder = resolveStopBuildFolder(manual, ref);
+            if (folder == juce::File()) continue;
+            map->push_back({ folder, entry.name, perspective, true, false, manual });
+        }
+    }
+    return map;
+}
+
+std::shared_ptr<std::vector<SamplerEngine::FolderAssignment>> MainComponent::stopMapForDivisions(const std::set<int>& divisions) const
+{
+    auto all = std::make_shared<std::vector<SamplerEngine::FolderAssignment>>();
+    for (int manual : divisions)
+        if (auto map = stopBuildMap(manual)) all->insert(all->end(), map->begin(), map->end());
+    return all;
+}
+
+void MainComponent::loadTreeIntoDivision(const juce::File& tree, int manual)
+{
+    // A tree enters the pool once; its folders join the division's table by the
+    // automatic rules and only this tree is loaded (nothing else is touched).
+    if (manual < 0 || manual > manualCount || !tree.isDirectory()) return;
+    if (poolIndexOf(tree.getFullPathName()) >= 0)
+    {
+        juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, "Load folder",
+            "This folder tree is already loaded. Its folders are assigned in the Stop List.");
+        return;
+    }
+    if (!checkMemoryForFolders({ tree })) return;
+    // A tree of the pool that is not on this computer (a configuration from
+    // elsewhere) and a chosen folder of the same name: the folder takes the
+    // missing tree's place in the pool. Every table row keeps its folders
+    // (they are relative to the tree), and every division that uses the tree
+    // is rebuilt - the missing-tree notice goes with it.
+    // The best match among the missing trees: the same last three path
+    // components first ("003136\pipe\PE"), then two, then the folder name alone
+    // (two editions of a set share their leaf names).
+    auto tail = [](const juce::File& file, int components)
+    {
+        juce::StringArray parts;
+        parts.addTokens(file.getFullPathName().replaceCharacter('/', '\\'), "\\", "");
+        parts.removeEmptyStrings();
+        while (parts.size() > components) parts.remove(0);
+        return parts.joinIntoString("\\").toLowerCase();
+    };
+    int relocate = -1;
+    for (int components = 3; components >= 1 && relocate < 0; --components)
+        for (size_t index = 0; index < sampleTrees.size() && relocate < 0; ++index)
+        {
+            const juce::File old(sampleTrees[index]);
+            if (!old.isDirectory() && tail(old, components) == tail(tree, components)) relocate = (int)index;
+        }
+    if (relocate >= 0)
+    {
+        const size_t index = (size_t)relocate;
+        const juce::File old(sampleTrees[index]);
+        sampleTrees[index] = tree.getFullPathName();
+        for (int m = 0; m <= manualCount && m < SamplerEngine::maxManuals; ++m)
+        {
+            auto& config = manualConfigs[(size_t)m];
+            if (juce::File(config.folderPath) == old) config.folderPath = tree.getFullPathName();
+            for (auto& extra : config.extraFolderPaths) if (juce::File(extra) == old) extra = tree.getFullPathName();
+        }
+        syncDivisionTreeLists();
+        std::vector<int> users;
+        for (int m = 0; m <= manualCount && m < SamplerEngine::maxManuals; ++m)
+            for (const auto& path : divisionTrees(m))
+                if (juce::File(path) == tree) { users.push_back(m); break; }
+        if (std::find(users.begin(), users.end(), manual) == users.end()) users.push_back(manual);
+        CrashHandler::note("Tree " + tree.getFullPathName() + " takes the place of the missing pool tree " + old.getFullPathName()
+            + " (index " + juce::String((int)index) + "); divisions reloaded: " + juce::String((int)users.size()));
+        saveSettings();
+        reloadDivisions(users);
+        return;
+    }
+    auto& config = manualConfigs[(size_t)manual];
+    if (!config.stopBuild.active)
+    {
+        // The division's table starts from what is loaded now (or its old tree lists).
+        config.stopBuild = deriveStopBuildFromEngine(manual);
+        config.stopBuild.active = true;
+    }
+    const int index = addTreeToPool(tree.getFullPathName());
+    extendStopBuildWithTree(manual, tree, index);
+    syncDivisionTreeLists();
+    CrashHandler::note("Tree " + tree.getFullPathName() + " joins the pool (index " + juce::String(index) + ") for division " + juce::String(manual));
+    saveSettings();
+    reloadDivisions({ manual }, tree.getFullPathName());
+}
+
+void MainComponent::unloadTreeFromPool(const juce::String& path)
+{
+    const int index = poolIndexOf(path);
+    if (index < 0 || activeFolderLoader != nullptr) return;
+    // Every division loses the folders of this tree; rows without folders go unless
+    // they are stop folders with children. Later trees move down one index.
+    std::vector<int> affected;
+    for (int manual = 0; manual <= manualCount && manual < SamplerEngine::maxManuals; ++manual)
+    {
+        auto& build = manualConfigs[(size_t)manual].stopBuild;
+        if (!build.active) continue;
+        bool touched = false;
+        for (auto& entry : build.entries)
+            for (auto it = entry.folders.begin(); it != entry.folders.end();)
+            {
+                if (it->second.tree == index) { it = entry.folders.erase(it); touched = true; continue; }
+                if (it->second.tree > index) --it->second.tree;
+                ++it;
+            }
+        // The rows that lost their folders stay as empty stops ("Remove empty stops" clears them).
+        if (touched) affected.push_back(manual);
+    }
+    sampleTrees.erase(sampleTrees.begin() + index);
+    CrashHandler::note("Tree " + path + " unloaded from the pool; divisions rebuilt: " + juce::String((int)affected.size()));
+    syncDivisionTreeLists();
+    saveSettings();
+    if (!affected.empty()) reloadDivisions(affected);
+    else if (reopenStopBuildManual >= 0) { const int m = reopenStopBuildManual; reopenStopBuildManual = -1; showStopBuildingDialog(m); }
+}
+
+void MainComponent::unloadAllTreesFromPool()
+{
+    if (sampleTrees.empty() || activeFolderLoader != nullptr) return;
+    // Every row loses its folders (the rows stay as empty stops); every division
+    // that had samples is unloaded. Divisions without a table lose their tree lists too.
+    std::vector<int> affected;
+    for (int manual = 0; manual <= manualCount && manual < SamplerEngine::maxManuals; ++manual)
+    {
+        auto& config = manualConfigs[(size_t)manual];
+        bool touched = !divisionTrees(manual).empty();
+        if (config.stopBuild.active)
+            for (auto& entry : config.stopBuild.entries)
+                if (!entry.folders.empty()) { entry.folders.clear(); touched = true; }
+        if (!config.stopBuild.active) { config.folderPath = {}; config.extraFolderPaths.clear(); }
+        if (touched) affected.push_back(manual);
+    }
+    const int count = (int)sampleTrees.size();
+    sampleTrees.clear();
+    CrashHandler::note("All " + juce::String(count) + " folder tree(s) unloaded from the pool; divisions unloaded: " + juce::String((int)affected.size()));
+    syncDivisionTreeLists();
+    saveSettings();
+    if (!affected.empty()) reloadDivisions(affected);
+    else if (reopenStopBuildManual >= 0) { const int m = reopenStopBuildManual; reopenStopBuildManual = -1; showStopBuildingDialog(m); }
+}
+
+MainComponent::ManualConfig::StopBuild MainComponent::deriveStopBuildFromEngine(int manual) const
+{
+    // The table as the division is loaded now: every stop with the folder of
+    // each of its perspectives (the automatic rules, or what was applied last).
+    ManualConfig::StopBuild build;
+    const auto trees = divisionTrees(manual);
+    // References point into the tree pool.
+    auto refFor = [&](const juce::File& folder, ManualConfig::StopBuild::FolderRef& ref)
+    {
+        for (int i = 0; i < (int)sampleTrees.size(); ++i)
+        {
+            const juce::File tree(sampleTrees[(size_t)i]);
+            if (folder == tree || folder.isAChildOf(tree))
+            {
+                ref.tree = i;
+                ref.relativePath = folder == tree ? juce::String(".") : folder.getRelativePathFrom(tree);
+                return true;
+            }
+        }
+        return false;
+    };
+    auto addPerspective = [&build](const juce::String& perspective)
+    {
+        for (const auto& existing : build.perspectives) if (existing.equalsIgnoreCase(perspective)) return;
+        build.perspectives.push_back(perspective);
+    };
+    for (auto* stop : engine.getStops())
+    {
+        if (stop->primaryManual != manual) continue;
+        ManualConfig::StopBuild::Entry entry;
+        entry.name = stop->name;
+        entry.alias = stop->alias;
+        entry.child = stop->groupMaster.isNotEmpty();
+        if (stop->container) { build.entries.push_back(entry); continue; }   // a stop folder without pipes: a row without folders
+        auto place = [&](const Stop* rank)
+        {
+            ManualConfig::StopBuild::FolderRef ref;
+            if (!refFor(rank->folder, ref)) return;
+            const juce::String perspective = rank->perspective.isEmpty() ? juce::String("default") : rank->perspective;
+            if (entry.folders.count(perspective) != 0) return;   // one folder per perspective
+            entry.folders[perspective] = ref;
+            addPerspective(perspective);
+        };
+        place(stop);
+        for (const auto& rank : stop->ranks) place(rank.get());
+        if (!entry.folders.empty()) build.entries.push_back(entry);
+    }
+    // Nothing loaded (yet) for this division: what the automatic rules would make
+    // of its trees, so the table never starts empty for a division that has folders.
+    if (build.entries.empty())
+        for (const auto& path : trees)
+        {
+            const juce::File tree(path);
+            const int treeIndex = poolIndexOf(path);
+            if (!tree.isDirectory() || treeIndex < 0) continue;
+            for (const auto& assignment : const_cast<SamplerEngine&>(engine).scanTreeAssignments(tree, false))
+            {
+                const juce::String perspective = assignment.perspective.isEmpty() ? juce::String("default") : assignment.perspective;
+                ManualConfig::StopBuild::Entry* target = nullptr;
+                if (assignment.grouped)
+                    for (auto& entry : build.entries)
+                        if (stopBuildKey(entry.name) == stopBuildKey(assignment.stopName) && entry.folders.count(perspective) == 0)
+                        { target = &entry; break; }
+                if (target == nullptr)
+                {
+                    ManualConfig::StopBuild::Entry entry;
+                    entry.name = uniqueStopBuildName(build.entries, assignment.stopName, nullptr);
+                    build.entries.push_back(entry);
+                    target = &build.entries.back();
+                }
+                target->folders[perspective] = { treeIndex, assignment.folder.getRelativePathFrom(tree) };
+                addPerspective(perspective);
+            }
+        }
+    // "default" first, the perspectives in their natural order after it.
+    std::sort(build.perspectives.begin(), build.perspectives.end(), [](const juce::String& a, const juce::String& b)
+    {
+        const bool da = a.equalsIgnoreCase("default"), db = b.equalsIgnoreCase("default");
+        if (da != db) return da;
+        return a.compareNatural(b) < 0;
+    });
+    return build;
+}
+
+void MainComponent::extendStopBuildWithTree(int manual, const juce::File& tree, int treeIndex)
+{
+    // A tree added to a built division: its folders enter the table the way the
+    // automatic rules would load them (same-named stops get the new perspectives).
+    if (manual < 0 || manual >= SamplerEngine::maxManuals) return;
+    auto& build = manualConfigs[(size_t)manual].stopBuild;
+    for (const auto& assignment : engine.scanTreeAssignments(tree, true))
+    {
+        const juce::String perspective = assignment.perspective.isEmpty() ? juce::String("default") : assignment.perspective;
+        bool known = false;
+        for (const auto& existing : build.perspectives) if (existing.equalsIgnoreCase(perspective)) known = true;
+        if (!known) build.perspectives.push_back(perspective);
+        ManualConfig::StopBuild::Entry* target = nullptr;
+        if (assignment.grouped)
+            for (auto& entry : build.entries)
+                if (stopBuildKey(entry.name) == stopBuildKey(assignment.stopName) && entry.folders.count(perspective) == 0)
+                { target = &entry; break; }
+        if (target == nullptr)
+        {
+            ManualConfig::StopBuild::Entry entry;
+            entry.name = uniqueStopBuildName(build.entries, assignment.stopName, nullptr);
+            build.entries.push_back(entry);
+            target = &build.entries.back();
+        }
+        target->folders[perspective] = { treeIndex, assignment.folder.getRelativePathFrom(tree) };
+    }
+}
+
+void MainComponent::applyStopBuild(int manual, const ManualConfig::StopBuild& build, bool arrangeGrid)
+{
+    if (manual < 0 || manual > manualCount) return;
+    if (arrangeGrid) pendingGridArrange.insert(manual);
+    reopenStopBuildManual = manual;   // the table opens again on the rebuilt division
+    auto& config = manualConfigs[(size_t)manual];
+    config.stopBuild = build;
+    config.stopBuild.active = true;
+    // Rows without a folder are empty stops (stop folders); names are unique within the division.
+    auto& entries = config.stopBuild.entries;
+    for (size_t i = 0; i < entries.size(); ++i)
+    {
+        std::vector<ManualConfig::StopBuild::Entry> earlier(entries.begin(), entries.begin() + (long)i);
+        entries[i].name = uniqueStopBuildName(earlier, entries[i].name, nullptr);
+    }
+    CrashHandler::note("Stop building applied to division " + juce::String(manual) + ": " + juce::String((int)entries.size())
+        + " stops, " + juce::String((int)config.stopBuild.perspectives.size()) + " perspectives");
+    saveSettings();
+    reloadDivisionTrees(manual);
+}
+
+void MainComponent::applyStopLists(const std::array<ManualConfig::StopBuild, SamplerEngine::maxManuals>& builds,
+    const std::set<int>& changed, const std::set<int>& arrangeGrid)
+{
+    // The Stop List: every division's table at once; only the changed divisions
+    // are loaded again (one loader for all of them, every tree once).
+    std::vector<int> reload;
+    for (int manual = 0; manual <= manualCount && manual < SamplerEngine::maxManuals; ++manual)
+    {
+        if (changed.count(manual) == 0) continue;
+        auto& config = manualConfigs[(size_t)manual];
+        config.stopBuild = builds[(size_t)manual];
+        auto& entries = config.stopBuild.entries;
+        // A row without folders is an empty stop (a stop folder, with or without
+        // children); it is never dropped here - "Remove empty stops" does that.
+        for (size_t i = 0; i < entries.size(); ++i)
+        {
+            std::vector<ManualConfig::StopBuild::Entry> earlier(entries.begin(), entries.begin() + (long)i);
+            entries[i].name = uniqueStopBuildName(earlier, entries[i].name, nullptr);
+        }
+        // A first row cannot be indented: nothing above it to belong to.
+        bool masterSeen = false;
+        for (auto& entry : entries) { if (entry.child && !masterSeen) entry.child = false; if (!entry.child) masterSeen = true; }
+        config.stopBuild.active = true;
+        if (arrangeGrid.count(manual) != 0) pendingGridArrange.insert(manual);
+        CrashHandler::note("Stop List applied to division " + juce::String(manual) + ": " + juce::String((int)entries.size())
+            + " stops, " + juce::String((int)config.stopBuild.perspectives.size()) + " perspectives");
+        reload.push_back(manual);
+    }
+    reopenStopBuildManual = reload.empty() ? -1 : reload.front();
+    syncDivisionTreeLists();
+    saveSettings();
+    if (!reload.empty()) reloadDivisions(reload);
+}
+
+void MainComponent::moveStopToDivision(Stop* stop, int targetManual)
+{
+    if (stop == nullptr || activeFolderLoader != nullptr) return;
+    const int source = stop->primaryManual;
+    if (targetManual < 0 || targetManual > manualCount || targetManual == source) return;
+    for (int m : { source, targetManual })
+    {
+        auto& config = manualConfigs[(size_t)m];
+        if (!config.stopBuild.active) { config.stopBuild = deriveStopBuildFromEngine(m); config.stopBuild.active = true; }
+    }
+    auto& from = manualConfigs[(size_t)source].stopBuild;
+    auto& to = manualConfigs[(size_t)targetManual].stopBuild;
+    size_t i = 0;
+    while (i < from.entries.size() && stopBuildKey(from.entries[i].name) != stopBuildKey(stop->name)) ++i;
+    if (i >= from.entries.size()) return;
+    // A stop folder takes its indented children along; a child leaves its folder.
+    size_t count = 1;
+    if (!from.entries[i].child)
+        while (i + count < from.entries.size() && from.entries[i + count].child) ++count;
+    std::vector<ManualConfig::StopBuild::Entry> block(from.entries.begin() + (long)i, from.entries.begin() + (long)(i + count));
+    from.entries.erase(from.entries.begin() + (long)i, from.entries.begin() + (long)(i + count));
+    block.front().child = false;
+    std::vector<std::pair<juce::String, juce::String>> renamed;   // old name -> new name
+    for (auto& entry : block)
+    {
+        const juce::String oldName = entry.name;
+        entry.name = uniqueStopBuildName(to.entries, entry.name, nullptr);
+        renamed.push_back({ oldName, entry.name });
+        for (const auto& [perspective, ref] : entry.folders)   // the pool is global: the references stay valid
+        {
+            bool present = false;
+            for (const auto& existing : to.perspectives) if (existing.equalsIgnoreCase(perspective)) present = true;
+            if (!present) to.perspectives.push_back(perspective);
+        }
+        to.entries.push_back(entry);
+    }
+    CrashHandler::note("Stop \"" + stop->name + "\" dragged from division " + juce::String(source) + " to " + juce::String(targetManual));
+    // In place: the stops of the block (a folder with its children) change
+    // division with their samples and copies; the new division's routes for
+    // their perspectives are opened if it lacks them.
+    for (const auto& [oldName, newName] : renamed)
+        if (auto* moving = stopNamed(source, oldName))
+        {
+            if (moving->name != newName) { const juce::ScopedLock sl(engine.getLock()); moving->name = newName; }
+            engine.moveStopToDivision(moving, targetManual);
+        }
+    rebuildPerspectiveAudioRoutes();
+    finishInPlaceStopEdit({ source, targetManual });
+}
+
+Stop* MainComponent::stopNamed(int manual, const juce::String& name) const
+{
+    for (auto* stop : engine.getStops())
+        if (stop->primaryManual == manual && stopBuildKey(stop->name) == stopBuildKey(name)) return stop;
+    return nullptr;
+}
+
+void MainComponent::finishInPlaceStopEdit(const std::set<int>& manuals)
+{
+    syncDivisionTreeLists();
+    applyStopGroups();
+    // A master's transmissions widen the compass its children must fill: the
+    // fills of the divisions' stops again (copies that exist stay, missing ones come).
+    for (auto* stop : engine.getStops())
+        if (manuals.count(stop->primaryManual) != 0) engine.refillStop(stop);
+    saveSettings();
+    if (voicer)
+    {
+        voicer->rebuildUI(stopsContent, stopsViewport);
+        voicer->saveState(voicerStateFile);
+    }
+    refreshConfigurationEditor();
+    if (stopPoolRefresh) stopPoolRefresh();
+    reopenStopBuildManual = -1;
+}
+
+void MainComponent::applyTransmissionPlan(std::vector<TransmissionEdit>& plan)
+{
+    // Per source stop the whole transmission list is rebuilt in its old order:
+    // removed ones left out, the others with their new division, master and
+    // alias; replaceTransmissions() switches the surviving ones back on.
+    std::set<std::pair<int, juce::String>> stopsDone;
+    for (const auto& first : plan)
+    {
+        const std::pair<int, juce::String> identity{ first.sourceManual, first.source };
+        if (!stopsDone.insert(identity).second) continue;
+        Stop* stop = nullptr;
+        for (auto* candidate : engine.getStops())
+            if (candidate->primaryManual == first.sourceManual && candidate->name == first.source) { stop = candidate; break; }
+        if (stop == nullptr) continue;
+        const int count = (int)stop->transmissions.size();
+        std::vector<int> removed(count, 0);
+        std::vector<TransmissionEdit*> editAt((size_t)count, nullptr);
+        for (auto& edit : plan)
+        {
+            if (edit.sourceManual != first.sourceManual || edit.source != first.source) continue;
+            const int index = stop->transmissionIndex(edit.originalManual, edit.ordinal);
+            if (index < 0 || index >= count) continue;
+            if (edit.remove) removed[(size_t)index] = 1;
+            else editAt[(size_t)index] = &edit;
+        }
+        bool moved = false, changed = false;
+        std::vector<Stop::Transmission> list;
+        std::vector<TransmissionEdit*> editOfNew;
+        for (int index = 0; index < count; ++index)
+        {
+            if (removed[(size_t)index]) { changed = true; continue; }
+            Stop::Transmission t = stop->transmissions[(size_t)index];
+            if (auto* edit = editAt[(size_t)index])
+            {
+                if (edit->newManual >= 0 && edit->newManual != t.manual) { t.manual = edit->newManual; moved = true; changed = true; }
+                if (edit->master != t.groupMaster) { t.groupMaster = edit->master; changed = true; }
+                if (edit->alias != t.alias) { t.alias = edit->alias; changed = true; }
+            }
+            list.push_back(t);
+            editOfNew.push_back(editAt[(size_t)index]);
+        }
+        if (changed) engine.replaceTransmissions(stop, list);
+        if (moved && voicer != nullptr) voicer->forgetTransmissionCells(stop);
+        for (int index = 0; index < (int)editOfNew.size(); ++index)
+            if (editOfNew[(size_t)index] != nullptr) editOfNew[(size_t)index]->newKey = Voicer::transmissionKey(stop, index);
+        if (changed) CrashHandler::note("Transmissions of \"" + stop->name + "\" edited in the Stop List: " + juce::String((int)list.size()) + " remain");
+    }
+}
+
+void MainComponent::indentStopUnder(Stop* stop, Stop* master)
+{
+    if (stop == nullptr || master == nullptr || stop == master || activeFolderLoader != nullptr) return;
+    const int source = stop->primaryManual, target = master->primaryManual;
+    if (source < 0 || source > manualCount || target < 0 || target > manualCount) return;
+    for (int m : { source, target })
+    {
+        auto& config = manualConfigs[(size_t)m];
+        if (!config.stopBuild.active) { config.stopBuild = deriveStopBuildFromEngine(m); config.stopBuild.active = true; }
+    }
+    auto& from = manualConfigs[(size_t)source].stopBuild.entries;
+    size_t i = 0;
+    while (i < from.size() && stopBuildKey(from[i].name) != stopBuildKey(stop->name)) ++i;
+    if (i >= from.size()) return;
+    if (!from[i].child && i + 1 < from.size() && from[i + 1].child) return;   // a stop folder keeps its own children
+    ManualConfig::StopBuild::Entry entry = from[i];
+    from.erase(from.begin() + (long)i);
+    auto& to = manualConfigs[(size_t)target].stopBuild.entries;
+    size_t masterIndex = 0;
+    while (masterIndex < to.size() && (to[masterIndex].child || stopBuildKey(to[masterIndex].name) != stopBuildKey(master->name))) ++masterIndex;
+    if (masterIndex >= to.size()) { from.insert(from.begin() + (long)i, entry); return; }
+    size_t after = masterIndex + 1;
+    while (after < to.size() && to[after].child) ++after;
+    entry.child = true;
+    if (source != target) entry.name = uniqueStopBuildName(to, entry.name, nullptr);
+    to.insert(to.begin() + (long)after, entry);
+    CrashHandler::note("Stop \"" + stop->name + "\" indented under \"" + master->name + "\" (arrange mode)");
+    // In place: the engine stop moves to the master's division when needed (its
+    // samples and copies go along), the grouping is metadata.
+    if (source != target)
+    {
+        if (stop->name != entry.name) { const juce::ScopedLock sl(engine.getLock()); stop->name = entry.name; }
+        engine.moveStopToDivision(stop, target);
+        rebuildPerspectiveAudioRoutes();   // the division may lack this stop's perspectives' routes
+    }
+    finishInPlaceStopEdit(source == target ? std::set<int>{ source } : std::set<int>{ source, target });
+}
+
+void MainComponent::createStopFolderOnGrid(int manual, int column, int row)
+{
+    if (manual < 0 || manual > manualCount || activeFolderLoader != nullptr) return;
+    if (sampleTrees.empty())
+    {
+        // An empty stop is created together with a folder tree: there is none yet.
+        juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, "New stop folder",
+            "Load a sample folder first (Stop List > Load folder...): stop folders are created together with the folder trees of the organ.", "OK", this);
+        return;
+    }
+    auto& config = manualConfigs[(size_t)manual];
+    if (!config.stopBuild.active) { config.stopBuild = deriveStopBuildFromEngine(manual); config.stopBuild.active = true; }
+    ManualConfig::StopBuild::Entry entry;
+    entry.name = uniqueStopBuildName(config.stopBuild.entries, "Stop folder", nullptr);
+    config.stopBuild.entries.push_back(entry);
+    if (voicer != nullptr) voicer->setGridCell(manual, entry.name, column, row);
+    CrashHandler::note("Stop folder \"" + entry.name + "\" created on the grid of division " + juce::String(manual)
+        + " (cell " + juce::String(column) + "," + juce::String(row) + ")");
+    engine.addContainerStop(manual, entry.name);   // in place: an empty stop, nothing reloaded
+    finishInPlaceStopEdit({ manual });
+}
+
+std::vector<MainComponent::ReadyStop> MainComponent::readyStopsNotIn(int manual, const std::vector<ManualConfig::StopBuild::Entry>& entries)
+{
+    std::vector<std::vector<ManualConfig::StopBuild::Entry>> all((size_t)SamplerEngine::maxManuals);
+    for (int m = 0; m < SamplerEngine::maxManuals; ++m)
+    {
+        if (m == manual) { all[(size_t)m] = entries; continue; }
+        if (m > manualCount) continue;
+        const auto& config = manualConfigs[(size_t)m];
+        all[(size_t)m] = config.stopBuild.active ? config.stopBuild.entries : deriveStopBuildFromEngine(m).entries;
+    }
+    return readyStopsNotIn(all);
+}
+
+std::vector<MainComponent::ReadyStop> MainComponent::readyStopsNotIn(const std::vector<std::vector<ManualConfig::StopBuild::Entry>>& allEntries)
+{
+    // Every stop folder of every loaded tree, grouped by name over its perspectives
+    // (the automatic rules of a fresh table), minus every stop one of whose folders
+    // is used by any row of any division: a stop used anywhere in the instrument is
+    // not offered again (adding it would be a second copy of the same folders).
+    std::vector<ReadyStop> ready;
+    for (const auto& path : sampleTrees)
+    {
+        const juce::File tree(path);
+        const int treeIndex = poolIndexOf(path);
+        if (!tree.isDirectory() || treeIndex < 0) continue;
+        for (const auto& assignment : engine.scanTreeAssignments(tree, false))
+        {
+            if (assignment.container) continue;
+            const juce::String perspective = assignment.perspective.isEmpty() ? juce::String("default") : assignment.perspective;
+            ReadyStop* target = nullptr;
+            if (assignment.grouped)
+                for (auto& stop : ready)
+                    if (stopBuildKey(stop.name) == stopBuildKey(assignment.stopName) && stop.folders.count(perspective) == 0) { target = &stop; break; }
+            if (target == nullptr) { ready.push_back({ assignment.stopName, {} }); target = &ready.back(); }
+            target->folders[perspective] = { treeIndex, assignment.folder.getRelativePathFrom(tree) };
+        }
+    }
+    auto folderUsed = [&](const ManualConfig::StopBuild::FolderRef& ref)
+    {
+        for (const auto& entries : allEntries)
+            for (const auto& entry : entries)
+            {
+                if (entry.isTransmission()) continue;
+                for (const auto& [perspective, used] : entry.folders)
+                    if (used.tree == ref.tree && used.relativePath.equalsIgnoreCase(ref.relativePath)) return true;
+            }
+        return false;
+    };
+    std::vector<ReadyStop> missing;
+    for (auto& stop : ready)
+    {
+        bool present = false;
+        for (const auto& [perspective, ref] : stop.folders)
+            if (folderUsed(ref)) { present = true; break; }
+        if (!present) missing.push_back(std::move(stop));
+    }
+    std::sort(missing.begin(), missing.end(), [](const ReadyStop& a, const ReadyStop& b) { return a.name.compareNatural(b.name) < 0; });
+    return missing;
+}
+
+void MainComponent::addReadyStopToDivision(int manual, const ReadyStop& stop, int column, int row)
+{
+    if (manual < 0 || manual > manualCount || activeFolderLoader != nullptr || stop.folders.empty()) return;
+    auto& config = manualConfigs[(size_t)manual];
+    if (!config.stopBuild.active) { config.stopBuild = deriveStopBuildFromEngine(manual); config.stopBuild.active = true; }
+    ManualConfig::StopBuild::Entry entry;
+    entry.name = uniqueStopBuildName(config.stopBuild.entries, stop.name, nullptr);
+    entry.folders = stop.folders;
+    for (const auto& [perspective, ref] : stop.folders)
+    {
+        bool known = false;
+        for (const auto& existing : config.stopBuild.perspectives) if (existing.equalsIgnoreCase(perspective)) known = true;
+        if (!known) config.stopBuild.perspectives.push_back(perspective);
+    }
+    config.stopBuild.entries.push_back(entry);
+    if (voicer != nullptr && column >= 0 && row >= 0) voicer->setGridCell(manual, entry.name, column, row);
+    CrashHandler::note("Stop \"" + entry.name + "\" added to division " + juce::String(manual) + " from the loaded folders ("
+        + juce::String((int)stop.folders.size()) + " perspective(s))");
+    saveSettings();
+    // The division again: the new stop alone is decoded, the others adopt their samples and copies.
+    reloadDivisionTrees(manual);
+}
+
+void MainComponent::mergeStopFolderInto(Stop* folder, Stop* target)
+{
+    if (folder == nullptr || target == nullptr || folder == target || activeFolderLoader != nullptr) return;
+    const int source = folder->primaryManual, dest = target->primaryManual;
+    if (source < 0 || source > manualCount || dest < 0 || dest > manualCount) return;
+    for (int m : { source, dest })
+    {
+        auto& config = manualConfigs[(size_t)m];
+        if (!config.stopBuild.active) { config.stopBuild = deriveStopBuildFromEngine(m); config.stopBuild.active = true; }
+    }
+    auto& from = manualConfigs[(size_t)source].stopBuild.entries;
+    size_t i = 0;
+    while (i < from.size() && (from[i].child || stopBuildKey(from[i].name) != stopBuildKey(folder->name))) ++i;
+    if (i >= from.size()) return;
+    size_t count = 1;
+    while (i + count < from.size() && from[i + count].child) ++count;
+    std::vector<ManualConfig::StopBuild::Entry> block(from.begin() + (long)i, from.begin() + (long)(i + count));
+    from.erase(from.begin() + (long)i, from.begin() + (long)(i + count));
+    auto& to = manualConfigs[(size_t)dest].stopBuild.entries;
+    size_t masterIndex = 0;
+    while (masterIndex < to.size() && (to[masterIndex].child || stopBuildKey(to[masterIndex].name) != stopBuildKey(target->name))) ++masterIndex;
+    if (masterIndex >= to.size()) { from.insert(from.begin() + (long)juce::jmin(i, from.size()), block.begin(), block.end()); return; }
+    size_t after = masterIndex + 1;
+    while (after < to.size() && to[after].child) ++after;
+    std::vector<ManualConfig::StopBuild::Entry> moved;
+    std::vector<std::pair<juce::String, juce::String>> renamed;   // old name -> new name of the rows that move
+    juce::String removed;
+    for (size_t k = 0; k < block.size(); ++k)
+    {
+        auto entry = block[k];
+        if (k == 0 && entry.folders.empty()) { removed = entry.name; continue; }   // the empty folder button: nothing left for it
+        entry.child = true;
+        const juce::String oldName = entry.name;
+        if (source != dest) entry.name = uniqueStopBuildName(to, entry.name, nullptr);
+        renamed.push_back({ oldName, entry.name });
+        moved.push_back(entry);
+    }
+    to.insert(to.begin() + (long)after, moved.begin(), moved.end());
+    CrashHandler::note("Stop folder \"" + folder->name + "\" merged into \"" + target->name + "\": " + juce::String((int)moved.size())
+        + " row(s) indented" + (removed.isNotEmpty() ? ", empty folder row \"" + removed + "\" removed" : juce::String()) + " (arrange mode)");
+    // In place: the empty folder stop goes, the moved rows' stops change division
+    // when needed (samples and copies along), the grouping is metadata.
+    if (removed.isNotEmpty())
+        if (auto* empty = stopNamed(source, removed)) { if (voicer) voicer->forgetStop(empty); engine.removeStop(empty); }
+    if (source != dest)
+    {
+        for (const auto& [oldName, newName] : renamed)
+            if (auto* moving = stopNamed(source, oldName))
+            {
+                if (moving->name != newName) { const juce::ScopedLock sl(engine.getLock()); moving->name = newName; }
+                engine.moveStopToDivision(moving, dest);
+            }
+        rebuildPerspectiveAudioRoutes();
+    }
+    finishInPlaceStopEdit(source == dest ? std::set<int>{ source } : std::set<int>{ source, dest });
+}
+
+void MainComponent::outdentStop(Stop* stop)
+{
+    if (stop == nullptr || activeFolderLoader != nullptr) return;
+    const int manual = stop->primaryManual;
+    if (manual < 0 || manual > manualCount) return;
+    auto& config = manualConfigs[(size_t)manual];
+    if (!config.stopBuild.active) { config.stopBuild = deriveStopBuildFromEngine(manual); config.stopBuild.active = true; }
+    auto& entries = config.stopBuild.entries;
+    size_t i = 0;
+    while (i < entries.size() && stopBuildKey(entries[i].name) != stopBuildKey(stop->name)) ++i;
+    if (i >= entries.size() || !entries[i].child) return;
+    // Out of the folder: the row follows the folder's block as a stop of its own.
+    ManualConfig::StopBuild::Entry entry = entries[i];
+    entry.child = false;
+    entries.erase(entries.begin() + (long)i);
+    size_t after = i;
+    while (after < entries.size() && entries[after].child) ++after;
+    entries.insert(entries.begin() + (long)after, entry);
+    CrashHandler::note("Stop \"" + stop->name + "\" taken out of its stop folder (arrange mode)");
+    finishInPlaceStopEdit({ manual });   // metadata only: nothing reloaded
+}
+
+void MainComponent::removeStopFromGrid(Stop* stop)
+{
+    if (stop == nullptr || activeFolderLoader != nullptr) return;
+    const int manual = stop->primaryManual;
+    if (manual < 0 || manual > manualCount) return;
+    const juce::String name = stop->name;
+    // A stop folder with anything under it stays: empty it first.
+    if (voicer != nullptr)
+    {
+        const auto children = voicer->groupChildren(stop);
+        const auto childTransmissions = voicer->groupChildTransmissions(stop);
+        if (!children.empty() || !childTransmissions.empty())
+        {
+            juce::StringArray names;
+            for (auto* child : children) names.add(child->displayName());
+            for (const auto& [source, index] : childTransmissions) names.add(Voicer::transmissionLabel(source, index));
+            juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Stop folder not empty",
+                "\"" + stop->displayName() + "\" still carries " + juce::String(names.size()) + " stop(s):\n  " + names.joinIntoString("\n  ")
+                + "\n\nTake them out of the folder (drag them onto the grid, or outdent them in the Stop List) or remove them first; "
+                "then the folder can be removed.", "OK", this);
+            return;
+        }
+    }
+    auto doRemove = [this, manual, name]
+    {
+        auto& config = manualConfigs[(size_t)manual];
+        if (!config.stopBuild.active) { config.stopBuild = deriveStopBuildFromEngine(manual); config.stopBuild.active = true; }
+        auto& entries = config.stopBuild.entries;
+        size_t i = 0;
+        while (i < entries.size() && stopBuildKey(entries[i].name) != stopBuildKey(name)) ++i;
+        if (i >= entries.size()) return;
+        // A stop folder's children stay as stops of their own.
+        if (!entries[i].child)
+            for (size_t j = i + 1; j < entries.size() && entries[j].child; ++j) entries[j].child = false;
+        entries.erase(entries.begin() + (long)i);
+        CrashHandler::note("Stop \"" + name + "\" removed from division " + juce::String(manual) + " (arrange mode)");
+        // In place: the engine drops this stop alone (its samples, copies and
+        // transmissions go with it); nothing else is reloaded, refilled or
+        // rebuilt, and the arrange mode goes on.
+        Stop* leaving = nullptr;
+        for (auto* candidate : engine.getStops())
+            if (candidate->primaryManual == manual && candidate->name == name) { leaving = candidate; break; }
+        if (leaving != nullptr)
+        {
+            if (voicer) voicer->forgetStop(leaving);
+            engine.removeStop(leaving);
+        }
+        applyStopGroups();
+        syncDivisionTreeLists();
+        saveSettings();
+        if (voicer)
+        {
+            voicer->rebuildUI(stopsContent, stopsViewport);
+            voicer->saveState(voicerStateFile);
+        }
+        refreshConfigurationEditor();
+        if (stopPoolRefresh) stopPoolRefresh();
+        reopenStopBuildManual = -1;
+    };
+    if (stop->transmissions.empty()) { doRemove(); return; }
+    // The transmissions go with the stop: say which.
+    static const juce::String divisionNames[8]{ "Pedal", "I.", "II.", "III.", "IV.", "V.", "VI.", "VII." };
+    juce::StringArray list;
+    for (int index = 0; index < (int)stop->transmissions.size(); ++index)
+    {
+        const auto& t = stop->transmissions[(size_t)index];
+        list.add(Voicer::transmissionLabel(stop, index) + " in " + divisionNames[juce::jlimit(0, 7, t.manual)]
+            + (t.shift != 0 ? " (" + juce::String(t.shift > 0 ? "+" : "") + juce::String(t.shift) + ")" : juce::String()));
+    }
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    juce::AlertWindow::showOkCancelBox(juce::MessageBoxIconType::WarningIcon, "Remove stop",
+        "\"" + stop->displayName() + "\" has " + juce::String((int)stop->transmissions.size()) + " transmission(s):\n  "
+        + list.joinIntoString("\n  ") + "\n\nRemoving the stop destroys all of them. Remove anyway?",
+        "Remove", "Cancel", this, juce::ModalCallbackFunction::create([safeThis, doRemove](int result)
+        {
+            if (result != 0 && safeThis != nullptr) doRemove();
+        }));
+}
+
+void MainComponent::applyStopGroups()
+{
+    // Stop folders: an indented row belongs to the nearest non-indented row
+    // above it in the same division. The engine routes a child through its
+    // master's transmissions, so the pointer is set under the control lock.
+    const juce::ScopedLock lock(engine.getLock());
+    for (auto* stop : engine.getStops()) { stop->groupMaster = {}; stop->groupMasterPtr = nullptr; }
+    for (int manual = 0; manual < SamplerEngine::maxManuals; ++manual)
+    {
+        const auto& build = manualConfigs[(size_t)manual].stopBuild;
+        if (!build.active) continue;
+        juce::String master;
+        for (const auto& entry : build.entries)
+        {
+            if (!entry.child) { master = entry.name; continue; }
+            if (master.isEmpty()) continue;
+            Stop* masterStop = nullptr;
+            for (auto* stop : engine.getStops())
+                if (stop->primaryManual == manual && stopBuildKey(stop->name) == stopBuildKey(master)) masterStop = stop;
+            for (auto* stop : engine.getStops())
+                if (stop->primaryManual == manual && stopBuildKey(stop->name) == stopBuildKey(entry.name) && stop != masterStop)
+                {
+                    stop->groupMaster = master;
+                    stop->groupMasterPtr = masterStop;
+                }
+        }
+    }
+}
+
+void MainComponent::resetStopBuild(int manual)
+{
+    if (manual < 0 || manual > manualCount) return;
+    manualConfigs[(size_t)manual].stopBuild = {};
+    CrashHandler::note("Stop building reset to automatic for division " + juce::String(manual));
+    saveSettings();
+    reloadDivisionTrees(manual);
+}
+
+void MainComponent::reloadDivisionTrees(int manual)
+{
+    reloadDivisions({ manual });
+}
+
+void MainComponent::reloadDivisions(const std::vector<int>& manualsIn, const juce::String& onlyTree)
+{
+    if (activeFolderLoader != nullptr) return;
+    std::vector<int> manuals;
+    for (int manual : manualsIn)
+        if (manual >= 0 && manual <= manualCount && std::find(manuals.begin(), manuals.end(), manual) == manuals.end())
+            manuals.push_back(manual);
+    if (manuals.empty()) return;
+    // One job per pool tree the divisions use (a tree is loaded once, its
+    // folders go to their divisions); divisions without a table keep the old
+    // per-division way.
+    std::vector<StartupFolderLoader::Job> jobs;
+    std::set<int> mapped;
+    for (int manual : manuals)
+    {
+        if (manualConfigs[(size_t)manual].stopBuild.active) { mapped.insert(manual); continue; }
+        bool first = true;
+        for (const auto& path : divisionTrees(manual))
+        {
+            const juce::File tree(path);
+            if (!tree.isDirectory() || (onlyTree.isNotEmpty() && juce::File(onlyTree) != tree)) continue;
+            jobs.push_back({ manual, tree, !first, nullptr });
+            first = false;
+        }
+    }
+    if (!mapped.empty())
+    {
+        auto map = stopMapForDivisions(mapped);
+        std::set<juce::String> treesUsed;
+        for (int manual : mapped) for (const auto& path : divisionTrees(manual)) treesUsed.insert(path);
+        for (int manual : mapped)   // containers of divisions without folders: created with the pool's first tree
+            for (const auto& entry : manualConfigs[(size_t)manual].stopBuild.entries)
+                if (entry.folders.empty() && !sampleTrees.empty() && divisionTrees(manual).empty()) treesUsed.insert(sampleTrees.front());
+        for (const auto& path : sampleTrees)   // pool order
+        {
+            const juce::File tree(path);
+            if (treesUsed.count(path) == 0 || !tree.isDirectory()) continue;
+            if (onlyTree.isNotEmpty() && juce::File(onlyTree) != tree) continue;
+            jobs.push_back({ -1, tree, true, map });
+        }
+    }
+    juce::String list;
+    for (int manual : manuals) list << (list.isEmpty() ? "" : ", ") << manual;
+    CrashHandler::note((onlyTree.isNotEmpty() ? "Loading tree " + onlyTree + " for division(s) " : "Reloading division(s) ") + list
+        + " with " + juce::String((int)jobs.size()) + " tree job(s)");
+    if (voicer) voicer->saveState(voicerStateFile);
+    audioMuted.store(true);
+    panic();
+    // The divisions' old stops stay until the commit: the new stops of the same
+    // folders adopt their samples, layers, copies and analysis there, so a
+    // reload decodes and builds only what is really new.
+    auto replacing = std::make_shared<std::set<int>>();
+    for (int manual : manuals)
+    {
+        if (keyboardsWindow != nullptr && keyboardsWindowManual == manual) keyboardsWindow.reset();
+        if (stopBuildWindow != nullptr) stopBuildWindow.reset();
+        if (onlyTree.isEmpty())
+        {
+            removePerspectiveAudioRoutesForManual(manual);
+            replacing->insert(manual);
+        }
+    }
+    if (jobs.empty())
+    {
+        for (int manual : *replacing) engine.unloadManual(manual);   // nothing to load: the division becomes empty
+        if (voicer) { voicer->setActiveManualCount(manualCount + 1); voicer->rebuildUI(stopsContent, stopsViewport); }
+        finishDivisionsLoad(manuals);
+        return;
+    }
+    for (auto& job : jobs) job.replacing = replacing;
+    if (voicer) voicer->setActiveManualCount(manualCount + 1);
+    auto loader = std::make_unique<StartupFolderLoader>(engine, std::move(jobs), currentSampleRate,
+        [this, manuals](bool cancelled) { if (cancelled) finishDivisionsLoad(manuals); else finishDivisionsLoadEnd(manuals); }, this);
+    // The commit retires the old stops of the reloaded divisions: the grid's rows
+    // (and the drag state of the arrange mode) must not point at them when the
+    // next paint comes - rebuilt at once, before the loading dialog's next step.
+    loader->afterCommit = [this]
+    {
+        if (voicer == nullptr) return;
+        voicer->dropStopReferences();
+        voicer->rebuildUI(stopsContent, stopsViewport);
+    };
+    loader->phases =
+    {
+        { "Compiling the Stop List: audio routes", 0.1, [this, manuals]
+            {
+                // One step per route, like the startup loading (each opens a device).
+                finishDivisionsLoadRoutesBegin(manuals);
+                if (auto* loader = dynamic_cast<StartupFolderLoader*>(activeFolderLoader.get()))
+                    loader->addPhasesNext(audioRouteSteps(0.1, 0.4, [this] { autoDetectBaseTemperament(); }));
+            } },
+        { "Compiling the Stop List: stop grid and voicing state", 0.5, [this, manuals] { finishDivisionsLoadGrid(manuals); } },
+    };
+    activeFolderLoader = std::move(loader);
+    activeFolderLoader->launchThread();
+}
+
+void MainComponent::finishDivisionLoad(int manual)
+{
+    finishDivisionsLoad({ manual });
+}
+
+void MainComponent::finishDivisionsLoad(const std::vector<int>& manuals)
+{
+    // The three parts in one go (no loading dialog to report into).
+    finishDivisionsLoadRoutes(manuals);
+    finishDivisionsLoadGrid(manuals);
+    finishDivisionsLoadEnd(manuals);
+}
+
+void MainComponent::finishDivisionsLoadRoutes(const std::vector<int>& manuals)
+{
+    finishDivisionsLoadRoutesBegin(manuals);
+    rebuildPerspectiveAudioRoutes();
+    autoDetectBaseTemperament();
+}
+
+void MainComponent::finishDivisionsLoadRoutesBegin(const std::vector<int>& manuals)
+{
+    auto concerns = [&manuals](int manual) { return std::find(manuals.begin(), manuals.end(), manual) != manuals.end(); };
+    for (auto* stop : engine.getStops())
+        if (concerns(stop->primaryManual)) stop->enabled = false;
+    // Audio settings of perspectives a rebuilt division no longer has (a prefix
+    // that meanwhile joined another perspective's pattern line) are dropped, so
+    // the Configuration Editor and the routing show one entry per perspective.
+    for (int manual : manuals)
+    {
+        auto& config = manualConfigs[(size_t)manual];
+        std::vector<juce::String> live = engine.getPerspectivesForManual(manual);
+        for (const auto& column : config.stopBuild.perspectives) live.push_back(column);
+        for (auto it = config.perspectiveAudio.begin(); it != config.perspectiveAudio.end();)
+        {
+            const auto perspective = juce::String(it->first).fromFirstOccurrenceOf("|", false, false);
+            bool keep = perspective.equalsIgnoreCase("default");
+            for (const auto& name : live) if (name.equalsIgnoreCase(perspective)) keep = true;
+            it = keep ? std::next(it) : config.perspectiveAudio.erase(it);
+        }
+    }
+}
+
+void MainComponent::finishDivisionsLoadGrid(const std::vector<int>& manuals)
+{
+    auto concerns = [&manuals](int manual) { return std::find(manuals.begin(), manuals.end(), manual) != manuals.end(); };
+    applyStopGroups();
+    if (keyboardsWindow != nullptr && concerns(keyboardsWindowManual)) keyboardsWindow.reset();
+    if (voicer)
+    {
+        voicer->setActiveManualCount(manualCount + 1);
+        voicer->rebuildUI(stopsContent, stopsViewport);
+        if (voicerStateFile.existsAsFile()) voicer->loadState(voicerStateFile);
+        bool layoutChanged = false;
+        for (int manual : manuals)
+        {
+            // Aliases typed in the Stop building table.
+            const auto& build = manualConfigs[(size_t)manual].stopBuild;
+            if (build.active)
+                for (auto* stop : engine.getStops())
+                    if (stop->primaryManual == manual)
+                        for (const auto& entry : build.entries)
+                            if (entry.alias.isNotEmpty() && stopBuildKey(entry.name) == stopBuildKey(stop->name) && stop->alias != entry.alias)
+                            { stop->alias = entry.alias; layoutChanged = true; }
+            // The grid follows the table's order when the user asked for it on Apply.
+            if (pendingGridArrange.erase(manual) > 0)
+            {
+                voicer->forgetGridCells(manual);
+                layoutChanged = true;
+            }
+        }
+        if (layoutChanged) voicer->rebuildUI(stopsContent, stopsViewport);
+        voicer->saveState(voicerStateFile);
+    }
+}
+
+void MainComponent::finishDivisionsLoadEnd(const std::vector<int>& manuals)
+{
+    auto concerns = [&manuals](int manual) { return std::find(manuals.begin(), manuals.end(), manual) != manuals.end(); };
+    int divisionStops = 0;
+    for (auto* stop : engine.getStops()) if (concerns(stop->primaryManual)) ++divisionStops;
+    juce::String list;
+    for (int manual : manuals) list << (list.isEmpty() ? "" : ", ") << manual;
+    CrashHandler::note("Division(s) " + list + " rebuilt: " + juce::String(divisionStops) + " stops");
+    engine.launchCopyBuilds();   // the copies of the filled pipes of the new stops
+    saveSettings();
+    refreshConfigurationEditor();
+    const bool haveStops = !engine.getStops().isEmpty();
+    saveStopSettingsButton.setEnabled(haveStops);
+    loadStopSettingsButton.setEnabled(haveStops);
+    mergeStopsButton.setEnabled(haveStops && topFolder.isDirectory());
+    resized();
+    if (stopPoolRefresh) stopPoolRefresh();
+    engine.noteOffAll();
+    audioMuted.store(false);
+    const int reopen = concerns(reopenStopBuildManual) ? reopenStopBuildManual : -1;
+    reopenStopBuildManual = -1;
+    showGeneratingMessage(false);
+    juce::MessageManager::callAsync([this, reopen]
+    {
+        activeFolderLoader.reset();
+        if (reopen >= 0) showStopBuildingDialog(reopen);
+    });
+}
+
+juce::var MainComponent::stopBuildToVar(const ManualConfig::StopBuild& build)
+{
+    juce::DynamicObject::Ptr object = new juce::DynamicObject();
+    object->setProperty("active", build.active);
+    juce::Array<juce::var> perspectives;
+    for (const auto& perspective : build.perspectives) perspectives.add(perspective);
+    object->setProperty("perspectives", perspectives);
+    juce::Array<juce::var> entries;
+    for (const auto& entry : build.entries)
+    {
+        juce::DynamicObject::Ptr item = new juce::DynamicObject();
+        item->setProperty("name", entry.name);
+        item->setProperty("alias", entry.alias);
+        item->setProperty("customName", entry.customName);
+        item->setProperty("child", entry.child);
+        juce::Array<juce::var> folders;
+        for (const auto& [perspective, ref] : entry.folders)
+        {
+            juce::DynamicObject::Ptr folder = new juce::DynamicObject();
+            folder->setProperty("perspective", perspective);
+            folder->setProperty("tree", ref.tree);
+            folder->setProperty("path", ref.relativePath);
+            folders.add(juce::var(folder.get()));
+        }
+        item->setProperty("folders", folders);
+        entries.add(juce::var(item.get()));
+    }
+    object->setProperty("entries", entries);
+    return juce::var(object.get());
+}
+
+MainComponent::ManualConfig::StopBuild MainComponent::stopBuildFromVar(const juce::var& value)
+{
+    ManualConfig::StopBuild build;
+    if (!value.isObject()) return build;
+    build.active = value.getProperty("active", false);
+    if (auto* perspectives = value.getProperty("perspectives", juce::var()).getArray())
+        for (const auto& perspective : *perspectives)
+            if (perspective.toString().isNotEmpty()) build.perspectives.push_back(perspective.toString());
+    if (auto* entries = value.getProperty("entries", juce::var()).getArray())
+        for (const auto& item : *entries)
+        {
+            ManualConfig::StopBuild::Entry entry;
+            entry.name = item.getProperty("name", "").toString();
+            entry.alias = item.getProperty("alias", "").toString();
+            entry.customName = item.getProperty("customName", false);
+            entry.child = item.getProperty("child", false);
+            if (auto* folders = item.getProperty("folders", juce::var()).getArray())
+                for (const auto& folder : *folders)
+                {
+                    const auto perspective = folder.getProperty("perspective", "default").toString();
+                    entry.folders[perspective.isEmpty() ? juce::String("default") : perspective] =
+                        { (int)folder.getProperty("tree", 0), folder.getProperty("path", "").toString() };
+                }
+            build.entries.push_back(entry);
+        }
+    // Rows without folders are empty stops and stay (dropping them here used to
+    // lose stop folders on every load).
+    if (build.entries.empty()) build.active = false;
+    return build;
+}
+
+//==============================================================================
+// The Stop List: one table for the whole organ. A row is a stop (division,
+// name, alias, transmissions, one folder per perspective); rows are dragged to
+// reorder, to move between divisions and, sideways, to make a stop folder.
+void MainComponent::showStopBuildingDialog(int)
+{
+    if (activeFolderLoader != nullptr) return;
+    if (stopBuildWindow != nullptr)
+    {
+        stopBuildWindow->setVisible(true);
+        stopBuildWindow->toFront(true);
+        return;
+    }
+    reopenStopBuildManual = -1;
+
+    class StopListDialog final : public juce::Component, private juce::Timer
+    {
+    public:
+        using Build = ManualConfig::StopBuild;
+        enum : int { kDivisions = SamplerEngine::maxManuals };
+
+        explicit StopListDialog(MainComponent& o) : owner(o)
+        {
+            pool = owner.sampleTrees;
+            for (const auto& path : pool) rememberTree(path);
+            for (int manual = 0; manual <= owner.manualCount && manual < kDivisions; ++manual)
+            {
+                for (const auto& path : owner.divisionTrees(manual)) rememberTree(path);
+                const auto& config = owner.manualConfigs[(size_t)manual];
+                drafts[(size_t)manual] = config.stopBuild.active ? config.stopBuild : owner.deriveStopBuildFromEngine(manual);
+                drafts[(size_t)manual].active = true;
+                // Tables saved by earlier builds locked an untouched "New stop" as a typed
+                // name: such rows follow their folders again.
+                for (auto& entry : drafts[(size_t)manual].entries)
+                    if (entry.customName && entry.name.startsWith("New stop")) entry.customName = false;
+                // The alias of a stop is edited in the voicing as well (it is what the
+                // button shows): the engine's stop has the current one, the saved
+                // table may be behind it.
+                for (auto& entry : drafts[(size_t)manual].entries)
+                    for (auto* stop : owner.engine.getStops())
+                        if (stop->primaryManual == manual && stopBuildKey(stop->name) == stopBuildKey(entry.name))
+                        { entry.alias = stop->alias; break; }
+            }
+            // Transmissions as rows of their receiving division ("Show Trsm."): a
+            // transmission indented under a stop folder follows the master's block,
+            // the others come after the stops in the order of their grid cells.
+            for (int manual = 0; manual <= owner.manualCount && manual < kDivisions; ++manual)
+            {
+                struct Item { Build::Entry entry; int column = 0, row = 0; bool placed = false; };
+                std::vector<Item> items;
+                for (auto* stop : owner.engine.getStops())
+                    for (int index = 0; index < (int)stop->transmissions.size(); ++index)
+                    {
+                        const auto& t = stop->transmissions[(size_t)index];
+                        if (t.manual != manual) continue;
+                        Item item;
+                        item.entry.name = SamplerEngine::transmissionCaption(stop, t);
+                        item.entry.alias = t.alias;
+                        item.entry.trSource = stop->name;
+                        item.entry.trSourceManual = stop->primaryManual;
+                        item.entry.trOriginalManual = manual;
+                        item.entry.trOrdinal = stop->transmissionOrdinal(index);
+                        item.entry.trShift = t.shift;
+                        item.entry.trMaster = t.groupMaster;
+                        if (owner.voicer != nullptr)
+                            item.placed = owner.voicer->gridCellOf(manual, Voicer::transmissionKey(stop, index), item.column, item.row);
+                        items.push_back(item);
+                    }
+                std::stable_sort(items.begin(), items.end(), [](const Item& a, const Item& b)
+                {
+                    const int ra = a.placed ? a.row * 1000 + a.column : 1 << 30, rb = b.placed ? b.row * 1000 + b.column : 1 << 30;
+                    return ra < rb;
+                });
+                auto& entries = drafts[(size_t)manual].entries;
+                for (auto& item : items)
+                {
+                    if (item.entry.trMaster.isNotEmpty())
+                    {
+                        size_t masterIndex = entries.size();
+                        for (size_t i = 0; i < entries.size(); ++i)
+                            if (!entries[i].child && !entries[i].isTransmission() && stopBuildKey(entries[i].name) == stopBuildKey(item.entry.trMaster))
+                            { masterIndex = i; break; }
+                        if (masterIndex < entries.size())
+                        {
+                            size_t after = masterIndex + 1;
+                            while (after < entries.size() && entries[after].child) ++after;
+                            item.entry.child = true;
+                            entries.insert(entries.begin() + (long)after, item.entry);
+                            continue;
+                        }
+                    }
+                    item.entry.child = false;
+                    entries.push_back(item.entry);
+                }
+            }
+            showTransmissions = owner.stopListShowTransmissions;
+            originalDrafts = drafts;
+            rebuildPerspectiveUnion();
+
+            intro.setText("One row per stop of the whole organ: its division, transmissions, name, alias and the sample "
+                "folder of every perspective. Click a folder cell to pick one of the free folders (the x frees it), or drag "
+                "a folder cell onto another cell (empty: it moves, occupied: they swap). Drag a name up or down to reorder "
+                "or to move the stop into another division; drag it a little to the right to indent it under the stop "
+                "above (a stop folder: the master's button switches its children too), to the left to make it a stop of "
+                "its own again. Double-click a name to edit it. Apply reloads the changed divisions.", juce::dontSendNotification);
+            intro.setFont(juce::FontOptions(13.0f));
+            intro.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+            intro.setJustificationType(juce::Justification::topLeft);
+            addAndMakeVisible(intro);
+            addAndMakeVisible(info);
+            info.setFont(juce::FontOptions(14.0f));
+            info.setColour(juce::Label::textColourId, juce::Colours::orange);
+            addAndMakeVisible(view);
+            view.setViewedComponent(&grid, false);
+            view.setScrollBarsShown(true, true);
+            addChildComponent(pathTip);
+            pathTip.setFont(juce::FontOptions(18.0f, juce::Font::bold));
+            pathTip.setColour(juce::Label::backgroundColourId, juce::Colour(0xff2b2b2b));
+            pathTip.setColour(juce::Label::textColourId, onColour());
+            pathTip.setColour(juce::Label::outlineColourId, juce::Colours::darkorange);
+            pathTip.setJustificationType(juce::Justification::centredLeft);
+            pathTip.setBorderSize(juce::BorderSize<int>(4, 10, 4, 10));
+            pathTip.setInterceptsMouseClicks(false, false);
+            // The dragged folder travels with the mouse as a translucent orange copy.
+            addChildComponent(ghost);
+            ghost.setFont(juce::FontOptions(15.0f));
+            ghost.setJustificationType(juce::Justification::centred);
+            ghost.setColour(juce::Label::backgroundColourId, onColour().withAlpha(0.75f));
+            ghost.setColour(juce::Label::textColourId, juce::Colours::black);
+            ghost.setInterceptsMouseClicks(false, false);
+            ghost.setAlwaysOnTop(true);
+
+            auto setup = [this](juce::TextButton& button, const juce::String& text, const juce::String& tip, std::function<void()> action)
+            {
+                button.setButtonText(text);
+                button.setTooltip(tip);
+                button.onClick = std::move(action);
+                addAndMakeVisible(button);
+            };
+            setup(addStopButton, "Add stop...", "A new row in the division you choose. Without folders it is an empty stop "
+                "folder: indent stops under it (drag their names a little to the right) and it carries them - also through "
+                "its transmissions.", [this] { addStopMenu(); });
+            setup(addPerspectiveButton, "Add perspective...", "A new perspective column (its own audio output in every division).",
+                [this] { addPerspectiveMenu(); });
+            setup(removeEmptyButton, "Remove empty stops", "Removes every row without folders that has no stops or transmissions "
+                "indented under it (empty stop folders, stops whose folder tree was unloaded). Rows are never dropped otherwise.",
+                [this] { removeEmptyStops(); });
+            setup(loadFolderButton, "Load folder...", "Loads a sample folder tree; you choose the division its stops go to. "
+                "The stops enter the table by the automatic rules and can then be moved and edited.", [this] { loadFolderMenu(); });
+            setup(unloadFolderButton, "Unload folder...", "Removes one of a division's folder trees (or all of them).", [this] { unloadFolderMenu(); });
+            setup(swapButton, "Swap divisions...", "Exchanges the whole stop lists of two divisions (stops, pool, transmissions, "
+                "combinations, crescendo and MIDI bindings follow).", [this] { swapMenu(); });
+            setup(resetButton, "Reset division...", "Forgets a division's table: it is built from the folder names again.",
+                [this] { resetMenu(); });
+            setup(applyButton, "Apply and reload", "", [this] { apply(); });
+            setup(closeButton, "Close", "", [this]
+            {
+                MainComponent& o = owner;
+                juce::MessageManager::callAsync([&o] { o.stopBuildWindow.reset(); });
+            });
+            showTrsmButton.setButtonText("Show Trsm.");
+            showTrsmButton.setTooltip("Lists every transmission as a row of the division it plays in (grey: its name, its source "
+                "stop's folders). Rows of transmissions move, change division and indent under stop folders like stops; "
+                "their x removes the transmission. Applied with \"Apply and reload\".");
+            showTrsmButton.setToggleState(showTransmissions, juce::dontSendNotification);
+            showTrsmButton.onClick = [this]
+            {
+                commitEditors();
+                showTransmissions = showTrsmButton.getToggleState();
+                owner.stopListShowTransmissions = showTransmissions;
+                owner.saveSettings();
+                rebuildGrid();
+            };
+            addAndMakeVisible(showTrsmButton);
+            rebuildGrid();
+        }
+
+        void resized() override
+        {
+            auto area = getLocalBounds().reduced(12);
+            intro.setBounds(area.removeFromTop(80));
+            auto buttons = area.removeFromBottom(36);
+            closeButton.setBounds(buttons.removeFromRight(90).reduced(2));
+            applyButton.setBounds(buttons.removeFromRight(170).reduced(2));
+            resetButton.setBounds(buttons.removeFromRight(150).reduced(2));
+            addStopButton.setBounds(buttons.removeFromLeft(96).reduced(2));
+            addPerspectiveButton.setBounds(buttons.removeFromLeft(150).reduced(2));
+            removeEmptyButton.setBounds(buttons.removeFromLeft(150).reduced(2));
+            buttons.removeFromLeft(12);
+            loadFolderButton.setBounds(buttons.removeFromLeft(120).reduced(2));
+            unloadFolderButton.setBounds(buttons.removeFromLeft(130).reduced(2));
+            swapButton.setBounds(buttons.removeFromLeft(140).reduced(2));
+            buttons.removeFromLeft(12);
+            showTrsmButton.setBounds(buttons.removeFromLeft(120).reduced(2));
+            info.setBounds(area.removeFromBottom(24));
+            view.setBounds(area);
+            layoutGrid();
+        }
+
+        int neededWidth() const { return 24 + removeWidth + divisionWidth + nameWidth + aliasWidth + transmissionWidth
+            + (int)perspectives.size() * cellWidth + 60; }
+
+        // An empty table: a big hint with an arrow leading to "Load folder...".
+        void paintOverChildren(juce::Graphics& g) override
+        {
+            if (!rows.empty()) return;
+            const auto area = view.getBounds().toFloat();
+            const juce::String text = treeInfos.empty() ? "Start by adding folders with audio samples"
+                : "No stops yet: load another folder or add a stop";
+            const auto textArea = area.withSizeKeepingCentre(area.getWidth() - 40.0f, 44.0f).translated(0.0f, -area.getHeight() * 0.18f);
+            g.setFont(juce::FontOptions(28.0f, juce::Font::bold));
+            g.setColour(onColour());   // the same orange as the arrow
+            g.drawFittedText(text, textArea.toNearestInt(), juce::Justification::centred, 2);
+            // The arrow: from under the text down to the top of the button.
+            const auto button = loadFolderButton.getBounds().toFloat();
+            const juce::Point<float> from(textArea.getCentreX(), textArea.getBottom() + 12.0f);
+            const juce::Point<float> to(button.getCentreX(), button.getY() - 6.0f);
+            juce::Path arrow;
+            arrow.startNewSubPath(from);
+            arrow.quadraticTo({ to.x, from.y + (to.y - from.y) * 0.45f }, { to.x, to.y - 16.0f });
+            g.setColour(onColour());
+            g.strokePath(arrow, juce::PathStrokeType(4.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            juce::Path head;
+            head.addTriangle(to.x - 13.0f, to.y - 20.0f, to.x + 13.0f, to.y - 20.0f, to.x, to.y);
+            g.fillPath(head);
+        }
+
+    private:
+        enum : int { rowHeight = 32, headerHeight = 30, removeWidth = 26, divisionWidth = 74, nameWidth = 240, aliasWidth = 150,
+            transmissionWidth = 180, cellWidth = 250, freeWidth = 24, indent = 28, pathTailLength = 30, sidewaysDrag = 40 };
+
+        // The stop name: double-click edits it, dragging it moves the row (up/down:
+        // order and division, sideways: stop folder).
+        class NameCell final : public juce::Label
+        {
+        public:
+            std::function<void(juce::Point<int>, juce::Point<int>)> dragOver;   // (screen position, drag start)
+            std::function<void(juce::Point<int>, juce::Point<int>)> dropAt;    // (screen position, drag start)
+            void mouseDown(const juce::MouseEvent& event) override { dragging = false; start = event.getScreenPosition(); juce::Label::mouseDown(event); }
+            void mouseDrag(const juce::MouseEvent& event) override
+            {
+                if (isBeingEdited()) { juce::Label::mouseDrag(event); return; }
+                if (!dragging && event.getDistanceFromDragStart() > 5) dragging = true;
+                if (dragging && dragOver) dragOver(event.getScreenPosition(), start);
+            }
+            void mouseUp(const juce::MouseEvent& event) override
+            {
+                if (dragging) { dragging = false; if (dropAt) dropAt(event.getScreenPosition(), start); return; }
+                juce::Label::mouseUp(event);
+            }
+        private:
+            bool dragging = false;
+            juce::Point<int> start;
+        };
+        // A folder cell: a click opens the menu of free folders, a drag carries the
+        // folder to another cell.
+        class CellButton final : public juce::TextButton
+        {
+        public:
+            std::function<void(juce::Point<int>)> dragOver, dropAt;
+            void mouseDown(const juce::MouseEvent& event) override { dragging = false; juce::TextButton::mouseDown(event); }
+            void mouseDrag(const juce::MouseEvent& event) override
+            {
+                if (!dragging && event.getDistanceFromDragStart() > 6) dragging = true;
+                if (dragging && dragOver) dragOver(event.getScreenPosition());
+            }
+            void mouseUp(const juce::MouseEvent& event) override
+            {
+                if (dragging)
+                {
+                    dragging = false;
+                    setState(juce::Button::buttonNormal);
+                    if (dropAt) dropAt(event.getScreenPosition());
+                    return;
+                }
+                juce::TextButton::mouseUp(event);
+            }
+        private:
+            bool dragging = false;
+        };
+        class GridArea final : public juce::Component
+        {
+        public:
+            int insertMarker = -1;                 // a dragged row lands before this row (-1 = none)
+            juce::Rectangle<int> dropTarget;       // a dragged folder lands in this cell (empty = none)
+            juce::Rectangle<int> dragSource;       // the cell the dragged folder leaves (empty = none)
+            float phase = 0.0f;                    // marching border animation
+            std::function<int(int)> markerYFor;
+            // A dashed border whose dashes walk around the rectangle (the arrange
+            // mode of the stop grid uses the same).
+            static void drawMarchingBorder(juce::Graphics& g, juce::Rectangle<float> r, float phase, juce::Colour colour)
+            {
+                const float dash = 9.0f, gap = 6.0f, period = dash + gap;
+                const float w = r.getWidth(), h = r.getHeight(), perimeter = 2.0f * (w + h);
+                if (perimeter < 4.0f) return;
+                auto pointAt = [&](float d)
+                {
+                    d = std::fmod(std::fmod(d, perimeter) + perimeter, perimeter);
+                    if (d < w) return juce::Point<float>(r.getX() + d, r.getY());
+                    d -= w;
+                    if (d < h) return juce::Point<float>(r.getRight(), r.getY() + d);
+                    d -= h;
+                    if (d < w) return juce::Point<float>(r.getRight() - d, r.getBottom());
+                    d -= w;
+                    return juce::Point<float>(r.getX(), r.getBottom() - d);
+                };
+                g.setColour(colour);
+                for (float d = std::fmod(phase, period) - period; d < perimeter; d += period)
+                {
+                    juce::Path segment;
+                    segment.startNewSubPath(pointAt(d));
+                    for (float s = 1.0f; s <= dash; s += 1.0f) segment.lineTo(pointAt(d + s));
+                    g.strokePath(segment, juce::PathStrokeType(2.0f));
+                }
+            }
+            void paint(juce::Graphics& g) override
+            {
+                if (insertMarker >= 0 && markerYFor)
+                {
+                    g.setColour(onColour());
+                    g.fillRect(0, markerYFor(insertMarker) - 2, getWidth(), 3);
+                }
+                if (!dragSource.isEmpty())
+                    drawMarchingBorder(g, dragSource.toFloat().expanded(2.0f), phase, juce::Colours::white.withAlpha(0.6f));
+                if (!dropTarget.isEmpty())
+                    drawMarchingBorder(g, dropTarget.toFloat().expanded(2.0f), phase, juce::Colours::white.withAlpha(0.95f));
+            }
+        };
+        struct TreeInfo
+        {
+            juce::File folder;
+            std::vector<juce::File> folders;
+            std::map<juce::String, SamplerEngine::FolderAssignment> automatic;   // lower-case full path -> automatic rule
+        };
+        struct Cell { std::unique_ptr<CellButton> button; std::unique_ptr<juce::TextButton> freeButton; };
+        struct Row
+        {
+            int manual = 0;
+            size_t index = 0;
+            std::unique_ptr<juce::TextButton> remove;
+            std::unique_ptr<juce::ComboBox> division;
+            std::unique_ptr<NameCell> name;
+            std::unique_ptr<juce::TextEditor> alias;
+            std::unique_ptr<juce::TextButton> transmissions;
+            std::vector<Cell> cells;
+        };
+        struct HeaderCell { std::unique_ptr<juce::Label> label; std::unique_ptr<juce::TextButton> remove; };
+
+        MainComponent& owner;
+        std::array<Build, kDivisions> drafts, originalDrafts;
+        std::vector<juce::String> pool;   // the tree pool as opened (FolderRef.tree indexes it)
+        std::map<juce::String, TreeInfo> treeInfos;   // by full path (as loaded)
+        std::vector<juce::String> perspectives;       // the union of every division's perspective columns
+        juce::Label intro, info, pathTip, ghost;
+        std::map<juce::Component*, juce::String> cellPaths;
+        juce::Viewport view;
+        GridArea grid;
+        CellButton* draggedCell = nullptr;   // the folder cell being dragged (shown orange meanwhile)
+
+        void timerCallback() override
+        {
+            grid.phase += 1.5f;
+            if (grid.phase > 1000.0f) grid.phase -= 990.0f;
+            grid.repaint();
+        }
+        void endCellDrag()
+        {
+            stopTimer();
+            ghost.setVisible(false);
+            grid.dropTarget = {};
+            grid.dragSource = {};
+            if (draggedCell != nullptr) draggedCell->removeColour(juce::TextButton::buttonColourId);   // grey again, even when dropped back
+            draggedCell = nullptr;
+            grid.repaint();
+        }
+        // The divisions whose table or trees differ from what is applied now.
+        std::set<int> changedDivisions() const
+        {
+            std::set<int> changed;
+            auto sameEntry = [](const Build::Entry& a, const Build::Entry& b)
+            {
+                if (a.name != b.name || a.alias != b.alias || a.customName != b.customName || a.child != b.child || a.folders.size() != b.folders.size()) return false;
+                for (const auto& [perspective, ref] : a.folders)
+                {
+                    const auto found = b.folders.find(perspective);
+                    if (found == b.folders.end() || found->second.tree != ref.tree || found->second.relativePath != ref.relativePath) return false;
+                }
+                return true;
+            };
+            for (int m = 0; m <= owner.manualCount && m < kDivisions; ++m)
+            {
+                // The stop rows only: transmission rows are applied on their own.
+                const auto a = stopEntries(drafts[(size_t)m]);
+                const auto b = stopEntries(originalDrafts[(size_t)m]);
+                bool same = a.size() == b.size()
+                    && drafts[(size_t)m].perspectives == originalDrafts[(size_t)m].perspectives && owner.manualConfigs[(size_t)m].stopBuild.active;
+                for (size_t i = 0; same && i < a.size(); ++i) same = sameEntry(a[i], b[i]);
+                if (!same && (!a.empty() || !b.empty())) changed.insert(m);
+            }
+            return changed;
+        }
+        static std::vector<Build::Entry> stopEntries(const Build& build)
+        {
+            std::vector<Build::Entry> result;
+            for (const auto& entry : build.entries) if (!entry.isTransmission()) result.push_back(entry);
+            return result;
+        }
+        static Build withoutTransmissions(const Build& build)
+        {
+            Build result = build;
+            result.entries = stopEntries(build);
+            return result;
+        }
+        // The stop folder a row is indented under: the nearest non-indented row above it.
+        juce::String masterOf(int manual, size_t index) const
+        {
+            const auto& entries = drafts[(size_t)manual].entries;
+            if (index >= entries.size() || !entries[index].child) return {};
+            for (size_t k = index; k-- > 0;)
+                if (!entries[k].child) return entries[k].isTransmission() ? juce::String() : entries[k].name;
+            return {};
+        }
+        // What Apply does with the transmissions: compared with the state at opening.
+        std::vector<MainComponent::TransmissionEdit> transmissionPlan() const
+        {
+            std::vector<MainComponent::TransmissionEdit> plan;
+            for (int m = 0; m <= owner.manualCount && m < kDivisions; ++m)
+                for (const auto& original : originalDrafts[(size_t)m].entries)
+                {
+                    if (!original.isTransmission()) continue;
+                    MainComponent::TransmissionEdit edit;
+                    edit.sourceManual = original.trSourceManual;
+                    edit.source = original.trSource;
+                    edit.originalManual = original.trOriginalManual;
+                    edit.ordinal = original.trOrdinal;
+                    edit.remove = true;
+                    for (int n = 0; n <= owner.manualCount && n < kDivisions && edit.remove; ++n)
+                    {
+                        const auto& entries = drafts[(size_t)n].entries;
+                        for (size_t i = 0; i < entries.size(); ++i)
+                        {
+                            const auto& entry = entries[i];
+                            if (!entry.isTransmission() || entry.trSourceManual != original.trSourceManual || entry.trSource != original.trSource
+                                || entry.trOriginalManual != original.trOriginalManual || entry.trOrdinal != original.trOrdinal) continue;
+                            edit.remove = false;
+                            edit.newManual = n;
+                            edit.master = masterOf(n, i);
+                            edit.alias = entry.alias;
+                            break;
+                        }
+                    }
+                    plan.push_back(edit);
+                }
+            return plan;
+        }
+        bool transmissionsChanged() const
+        {
+            for (const auto& edit : transmissionPlan())
+            {
+                if (edit.remove || edit.newManual != edit.originalManual) return true;
+                // The master and the alias as they were when the dialog opened.
+                for (const auto& original : originalDrafts[(size_t)edit.originalManual].entries)
+                    if (original.isTransmission() && original.trSourceManual == edit.sourceManual && original.trSource == edit.source
+                        && original.trOrdinal == edit.ordinal)
+                        if (original.trMaster != edit.master || original.alias != edit.alias) return true;
+            }
+            return false;
+        }
+        // A message that closes itself after three seconds when nobody clicks OK.
+        void showBriefMessage(const juce::String& title, const juce::String& text)
+        {
+            auto* alert = new juce::AlertWindow(title, text, juce::MessageBoxIconType::InfoIcon, this);
+            alert->addButton("OK", 0, juce::KeyPress(juce::KeyPress::returnKey));
+            alert->enterModalState(true, juce::ModalCallbackFunction::create([](int) {}), true);
+            juce::Component::SafePointer<juce::AlertWindow> safeAlert(alert);
+            juce::Timer::callAfterDelay(3000, [safeAlert] { if (safeAlert != nullptr && safeAlert->isCurrentlyModal()) safeAlert->exitModalState(0); });
+        }
+        void updateApplyState()
+        {
+            // Apply is for the table only; transmissions act at once and need no reload.
+            // The button looks like the others until something needs applying: then it turns orange.
+            const bool changes = !treeInfos.empty() && (!changedDivisions().empty() || transmissionsChanged());
+            applyButton.setEnabled(changes);
+            if (changes) applyButton.setColour(juce::TextButton::buttonColourId, juce::Colours::darkorange);
+            else applyButton.removeColour(juce::TextButton::buttonColourId);
+            applyButton.setTooltip(changes ? "Saves the table and loads the changed divisions again. Folders left out of the "
+                "table are not loaded (they leave the RAM)." : "Nothing to apply: the table is what is loaded. Transmissions act at once.");
+        }
+        juce::Label divisionHeader, nameHeader, aliasHeader, transmissionHeader;
+        std::vector<HeaderCell> headers;
+        std::vector<std::unique_ptr<Row>> rows;
+        juce::TextButton addStopButton, addPerspectiveButton, removeEmptyButton, loadFolderButton, unloadFolderButton, swapButton,
+            resetButton, applyButton, closeButton;
+        juce::ToggleButton showTrsmButton;
+        bool showTransmissions = false;   // transmission rows shown (they are always in the drafts)
+        std::set<int> orderChanged;   // divisions whose rows were dragged
+        std::pair<int, int> recentlyAdded{ -1, -1 };      // (division, index) of the row just added: shown orange until the next action
+        std::set<std::pair<int, int>> dropCandidates;     // rows Apply would drop: shown orange while the question is open
+
+        static const juce::String* shortNames() { static const juce::String names[8]{ "P.", "I.", "II.", "III.", "IV.", "V.", "VI.", "VII." }; return names; }
+        static const juce::String* longNames() { static const juce::String names[8]{ "Pedal", "Manual I", "Manual II", "Manual III", "Manual IV", "Manual V", "Manual VI", "Manual VII" }; return names; }
+
+        void rememberTree(const juce::String& path)
+        {
+            if (treeInfos.count(path) != 0) return;
+            TreeInfo tree;
+            tree.folder = juce::File(path);
+            for (const auto& assignment : owner.engine.scanTreeAssignments(tree.folder, false))
+            {
+                tree.folders.push_back(assignment.folder);
+                tree.automatic[assignment.folder.getFullPathName().toLowerCase()] = assignment;
+            }
+            treeInfos[path] = std::move(tree);
+        }
+        void rebuildPerspectiveUnion()
+        {
+            perspectives.clear();
+            for (const auto& draft : drafts)
+                for (const auto& perspective : draft.perspectives)
+                {
+                    bool present = false;
+                    for (const auto& existing : perspectives) if (existing.equalsIgnoreCase(perspective)) present = true;
+                    if (!present) perspectives.push_back(perspective);
+                }
+            std::sort(perspectives.begin(), perspectives.end(), [](const juce::String& a, const juce::String& b)
+            {
+                const bool da = a.equalsIgnoreCase("default"), db = b.equalsIgnoreCase("default");
+                if (da != db) return da;
+                return a.compareNatural(b) < 0;
+            });
+            for (auto& draft : drafts) draft.perspectives = perspectives;
+        }
+        std::vector<Build::Entry> allEntries() const
+        {
+            std::vector<Build::Entry> all;
+            for (const auto& draft : drafts) all.insert(all.end(), draft.entries.begin(), draft.entries.end());
+            return all;
+        }
+        Build::Entry* entryOf(size_t row) { return row < rows.size() ? &drafts[(size_t)rows[row]->manual].entries[rows[row]->index] : nullptr; }
+        juce::String folderKey(const juce::File& folder) const { return folder.getFullPathName().toLowerCase(); }
+        juce::File resolve(int manual, const Build::FolderRef& ref) const
+        {
+            juce::ignoreUnused(manual);
+            if (ref.tree < 0 || ref.tree >= (int)pool.size()) return {};
+            const juce::File tree(pool[(size_t)ref.tree]);
+            return ref.relativePath.isEmpty() || ref.relativePath == "." ? tree : tree.getChildFile(ref.relativePath);
+        }
+        // A folder as a pool reference (the same for every division).
+        Build::FolderRef refFor(int manual, const juce::File& folder)
+        {
+            juce::ignoreUnused(manual);
+            for (int index = 0; index < (int)pool.size(); ++index)
+            {
+                const juce::File tree(pool[(size_t)index]);
+                if (folder == tree || folder.isAChildOf(tree))
+                    return { index, folder == tree ? juce::String(".") : folder.getRelativePathFrom(tree) };
+            }
+            return { 0, folder.getFileName() };
+        }
+        std::set<juce::String> usedFolderKeys() const
+        {
+            std::set<juce::String> used;
+            for (int manual = 0; manual < kDivisions; ++manual)
+                for (const auto& entry : drafts[(size_t)manual].entries)
+                    for (const auto& [perspective, ref] : entry.folders) used.insert(folderKey(resolve(manual, ref)));
+            return used;
+        }
+        int totalFolders() const
+        {
+            std::set<juce::String> all;
+            for (const auto& [path, tree] : treeInfos) for (const auto& folder : tree.folders) all.insert(folderKey(folder));
+            return (int)all.size();
+        }
+        const SamplerEngine::FolderAssignment* automaticFor(const juce::File& folder) const
+        {
+            for (const auto& [path, tree] : treeInfos)
+            {
+                const auto found = tree.automatic.find(folderKey(folder));
+                if (found != tree.automatic.end()) return &found->second;
+            }
+            return nullptr;
+        }
+        juce::String automaticName(int manual, const Build::Entry& entry) const
+        {
+            juce::StringArray names;
+            for (const auto& [perspective, ref] : entry.folders)
+            {
+                const auto folder = resolve(manual, ref);
+                const auto* automatic = automaticFor(folder);
+                const auto name = automatic != nullptr ? automatic->stopName : folder.getFileName();
+                bool present = false;
+                for (const auto& existing : names) if (stopBuildKey(existing) == stopBuildKey(name)) present = true;
+                if (!present) names.add(name);
+            }
+            if (!names.isEmpty()) return names.joinIntoString(" / ");
+            // An empty stop folder is named after its children: all of them when
+            // that stays short, otherwise the first one and how many more.
+            const auto children = childrenOf(manual, entry);
+            if (children.empty()) return {};
+            juce::StringArray childNames;
+            for (const auto* child : children) childNames.add(child->name);
+            const auto joined = childNames.joinIntoString(" + ");
+            if (joined.length() <= 28 || children.size() == 1) return joined;
+            return childNames[0] + " [" + romanNumeral((int)children.size()) + "]";   // the number of ranks in the folder
+        }
+        void refreshName(int manual, Build::Entry& entry)
+        {
+            if (entry.customName) return;
+            const auto automatic = automaticName(manual, entry);
+            if (automatic.isNotEmpty()) entry.name = uniqueStopBuildName(drafts[(size_t)manual].entries, automatic, &entry);
+        }
+        // Empty stop folders follow their children's names.
+        void refreshContainerNames()
+        {
+            for (int manual = 0; manual < kDivisions; ++manual)
+                for (auto& entry : drafts[(size_t)manual].entries)
+                    if (entry.folders.empty() && !entry.child) refreshName(manual, entry);
+        }
+        void commitName(size_t row, const juce::String& text)
+        {
+            auto* entry = entryOf(row);
+            if (entry == nullptr) return;
+            const auto trimmed = text.trim();
+            if (trimmed == entry->name) return;   // untouched: the automatic/custom state stays as it is
+            const auto automatic = automaticName(rows[row]->manual, *entry);
+            if (trimmed.isEmpty() || stopBuildKey(trimmed) == stopBuildKey(automatic))
+            {
+                entry->customName = false;
+                if (automatic.isNotEmpty()) entry->name = automatic;
+            }
+            else { entry->customName = true; entry->name = trimmed; }
+        }
+        // Children of a row (the indented rows right below it in the same division).
+        std::vector<const Build::Entry*> childrenOf(int manual, const Build::Entry& entry) const
+        {
+            std::vector<const Build::Entry*> children;
+            const auto& entries = drafts[(size_t)manual].entries;
+            for (size_t i = 0; i < entries.size(); ++i)
+            {
+                if (&entries[i] != &entry) continue;
+                for (size_t j = i + 1; j < entries.size() && entries[j].child; ++j) children.push_back(&entries[j]);
+                break;
+            }
+            return children;
+        }
+        void commitEditors()
+        {
+            for (size_t i = 0; i < rows.size(); ++i)
+            {
+                commitName(i, rows[i]->name->getText());
+                if (auto* entry = entryOf(i)) entry->alias = rows[i]->alias->getText().trim();
+            }
+            recentlyAdded = { -1, -1 };   // the next action ends the "just added" highlight
+            dropCandidates.clear();
+        }
+        Stop* liveStop(int manual, const juce::String& name) const
+        {
+            for (auto* stop : owner.engine.getStops())
+                if (stop->primaryManual == manual && stopBuildKey(stop->name) == stopBuildKey(name)) return stop;
+            return nullptr;
+        }
+        juce::String transmissionsText(int manual, const Build::Entry& entry) const
+        {
+            auto* stop = liveStop(manual, entry.name);
+            if (stop == nullptr) return "(apply first)";
+            if (stop->transmissions.empty()) return "(none)";
+            juce::StringArray parts;
+            for (const auto& t : stop->transmissions)
+                parts.add(shortNames()[juce::jlimit(0, 7, t.manual)] + (t.shift != 0 ? (t.shift > 0 ? "+" : "") + juce::String(t.shift) : juce::String()));
+            return parts.joinIntoString(", ");
+        }
+        juce::String cellText(int manual, const Build::Entry& entry, const juce::String& perspective) const
+        {
+            const auto found = entry.folders.find(perspective);
+            if (found == entry.folders.end()) return "(none)";
+            const auto& ref = found->second;
+            const auto relative = ref.relativePath.isEmpty() ? juce::String(".") : ref.relativePath;
+            juce::ignoreUnused(manual);
+            const auto text = pool.size() > 1 && ref.tree >= 0 && ref.tree < (int)pool.size()
+                ? juce::File(pool[(size_t)ref.tree]).getFileName() + " > " + relative : relative;
+            return text.length() > pathTailLength ? "..." + text.substring(text.length() - pathTailLength) : text;
+        }
+
+        void mouseEnter(const juce::MouseEvent& event) override
+        {
+            const auto found = cellPaths.find(event.eventComponent);
+            if (found == cellPaths.end()) return;
+            pathTip.setText(found->second, juce::dontSendNotification);
+            const int width = juce::jmin(getWidth() - 8,
+                (int)std::ceil(juce::GlyphArrangement::getStringWidth(pathTip.getFont(), found->second)) + 28);
+            const auto cellBounds = getLocalArea(event.eventComponent, event.eventComponent->getLocalBounds());
+            const int x = juce::jlimit(4, juce::jmax(4, getWidth() - width - 4), cellBounds.getX());
+            int y = cellBounds.getBottom() + 2;
+            if (y + 34 > getHeight()) y = cellBounds.getY() - 36;
+            pathTip.setBounds(x, y, width, 32);
+            pathTip.setVisible(true);
+            pathTip.toFront(false);
+        }
+        void mouseExit(const juce::MouseEvent& event) override
+        {
+            if (cellPaths.count(event.eventComponent) != 0) pathTip.setVisible(false);
+        }
+
+        // Where a screen point lies in the table.
+        int rowIndexForScreenPoint(juce::Point<int> screen, bool insertion) const
+        {
+            const auto local = grid.getLocalPoint(nullptr, screen);
+            const int index = (local.y - (int)headerHeight + (insertion ? (int)rowHeight / 2 : 0)) / (int)rowHeight;
+            return juce::jlimit(0, insertion ? (int)rows.size() : juce::jmax(0, (int)rows.size() - 1), index);
+        }
+        int perspectiveColumnForScreenPoint(juce::Point<int> screen) const
+        {
+            const auto local = grid.getLocalPoint(nullptr, screen);
+            const int x0 = removeWidth + divisionWidth + nameWidth + aliasWidth + transmissionWidth;
+            if (local.x < x0) return -1;
+            const int column = (local.x - x0) / (int)cellWidth;
+            return column < (int)perspectives.size() ? column : -1;
+        }
+        juce::Rectangle<int> cellRect(int row, int column) const
+        {
+            const int x = removeWidth + divisionWidth + nameWidth + aliasWidth + transmissionWidth + column * cellWidth;
+            return { x, (int)headerHeight + row * (int)rowHeight + 2, cellWidth - freeWidth - 4, rowHeight - 4 };
+        }
+
+        // Moves entry (m1, i1) to division m2 at position p2 (before the entry now at p2).
+        void moveEntry(int m1, size_t i1, int m2, size_t p2)
+        {
+            auto& source = drafts[(size_t)m1].entries;
+            if (i1 >= source.size()) return;
+            // A stop folder travels as a block: the master with the indented rows after it.
+            size_t count = 1;
+            if (!source[i1].child)
+                while (i1 + count < source.size() && source[i1 + count].child) ++count;
+            if (m1 == m2 && p2 > i1 && p2 <= i1 + count) return;   // dropped onto its own block
+            std::vector<Build::Entry> block(source.begin() + (long)i1, source.begin() + (long)(i1 + count));
+            source.erase(source.begin() + (long)i1, source.begin() + (long)(i1 + count));
+            if (m1 == m2 && p2 > i1) p2 -= count;
+            if (m1 != m2)
+            {
+                // The folders travel: references relative to the new division's trees.
+                for (auto& entry : block)
+                {
+                    if (entry.isTransmission()) continue;   // a transmission row keeps its caption; the engine moves it on Apply
+                    std::map<juce::String, Build::FolderRef> moved;
+                    for (const auto& [perspective, ref] : entry.folders) moved[perspective] = refFor(m2, resolve(m1, ref));
+                    entry.folders = moved;
+                    entry.name = uniqueStopBuildName(drafts[(size_t)m2].entries, entry.name, nullptr);
+                }
+                block.front().child = false;
+            }
+            auto& target = drafts[(size_t)m2].entries;
+            p2 = juce::jmin(p2, target.size());
+            target.insert(target.begin() + (long)p2, block.begin(), block.end());
+            orderChanged.insert(m1);
+            orderChanged.insert(m2);
+        }
+
+        void rebuildGrid()
+        {
+            refreshContainerNames();
+            rows.clear();
+            headers.clear();
+            cellPaths.clear();
+            pathTip.setVisible(false);
+            grid.insertMarker = -1;
+            grid.dropTarget = {};
+            grid.removeAllChildren();
+            const bool anyRows = std::any_of(drafts.begin(), drafts.end(), [](const Build& b) { return !b.entries.empty(); });
+            auto header = [this, anyRows](juce::Label& label, const juce::String& text)
+            {
+                label.setText(text, juce::dontSendNotification);
+                label.setFont(juce::FontOptions(15.0f, juce::Font::bold));
+                label.setVisible(anyRows);
+                grid.addAndMakeVisible(label);
+                label.setVisible(anyRows);
+            };
+            header(divisionHeader, "Division");
+            header(nameHeader, "Stop (name in every saved state)");
+            header(aliasHeader, "Alias (shown instead)");
+            header(transmissionHeader, "Transmissions");
+            for (size_t p = 0; p < perspectives.size(); ++p)
+            {
+                HeaderCell cell;
+                cell.label = std::make_unique<juce::Label>();
+                cell.label->setText(perspectives[p], juce::dontSendNotification);
+                cell.label->setFont(juce::FontOptions(15.0f, juce::Font::bold));
+                cell.label->setTooltip("Perspective \"" + perspectives[p] + "\": one audio output per division");
+                grid.addAndMakeVisible(*cell.label);
+                cell.remove = std::make_unique<juce::TextButton>("x");
+                cell.remove->setTooltip("Remove this perspective column (its folders become free)");
+                cell.remove->onClick = [this, p] { removePerspective(p); };
+                grid.addAndMakeVisible(*cell.remove);
+                cell.label->setVisible(anyRows);
+                cell.remove->setVisible(anyRows);
+                headers.push_back(std::move(cell));
+            }
+            for (int manual = 0; manual <= owner.manualCount && manual < kDivisions; ++manual)
+                for (size_t index = 0; index < drafts[(size_t)manual].entries.size(); ++index)
+                    if (showTransmissions || !drafts[(size_t)manual].entries[index].isTransmission()) addRow(manual, index);
+            layoutGrid();
+            const int used = (int)usedFolderKeys().size(), total = totalFolders();
+            int stops = 0;
+            for (const auto& draft : drafts) stops += (int)stopEntries(draft).size();
+            if (treeInfos.empty())
+                info.setText("No sample folder loaded yet: \"Load folder...\" adds a folder tree to a division; its stops "
+                    "enter the table by the automatic rules.", juce::dontSendNotification);
+            else
+                info.setText("Sample folders in the loaded trees: " + juce::String(total) + ", used in the table: " + juce::String(used)
+                    + ", free: " + juce::String(juce::jmax(0, total - used)) + "   |   folder trees: " + juce::String((int)treeInfos.size())
+                    + "   |   stops: " + juce::String(stops), juce::dontSendNotification);
+            unloadFolderButton.setEnabled(!treeInfos.empty());
+            swapButton.setEnabled(owner.manualCount >= 1);
+            resetButton.setEnabled(!treeInfos.empty());
+            updateApplyState();
+            info.setVisible(!rows.empty());   // an empty table shows the big hint instead
+            repaint();   // the empty-table hint comes and goes with the rows
+        }
+
+        void addRow(int manual, size_t index)
+        {
+            auto& entry = drafts[(size_t)manual].entries[index];
+            auto row = std::make_unique<Row>();
+            row->manual = manual;
+            row->index = index;
+            const size_t i = rows.size();
+            const bool transmission = entry.isTransmission();
+            static const juce::Colour greyText(0xffa8a8a8);
+            row->remove = std::make_unique<juce::TextButton>("x");
+            row->remove->setTooltip(transmission ? "Remove this transmission (applied with Apply)" : "Remove this stop (its folders become free)");
+            row->remove->onClick = [this, i] { removeRow(i); };
+            grid.addAndMakeVisible(*row->remove);
+            row->division = std::make_unique<juce::ComboBox>();
+            for (int m = 0; m <= owner.manualCount && m < kDivisions; ++m) row->division->addItem(shortNames()[m], m + 1);
+            row->division->setSelectedId(manual + 1, juce::dontSendNotification);
+            row->division->setTooltip("The division this stop belongs to (its button appears there)");
+            row->division->onChange = [this, i]
+            {
+                if (i >= rows.size()) return;
+                const int target = rows[i]->division->getSelectedId() - 1;
+                if (target < 0 || target == rows[i]->manual) return;
+                commitEditors();
+                moveEntry(rows[i]->manual, rows[i]->index, target, drafts[(size_t)target].entries.size());
+                rebuildGrid();
+            };
+            grid.addAndMakeVisible(*row->division);
+            row->name = std::make_unique<NameCell>();
+            row->name->setFont(juce::FontOptions(16.0f));
+            row->name->setEditable(false, !transmission, false);   // a transmission's caption is not a name
+            row->name->setText(entry.name, juce::dontSendNotification);
+            row->name->setColour(juce::Label::backgroundColourId, juce::Colour(0xff2b2b2b));
+            row->name->setColour(juce::Label::outlineColourId, juce::Colour(0xff555555));
+            // Orange only where the eye must go: a row just added, or a row about to be dropped.
+            const bool highlighted = (recentlyAdded.first == manual && recentlyAdded.second == (int)index)
+                || dropCandidates.count({ manual, (int)index }) != 0;
+            row->name->setColour(juce::Label::textColourId, highlighted ? juce::Colours::orange : (transmission ? greyText : juce::Colours::white));
+            if (transmission)
+                row->name->setTooltip("Transmission of \"" + entry.trSource + "\" (" + shortNames()[juce::jlimit(0, 7, entry.trSourceManual)] + ")"
+                    + (entry.trShift != 0 ? ", transposed by " + juce::String(entry.trShift) + " semitones" : juce::String())
+                    + ".\nDrag up/down: order or another division. Drag right: indent under the stop folder above (it switches with it). Drag left: on its own again."
+                    + (entry.child ? "\nThis transmission switches with the stop folder above it." : ""));
+            else
+                row->name->setTooltip((entry.customName ? "Your name (clear it for the automatic one: " + automaticName(manual, entry) + ")"
+                    : juce::String("Automatic name from the folders; double-click to give the stop your own name"))
+                    + "\nDrag up/down: order or another division. Drag right: indent under the stop above (stop folder). Drag left: on its own again."
+                    + (entry.child ? "\nThis stop sounds with the stop above it." : ""));
+            row->name->onTextChange = [this, i]
+            {
+                if (i >= rows.size()) return;
+                commitName(i, rows[i]->name->getText());
+                juce::Component::SafePointer<StopListDialog> safeThis(this);
+                juce::MessageManager::callAsync([safeThis] { if (safeThis != nullptr) safeThis->rebuildGrid(); });
+            };
+            row->name->dragOver = [this, i](juce::Point<int> screen, juce::Point<int> start)
+            {
+                if (i >= rows.size()) return;
+                // Sideways on the same row: the name jumps to the indented (or the
+                // plain) place at once, so the drag is visible while the mouse is held.
+                const int dx = screen.x - start.x;
+                const int target = rowIndexForScreenPoint(screen, true);
+                const bool sameRow = target == (int)i || target == (int)i + 1;
+                const auto* entry = entryOf(i);
+                int shift = entry != nullptr && entry->child ? (int)indent : 0;
+                if (sameRow && std::abs(dx) >= sidewaysDrag) shift = dx > 0 && i > 0 ? (int)indent : 0;
+                const int nameX = removeWidth + divisionWidth + transmissionWidth;
+                auto& cell = *rows[i]->name;
+                cell.setBounds(nameX + shift, cell.getY(), nameWidth - 6 - shift, cell.getHeight());
+                grid.insertMarker = sameRow ? -1 : target;
+                grid.repaint();
+            };
+            row->name->dropAt = [this, i](juce::Point<int> screen, juce::Point<int> start)
+            {
+                grid.insertMarker = -1;
+                grid.repaint();
+                commitEditors();
+                if (i >= rows.size()) return;
+                const int dx = screen.x - start.x;
+                const int target = rowIndexForScreenPoint(screen, true);
+                const bool sameRow = target == (int)i || target == (int)i + 1;
+                if (sameRow && std::abs(dx) >= sidewaysDrag)
+                {
+                    // Sideways: indent under the row above, or stand alone again. A row
+                    // above in another division takes the stop into that division first.
+                    auto* entry = entryOf(i);
+                    if (entry != nullptr)
+                    {
+                        // The stop folder this row would join: the nearest non-indented row above.
+                        int masterRow = (int)i - 1;
+                        while (masterRow >= 0 && entryOf((size_t)masterRow) != nullptr && entryOf((size_t)masterRow)->child) --masterRow;
+                        const auto* master = masterRow >= 0 ? entryOf((size_t)masterRow) : nullptr;
+                        if (dx > 0 && master != nullptr && master->isTransmission() && rows[(size_t)masterRow]->manual == rows[i]->manual)
+                            showBriefMessage("A transmission cannot be a stop folder",
+                                "\"" + entry->name + "\" would be indented under \"" + master->name + "\", which is a transmission. "
+                                "Only a stop can carry indented stops and transmissions.");
+                        else if (dx > 0 && i > 0 && rows[i - 1]->manual != rows[i]->manual)
+                        {
+                            // Another division above: no indent across divisions.
+                            static const juce::String divisionNames[8]{ "the pedal", "Manual I", "Manual II", "Manual III", "Manual IV", "Manual V", "Manual VI", "Manual VII" };
+                            showBriefMessage("Stop folders stay within one division",
+                                "\"" + entry->name + "\" belongs to " + divisionNames[juce::jlimit(0, 7, rows[i]->manual)] + ", the stop above it to "
+                                + divisionNames[juce::jlimit(0, 7, rows[i - 1]->manual)] + ".\nMove the stop there first (drag its row into that "
+                                "division's block or choose the division in its combo box), then indent it.");
+                        }
+                        else if (dx > 0 && i > 0 && master != nullptr && !entry->child && !entry->isTransmission()
+                            && i + 1 < rows.size() && entryOf(i + 1) != nullptr && entryOf(i + 1)->child)
+                        {
+                            // A stop folder indented under the row above dissolves into it (one level
+                            // only): its rows become the upper folder's children - the table shows it,
+                            // no question here. A folder row without folders is left with nothing and goes.
+                            const int m = rows[i]->manual;
+                            const size_t index = rows[i]->index;
+                            auto& entries = drafts[(size_t)m].entries;
+                            const juce::String folderName = entry->name, masterName = master->name;
+                            const bool hasPipes = !entry->folders.empty();
+                            if (hasPipes) entry->child = true;
+                            else if (index < entries.size()) entries.erase(entries.begin() + (long)index);   // 'entry' is gone now
+                            orderChanged.insert(m);
+                            info.setText("Stop folder \"" + folderName + "\" dissolved into \"" + masterName + "\": its rows are children of \""
+                                + masterName + "\" now" + (hasPipes ? juce::String(", the folder itself too (it has pipes).")
+                                    : juce::String("; the empty folder row was removed.")), juce::dontSendNotification);
+                        }
+                        else
+                        {
+                            entry->child = dx > 0 && i > 0;
+                            orderChanged.insert(rows[i]->manual);
+                        }
+                    }
+                    rebuildGrid();
+                    return;
+                }
+                if (sameRow) return;
+                int m2; size_t p2;
+                if (target >= (int)rows.size()) { m2 = rows.back()->manual; p2 = drafts[(size_t)m2].entries.size(); }
+                else { m2 = rows[(size_t)target]->manual; p2 = rows[(size_t)target]->index; }
+                moveEntry(rows[i]->manual, rows[i]->index, m2, p2);
+                rebuildGrid();
+            };
+            grid.addAndMakeVisible(*row->name);
+            row->alias = std::make_unique<juce::TextEditor>();
+            row->alias->setFont(juce::Font(juce::FontOptions(16.0f)));
+            row->alias->setText(entry.alias, false);
+            row->alias->setTooltip(transmission ? "Alias: shown on the transmission's button instead of the automatic caption"
+                : "Alias: shown on the stop button and in the voicing instead of the name");
+            row->alias->onTextChange = [this, i]
+            {
+                if (auto* e = entryOf(i)) e->alias = rows[i]->alias->getText().trim();
+                updateApplyState();
+            };
+            grid.addAndMakeVisible(*row->alias);
+            if (transmission)
+            {
+                // The source in grey: a transmission has no transmissions and no folders of its own.
+                row->transmissions = std::make_unique<juce::TextButton>("Trsm. of " + entry.trSource + " (" + shortNames()[juce::jlimit(0, 7, entry.trSourceManual)] + ")");
+                row->transmissions->setEnabled(false);
+                row->transmissions->setTooltip("A transmission: its source stop and division");
+                grid.addAndMakeVisible(*row->transmissions);
+                const Build::Entry* sourceEntry = nullptr;
+                if (entry.trSourceManual >= 0 && entry.trSourceManual < kDivisions)
+                    for (const auto& candidate : drafts[(size_t)entry.trSourceManual].entries)
+                        if (!candidate.isTransmission() && stopBuildKey(candidate.name) == stopBuildKey(entry.trSource)) { sourceEntry = &candidate; break; }
+                for (size_t p = 0; p < perspectives.size(); ++p)
+                {
+                    Cell cell;
+                    cell.button = std::make_unique<CellButton>();
+                    cell.button->setButtonText(sourceEntry != nullptr ? cellText(entry.trSourceManual, *sourceEntry, perspectives[p]) : juce::String("(source stop)"));
+                    cell.button->setEnabled(false);
+                    cell.button->setColour(juce::TextButton::textColourOffId, greyText);
+                    cell.button->setTooltip("The source stop's folder (a transmission plays the stop's pipes)");
+                    grid.addAndMakeVisible(*cell.button);
+                    cell.freeButton = std::make_unique<juce::TextButton>("x");
+                    cell.freeButton->setEnabled(false);
+                    grid.addAndMakeVisible(*cell.freeButton);
+                    row->cells.push_back(std::move(cell));
+                }
+                rows.push_back(std::move(row));
+                return;
+            }
+            row->transmissions = std::make_unique<juce::TextButton>(transmissionsText(manual, entry));
+            row->transmissions->setTooltip("Transmissions: extra buttons of this stop in other divisions (or its own). Click "
+                "to add or remove one; transposition and voicing of each are in its own voicing row.");
+            row->transmissions->onClick = [this, i] { transmissionsMenu(i); };
+            grid.addAndMakeVisible(*row->transmissions);
+            for (size_t p = 0; p < perspectives.size(); ++p)
+            {
+                const auto& perspective = perspectives[p];
+                Cell cell;
+                cell.button = std::make_unique<CellButton>();
+                cell.button->setButtonText(cellText(manual, entry, perspective));
+                const bool assigned = entry.folders.count(perspective) != 0;
+                if (assigned)
+                {
+                    cellPaths[cell.button.get()] = resolve(manual, entry.folders.at(perspective)).getFullPathName();
+                    cell.button->addMouseListener(this, false);
+                }
+                else
+                {
+                    cell.button->setTooltip("Click: choose a free folder for this perspective of the stop");
+                    cell.button->setColour(juce::TextButton::textColourOffId, juce::Colours::grey);
+                }
+                cell.button->onClick = [this, i, perspective] { showFolderMenu(i, perspective); };
+                auto* buttonPtr = cell.button.get();
+                cell.button->dragOver = [this, i, p, buttonPtr, assigned](juce::Point<int> screen)
+                {
+                    if (!assigned) return;   // an empty cell carries nothing
+                    if (draggedCell != buttonPtr)
+                    {
+                        // The drag begins: the cell turns orange, its copy follows the mouse,
+                        // the vacated cell and the cell under the mouse get marching borders.
+                        draggedCell = buttonPtr;
+                        buttonPtr->setColour(juce::TextButton::buttonColourId, onColour());
+                        grid.dragSource = cellRect((int)i, (int)p);
+                        ghost.setText(buttonPtr->getButtonText(), juce::dontSendNotification);
+                        ghost.setSize(cellWidth - freeWidth - 4, rowHeight - 4);
+                        ghost.setVisible(true);
+                        ghost.toFront(false);
+                        startTimerHz(30);
+                    }
+                    const auto local = getLocalPoint(nullptr, screen);
+                    ghost.setCentrePosition(local.x, local.y);
+                    const int row = rowIndexForScreenPoint(screen, false), column = perspectiveColumnForScreenPoint(screen);
+                    auto target = column >= 0 && !rows.empty() ? cellRect(row, column) : juce::Rectangle<int>();
+                    grid.dropTarget = target == grid.dragSource ? juce::Rectangle<int>() : target;
+                    grid.repaint();
+                };
+                cell.button->dropAt = [this, i, perspective, assigned](juce::Point<int> screen)
+                {
+                    const bool wasDragging = draggedCell != nullptr;
+                    endCellDrag();
+                    if (!assigned || !wasDragging) return;
+                    const int row = rowIndexForScreenPoint(screen, false), column = perspectiveColumnForScreenPoint(screen);
+                    if (column < 0 || rows.empty()) { rebuildGrid(); return; }
+                    moveFolder(i, perspective, (size_t)row, perspectives[(size_t)column]);
+                };
+                grid.addAndMakeVisible(*cell.button);
+                cell.freeButton = std::make_unique<juce::TextButton>("x");
+                cell.freeButton->setTooltip("Free this folder (the cell becomes empty, the folder can be used elsewhere)");
+                cell.freeButton->setEnabled(assigned);
+                cell.freeButton->onClick = [this, i, perspective]
+                {
+                    commitEditors();
+                    auto* e = entryOf(i);
+                    if (e == nullptr) return;
+                    e->folders.erase(perspective);
+                    refreshName(rows[i]->manual, *e);
+                    rebuildGrid();
+                };
+                grid.addAndMakeVisible(*cell.freeButton);
+                row->cells.push_back(std::move(cell));
+            }
+            rows.push_back(std::move(row));
+        }
+
+        void layoutGrid()
+        {
+            const int width = removeWidth + divisionWidth + nameWidth + aliasWidth + transmissionWidth + (int)perspectives.size() * cellWidth + 12;
+            const int height = headerHeight + (int)rows.size() * rowHeight + 8;
+            grid.markerYFor = [](int index) { return (int)headerHeight + index * (int)rowHeight; };
+            grid.setSize(juce::jmax(width, view.getWidth() - 20), juce::jmax(height, 40));
+            // Columns: x | division | transmissions | name | alias | one cell per perspective.
+            int x = removeWidth;
+            divisionHeader.setBounds(x, 0, divisionWidth, headerHeight); x += divisionWidth;
+            transmissionHeader.setBounds(x, 0, transmissionWidth, headerHeight); x += transmissionWidth;
+            nameHeader.setBounds(x, 0, nameWidth, headerHeight); x += nameWidth;
+            aliasHeader.setBounds(x, 0, aliasWidth, headerHeight); x += aliasWidth;
+            for (auto& header : headers)
+            {
+                header.label->setBounds(x + 2, 0, cellWidth - freeWidth - 6, headerHeight);
+                header.remove->setBounds(x + cellWidth - freeWidth, 4, freeWidth - 4, headerHeight - 8);
+                x += cellWidth;
+            }
+            int y = headerHeight;
+            for (auto& row : rows)
+            {
+                const auto& entry = drafts[(size_t)row->manual].entries[row->index];
+                const int shift = entry.child ? (int)indent : 0;   // an indented row: the stop folder's child
+                x = 0;
+                row->remove->setBounds(x + 2, y + 4, removeWidth - 4, rowHeight - 8); x += removeWidth;
+                row->division->setBounds(x, y + 3, divisionWidth - 6, rowHeight - 6); x += divisionWidth;
+                row->transmissions->setBounds(x, y + 2, transmissionWidth - 6, rowHeight - 4); x += transmissionWidth;
+                row->name->setBounds(x + shift, y + 2, nameWidth - 6 - shift, rowHeight - 4); x += nameWidth;
+                row->alias->setBounds(x, y + 2, aliasWidth - 6, rowHeight - 4); x += aliasWidth;
+                for (auto& cell : row->cells)
+                {
+                    cell.button->setBounds(x, y + 2, cellWidth - freeWidth - 4, rowHeight - 4);
+                    cell.freeButton->setBounds(x + cellWidth - freeWidth, y + 4, freeWidth - 4, rowHeight - 8);
+                    x += cellWidth;
+                }
+                y += rowHeight;
+            }
+        }
+
+        void removeRow(size_t i)
+        {
+            commitEditors();
+            auto* entry = entryOf(i);
+            if (entry == nullptr) return;
+            const int manual = rows[i]->manual;
+            const size_t index = rows[i]->index;
+            // A stop folder with rows indented under it stays until they are taken out.
+            if (!entry->child && !entry->isTransmission())
+            {
+                const auto& entries = drafts[(size_t)manual].entries;
+                juce::StringArray names;
+                for (size_t j = index + 1; j < entries.size() && entries[j].child; ++j) names.add(entries[j].name);
+                if (!names.isEmpty())
+                {
+                    juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Stop folder not empty",
+                        "\"" + entry->name + "\" still carries " + juce::String(names.size()) + " stop(s):\n  " + names.joinIntoString("\n  ")
+                        + "\n\nOutdent or remove them first; then the folder can be removed.", "OK", this);
+                    return;
+                }
+            }
+            auto doRemove = [this, manual, index]
+            {
+                auto& entries = drafts[(size_t)manual].entries;
+                if (index < entries.size()) entries.erase(entries.begin() + (long)index);
+                rebuildGrid();
+            };
+            juce::String warning;
+            if (auto* stop = liveStop(manual, entry->name); stop != nullptr && !stop->transmissions.empty())
+                warning = "\"" + entry->name + "\" has " + juce::String((int)stop->transmissions.size())
+                    + " transmission(s) (" + transmissionsText(manual, *entry) + ").\n\nRemoving the stop destroys all of its transmissions. Remove anyway?";
+            if (warning.isEmpty()) { doRemove(); return; }
+            juce::Component::SafePointer<StopListDialog> safeThis(this);
+            juce::AlertWindow::showOkCancelBox(juce::MessageBoxIconType::WarningIcon, "Remove stop", warning, "Remove", "Cancel", this,
+                juce::ModalCallbackFunction::create([safeThis, doRemove](int result) { if (result != 0 && safeThis != nullptr) doRemove(); }));
+        }
+
+        // A folder dragged from one cell to another: the empty cell takes it, an occupied one swaps.
+        void moveFolder(size_t fromRow, const juce::String& fromPerspective, size_t toRow, const juce::String& toPerspective)
+        {
+            commitEditors();
+            auto* source = entryOf(fromRow);
+            auto* target = entryOf(toRow);
+            if (source == nullptr || target == nullptr) return;
+            if (source == target && fromPerspective == toPerspective) return;
+            const auto sourceFound = source->folders.find(fromPerspective);
+            if (sourceFound == source->folders.end()) return;
+            const int m1 = rows[fromRow]->manual, m2 = rows[toRow]->manual;
+            const juce::File sourceFolder = resolve(m1, sourceFound->second);
+            const auto targetFound = target->folders.find(toPerspective);
+            const bool targetAssigned = targetFound != target->folders.end();
+            const juce::File targetFolder = targetAssigned ? resolve(m2, targetFound->second) : juce::File();
+            source->folders.erase(fromPerspective);
+            if (targetAssigned) source->folders[fromPerspective] = refFor(m1, targetFolder);
+            target->folders[toPerspective] = refFor(m2, sourceFolder);
+            refreshName(m1, *source);
+            refreshName(m2, *target);
+            rebuildGrid();
+        }
+
+        void showFolderMenu(size_t rowIndex, const juce::String& perspective)
+        {
+            commitEditors();
+            if (rowIndex >= rows.size()) return;
+            juce::PopupMenu menu;
+            const auto used = usedFolderKeys();
+            std::map<int, juce::File> byId;
+            int id = 1;
+            bool anyFree = false;
+            for (const auto& [path, tree] : treeInfos)
+            {
+                juce::PopupMenu sub;
+                for (const auto& folder : tree.folders)
+                {
+                    if (used.count(folderKey(folder)) != 0) continue;
+                    anyFree = true;
+                    byId[id] = folder;
+                    juce::String caption = folder.getRelativePathFrom(tree.folder);
+                    if (const auto* automatic = automaticFor(folder))
+                        caption << "     [" << automatic->stopName << " / " << automatic->perspective << "]";
+                    (treeInfos.size() > 1 ? sub : menu).addItem(id, caption);
+                    ++id;
+                }
+                if (treeInfos.size() > 1)
+                    menu.addSubMenu(tree.folder.getFileName() + "  (" + juce::String(sub.getNumItems()) + " free)", sub, sub.getNumItems() > 0);
+            }
+            if (!anyFree) menu.addItem(-1, "All folders are used. Free one first (the x beside a cell) to use it here.", false);
+            juce::Component* target = nullptr;
+            for (size_t p = 0; p < perspectives.size() && p < rows[rowIndex]->cells.size(); ++p)
+                if (perspectives[p] == perspective) target = rows[rowIndex]->cells[p].button.get();
+            juce::Component::SafePointer<StopListDialog> safeThis(this);
+            menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(target).withMinimumWidth(320),
+                [safeThis, rowIndex, perspective, byId](int result)
+                {
+                    if (safeThis == nullptr || result <= 0) return;
+                    const auto found = byId.find(result);
+                    auto* entry = safeThis->entryOf(rowIndex);
+                    if (found == byId.end() || entry == nullptr) return;
+                    const int manual = safeThis->rows[rowIndex]->manual;
+                    entry->folders[perspective] = safeThis->refFor(manual, found->second);
+                    safeThis->refreshName(manual, *entry);
+                    safeThis->rebuildGrid();
+                });
+        }
+
+        void transmissionsMenu(size_t rowIndex)
+        {
+            commitEditors();
+            auto* entry = entryOf(rowIndex);
+            if (entry == nullptr) return;
+            const int manual = rows[rowIndex]->manual;
+            auto* stop = liveStop(manual, entry->name);
+            juce::PopupMenu menu;
+            if (stop == nullptr) menu.addItem(-1, "Apply the table first: transmissions belong to loaded stops.", false);
+            else
+            {
+                juce::PopupMenu add;
+                for (int m = 0; m <= owner.manualCount && m < kDivisions; ++m) add.addItem(m + 1, longNames()[m] + (m == manual ? " (its own division)" : ""));
+                menu.addSubMenu("Add a transmission into", add);
+                if (!stop->transmissions.empty())
+                {
+                    juce::PopupMenu remove;
+                    for (int index = 0; index < (int)stop->transmissions.size(); ++index)
+                        remove.addItem(100 + index, Voicer::transmissionLabel(stop, index) + "  ->  " + longNames()[juce::jlimit(0, 7, stop->transmissions[(size_t)index].manual)]);
+                    menu.addSubMenu("Remove", remove);
+                }
+            }
+            juce::Component::SafePointer<StopListDialog> safeThis(this);
+            menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(rows[rowIndex]->transmissions.get()),
+                [safeThis, manual, name = entry->name](int result)
+                {
+                    if (safeThis == nullptr || result <= 0) return;
+                    auto* target = safeThis->liveStop(manual, name);
+                    if (target == nullptr) return;
+                    MainComponent& o = safeThis->owner;
+                    if (result >= 100)
+                    {
+                        if (o.voicer) o.voicer->removeTransmission(target, result - 100);
+                        else o.engine.removeTransmission(target, result - 100);
+                    }
+                    else
+                    {
+                        o.engine.addTransmission(target, result - 1, 0);
+                        if (target->samplesUnloaded) o.engine.reloadStopSamples(target);
+                    }
+                    if (o.voicer)
+                    {
+                        o.voicer->rebuildUI(o.stopsContent, o.stopsViewport);
+                        o.voicer->saveState(o.voicerStateFile);
+                    }
+                    if (o.stopPoolRefresh) o.stopPoolRefresh();
+                    safeThis->rebuildGrid();
+                });
+        }
+
+        void removePerspective(size_t index)
+        {
+            commitEditors();
+            if (index >= perspectives.size()) return;
+            const auto perspective = perspectives[index];
+            int assigned = 0;
+            for (const auto& draft : drafts) for (const auto& entry : draft.entries) assigned += (int)entry.folders.count(perspective);
+            auto doRemove = [this, perspective]
+            {
+                for (int manual = 0; manual < kDivisions; ++manual)
+                {
+                    auto& draft = drafts[(size_t)manual];
+                    draft.perspectives.erase(std::remove(draft.perspectives.begin(), draft.perspectives.end(), perspective), draft.perspectives.end());
+                    for (auto& entry : draft.entries) { entry.folders.erase(perspective); refreshName(manual, entry); }
+                }
+                rebuildPerspectiveUnion();
+                rebuildGrid();
+            };
+            if (assigned == 0) { doRemove(); return; }
+            juce::Component::SafePointer<StopListDialog> safeThis(this);
+            juce::AlertWindow::showOkCancelBox(juce::MessageBoxIconType::QuestionIcon, "Remove perspective",
+                "Remove the perspective \"" + perspective + "\"? Its " + juce::String(assigned) + " folder(s) become free.",
+                "Remove", "Cancel", this, juce::ModalCallbackFunction::create([safeThis, doRemove](int result)
+                { if (result != 0 && safeThis != nullptr) doRemove(); }));
+        }
+
+        void addPerspectiveMenu()
+        {
+            commitEditors();
+            // "default" is not offered: it is the route of folders without a perspective
+            // prefix and appears only when such folders exist. The division downmix is
+            // the auxiliary route (audio tabs).
+            juce::StringArray candidates;
+            for (const auto& line : owner.engine.getPerspectivePatterns())
+            {
+                const auto name = juce::StringArray::fromTokens(line, ";", "")[0].trim();
+                if (name.isNotEmpty() && !name.equalsIgnoreCase("default")) candidates.addIfNotAlreadyThere(name);
+            }
+            juce::StringArray offered;
+            for (const auto& candidate : candidates)
+            {
+                bool present = false;
+                for (const auto& existing : perspectives) if (existing.equalsIgnoreCase(candidate)) present = true;
+                if (!present) offered.add(candidate);
+            }
+            juce::PopupMenu menu;
+            for (int i = 0; i < offered.size(); ++i) menu.addItem(i + 1, offered[i]);
+            if (offered.size() > 0) menu.addSeparator();
+            menu.addItem(1000, "Other name...");
+            juce::Component::SafePointer<StopListDialog> safeThis(this);
+            menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&addPerspectiveButton), [safeThis, offered](int result)
+            {
+                if (safeThis == nullptr || result == 0) return;
+                if (result >= 1 && result <= offered.size()) { safeThis->addPerspective(offered[result - 1]); return; }
+                auto* alert = new juce::AlertWindow("New perspective",
+                    "Name of the new perspective (a microphone position with its own audio output):", juce::MessageBoxIconType::NoIcon);
+                alert->addTextEditor("name", "", "Name");
+                alert->addButton("Add", 1, juce::KeyPress(juce::KeyPress::returnKey));
+                alert->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+                alert->enterModalState(true, juce::ModalCallbackFunction::create([safeThis, alert](int r)
+                {
+                    if (r == 1 && safeThis != nullptr) safeThis->addPerspective(alert->getTextEditorContents("name").trim());
+                }), true);
+            });
+        }
+        void addPerspective(const juce::String& name)
+        {
+            if (name.isEmpty() || name.equalsIgnoreCase("default")) return;
+            for (const auto& existing : perspectives) if (existing.equalsIgnoreCase(name)) return;
+            for (auto& draft : drafts) draft.perspectives.push_back(name);
+            rebuildPerspectiveUnion();
+            rebuildGrid();
+        }
+
+        void addStopMenu()
+        {
+            commitEditors();
+            // Per division: an empty stop folder, or one of the ready-made stops the
+            // loaded trees hold and no division uses yet (added whole, every perspective).
+            juce::PopupMenu menu;
+            std::vector<std::vector<MainComponent::ReadyStop>> ready((size_t)kDivisions);
+            static constexpr int perDivision = 1000;
+            std::vector<std::vector<MainComponent::ManualConfig::StopBuild::Entry>> allDrafts;
+            for (const auto& draft : drafts) allDrafts.push_back(draft.entries);   // the table as it is now, every division
+            const auto unused = owner.readyStopsNotIn(allDrafts);
+            for (int m = 0; m <= owner.manualCount && m < kDivisions; ++m)
+            {
+                ready[(size_t)m] = unused;
+                juce::PopupMenu into;
+                into.addItem(perDivision * (m + 1), "Empty stop folder (indent stops under it)");
+                if (!ready[(size_t)m].empty())
+                {
+                    into.addSeparator();
+                    into.addSectionHeader("Ready-made stops of the loaded folders");
+                    for (size_t i = 0; i < ready[(size_t)m].size(); ++i)
+                        into.addItem(perDivision * (m + 1) + 1 + (int)i, ready[(size_t)m][i].name
+                            + "  (" + juce::String((int)ready[(size_t)m][i].folders.size()) + " perspective(s))");
+                }
+                menu.addSubMenu("Into " + longNames()[m] + (drafts[(size_t)m].entries.empty() ? "  (no stops yet)" : ""), into);
+            }
+            juce::Component::SafePointer<StopListDialog> safeThis(this);
+            menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&addStopButton), [safeThis, ready](int result)
+            {
+                if (safeThis == nullptr || result <= 0) return;
+                const int m = result / perDivision - 1;
+                const int which = result % perDivision - 1;   // -1: the empty stop folder
+                if (m < 0 || m >= kDivisions) return;
+                Build::Entry entry;
+                if (which < 0) entry.name = uniqueStopBuildName(safeThis->allEntries(), "New stop", nullptr);
+                else
+                {
+                    if (which >= (int)ready[(size_t)m].size()) return;
+                    const auto& stop = ready[(size_t)m][(size_t)which];
+                    entry.name = uniqueStopBuildName(safeThis->allEntries(), stop.name, nullptr);
+                    entry.folders = stop.folders;
+                    auto& perspectives = safeThis->drafts[(size_t)m].perspectives;
+                    for (const auto& [perspective, ref] : stop.folders)
+                    {
+                        bool known = false;
+                        for (const auto& existing : perspectives) if (existing.equalsIgnoreCase(perspective)) known = true;
+                        if (!known) perspectives.push_back(perspective);
+                    }
+                }
+                safeThis->drafts[(size_t)m].entries.push_back(entry);
+                safeThis->orderChanged.insert(m);
+                safeThis->recentlyAdded = { m, (int)safeThis->drafts[(size_t)m].entries.size() - 1 };
+                safeThis->rebuildGrid();
+            });
+        }
+        // Rows without folders and without indented rows under them (empty stop
+        // folders, stops whose tree was unloaded) go; nothing else is ever dropped.
+        void removeEmptyStops()
+        {
+            commitEditors();
+            juce::StringArray removed;
+            for (int m = 0; m < kDivisions; ++m)
+            {
+                auto& entries = drafts[(size_t)m].entries;
+                for (size_t i = 0; i < entries.size();)
+                {
+                    const bool empty = !entries[i].isTransmission() && entries[i].folders.empty()
+                        && !(!entries[i].child && i + 1 < entries.size() && entries[i + 1].child);
+                    if (!empty) { ++i; continue; }
+                    removed.add("\"" + entries[i].name + "\" (" + shortNames()[m] + ")");
+                    entries.erase(entries.begin() + (long)i);
+                    orderChanged.insert(m);
+                }
+            }
+            recentlyAdded = { -1, -1 };
+            rebuildGrid();
+            info.setText(removed.isEmpty() ? juce::String("No empty stops: every row has folders or indented rows under it.")
+                : "Removed " + juce::String(removed.size()) + " empty stop(s): " + removed.joinIntoString(", ") + " - applied with \"Apply and reload\".",
+                juce::dontSendNotification);
+        }
+        void loadFolderMenu()
+        {
+            commitEditors();
+            juce::PopupMenu menu;
+            for (int m = 0; m <= owner.manualCount && m < kDivisions; ++m)
+                menu.addItem(m + 1, "Its stops into " + longNames()[m] + (drafts[(size_t)m].entries.empty() ? "  (empty)" : ""));
+            juce::Component::SafePointer<StopListDialog> safeThis(this);
+            menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&loadFolderButton), [safeThis](int result)
+            {
+                if (safeThis == nullptr || result <= 0) return;
+                MainComponent& o = safeThis->owner;
+                o.reopenStopBuildManual = result - 1;
+                o.selectManualFolder(result - 1);
+            });
+        }
+        // Stops (rows) using a pool tree, in every division.
+        int stopsUsingTree(int treeIndex) const
+        {
+            int count = 0;
+            for (const auto& draft : drafts)
+                for (const auto& entry : draft.entries)
+                    for (const auto& [perspective, ref] : entry.folders)
+                        if (ref.tree == treeIndex) { ++count; break; }
+            return count;
+        }
+        void unloadFolderMenu()
+        {
+            commitEditors();
+            juce::PopupMenu menu;
+            for (int t = 0; t < (int)pool.size(); ++t)
+                menu.addItem(t + 1, juce::File(pool[(size_t)t]).getFileName() + "  (" + juce::String(stopsUsingTree(t)) + " stop(s))   "
+                    + pool[(size_t)t]);
+            if (!pool.empty())
+            {
+                menu.addSeparator();
+                menu.addItem((int)pool.size() + 1, "Unload all folder trees (" + juce::String((int)pool.size()) + ")");
+            }
+            juce::Component::SafePointer<StopListDialog> safeThis(this);
+            menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&unloadFolderButton), [safeThis](int result)
+            {
+                if (safeThis == nullptr || result <= 0 || result - 1 > (int)safeThis->pool.size()) return;
+                if (result - 1 == (int)safeThis->pool.size())
+                {
+                    // Every tree at once: the rows stay (as empty stops), every division empties.
+                    MainComponent& owner = safeThis->owner;
+                    int total = 0;
+                    for (int t = 0; t < (int)safeThis->pool.size(); ++t) total += safeThis->stopsUsingTree(t);
+                    juce::AlertWindow::showOkCancelBox(juce::MessageBoxIconType::WarningIcon, "Unload all folder trees",
+                        "Unload all " + juce::String((int)safeThis->pool.size()) + " folder trees from the whole organ?\n\n"
+                        + juce::String(total) + " stop(s) built from them lose their samples in every division; their rows stay in the "
+                        "table as empty stops (\"Remove empty stops\" clears them) and their voicing stays saved under their names.",
+                        "Unload all", "Cancel", safeThis, juce::ModalCallbackFunction::create([safeThis, &owner](int r)
+                        {
+                            if (r == 0 || safeThis == nullptr) return;
+                            owner.reopenStopBuildManual = 0;
+                            juce::MessageManager::callAsync([&owner] { owner.stopBuildWindow.reset(); owner.unloadAllTreesFromPool(); });
+                        }));
+                    return;
+                }
+                const int t = result - 1;
+                const juce::String path = safeThis->pool[(size_t)t];
+                // The rows that go with the tree turn orange while the question is open.
+                safeThis->dropCandidates.clear();
+                for (int m = 0; m < kDivisions; ++m)
+                {
+                    const auto& entries = safeThis->drafts[(size_t)m].entries;
+                    for (size_t i = 0; i < entries.size(); ++i)
+                        for (const auto& [perspective, ref] : entries[i].folders)
+                            if (ref.tree == t) { safeThis->dropCandidates.insert({ m, (int)i }); break; }
+                }
+                safeThis->rebuildGrid();
+                const int count = safeThis->stopsUsingTree(t);
+                MainComponent& o = safeThis->owner;
+                juce::AlertWindow::showOkCancelBox(juce::MessageBoxIconType::WarningIcon, "Unload folder tree",
+                    "Unload \"" + juce::File(path).getFileName() + "\" (" + path + ") from the whole organ?\n\n"
+                    + juce::String(count) + " stop(s) built from it are dropped, in every division; their voicing stays saved under "
+                    "their names and returns when the tree is loaded again.", "Unload", "Cancel", safeThis,
+                    juce::ModalCallbackFunction::create([safeThis, &o, path](int r)
+                    {
+                        if (safeThis != nullptr) { safeThis->dropCandidates.clear(); safeThis->rebuildGrid(); }
+                        if (r == 0) return;
+                        o.reopenStopBuildManual = 0;
+                        juce::MessageManager::callAsync([&o, path] { o.stopBuildWindow.reset(); o.unloadTreeFromPool(path); });
+                    }));
+            });
+        }
+        void swapMenu()
+        {
+            juce::PopupMenu menu;
+            for (int a = 0; a <= owner.manualCount && a < kDivisions; ++a)
+                for (int b = a + 1; b <= owner.manualCount && b < kDivisions; ++b)
+                    menu.addItem(a * 10 + b + 1, shortNames()[a] + "  <->  " + shortNames()[b]);
+            juce::Component::SafePointer<StopListDialog> safeThis(this);
+            menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&swapButton), [safeThis](int result)
+            {
+                if (safeThis == nullptr || result <= 0) return;
+                const int a = (result - 1) / 10, b = (result - 1) % 10;
+                MainComponent& o = safeThis->owner;
+                juce::AlertWindow::showOkCancelBox(juce::MessageBoxIconType::QuestionIcon, "Swap divisions",
+                    "Exchange every stop (shown, pooled, transmissions) of " + longNames()[a] + " and " + longNames()[b]
+                    + "?\n\nThe divisions keep their own tremulant, swell, wind model, couplers, MIDI and audio; the "
+                    "stops keep their grid positions in their new division; combinations, crescendo and MIDI bindings follow.",
+                    "Swap", "Cancel", safeThis, juce::ModalCallbackFunction::create([&o, a, b](int r)
+                    {
+                        if (r == 0) return;
+                        o.reopenStopBuildManual = a;
+                        juce::MessageManager::callAsync([&o, a, b] { o.swapDivisionStops(a, b); });
+                    }));
+            });
+        }
+        void resetMenu()
+        {
+            juce::PopupMenu menu;
+            for (int m = 0; m <= owner.manualCount && m < kDivisions; ++m)
+                if (!drafts[(size_t)m].entries.empty()) menu.addItem(m + 1, longNames()[m]);
+            juce::Component::SafePointer<StopListDialog> safeThis(this);
+            menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&resetButton), [safeThis](int result)
+            {
+                if (safeThis == nullptr || result <= 0) return;
+                MainComponent& o = safeThis->owner;
+                const int m = result - 1;
+                juce::AlertWindow::showOkCancelBox(juce::MessageBoxIconType::QuestionIcon, "Reset to automatic",
+                    "Forget the table of " + longNames()[m] + " and build the division from the folder names again?",
+                    "Reset", "Cancel", safeThis, juce::ModalCallbackFunction::create([&o, m](int r)
+                    {
+                        if (r == 0) return;
+                        o.reopenStopBuildManual = m;
+                        juce::MessageManager::callAsync([&o, m] { o.stopBuildWindow.reset(); o.resetStopBuild(m); });
+                    }));
+            });
+        }
+
+        void apply()
+        {
+            commitEditors();
+            // Which divisions changed (table or trees): only those are loaded again.
+            // Transmission rows are applied to the engine on their own, without a reload.
+            const std::set<int> changed = changedDivisions();
+            auto plan = transmissionPlan();
+            const bool trChanged = transmissionsChanged();
+            if (changed.empty() && !trChanged) { updateApplyState(); return; }
+            juce::StringArray losing;
+            dropCandidates.clear();
+            for (int m : changed)
+            {
+                // Rows without folders are empty stops (stop folders) and stay.
+                for (auto* stop : owner.engine.getStops())
+                {
+                    if (stop->primaryManual != m || stop->transmissions.empty()) continue;
+                    bool kept = false;
+                    for (const auto& entry : drafts[(size_t)m].entries)
+                        if (!entry.isTransmission() && stopBuildKey(entry.name) == stopBuildKey(stop->name)) kept = true;
+                    if (!kept) losing.add("\"" + stop->name + "\" (" + shortNames()[m] + "): " + juce::String((int)stop->transmissions.size()) + " transmission(s)");
+                }
+            }
+            MainComponent& o = owner;
+            std::array<Build, kDivisions> builds;
+            for (int m = 0; m < kDivisions; ++m) builds[(size_t)m] = withoutTransmissions(drafts[(size_t)m]);
+            // The order of every row (stops and transmission rows) per division, for "arrange".
+            std::array<std::vector<std::pair<juce::String, int>>, kDivisions> rowOrder;   // (stop name, -1) or ("", plan index)
+            for (int m = 0; m < kDivisions; ++m)
+                for (const auto& entry : drafts[(size_t)m].entries)
+                {
+                    if (!entry.isTransmission()) { rowOrder[(size_t)m].push_back({ entry.name, -1 }); continue; }
+                    for (size_t k = 0; k < plan.size(); ++k)
+                        if (plan[k].sourceManual == entry.trSourceManual && plan[k].source == entry.trSource
+                            && plan[k].originalManual == entry.trOriginalManual && plan[k].ordinal == entry.trOrdinal)
+                        { rowOrder[(size_t)m].push_back({ {}, (int)k }); break; }
+                }
+            std::set<int> reordered;
+            for (int m : orderChanged) if (changed.count(m) != 0 || trChanged) reordered.insert(m);
+            juce::Component::SafePointer<StopListDialog> safeThis(this);
+            auto run = [&o, builds, changed, plan, rowOrder, trChanged](std::set<int> arrange)
+            {
+                juce::MessageManager::callAsync([&o, builds, changed, plan, rowOrder, trChanged, arrange]() mutable
+                {
+                    o.stopBuildWindow.reset();
+                    if (trChanged) o.applyTransmissionPlan(plan);
+                    if (o.voicer != nullptr)
+                        for (int m : arrange)
+                        {
+                            std::vector<juce::String> keys;
+                            for (const auto& [name, planIndex] : rowOrder[(size_t)m])
+                            {
+                                if (planIndex < 0) keys.push_back(name);
+                                else if (planIndex < (int)plan.size() && plan[(size_t)planIndex].newKey.isNotEmpty()) keys.push_back(plan[(size_t)planIndex].newKey);
+                            }
+                            o.voicer->setArrangeOrder(m, keys);
+                        }
+                    if (!changed.empty()) { o.applyStopLists(builds, changed, arrange); return; }
+                    // Transmissions only: no reload, the console follows at once.
+                    if (o.voicer != nullptr)
+                    {
+                        o.voicer->rebuildUI(o.stopsContent, o.stopsViewport);
+                        o.voicer->saveState(o.voicerStateFile);
+                    }
+                    o.saveSettings();
+                });
+            };
+            auto askOrder = [run, reordered, safeThis]
+            {
+                if (reordered.empty()) { run({}); return; }
+                juce::AlertWindow::showYesNoCancelBox(juce::MessageBoxIconType::QuestionIcon, "Order of the stops",
+                    "You changed the order of rows. Arrange the grid of the changed division(s) in this order as well?\n\n"
+                    "Yes: the stops are laid out afresh in the table's order (row by row).\nNo: every stop keeps its grid cell.",
+                    "Yes", "No", "Cancel", safeThis, juce::ModalCallbackFunction::create([run, reordered](int result)
+                    {
+                        if (result == 1) run(reordered);
+                        else if (result == 2) run({});
+                    }));
+            };
+            if (losing.isEmpty()) { askOrder(); return; }
+            juce::AlertWindow::showOkCancelBox(juce::MessageBoxIconType::WarningIcon, "Transmissions will be lost",
+                "These stops are removed or renamed by the table and have transmissions:\n  - " + losing.joinIntoString("\n  - ")
+                + "\n\nApplying destroys all of these transmissions. Apply anyway?", "Apply", "Cancel", this,
+                juce::ModalCallbackFunction::create([askOrder, safeThis](int result) { if (result != 0 && safeThis != nullptr) askOrder(); }));
+        }
+    };
+
+    class StopListWindow final : public juce::DialogWindow
+    {
+    public:
+        StopListWindow(MainComponent& o, const juce::String& title)
+            : juce::DialogWindow(title, juce::Colours::darkgrey, true, true), owner(o) {}
+        float getDesktopScaleFactor() const override { return UIScale::factor(); }
+        void closeButtonPressed() override
+        {
+            MainComponent& o = owner;
+            juce::MessageManager::callAsync([&o] { o.stopBuildWindow.reset(); });
+        }
+    private:
+        MainComponent& owner;
+    };
+
+    auto* content = new StopListDialog(*this);
+    const int neededWidth = content->neededWidth();
+    const int defaultWidth = juce::jmax(1400, neededWidth);
+    content->setSize(defaultWidth, 780);
+    stopBuildWindow = std::make_unique<StopListWindow>(*this, "Stop List");
+    stopBuildWindow->setUsingNativeTitleBar(true);
+    stopBuildWindow->setResizable(true, true);
+    stopBuildWindow->setContentOwned(new ScrollableContent(content), true);
+    placeDialog(*stopBuildWindow, "stopList", defaultWidth, 780);
+    if (stopBuildWindow->getWidth() < neededWidth)   // a remembered narrower window: widen it
+    {
+        const auto screen = UIScale::toWindowSpace(juce::Desktop::getInstance().getDisplays()
+            .getDisplayForRect(UIScale::toScreenSpace(stopBuildWindow->getBounds()))->userBounds.toNearestInt());
+        const int width = juce::jmin(neededWidth, screen.getWidth() - 20);
+        stopBuildWindow->setBounds(stopBuildWindow->getBounds().withWidth(width).withX(
+            juce::jlimit(screen.getX(), juce::jmax(screen.getX(), screen.getRight() - width), stopBuildWindow->getX())));
+    }
+    stopBuildWindow->setVisible(true);
+    stopBuildWindow->toFront(true);
+}
+
+namespace
+{
+    // Coupler ids read "<target>-<source>-<type>": both divisions are renamed.
+    juce::String remapCouplerId(const juce::String& id, int a, int b)
+    {
+        auto tokens = juce::StringArray::fromTokens(id, "-", "");
+        if (tokens.size() < 3) return id;
+        auto swapped = [a, b](int manual) { return manual == a ? b : (manual == b ? a : manual); };
+        tokens.set(0, juce::String(swapped(tokens[0].getIntValue())));
+        tokens.set(1, juce::String(swapped(tokens[1].getIntValue())));
+        return tokens.joinIntoString("-");
+    }
+    int swapMaskBits(int mask, int a, int b)
+    {
+        const bool bitA = (mask & (1 << a)) != 0, bitB = (mask & (1 << b)) != 0;
+        mask &= ~((1 << a) | (1 << b));
+        if (bitA) mask |= 1 << b;
+        if (bitB) mask |= 1 << a;
+        return mask;
+    }
+    // A stored registration (combination, crescendo step, saved file): the stops
+    // keep their names but change division, their transmissions and the
+    // couplers change division too.
+    void remapRegistrationArrays(juce::Array<juce::var>* stopData, juce::Array<juce::var>* couplerData, int a, int b)
+    {
+        auto swapped = [a, b](int manual) { return manual == a ? b : (manual == b ? a : manual); };
+        if (stopData != nullptr)
+            for (auto& stopVar : *stopData)
+                if (auto* stopObj = stopVar.getDynamicObject())
+                {
+                    stopObj->setProperty("primaryManual", swapped((int)stopObj->getProperty("primaryManual")));
+                    if (auto* list = stopObj->getProperty("transmissions").getArray())
+                        for (auto& item : *list)
+                            if (auto* t = item.getDynamicObject()) t->setProperty("manual", swapped((int)t->getProperty("manual")));
+                    for (const char* mask : { "transmissionMask", "transmissionEnabledMask", "manualMask" })
+                        if (stopObj->hasProperty(mask)) stopObj->setProperty(mask, swapMaskBits((int)stopObj->getProperty(mask), a, b));
+                }
+        if (couplerData != nullptr)
+            for (auto& state : *couplerData)
+                if (auto* obj = state.getDynamicObject())
+                    obj->setProperty("id", remapCouplerId(obj->getProperty("id").toString(), a, b));
+    }
+}
+
+void MainComponent::swapDivisionStops(int a, int b)
+{
+    if (a < 0 || b < 0 || a > manualCount || b > manualCount || a == b) return;
+    static const juce::String names[8]{ "Pedal", "I.", "II.", "III.", "IV.", "V.", "VI.", "VII." };
+    CrashHandler::note("Swapping the stops of divisions " + names[a] + " and " + names[b]);
+    audioMuted.store(true);
+    panic();
+    if (keyboardsWindow != nullptr) keyboardsWindow.reset();
+    engine.swapDivisions(a, b);
+    // The folders are the divisions' stops: they change hands too.
+    std::swap(manualConfigs[(size_t)a].folderPath, manualConfigs[(size_t)b].folderPath);
+    std::swap(manualConfigs[(size_t)a].extraFolderPaths, manualConfigs[(size_t)b].extraFolderPaths);
+    std::swap(manualConfigs[(size_t)a].stopBuild, manualConfigs[(size_t)b].stopBuild);
+    syncDivisionTreeLists();   // table references point into the pool: nothing else to convert
+    if (stopBuildWindow != nullptr) stopBuildWindow.reset();
+    if (juce::File(manualConfigs[0].folderPath).isDirectory()) topFolder = juce::File(manualConfigs[0].folderPath);
+    if (voicer) voicer->swapDivisions(a, b);
+    for (auto& entry : combinations) remapRegistrationArrays(&entry.second.stopData, &entry.second.couplerData, a, b);
+    for (auto& slot : crescendoSteps) remapRegistrationArrays(&slot.stopData, &slot.couplerData, a, b);
+    remapRegistrationArrays(&crescendoRestore.stopData, &crescendoRestore.couplerData, a, b);
+    {
+        // MIDI bindings of transmissions ("transmission:target:source:name[:ordinal]") and couplers ("coupler:id").
+        const juce::ScopedLock lock(midiButtonBindingLock);
+        auto swapped = [a, b](int manual) { return manual == a ? b : (manual == b ? a : manual); };
+        std::unordered_map<std::string, MidiButtonBinding> remapped;
+        for (const auto& [key, binding] : midiButtonBindings)
+        {
+            juce::String target(key);
+            if (target.startsWith("transmission:"))
+            {
+                auto fields = juce::StringArray::fromTokens(target, ":", "");
+                if (fields.size() >= 4)
+                {
+                    fields.set(1, juce::String(swapped(fields[1].getIntValue())));
+                    fields.set(2, juce::String(swapped(fields[2].getIntValue())));
+                    target = fields.joinIntoString(":");
+                }
+            }
+            else if (target.startsWith("coupler:"))
+                target = "coupler:" + remapCouplerId(target.fromFirstOccurrenceOf(":", false, false), a, b);
+            remapped[target.toStdString()] = binding;
+        }
+        midiButtonBindings = std::move(remapped);
+    }
+    rebuildPerspectiveAudioRoutes();
+    if (voicer)
+    {
+        voicer->rebuildUI(stopsContent, stopsViewport);
+        voicer->saveState(voicerStateFile);
+    }
+    saveMemories();
+    saveSettings();
+    audioMuted.store(false);
+    refreshConfigurationEditor();
+    if (reopenStopBuildManual == a || reopenStopBuildManual == b)
+    {
+        const int reopen = reopenStopBuildManual;
+        reopenStopBuildManual = -1;
+        juce::MessageManager::callAsync([this, reopen] { showStopBuildingDialog(reopen); });
+    }
+    offerCombinationFileConversion(a, b);
+}
+
+void MainComponent::offerCombinationFileConversion(int a, int b)
+{
+    static const juce::String names[8]{ "Pedal", "I.", "II.", "III.", "IV.", "V.", "VI.", "VII." };
+    juce::AlertWindow::showOkCancelBox(juce::MessageBoxIconType::QuestionIcon, "Swap divisions",
+        "The stops of " + names[a] + " and " + names[b] + " were exchanged; the combinations and the crescendo of this "
+        "configuration follow them.\n\nCombination files saved separately (Save in the combination row) still name the old "
+        "divisions. Convert such files now? Choose one or more files; they are rewritten in place.",
+        "Choose files...", "Not now", nullptr,
+        juce::ModalCallbackFunction::create([this, a, b](int result)
+        {
+            if (result == 0) return;
+            swapFileChooser = std::make_unique<juce::FileChooser>("Combination files to convert",
+                lastSettingsDirectory.isDirectory() ? lastSettingsDirectory : juce::File(), "*.json");
+            swapFileChooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles
+                | juce::FileBrowserComponent::canSelectMultipleItems, [this, a, b](const juce::FileChooser& chooser)
+            {
+                int converted = 0, skipped = 0;
+                for (const auto& file : chooser.getResults())
+                {
+                    auto parsed = juce::JSON::parse(file.loadFileAsString());
+                    auto* scenes = parsed.getProperty("combinations", juce::var()).getArray();
+                    if (scenes == nullptr) scenes = parsed.getProperty("memories", juce::var()).getArray();
+                    if (scenes == nullptr) { ++skipped; continue; }
+                    for (auto& scene : *scenes)
+                        if (auto* obj = scene.getDynamicObject())
+                            remapRegistrationArrays(obj->getProperty("stops").getArray(), obj->getProperty("couplers").getArray(), a, b);
+                    if (file.replaceWithText(juce::JSON::toString(parsed, true))) ++converted; else ++skipped;
+                }
+                if (converted + skipped > 0)
+                    juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, "Swap divisions",
+                        juce::String(converted) + " file(s) converted" + (skipped > 0 ? ", " + juce::String(skipped) + " skipped (not a combination file)." : "."));
+            });
+        }));
+}
+
+void MainComponent::setTwoWindows(bool on)
+{
+    twoWindows = on;
+    // One window again (the second one was closed): every division is in window 1
+    // from now on, nothing stays silently assigned to a window that does not exist.
+    if (!on) divisionScreen.fill(0);
+    updateSecondWindow();
+    saveSettings();
+    refreshConfigurationEditor();   // the "Shown in window" rows appear or vanish
+}
+
+void MainComponent::updateSecondWindow()
+{
+    if (twoWindows)
+    {
+        if (secondWindow == nullptr)
+        {
+            secondWindow = std::make_unique<SecondWindow>(*this);
+            placeDialog(*secondWindow, "secondWindow", 1200, 800);
+            secondWindow->setVisible(true);
+        }
+        if (voicer) voicer->setSecondScreen(&secondWindow->content->stops, &secondWindow->content->viewport);
+    }
+    else
+    {
+        if (voicer) voicer->setSecondScreen(nullptr, nullptr);
+        secondWindow.reset();
+    }
+    if (voicer) voicer->rebuildUI(stopsContent, stopsViewport);
+}
+
+void MainComponent::forgetDivision(int manual)
+{
+    if (manual < 1 || manual >= SamplerEngine::maxManuals) return;   // the pedal is always present
+    manualConfigs[(size_t)manual] = ManualConfig{};
+    divisionColumnWeights[(size_t)manual] = 1.0f;
+    couplerOrder.erase(manual);
+    if (voicer) voicer->forgetDivision(manual);
+}
+
+void MainComponent::unloadWholeManualFolder(int manualIndex)
+{
+    if (manualIndex < 0 || manualIndex > manualCount) return;
+    audioMuted.store(true);
+    panic();
+    if (keyboardsWindow != nullptr && keyboardsWindowManual == manualIndex)
+        keyboardsWindow.reset();
+    if (stopBuildWindow != nullptr && stopBuildWindowManual == manualIndex) stopBuildWindow.reset();
+    removePerspectiveAudioRoutesForManual(manualIndex);
+    engine.unloadManual(manualIndex);
+    manualConfigs[(size_t)manualIndex].folderPath.clear();
+    manualConfigs[(size_t)manualIndex].stopBuild = {};
+    if (manualIndex == 0) topFolder = {};
+    if (voicer)
+    {
+        voicer->setActiveManualCount(manualCount + 1);
+        voicer->rebuildUI(stopsContent, stopsViewport);
+    }
+    saveSettings();
+    const bool haveStops = !engine.getStops().isEmpty();
+    saveStopSettingsButton.setEnabled(haveStops);
+    loadStopSettingsButton.setEnabled(haveStops);
+    if (!topFolder.isDirectory())
+        for (int manual = 0; manual <= manualCount; ++manual)
+        {
+            const juce::File remaining(manualConfigs[(size_t)manual].folderPath);
+            if (remaining.isDirectory()) { topFolder = remaining; break; }
+        }
+    mergeStopsButton.setEnabled(haveStops && topFolder.isDirectory());
+    resized();
+    audioMuted.store(false);
+    refreshConfigurationEditor();
+    if (reopenStopBuildManual == manualIndex)
+    {
+        reopenStopBuildManual = -1;
+        juce::MessageManager::callAsync([this, manualIndex] { showStopBuildingDialog(manualIndex); });
+    }
+}
+
+void MainComponent::loadSettings()
+{
+    if (!settingsFile.existsAsFile())
+        return;
+
+    auto text = settingsFile.loadFileAsString();
+    auto parsed = juce::JSON::parse(text);
+    if (!parsed.isObject())
+        return;
+    const int windScaleVersion = (int)parsed.getProperty("windStrengthScaleVersion", 1);
+    const bool migrateWindStrength = windScaleVersion < 2;
+    // Version 3: depth two thirds, oscillation strength doubled (level coupling
+    // moved to a fixed 0.2 dB per cent in the engine).
+    const bool migrateWindV3 = windScaleVersion < 3;
+    dialogBounds.clear();
+    if (auto* bounds = parsed.getProperty("dialogBounds", juce::var()).getDynamicObject())
+        for (const auto& entry : bounds->getProperties())
+        {
+            const auto rect = juce::Rectangle<int>::fromString(entry.value.toString());
+            if (!rect.isEmpty()) dialogBounds[entry.name.toString()] = rect;
+        }
+    couplerOrder.clear();
+    if (auto* order = parsed.getProperty("couplerOrder", juce::var()).getDynamicObject())
+        for (const auto& entry : order->getProperties())
+        {
+            auto& ids = couplerOrder[entry.name.toString().getIntValue()];
+            if (auto* array = entry.value.getArray())
+                for (const auto& id : *array) ids.push_back(id.toString());
+        }
+    {
+        const auto path = parsed.getProperty("configurationFile", "").toString();
+        currentConfigurationFile = path.isNotEmpty() ? juce::File(path) : juce::File();
+    }
+    currentConfigurationName = parsed.getProperty("configurationName", "").toString();
+    crescendoFromVar(parsed.getProperty("crescendo", juce::var()));
+    // Samples stay 32-bit float unless the user explicitly chooses 16-bit.
+    sampleStorageFloat = parsed.getProperty("sampleStorageFloat", true);
+    engine.setSampleStorageFloat(sampleStorageFloat);
+    stopListShowTransmissions = parsed.getProperty("stopListShowTransmissions", false);
+    resampleOnLoad = parsed.getProperty("resampleOnLoad", true);
+    engine.setResampleOnLoad(resampleOnLoad);
+    {
+        // Per-slider visibility; older settings had one switch for all of them.
+        const bool allShown = parsed.getProperty("showGlobalSliders", true);
+        globalSliderShown.fill(allShown);
+        globalSliderShown[gsReleaseCut] = false;   // newer slider: hidden unless the settings say otherwise
+        if (auto* shown = parsed.getProperty("globalSlidersShown", juce::var()).getArray())
+            for (int i = 0; i < gsCount && i < shown->size(); ++i)
+                globalSliderShown[(size_t)i] = (bool)shown->getReference(i);
+    }
+    fillGroupSize = juce::jlimit(1, 12, (int)parsed.getProperty("fillGroupSize", 12));
+    engine.setFillGroupSize(fillGroupSize);
+    transposeQuality = juce::jlimit(0, 2, (int)parsed.getProperty("transposeQuality", 2));
+    engine.setTransposeQuality(transposeQuality);
+    // 0.8.17: "transposeReleaseLengthPct" replaces the shortening rule ("transposeReleaseShortenPct");
+    // the global "transposeFormantFollowPct" is gone - every stop has its own value (voicer.json).
+    transposeReleaseLengthPct = juce::jlimit(25.0f, 200.0f, (float)(double)parsed.getProperty("transposeReleaseLengthPct", 100.0));
+    engine.setTransposeReleaseLength(transposeReleaseLengthPct / 100.0f);
+    transposeKeepLoudness = parsed.getProperty("transposeKeepLoudness", true);
+    engine.setTransposeKeepLoudness(transposeKeepLoudness);
+    transposeLoopCrossfadePct = juce::jlimit(0.0f, 100.0f, (float)(double)parsed.getProperty("transposeLoopCrossfadePct", 40.0));
+    engine.setCopyLoopCrossfade(transposeLoopCrossfadePct / 100.0f);
+    transposeMethod = juce::jlimit(0, 3, (int)parsed.getProperty("transposeMethod", 2));   // pitch shift + time stretch by default
+    engine.setTransposeMethod(transposeMethod);
+    transposeAttackTimingPct = juce::jlimit(0.0f, 100.0f, (float)(double)parsed.getProperty("transposeAttackTimingPct", 50.0));
+    engine.setTransposeAttackTiming(transposeAttackTimingPct / 100.0f);
+    transposeReleaseTimingPct = juce::jlimit(0.0f, 100.0f, (float)(double)parsed.getProperty("transposeReleaseTimingPct", 55.0));
+    engine.setTransposeReleaseTiming(transposeReleaseTimingPct / 100.0f);
+    transposeReleaseTrimMs = juce::jlimit(0.0f, 300.0f, (float)(double)parsed.getProperty("transposeReleaseTrimMs", 140.0));
+    engine.setTransposeReleaseTrim(transposeReleaseTrimMs);
+    transposeReleaseLevelMatch = parsed.getProperty("transposeReleaseLevelMatch", false);
+    engine.setTransposeReleaseLevelMatch(transposeReleaseLevelMatch);
+    // The copy cache is switched on only after every setting that shapes the copies
+    // is applied: those setters empty the cache when their value changes, and at
+    // start-up every one of them changes from the engine's default.
+    copyCacheFolder = parsed.getProperty("copyCacheFolder", "").toString();
+    copyCacheEnabled = parsed.getProperty("copyCacheEnabled", false);
+    engine.setCopyCache(copyCacheEnabled, copyCacheDirectory());
+    loadLastConfigurationAtStartup = parsed.getProperty("loadLastConfigurationAtStartup", false);
+    // Remembered folding of the Configuration Editor sections and the Division dialog groups.
+    configEditorCollapsed.clear();
+    if (auto* folded = parsed.getProperty("configEditorCollapsed", juce::var()).getDynamicObject())
+        for (const auto& prop : folded->getProperties()) configEditorCollapsed[prop.name.toString()] = (bool)prop.value;
+    divisionTremulantExpanded = parsed.getProperty("divisionTremulantExpanded", false);
+    divisionWindExpanded = parsed.getProperty("divisionWindExpanded", false);
+    twoWindows = parsed.getProperty("twoWindows", false);
+    headerButtonShown.clear();
+    if (auto* shown = parsed.getProperty("headerButtons", juce::var()).getDynamicObject())
+        for (const auto& property : shown->getProperties())
+            headerButtonShown[property.name.toString()] = (bool)property.value;
+    divisionScreen.fill(0);
+    if (auto* screens = parsed.getProperty("divisionScreen", juce::var()).getArray())
+        for (int i = 0; i < SamplerEngine::maxManuals && i < screens->size(); ++i) divisionScreen[(size_t)i] = juce::jlimit(0, 1, (int)screens->getReference(i));
+    windMaxEffect = juce::jlimit(0.0f, 1.0f, (float)(double)parsed.getProperty("windMaxEffect", 1.0));
+    toneStartHz = juce::jlimit(120.0f, 5000.0f, (float)(double)parsed.getProperty("toneStartHz", 1800.0));
+    harmonicSwellDb = juce::jlimit(0.0f, 12.0f, (float)(double)parsed.getProperty("harmonicSwellDb", 8.0));
+    harmonicWindDb = juce::jlimit(0.0f, 12.0f, (float)(double)parsed.getProperty("harmonicWindDb", 2.0));
+    harmonicTremulantDb = juce::jlimit(0.0f, 12.0f, (float)(double)parsed.getProperty("harmonicTremulantDb", 4.0));
+    engine.setHarmonicFilterDb(harmonicSwellDb, harmonicWindDb, harmonicTremulantDb);
+    windLevelDbPerCent = juce::jlimit(0.0f, 1.0f, (float)(double)parsed.getProperty("windLevelDbPerCent", 0.2));
+    tremulantLevelDbPerCent = juce::jlimit(0.0f, 1.0f, (float)(double)parsed.getProperty("tremulantLevelDbPerCent", 0.187));
+    tremulantShelfPhaseDegrees = juce::jlimit(0.0f, 360.0f, (float)(double)parsed.getProperty("tremulantShelfPhaseDegrees", 90.0));
+    engine.setTremulantShelfPhaseDegrees(tremulantShelfPhaseDegrees);
+    velocityFadeInMs = juce::jlimit(0.0f, 500.0f, (float)(double)parsed.getProperty("velocityFadeInMs", 40.0));
+    engine.setVelocityFadeInMs(velocityFadeInMs);
+    velocityShelfDb = juce::jlimit(0.0f, 24.0f, (float)(double)parsed.getProperty("velocityShelfDb", 9.0));
+    velocityShelfMs = juce::jlimit(5.0f, 1000.0f, (float)(double)parsed.getProperty("velocityShelfMs", 80.0));
+    engine.setVelocityShelfDb(velocityShelfDb);
+    engine.setVelocityShelfMs(velocityShelfMs);
+    // Interface size: Main.cpp applied it before this window existed; a first
+    // start has no value yet and takes the screen's estimate (saved from now on).
+    uiScalePercent = UIScale::percentFromSettings(parsed);
+    if (uiScalePercent <= 0) uiScalePercent = UIScale::estimatePercent();
+    uiScalePercent = UIScale::clampPercent(uiScalePercent);
+    windOneStopShare = juce::jlimit(0.02f, 1.0f, (float)(double)parsed.getProperty("windOneStopShare", 0.2));
+    windOnePipeShare = juce::jlimit(0.02f, 1.0f, (float)(double)parsed.getProperty("windOnePipeShare", 0.5));
+    windTwoPipesShare = juce::jlimit(0.02f, 1.0f, (float)(double)parsed.getProperty("windTwoPipesShare", 0.5));
+    releaseCutPercent = juce::jlimit(5.0f, 100.0f, (float)(double)parsed.getProperty("releaseCutPercent", 100.0));
+    releaseCutSlider.setValue(releaseCutPercent, juce::dontSendNotification);
+    releaseCutLabel.setText("Release cut: " + juce::String(releaseCutPercent, 0) + " %", juce::dontSendNotification);
+    applyAdvancedAudioSettings();
+    undulationBeatRatio = juce::jlimit(1.0f, 20.0f, (float)(double)parsed.getProperty("undulationBeatRatio", 12.0));
+    engine.setUndulationBeatRatio(undulationBeatRatio);
+    equalAt440 = parsed.getProperty("equalAt440", false);
+    engine.setAllStopsTuneTo440(equalAt440);
+    // Render threads: preset (physical / physicalMinusOne / all / allMinusOne)
+    // or an explicit total thread count in "renderThreads" (0 = use the preset).
+    renderThreadPreset = parsed.getProperty("renderThreadPreset", "physical").toString();
+    renderThreads = juce::jlimit(0, 63, (int)parsed.getProperty("renderThreads", 0));
+    applyRenderThreadSetting();
+    renderThreadsWasapi = juce::jlimit(1, 63, (int)parsed.getProperty("renderThreadsWasapi", 1));
+    wasapiRenderLanes.store(renderThreadsWasapi);
+    ignoreDeviceRestartsUntil.store(juce::Time::getMillisecondCounterHiRes() + 6000.0);
+
+    savedWindowWidth = juce::jlimit(900, 7680,
+        (int)parsed.getProperty("windowWidth", 1680));
+    savedWindowHeight = juce::jlimit(600, 4320,
+        (int)parsed.getProperty("windowHeight", 900));
+    savedWindowX = parsed.hasProperty("windowX") ? (int)parsed.getProperty("windowX", 0) : INT_MIN;
+    savedWindowY = parsed.hasProperty("windowY") ? (int)parsed.getProperty("windowY", 0) : INT_MIN;
+    savedWindowMaximised = parsed.getProperty("windowMaximised", false);
+
+    manualCount = juce::jlimit(1, SamplerEngine::maxManuals - 1, (int)parsed.getProperty("manualCount", 2));
+    const auto savedColumnWeights = parsed.getProperty("divisionColumnWeights", juce::var());
+    if (savedColumnWeights.isArray())
+        for (int i = 0; i < SamplerEngine::maxManuals && i < savedColumnWeights.size(); ++i)
+            divisionColumnWeights[(size_t)i] = juce::jlimit(0.15f, 10.0f,
+                (float)(double)savedColumnWeights[i]);
+    rebuildCouplerCatalog();
+    melodyBassNewKeysOnly = parsed.getProperty("melodyBassNewKeysOnly", true);
+    melodyBassGraceTime = parsed.getProperty("melodyBassGraceTime", true);
+
+    const auto customTemperaments = parsed.getProperty("customTemperaments", juce::var());
+    if (customTemperaments.isArray())
+        for (const auto& item : *customTemperaments.getArray())
+        {
+            if (!item.isObject()) continue;
+            const auto name = item.getProperty("name", "").toString().trim();
+            const auto values = item.getProperty("cents", juce::var());
+            if (name.isEmpty() || findTemperament(name) >= 0 || !values.isArray()
+                || values.size() < 12) continue;
+            Temperament temperament;
+            temperament.name = name;
+            temperament.builtIn = false;
+            temperament.rotation = juce::jlimit(0, 11,
+                (int)item.getProperty("rotation", 0));
+            for (int pitch = 0; pitch < 12; ++pitch)
+                temperament.cents[(size_t)pitch] = juce::jlimit(-1200.0f, 1200.0f,
+                    (float)(double)values[pitch]);
+            temperaments.push_back(std::move(temperament));
+        }
+    const auto savedTemperamentRotations = parsed.getProperty("temperamentRotations", juce::var());
+    if (savedTemperamentRotations.isArray())
+        for (const auto& item : *savedTemperamentRotations.getArray())
+            if (item.isObject())
+            {
+                const int index = findTemperament(item.getProperty("name", "").toString());
+                if (index >= 0) temperaments[(size_t)index].rotation = juce::jlimit(0, 11,
+                    (int)item.getProperty("rotation", 0));
+            }
+    const auto savedBaseTemperament = parsed.getProperty("baseTemperament", "").toString();
+    const auto savedSelectedTemperament = parsed.getProperty("selectedTemperament", "").toString();
+    if (findTemperament(savedBaseTemperament) >= 0)
+        baseTemperamentName = temperaments[(size_t)findTemperament(savedBaseTemperament)].name;
+    if (findTemperament(savedSelectedTemperament) >= 0)
+        selectedTemperamentName = temperaments[(size_t)findTemperament(savedSelectedTemperament)].name;
+    coincidentTemperamentShowsTarget = parsed.getProperty(
+        "coincidentTemperamentShowsTarget", true);
+    applyTemperamentTuning();
+
+    // Keep voicing inside the main configuration as well as in the legacy
+    // voicer.json sidecar. Folder loading happens later, and its existing
+    // post-load path will apply this state once the stops actually exist.
+    const auto embeddedVoicing = parsed.getProperty("voicingSettings", juce::var());
+    if (embeddedVoicing.isObject())
+        voicerStateFile.replaceWithText(juce::JSON::toString(embeddedVoicing, true));
+
+    // Master volume
+    double masterDb = parsed.getProperty("masterVolumeDb", -20.0);
+    masterVolumeSlider.setValue(masterDb, juce::dontSendNotification);
+    masterGainLinear.store(juce::Decibels::decibelsToGain((float)masterDb));
+    masterLabel.setText("Master: " + juce::String(masterDb, 1) + " dB", juce::dontSendNotification);
+
+    const double releaseFadeOut = parsed.getProperty("releaseFadeOutMs", 70.0);
+    releaseFadeOutSlider.setValue(releaseFadeOut, juce::dontSendNotification);
+    releaseFadeOutLabel.setText("Sustain fade-out: " + juce::String(releaseFadeOut, 0) + " ms", juce::dontSendNotification);
+    engine.setReleaseFadeOutMs((float)releaseFadeOut);
+
+    const double releaseFadeIn = parsed.getProperty("releaseFadeInMs", 70.0);
+    releaseFadeInSlider.setValue(releaseFadeIn, juce::dontSendNotification);
+    releaseFadeInLabel.setText("Release fade-in: " + juce::String(releaseFadeIn, 0) + " ms", juce::dontSendNotification);
+    engine.setReleaseFadeInMs((float)releaseFadeIn);
+
+    const double releaseScaling = parsed.getProperty("releaseScalingDb", 0.0);
+    releaseScalingSlider.setValue(releaseScaling, juce::dontSendNotification);
+    releaseScalingLabel.setText(releaseScaling < -20.5 ? "Release scaling: -inf"
+        : "Release scaling: " + juce::String(releaseScaling, 1) + " dB",
+        juce::dontSendNotification);
+    engine.setReleaseScalingDb((float)releaseScaling);
+
+    const double globalPitch = parsed.getProperty("globalPitchCents", 0.0);
+    pitchSlider.setValue(globalPitch, juce::dontSendNotification);
+    pitchLabel.setText("Pitch: " + juce::String(globalPitch, 0) + " cents", juce::dontSendNotification);
+    engine.setGlobalPitchCents((float)globalPitch);
+    engine.setMaxPolyphony((int)parsed.getProperty("maxPolyphony", 30000));
+
+    const double attackMinimum = parsed.getProperty("attackMinimumTimeMs", 80.0);
+    attackMinimumSlider.setValue(attackMinimum, juce::dontSendNotification);
+    attackMinimumLabel.setText("Attack min. time: " + juce::String(attackMinimum, 0) + " ms", juce::dontSendNotification);
+    engine.setAttackMinimumMs((float)attackMinimum);
+
+    const double attackDelay = parsed.getProperty("attackMinimumDelayMs", 2.0);
+    attackMinimumDelaySlider.setValue(attackDelay, juce::dontSendNotification);
+    attackMinimumDelayLabel.setText("Attack min. delay: " + juce::String(attackDelay, 0) + " ms", juce::dontSendNotification);
+    engine.setAttackMinimumDelayMs((float)attackDelay);
+
+    auto manualsArray = parsed.getProperty("manualKeyboards", juce::var());
+    if (manualsArray.isArray())
+    {
+        // A load starts every division from scratch and then applies what the
+        // file carries: no route, IR, device or value of a former configuration
+        // survives in memory to be saved back later (the configuration holds
+        // only what is in use - the user's fundamental rule).
+        for (auto& config : manualConfigs) config = ManualConfig();
+        for (int i = 0; i < SamplerEngine::maxManuals && i < manualsArray.size(); ++i)
+        {
+            const auto item = manualsArray[i];
+            if (!item.isObject()) continue;
+            manualConfigs[(size_t)i].deviceIdentifier = item.getProperty("deviceIdentifier", "").toString();
+            manualConfigs[(size_t)i].midiChannel = juce::jlimit(1, 16, (int)item.getProperty("channel", 1));
+            manualConfigs[(size_t)i].disableVelocity = item.getProperty("disableVelocity", true);
+            manualConfigs[(size_t)i].bassOctaveLayout = juce::jlimit(0, 3,
+                (int)item.getProperty("bassOctaveLayout", 0));
+            manualConfigs[(size_t)i].midiTranspose = juce::jlimit(-24, 24, (int)item.getProperty("midiTranspose", 0));
+            manualConfigs[(size_t)i].compassLow = juce::jlimit(0, 127, (int)item.getProperty("compassLow", 36));
+            manualConfigs[(size_t)i].compassHigh = juce::jlimit(manualConfigs[(size_t)i].compassLow, 127,
+                (int)item.getProperty("compassHigh", i == 0 ? 67 : 96));
+            engine.setManualCompass(i, manualConfigs[(size_t)i].compassLow, manualConfigs[(size_t)i].compassHigh);
+            manualConfigs[(size_t)i].expressionDeviceIdentifier = item.getProperty("expressionDeviceIdentifier", "").toString();
+            manualConfigs[(size_t)i].expressionChannel = juce::jlimit(1, 16, (int)item.getProperty("expressionChannel", 1));
+            manualConfigs[(size_t)i].expressionController = (int)item.getProperty("expressionController", -1);
+            manualConfigs[(size_t)i].expressionMinimum = (int)item.getProperty("expressionMinimum", 127);
+            manualConfigs[(size_t)i].expressionMaximum = (int)item.getProperty("expressionMaximum", 0);
+            manualConfigs[(size_t)i].expressionPosition = (float)(double)item.getProperty("expressionPosition", 1.0);
+            expressionTargetPositions[(size_t)i].store(
+                manualConfigs[(size_t)i].expressionPosition, std::memory_order_relaxed);
+            expressionInertiaStages[(size_t)i] = manualConfigs[(size_t)i].expressionPosition;
+            manualConfigs[(size_t)i].expressionMaxAttenuationDb = (float)(double)item.getProperty("expressionMaxAttenuationDb", 13.0);
+            manualConfigs[(size_t)i].expressionInertiaMs = (float)(double)item.getProperty(
+                "expressionInertiaMs", manualConfigs[(size_t)i].expressionInertiaMs);
+            manualConfigs[(size_t)i].folderPath = item.getProperty("folderPath", "").toString();
+            manualConfigs[(size_t)i].extraFolderPaths.clear();
+            if (auto* extras = item.getProperty("extraFolderPaths", juce::var()).getArray())
+                for (const auto& extra : *extras)
+                    if (extra.toString().isNotEmpty()) manualConfigs[(size_t)i].extraFolderPaths.push_back(extra.toString());
+            manualConfigs[(size_t)i].stopBuild = stopBuildFromVar(item.getProperty("stopBuild", juce::var()));
+            manualConfigs[(size_t)i].stopBuild.legacyTrees = manualConfigs[(size_t)i].extraFolderPaths;
+            if (manualConfigs[(size_t)i].folderPath.isNotEmpty())
+                manualConfigs[(size_t)i].stopBuild.legacyTrees.insert(manualConfigs[(size_t)i].stopBuild.legacyTrees.begin(),
+                    manualConfigs[(size_t)i].folderPath);
+            manualConfigs[(size_t)i].divisionVolumeDb = (float)(double)item.getProperty("divisionVolumeDb", 0.0);
+            manualConfigs[(size_t)i].allowRandomTuningError = item.getProperty("allowRandomTuningError", true);
+            engine.setManualRandomTuningAllowed(i, manualConfigs[(size_t)i].allowRandomTuningError);
+            manualConfigs[(size_t)i].allowPipeCoupling = item.getProperty("allowPipeCoupling", true);
+            engine.setManualPipeCouplingAllowed(i, manualConfigs[(size_t)i].allowPipeCoupling);
+            manualConfigs[(size_t)i].tremulantEnabled = item.getProperty("tremulantEnabled", false);
+            manualConfigs[(size_t)i].tremulantRateHz = (float)(double)item.getProperty(
+                "tremulantRateHz", manualConfigs[(size_t)i].tremulantRateHz);
+            manualConfigs[(size_t)i].tremulantDepthCents = (float)(double)item.getProperty(
+                "tremulantDepthCents", manualConfigs[(size_t)i].tremulantDepthCents);
+            manualConfigs[(size_t)i].tremulantRankDriftDegrees = (float)(double)item.getProperty(
+                "tremulantRankDriftDegrees", manualConfigs[(size_t)i].tremulantRankDriftDegrees);
+            engine.setManualTremulant(i, manualConfigs[(size_t)i].tremulantEnabled,
+                manualConfigs[(size_t)i].tremulantRateHz,
+                manualConfigs[(size_t)i].tremulantDepthCents,
+                manualConfigs[(size_t)i].tremulantRankDriftDegrees);
+            manualConfigs[(size_t)i].windDepthCents = (float)(double)item.getProperty(
+                "windDepthCents", manualConfigs[(size_t)i].windDepthCents);
+            manualConfigs[(size_t)i].windFrequencyHz = (float)(double)item.getProperty(
+                "windFrequencyHz", manualConfigs[(size_t)i].windFrequencyHz);
+            manualConfigs[(size_t)i].windOscillations = (float)(double)item.getProperty(
+                "windOscillations", manualConfigs[(size_t)i].windOscillations);
+            manualConfigs[(size_t)i].windOscillationStrength = (float)(double)item.getProperty(
+                "windOscillationStrength", manualConfigs[(size_t)i].windOscillationStrength);
+            if (migrateWindStrength)
+                manualConfigs[(size_t)i].windOscillationStrength *= 0.5f;
+            if (migrateWindV3)
+            {
+                manualConfigs[(size_t)i].windDepthCents *= 2.0f / 3.0f;
+                manualConfigs[(size_t)i].windOscillationStrength =
+                    juce::jmin(100.0f, manualConfigs[(size_t)i].windOscillationStrength * 2.0f);
+            }
+            manualConfigs[(size_t)i].windSmoothingMs = (float)(double)item.getProperty(
+                "windSmoothingMs", manualConfigs[(size_t)i].windSmoothingMs);
+            manualConfigs[(size_t)i].windTargetMask = (uint8_t)(int)item.getProperty(
+                "windTargetMask", manualConfigs[(size_t)i].windTargetMask);
+            engine.setWindModel(i, manualConfigs[(size_t)i].windDepthCents,
+                manualConfigs[(size_t)i].windFrequencyHz,
+                manualConfigs[(size_t)i].windOscillations,
+                manualConfigs[(size_t)i].windOscillationStrength / 50.0f,
+                manualConfigs[(size_t)i].windSmoothingMs,
+                manualConfigs[(size_t)i].windTargetMask);
+            manualConfigs[(size_t)i].audioDeviceStateXml = item.getProperty("audioDeviceStateXml", "").toString();
+            // The channels before the device: an Aggregated WASAPI device opens
+            // exactly the configured endpoints when its route starts.
+            auto outputs = item.getProperty("outputChannels", juce::var());
+            if (outputs.isArray())
+            {
+                manualConfigs[(size_t)i].outputChannels.clear();
+                for (const auto& output : *outputs.getArray())
+                    manualConfigs[(size_t)i].outputChannels.push_back(juce::jmax(0, (int)output));
+            }
+            engine.setManualOutputChannels(i, manualConfigs[(size_t)i].outputChannels);
+            {
+                // The division's own route: a saved device joins its shared host (ASIO,
+                // Windows Audio) or opens privately (Aggregated WASAPI); a saved 'none'
+                // stays without a device; no saved state at all means the system's
+                // default Windows Audio output, shared with every other such route.
+                auto xml = juce::parseXML(manualConfigs[(size_t)i].audioDeviceStateXml);
+                juce::String typeName = "Windows Audio", deviceName;
+                if (xml != nullptr)
+                {
+                    typeName = xml->getStringAttribute("deviceType");
+                    deviceName = xml->getStringAttribute("audioOutputDeviceName");
+                    if (xml->hasAttribute("audioOutputDeviceName") && deviceName.isEmpty()) typeName = "none";
+                }
+                attachDivisionRoute(i, typeName, deviceName, xml.get());
+            }
+            engine.setManualDivisionGain(i, juce::Decibels::decibelsToGain(
+                manualConfigs[(size_t)i].divisionVolumeDb));
+            auto perspectiveAudio = item.getProperty("perspectiveAudio", juce::var());
+            if (perspectiveAudio.isArray())
+                for (const auto& route : *perspectiveAudio.getArray())
+                {
+                    if (!route.isObject()) continue;
+                    auto name = route.getProperty("name", "default").toString();
+                    if (name.equalsIgnoreCase("misc.")) name = "default"; // old settings
+                    const auto key = perspectiveRouteKey(i, name);
+                    auto& config = manualConfigs[(size_t)i].perspectiveAudio[key];
+                    config.audioDeviceStateXml = route.getProperty("audioDeviceStateXml", "").toString();
+                    config.volumeDb = (float)(double)route.getProperty("volumeDb", 0.0);
+                    engine.setPerspectiveVolumeDb(i, name, config.volumeDb);
+                    config.channelSeparation = juce::jlimit(0.0f, 1.0f, (float)(double)route.getProperty("channelSeparation", 1.0));
+                    engine.setPerspectiveChannelSeparation(i, name, config.channelSeparation);
+                    config.reverbIrPath = route.getProperty("reverbIr", "").toString();
+                    config.reverbWet = juce::jlimit(0.0f, 1.0f, (float)(double)route.getProperty("reverbWet", 0.3));
+                    config.reverbTone.highCutHz = (float)(double)route.getProperty("reverbHighCutHz", 2000.0);
+                    config.reverbTone.lowCutHz = (float)(double)route.getProperty("reverbLowCutHz", 195.0);
+                    config.reverbTone.preDelayMs = (float)(double)route.getProperty("reverbPreDelayMs", 0.0);
+                    config.reverbTone.wetDb = (float)(double)route.getProperty("reverbWetDb", -4.0);
+                    config.reverbTone.decayPercent = (float)(double)route.getProperty("reverbDecayPercent", 100.0);
+                    config.reverbTone.fadePercent = (float)(double)route.getProperty("reverbFadePercent", 0.0);
+                    // The first fade-out version defaulted to 100 % even at full decay: that was a mistake.
+                    if (config.reverbTone.decayPercent > 99.9f && config.reverbTone.fadePercent > 99.9f)
+                        config.reverbTone.fadePercent = 0.0f;
+                    // Settings written by the first IR build carry its old defaults
+                    // (5000 Hz, 60 Hz, -6 dB) untouched: they mean "default" and follow.
+                    if (std::abs(config.reverbTone.highCutHz - 5000.0f) < 0.5f && std::abs(config.reverbTone.lowCutHz - 60.0f) < 0.5f
+                        && std::abs(config.reverbTone.wetDb + 6.0f) < 0.01f)
+                    {
+                        config.reverbTone.highCutHz = 2000.0f;
+                        config.reverbTone.lowCutHz = 195.0f;
+                        config.reverbTone.wetDb = -4.0f;
+                    }
+                    applyPerspectiveReverb(i, name);
+                    const auto routeOutputs = route.getProperty("outputChannels", juce::var());
+                    if (routeOutputs.isArray())
+                    {
+                        config.outputChannels.clear();
+                        for (const auto& output : *routeOutputs.getArray())
+                            config.outputChannels.push_back(juce::jmax(0, (int)output));
+                    }
+                }
+            engine.setManualExpressionMaxAttenuationDb(i, manualConfigs[(size_t)i].expressionMaxAttenuationDb);
+            engine.setManualExpressionGain(i, expressionGainFor(manualConfigs[(size_t)i]));
+        }
+    }
+
+    auto couplerSettings = parsed.getProperty("couplers", juce::var());
+    if (couplerSettings.isArray())
+        for (const auto& item : *couplerSettings.getArray())
+            if (item.isObject())
+                if (auto* coupler = findCoupler(item.getProperty("id", "").toString()))
+                {
+                    // Coupler visibility is configuration; its on/off state is
+                    // deliberately never restored at application startup.
+                    coupler->enabled = false;
+                    coupler->visible = item.getProperty("visible", true);
+                }
+
+    auto buttonBindings = parsed.getProperty("midiButtonBindings", juce::var());
+    if (buttonBindings.isArray())
+    {
+        const juce::ScopedLock lock(midiButtonBindingLock);
+        midiButtonBindings.clear();
+        for (const auto& item : *buttonBindings.getArray())
+        {
+            if (!item.isObject()) continue;
+            const auto target = item.getProperty("target", "").toString();
+            if (target.isEmpty()) continue;
+            MidiButtonBinding binding;
+            binding.deviceIdentifier = item.getProperty("deviceIdentifier", "").toString();
+            binding.channel = juce::jlimit(1, 16, (int)item.getProperty("channel", 1));
+            binding.messageType = (int)item.getProperty("messageType", 0);
+            binding.number = (int)item.getProperty("number", 0);
+            binding.toggleBehaviour = item.getProperty("toggleBehaviour", false);
+            binding.continuous = item.getProperty("continuous", false);
+            midiButtonBindings[target.toStdString()] = binding;
+        }
+    }
+    reopenMidiInputs();
+
+    // ========== NOVÉ: NAČTENÍ ONE‑SHOT PATTERNS ==========
+    // The tree pool. Settings written before the pool existed keep per-division
+    // tree lists with table references into them: the pool is built from those
+    // lists and the references are remapped. A pool path that vanished (a moved
+    // library) is replaced by a division's relocated tree of the same name.
+    sampleTrees.clear();
+    if (auto* pool = parsed.getProperty("sampleTrees", juce::var()).getArray())
+        for (const auto& path : *pool) if (path.toString().isNotEmpty()) sampleTrees.push_back(path.toString());
+    const bool migrate = sampleTrees.empty();   // decided once: the first migrated division fills the pool
+    for (int manual = 0; manual < SamplerEngine::maxManuals; ++manual)
+    {
+        auto& build = manualConfigs[(size_t)manual].stopBuild;
+        if (migrate && build.active)
+        {
+            // Migration: local tree indices become pool indices.
+            std::vector<int> remap;
+            for (const auto& tree : build.legacyTrees) remap.push_back(addTreeToPool(tree));
+            for (auto& entry : build.entries)
+                for (auto& [perspective, ref] : entry.folders)
+                    if (ref.tree >= 0 && ref.tree < (int)remap.size()) ref.tree = remap[(size_t)ref.tree];
+        }
+    }
+    for (auto& path : sampleTrees)
+        if (!juce::File(path).isDirectory())
+            for (int manual = 0; manual < SamplerEngine::maxManuals; ++manual)
+                for (const auto& tree : manualConfigs[(size_t)manual].stopBuild.legacyTrees)
+                    if (juce::File(tree).isDirectory() && juce::File(tree).getFileName() == juce::File(path).getFileName()) path = tree;
+    for (int manual = 0; manual < SamplerEngine::maxManuals; ++manual)   // trees of divisions without a table are pool trees too
+        if (!manualConfigs[(size_t)manual].stopBuild.active)
+            for (const auto& tree : manualConfigs[(size_t)manual].stopBuild.legacyTrees)
+                if (juce::File(tree).isDirectory()) addTreeToPool(tree);
+    syncDivisionTreeLists();
+
+    // A list that is missing or empty in the settings means the defaults
+    // (one-shot "Chiff", ignored "trem", perspectives Direct, Diffuse, Rear).
+    auto readPatterns = [&parsed](const char* key, std::vector<juce::String> defaults)
+    {
+        std::vector<juce::String> patterns;
+        if (auto* array = parsed.getProperty(key, juce::var()).getArray())
+            for (const auto& item : *array)
+                if (item.toString().trim().isNotEmpty()) patterns.push_back(item.toString());
+        return patterns.empty() ? defaults : patterns;
+    };
+    engine.setOneShotPatterns(readPatterns("oneShotPatterns", SamplerEngine::defaultOneShotPatterns()));
+    {
+        // A saved list that is still the old default ("trem" alone) takes the new default ("*_tr" added).
+        auto ignored = readPatterns("ignoredPatterns", SamplerEngine::defaultIgnoredPatterns());
+        if (ignored.size() == 1 && ignored.front().trim().equalsIgnoreCase("trem")) ignored = SamplerEngine::defaultIgnoredPatterns();
+        engine.setIgnoredPatterns(ignored);
+    }
+    engine.setPerspectivePatterns(readPatterns("perspectivePatterns", SamplerEngine::defaultPerspectivePatterns()));
+    // ========== KONEC NOVÉ ČÁSTI ==========
+}
+
+void MainComponent::saveSettings()
+{
+    // Every user change arrives here. Whether the open configuration is
+    // "changed" is decided by comparing the settings (without window geometry
+    // and dialog positions) with their state at the configuration's load or save.
+    juce::DynamicObject::Ptr obj = new juce::DynamicObject();
+    obj->setProperty("manualCount", manualCount);
+    obj->setProperty("masterVolumeDb", masterVolumeSlider.getValue());
+    obj->setProperty("globalPitchCents", pitchSlider.getValue());
+    obj->setProperty("maxPolyphony", engine.getMaxPolyphony());
+    obj->setProperty("releaseFadeOutMs", releaseFadeOutSlider.getValue());
+    obj->setProperty("releaseFadeInMs", releaseFadeInSlider.getValue());
+    obj->setProperty("releaseScalingDb", releaseScalingSlider.getValue());
+    obj->setProperty("attackMinimumTimeMs", attackMinimumSlider.getValue());
+    obj->setProperty("attackMinimumDelayMs", attackMinimumDelaySlider.getValue());
+    obj->setProperty("melodyBassNewKeysOnly", melodyBassNewKeysOnly);
+    obj->setProperty("melodyBassGraceTime", melodyBassGraceTime);
+    obj->setProperty("windStrengthScaleVersion", 3);
+    {
+        auto* bounds = new juce::DynamicObject();
+        for (const auto& entry : dialogBounds)
+            bounds->setProperty(entry.first, entry.second.toString());
+        obj->setProperty("dialogBounds", juce::var(bounds));
+    }
+    {
+        auto* order = new juce::DynamicObject();
+        for (const auto& entry : couplerOrder)
+        {
+            if (entry.second.empty()) continue;
+            juce::Array<juce::var> ids;
+            for (const auto& id : entry.second) ids.add(id);
+            order->setProperty(juce::Identifier(juce::String(entry.first)), ids);
+        }
+        obj->setProperty("couplerOrder", juce::var(order));
+    }
+    obj->setProperty("configurationFile", currentConfigurationFile.getFullPathName());
+    obj->setProperty("crescendo", crescendoToVar());
+    {
+        juce::Array<juce::var> shown;
+        for (const bool flag : globalSliderShown) shown.add(flag);
+        obj->setProperty("globalSlidersShown", shown);
+        obj->setProperty("showGlobalSliders", anyGlobalSliderShown());   // read by older builds
+    }
+    obj->setProperty("fillGroupSize", fillGroupSize);
+    obj->setProperty("transposeQuality", transposeQuality);
+    obj->setProperty("transposeMethod", transposeMethod);
+    obj->setProperty("transposeReleaseLengthPct", transposeReleaseLengthPct);
+    obj->setProperty("transposeKeepLoudness", transposeKeepLoudness);
+    obj->setProperty("transposeLoopCrossfadePct", transposeLoopCrossfadePct);
+    obj->setProperty("copyCacheEnabled", copyCacheEnabled);
+    obj->setProperty("copyCacheFolder", copyCacheFolder);
+    obj->setProperty("transposeAttackTimingPct", transposeAttackTimingPct);
+    obj->setProperty("transposeReleaseTimingPct", transposeReleaseTimingPct);
+    obj->setProperty("transposeReleaseTrimMs", transposeReleaseTrimMs);
+    obj->setProperty("transposeReleaseLevelMatch", transposeReleaseLevelMatch);
+    obj->setProperty("loadLastConfigurationAtStartup", loadLastConfigurationAtStartup);
+    {
+        juce::DynamicObject::Ptr folded = new juce::DynamicObject();
+        for (const auto& entry : configEditorCollapsed) folded->setProperty(juce::Identifier(entry.first), entry.second);
+        obj->setProperty("configEditorCollapsed", juce::var(folded.get()));
+    }
+    obj->setProperty("divisionTremulantExpanded", divisionTremulantExpanded);
+    obj->setProperty("divisionWindExpanded", divisionWindExpanded);
+    obj->setProperty("twoWindows", twoWindows);
+    {
+        juce::Array<juce::var> pool;
+        for (const auto& path : sampleTrees) pool.add(path);
+        obj->setProperty("sampleTrees", pool);
+    }
+    {
+        juce::DynamicObject::Ptr shown = new juce::DynamicObject();
+        for (const auto& item : headerButtons()) shown->setProperty(juce::Identifier(item.key), isHeaderButtonShown(item.key));
+        obj->setProperty("headerButtons", juce::var(shown.get()));
+    }
+    {
+        juce::Array<juce::var> screens;
+        for (const int screen : divisionScreen) screens.add(screen);
+        obj->setProperty("divisionScreen", screens);
+    }
+    obj->setProperty("windMaxEffect", windMaxEffect);
+    obj->setProperty("toneStartHz", toneStartHz);
+    obj->setProperty("harmonicSwellDb", harmonicSwellDb);
+    obj->setProperty("harmonicWindDb", harmonicWindDb);
+    obj->setProperty("harmonicTremulantDb", harmonicTremulantDb);
+    obj->setProperty("tremulantShelfPhaseDegrees", tremulantShelfPhaseDegrees);
+    obj->setProperty("velocityFadeInMs", velocityFadeInMs);
+    obj->setProperty("velocityShelfDb", velocityShelfDb);
+    obj->setProperty("velocityShelfMs", velocityShelfMs);
+    obj->setProperty("uiScalePercent", uiScalePercent);
+    obj->setProperty("windLevelDbPerCent", windLevelDbPerCent);
+    obj->setProperty("tremulantLevelDbPerCent", tremulantLevelDbPerCent);
+    obj->setProperty("windOneStopShare", windOneStopShare);
+    obj->setProperty("windOnePipeShare", windOnePipeShare);
+    obj->setProperty("windTwoPipesShare", windTwoPipesShare);
+    obj->setProperty("releaseCutPercent", releaseCutPercent);
+    obj->setProperty("undulationBeatRatio", undulationBeatRatio);
+    obj->setProperty("equalAt440", equalAt440);
+    obj->setProperty("sampleStorageFloat", sampleStorageFloat);
+    obj->setProperty("resampleOnLoad", resampleOnLoad);
+    obj->setProperty("stopListShowTransmissions", stopListShowTransmissions);
+    obj->setProperty("renderThreads", renderThreads);
+    obj->setProperty("renderThreadPreset", renderThreadPreset);
+    obj->setProperty("renderThreadsWasapi", renderThreadsWasapi);
+    obj->setProperty("configurationName", currentConfigurationName);
+    {
+        // Where the main window is (and whether it is maximised): restored at the
+        // next start. Screen pixels, whatever the interface size (UIScale.h).
+        if (auto* top = getTopLevelComponent(); top != nullptr && top != this && applicationReady.load())
+        {
+            auto* peer = top->getPeer();
+            savedWindowMaximised = peer != nullptr && peer->isFullScreen();
+            if (!savedWindowMaximised)
+            {
+                const auto screen = UIScale::toScreenSpace(top->getBounds());
+                const auto size = UIScale::toScreenSpace(getLocalBounds());
+                savedWindowX = screen.getX();
+                savedWindowY = screen.getY();
+                savedWindowWidth = juce::jmax(900, size.getWidth());
+                savedWindowHeight = juce::jmax(600, size.getHeight());
+            }
+        }
+        obj->setProperty("windowWidth", savedWindowWidth);
+        obj->setProperty("windowHeight", savedWindowHeight);
+        if (savedWindowX != INT_MIN) obj->setProperty("windowX", savedWindowX);
+        if (savedWindowY != INT_MIN) obj->setProperty("windowY", savedWindowY);
+        obj->setProperty("windowMaximised", savedWindowMaximised);
+    }
+    obj->setProperty("baseTemperament", baseTemperamentName);
+    obj->setProperty("selectedTemperament", selectedTemperamentName);
+    obj->setProperty("coincidentTemperamentShowsTarget", coincidentTemperamentShowsTarget);
+    juce::Array<juce::var> customTemperaments;
+    for (const auto& temperament : temperaments)
+        if (!temperament.builtIn)
+        {
+            juce::DynamicObject::Ptr item = new juce::DynamicObject();
+            item->setProperty("name", temperament.name);
+            item->setProperty("rotation", temperament.rotation);
+            juce::Array<juce::var> cents;
+            for (const auto value : temperament.cents) cents.add(value);
+            item->setProperty("cents", cents);
+            customTemperaments.add(juce::var(item.get()));
+        }
+    obj->setProperty("customTemperaments", customTemperaments);
+    juce::Array<juce::var> temperamentRotations;
+    for (const auto& temperament : temperaments)
+        if (temperament.rotation != 0)
+        {
+            juce::DynamicObject::Ptr item = new juce::DynamicObject();
+            item->setProperty("name", temperament.name);
+            item->setProperty("rotation", temperament.rotation);
+            temperamentRotations.add(juce::var(item.get()));
+        }
+    obj->setProperty("temperamentRotations", temperamentRotations);
+    juce::Array<juce::var> columnWeights;
+    for (const auto weight : divisionColumnWeights) columnWeights.add(weight);
+    obj->setProperty("divisionColumnWeights", columnWeights);
+    if (voicer != nullptr && !engine.getStops().isEmpty())
+        obj->setProperty("voicingSettings", voicer->createState());
+    else if (voicerStateFile.existsAsFile())
+    {
+        const auto retainedVoicing = juce::JSON::parse(voicerStateFile.loadFileAsString());
+        if (retainedVoicing.isObject()) obj->setProperty("voicingSettings", retainedVoicing);
+    }
+
+    juce::Array<juce::var> manualsArray;
+    for (const auto& config : manualConfigs)
+    {
+        // Only the divisions in use: a former division leaves nothing behind.
+        if (manualsArray.size() > manualCount) break;
+        juce::DynamicObject::Ptr item = new juce::DynamicObject();
+        item->setProperty("deviceIdentifier", config.deviceIdentifier);
+        item->setProperty("channel", config.midiChannel);
+        item->setProperty("disableVelocity", config.disableVelocity);
+        item->setProperty("bassOctaveLayout", config.bassOctaveLayout);
+        item->setProperty("midiTranspose", config.midiTranspose);
+        item->setProperty("compassLow", config.compassLow);
+        item->setProperty("compassHigh", config.compassHigh);
+        item->setProperty("expressionDeviceIdentifier", config.expressionDeviceIdentifier);
+        item->setProperty("expressionChannel", config.expressionChannel);
+        item->setProperty("expressionController", config.expressionController);
+        item->setProperty("expressionMinimum", config.expressionMinimum);
+        item->setProperty("expressionMaximum", config.expressionMaximum);
+        item->setProperty("expressionPosition", config.expressionPosition);
+        item->setProperty("expressionMaxAttenuationDb", config.expressionMaxAttenuationDb);
+        item->setProperty("expressionInertiaMs", config.expressionInertiaMs);
+        item->setProperty("folderPath", config.folderPath);
+        {
+            juce::Array<juce::var> extras;
+            for (const auto& extra : config.extraFolderPaths) extras.add(extra);
+            item->setProperty("extraFolderPaths", extras);
+        }
+        if (config.stopBuild.active) item->setProperty("stopBuild", stopBuildToVar(config.stopBuild));
+        item->setProperty("divisionVolumeDb", config.divisionVolumeDb);
+        item->setProperty("allowRandomTuningError", config.allowRandomTuningError);
+        item->setProperty("allowPipeCoupling", config.allowPipeCoupling);
+        item->setProperty("tremulantEnabled", config.tremulantEnabled);
+        item->setProperty("tremulantRateHz", config.tremulantRateHz);
+        item->setProperty("tremulantDepthCents", config.tremulantDepthCents);
+        item->setProperty("tremulantRankDriftDegrees", config.tremulantRankDriftDegrees);
+        item->setProperty("windDepthCents", config.windDepthCents);
+        item->setProperty("windFrequencyHz", config.windFrequencyHz);
+        item->setProperty("windOscillations", config.windOscillations);
+        item->setProperty("windOscillationStrength", config.windOscillationStrength);
+        item->setProperty("windSmoothingMs", config.windSmoothingMs);
+        item->setProperty("windTargetMask", (int)config.windTargetMask);
+        const int audioManual = manualsArray.size();
+        auto* manager = manualAsioHost[(size_t)audioManual] != nullptr
+            ? manualAsioHost[(size_t)audioManual]
+            : (audioManual == 0 ? &deviceManager
+                : extraAudioManagers[(size_t)(audioManual - 1)].get());
+        // The manager's state is taken when a device is open, or when the manager
+        // itself says "no device" (the user chose none in the list). A JUCE
+        // manager keeps its last setup after closeAudioDevice(), so a route set
+        // to 'none' by "set for all" (closed quietly) would otherwise be saved as
+        // "that device" again - and the missing-device watcher reopened it ("is
+        // available again"). A state still naming a device while none is open is
+        // stale (or a saved device not available yet): the remembered state stays.
+        auto trustedManagerState = [](juce::AudioDeviceManager* m) -> std::unique_ptr<juce::XmlElement>
+        {
+            if (m == nullptr) return nullptr;
+            auto xml = m->createStateXml();
+            if (xml == nullptr) return nullptr;
+            if (m->getCurrentAudioDevice() != nullptr) return xml;
+            if (xml->hasAttribute("audioOutputDeviceName") && xml->getStringAttribute("audioOutputDeviceName").isEmpty()) return xml;
+            return nullptr;
+        };
+        if (!ignoreCurrentAudioStateUntilUserSelection)
+            if (auto xml = trustedManagerState(manager))
+            {
+                item->setProperty("audioDeviceStateXml", xml->toString());
+                // The remembered state follows the device in use: the missing-device
+                // watcher compares against it and must never "restore" a device the
+                // user has just left.
+                manualConfigs[(size_t)audioManual].audioDeviceStateXml = xml->toString();
+            }
+        juce::Array<juce::var> outputs;
+        for (int channel : config.outputChannels) outputs.add(channel);
+        item->setProperty("outputChannels", outputs);
+        const int configManual = manualsArray.size();
+        juce::Array<juce::var> perspectiveAudio;
+        // Only the routes that exist (the audio tabs): the settings of a route
+        // that is gone are not kept for later.
+        const auto liveRoutes = engine.getPerspectivesForManual(configManual);
+        for (const auto& entry : config.perspectiveAudio)
+        {
+            auto name = juce::String(entry.first).fromFirstOccurrenceOf("|", false, false);
+            bool isLive = false;
+            for (const auto& live : liveRoutes) if (live.equalsIgnoreCase(name)) isLive = true;
+            if (!isLive) continue;
+            juce::DynamicObject::Ptr routeObject = new juce::DynamicObject();
+            routeObject->setProperty("name", name);
+            juce::String xmlText = entry.second.audioDeviceStateXml;
+            if (!ignoreCurrentAudioStateUntilUserSelection)
+                if (auto found = perspectiveAudioRoutes.find(entry.first); found != perspectiveAudioRoutes.end())
+                if (found->second->managerInUse)
+                    if (auto xml = trustedManagerState(found->second->managerInUse))   // see above
+                    {
+                        xmlText = xml->toString();
+                        // Same key, no rehash: the remembered state follows the device in use.
+                        manualConfigs[(size_t)configManual].perspectiveAudio[entry.first].audioDeviceStateXml = xmlText;
+                    }
+            routeObject->setProperty("audioDeviceStateXml", xmlText);
+            routeObject->setProperty("volumeDb", entry.second.volumeDb);
+            routeObject->setProperty("channelSeparation", entry.second.channelSeparation);
+            routeObject->setProperty("reverbIr", entry.second.reverbIrPath);
+            routeObject->setProperty("reverbWet", entry.second.reverbWet);
+            routeObject->setProperty("reverbHighCutHz", entry.second.reverbTone.highCutHz);
+            routeObject->setProperty("reverbLowCutHz", entry.second.reverbTone.lowCutHz);
+            routeObject->setProperty("reverbPreDelayMs", entry.second.reverbTone.preDelayMs);
+            routeObject->setProperty("reverbWetDb", entry.second.reverbTone.wetDb);
+            routeObject->setProperty("reverbDecayPercent", entry.second.reverbTone.decayPercent);
+            routeObject->setProperty("reverbFadePercent", entry.second.reverbTone.fadePercent);
+            juce::Array<juce::var> routeOutputs;
+            for (int channel : entry.second.outputChannels) routeOutputs.add(channel);
+            routeObject->setProperty("outputChannels", routeOutputs);
+            perspectiveAudio.add(juce::var(routeObject.get()));
+        }
+        juce::ignoreUnused(configManual);
+        item->setProperty("perspectiveAudio", perspectiveAudio);
+        manualsArray.add(juce::var(item.get()));
+    }
+    obj->setProperty("manualKeyboards", manualsArray);
+
+    {
+        const juce::ScopedLock lock(couplerLock);
+        juce::Array<juce::var> couplerSettings;
+        for (const auto& coupler : couplers)
+        {
+            juce::DynamicObject::Ptr item = new juce::DynamicObject();
+            item->setProperty("id", coupler.id);
+            item->setProperty("enabled", false);
+            item->setProperty("visible", coupler.visible);
+            couplerSettings.add(juce::var(item.get()));
+        }
+        obj->setProperty("couplers", couplerSettings);
+    }
+
+    juce::Array<juce::var> buttonBindings;
+    {
+        const juce::ScopedLock lock(midiButtonBindingLock);
+        for (const auto& entry : midiButtonBindings)
+        {
+            juce::DynamicObject::Ptr item = new juce::DynamicObject();
+            item->setProperty("target", juce::String(entry.first));
+            item->setProperty("deviceIdentifier", entry.second.deviceIdentifier);
+            item->setProperty("channel", entry.second.channel);
+            item->setProperty("messageType", entry.second.messageType);
+            item->setProperty("number", entry.second.number);
+            item->setProperty("toggleBehaviour", entry.second.toggleBehaviour);
+            item->setProperty("continuous", entry.second.continuous);
+            buttonBindings.add(juce::var(item.get()));
+        }
+    }
+    obj->setProperty("midiButtonBindings", buttonBindings);
+
+    // ========== NOVÉ: ULOŽENÍ ONE‑SHOT PATTERNS ==========
+    juce::Array<juce::var> patternsArray;
+    for (const auto& p : engine.getOneShotPatterns())
+        patternsArray.add(p);
+    obj->setProperty("oneShotPatterns", patternsArray);
+    // ========== KONEC NOVÉ ČÁSTI ==========
+
+    // ========== NOVÉ: ULOŽENÍ IGNORED PATTERNS ==========
+    juce::Array<juce::var> ignoredArray;
+    for (const auto& p : engine.getIgnoredPatterns())
+        ignoredArray.add(p);
+    obj->setProperty("ignoredPatterns", ignoredArray);
+    juce::Array<juce::var> perspectiveArray;
+    for (const auto& p : engine.getPerspectivePatterns()) perspectiveArray.add(p);
+    obj->setProperty("perspectivePatterns", perspectiveArray);
+    // ========== KONEC NOVÉ ČÁSTI ==========
+
+    juce::String json = juce::JSON::toString(juce::var(obj.get()), true);
+    settingsFile.replaceWithText(json);
+    {
+        // The configuration-relevant part of the settings (everything but the
+        // window and dialog geometry). The settings JSON is written with the
+        // properties in insertion order, so the string compares reliably.
+        juce::DynamicObject::Ptr essential = new juce::DynamicObject();
+        static const std::set<juce::String> volatileKeys{ "windowWidth", "windowHeight", "windowX", "windowY",
+            "windowMaximised", "dialogBounds", "configurationFile", "configurationName" };
+        for (const auto& property : obj->getProperties())
+            if (volatileKeys.count(property.name.toString()) == 0) essential->setProperty(property.name, property.value);
+        // Opening a voicing or unfolding its key rows is not a change worth asking about.
+        if (auto voicing = essential->getProperty("voicingSettings"); voicing.isObject())
+        {
+            voicing = voicing.clone();
+            if (auto* stops = voicing.getProperty("stops", juce::var()).getArray())
+                for (auto& stopVar : *stops)
+                    if (auto* stopObj = stopVar.getDynamicObject())
+                    {
+                        for (const char* key : { "voicingExpanded", "volumeKeysExpanded", "toneKeysExpanded" }) stopObj->removeProperty(key);
+                        if (auto* transmissions = stopObj->getProperty("transmissions").getArray())
+                            for (auto& t : *transmissions)
+                                if (auto* tObj = t.getDynamicObject())
+                                    for (const char* key : { "volumeKeysExpanded", "toneKeysExpanded" }) tObj->removeProperty(key);
+                    }
+            essential->setProperty("voicingSettings", voicing);
+        }
+        lastSettingsFingerprint = juce::JSON::toString(juce::var(essential.get()), true);
+        if (configurationFingerprint.isNotEmpty() && activeFolderLoader == nullptr)
+            configurationDirty = lastSettingsFingerprint != configurationFingerprint;
+    }
+    refreshMidiRouting();
+}
+
+void MainComponent::placeMainWindow(juce::ResizableWindow& window)
+{
+    // Where the window was last time, as long as that place is still on a screen
+    // and its top edge (the title bar) is visible; a maximised window comes back
+    // maximised. Otherwise centred, never taller than the screen. All of this in
+    // screen pixels (the saved values are screen pixels); the window's own bounds
+    // are in its scaled space (interface size, UIScale.h).
+    const auto& displays = juce::Desktop::getInstance().getDisplays();
+    const auto* primary = displays.getPrimaryDisplay();
+    juce::Rectangle<int> work = primary != nullptr ? primary->userBounds.toNearestInt() : juce::Rectangle<int>(0, 0, 1920, 1080);
+    if (savedWindowX != INT_MIN && savedWindowY != INT_MIN)
+    {
+        const juce::Point<int> topLeft(savedWindowX, savedWindowY);
+        for (const auto& display : displays.displays)
+        {
+            const auto bounds = display.userBounds.toNearestInt();
+            if (bounds.contains(topLeft + juce::Point<int>(80, 20))) { work = bounds; break; }
+        }
+    }
+    // The window's bounds are its client area; the native title bar and frame
+    // lie outside them and must fit on the screen as well.
+    juce::BorderSize<int> frame(31, 8, 8, 8);
+    if (auto* peer = window.getPeer())
+        if (const auto present = peer->getFrameSizeIfPresent()) frame = *present;
+    const auto inner = frame.subtractedFrom(work);
+    int width = juce::jmin(savedWindowWidth, inner.getWidth());
+    int height = juce::jmin(savedWindowHeight, inner.getHeight());
+    int x = savedWindowX != INT_MIN ? savedWindowX : inner.getCentreX() - width / 2;
+    int y = savedWindowY != INT_MIN ? savedWindowY : inner.getCentreY() - height / 2;
+    x = juce::jlimit(inner.getX(), juce::jmax(inner.getX(), inner.getRight() - width), x);
+    y = juce::jlimit(inner.getY(), juce::jmax(inner.getY(), inner.getBottom() - height), y);
+    window.setBounds(UIScale::toWindowSpace(juce::Rectangle<int>(x, y, width, height)));
+    if (savedWindowMaximised) window.setFullScreen(true);
+}
+
+void MainComponent::showManualSection(const juce::String& section, const juce::String& fallbackSection)
+{
+    showAboutDialog(section.isNotEmpty() ? section : juce::String("User manual"), fallbackSection);
+}
+
+void MainComponent::updateEmptyHint()
+{
+    // Shown only while nothing is loaded and nothing is loading.
+    const bool empty = sampleTrees.empty() && engine.getStops().isEmpty() && activeFolderLoader == nullptr;
+    if (empty == emptyHintPanel.isVisible()) return;
+    emptyHintPanel.setVisible(empty);
+    if (empty) emptyHintPanel.toFront(false);
+}
+
+juce::String MainComponent::missingTreeNotice(int manual, bool detail) const
+{
+    // The trees of the division that are not on this computer: the notice under
+    // the division header names them by their folder name; the tooltip gives
+    // the paths and the two ways out (load the folder again, or unload it).
+    if (manual < 0 || manual >= SamplerEngine::maxManuals) return {};
+    juce::StringArray names, paths;
+    for (const auto& path : divisionTrees(manual))
+    {
+        const juce::File tree(path);
+        if (path.isEmpty() || tree.isDirectory()) continue;
+        // The last three components ("003136\pipe\HW"): a set's trees often share
+        // their leaf names (PE, HW of two editions), so the leaf alone would not say which.
+        juce::StringArray parts;
+        parts.addTokens(path.replaceCharacter('/', '\\'), "\\", "");
+        parts.removeEmptyStrings();
+        while (parts.size() > 3) parts.remove(0);
+        names.add(parts.joinIntoString(juce::File::getSeparatorString()));
+        paths.add(path);
+    }
+    if (names.isEmpty()) return {};
+    if (!detail) return (names.size() == 1 ? "Sample folder not found: " : "Sample folders not found: ") + names.joinIntoString(", ");
+    return "These sample folder trees of the division are not on this computer:\n" + paths.joinIntoString("\n")
+        + "\n\nClick to open the Stop List. \"Load folder...\" with a folder of the same name puts it in the missing tree's place "
+          "(the stops keep their samples); \"Unload folder...\" removes the tree and its stops. The notice goes when no tree is missing.";
+}
+
+void MainComponent::updateMissingTreeNotices()
+{
+    // Once a second: when the set of missing trees changes (a configuration from
+    // another computer loaded, a tree relocated or unloaded, a drive plugged in),
+    // the division columns are rebuilt so their headers show or drop the notice.
+    if (activeFolderLoader != nullptr) return;
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    if (now < missingTreeCheckAt) return;
+    missingTreeCheckAt = now + 1000.0;
+    juce::String summary;
+    for (int manual = 0; manual <= manualCount && manual < SamplerEngine::maxManuals; ++manual)
+        summary << manual << ":" << missingTreeNotice(manual, false) << "|";
+    if (summary == lastMissingTreeSummary) return;
+    const bool wasAny = lastMissingTreeSummary.contains("not found"), isAny = summary.contains("not found");
+    lastMissingTreeSummary = summary;
+    if ((wasAny || isAny) && voicer) voicer->rebuildUI(stopsContent, stopsViewport);
+}
+
+juce::File MainComponent::copyCacheDirectory() const
+{
+    if (copyCacheFolder.isNotEmpty())
+    {
+        const juce::File chosen(copyCacheFolder);
+        if (chosen.isDirectory() || chosen.getParentDirectory().isDirectory()) return chosen;
+    }
+    return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+        .getChildFile("OrganSampler").getChildFile("FilledPipesCache");
+}
+
+void MainComponent::setUiScalePercent(int percent)
+{
+    // The interface size (UIScale.h): every open window keeps its place and size
+    // on the screen, its content is laid out at the new size.
+    percent = UIScale::clampPercent(percent);
+    if (percent == uiScalePercent && percent == UIScale::percent()) return;
+    uiScalePercent = percent;
+    UIScale::set(percent);
+    UIScale::relayoutOpenWindows();
+    saveSettings();
+}
+
+MemorySlot MainComponent::captureCurrentState() const
+{
+    MemorySlot memory;
+    memory.masterDb = masterVolumeSlider.getValue();
+
+    {
+        const juce::ScopedLock engineLock(engine.getLock());
+        for (auto* s : engine.getStops())
+        {
+            juce::DynamicObject::Ptr st = new juce::DynamicObject();
+            st->setProperty("name", s->name);
+            st->setProperty("perspective", s->perspective);
+            st->setProperty("enabled", s->enabled);
+            st->setProperty("db", s->db);
+            st->setProperty("gainDb", s->gainDb);
+            st->setProperty("attackMs", s->attackMs);
+            st->setProperty("attackFadeoutMs", s->attackFadeoutMs);
+            st->setProperty("randomPitchErrorCents", s->randomPitchErrorCents);
+            st->setProperty("primaryManual", s->primaryManual);
+            st->setProperty("transmissions", Voicer::transmissionsToVar(s));
+            memory.stopData.add(juce::var(st.get()));
+        }
+    }
+    {
+        const juce::ScopedLock couplerStateLock(couplerLock);
+        for (const auto& coupler : couplers)
+        {
+            juce::DynamicObject::Ptr state = new juce::DynamicObject();
+            state->setProperty("id", coupler.id);
+            state->setProperty("enabled", coupler.enabled);
+            memory.couplerData.add(juce::var(state.get()));
+        }
+    }
+    for (int manual = 0; manual < SamplerEngine::maxManuals; ++manual)
+    {
+        juce::DynamicObject::Ptr state = new juce::DynamicObject();
+        state->setProperty("manual", manual);
+        state->setProperty("enabled", manualConfigs[(size_t)manual].tremulantEnabled);
+        memory.tremulantData.add(juce::var(state.get()));
+    }
+    return memory;
+}
+
+void MainComponent::storeCombination(int piston)
+{
+    if (piston < 0 || piston >= pistonCount) return;
+    combinations[combinationKey(currentBank, piston)] = captureCurrentState();
+    activePiston = piston;
+
+    saveMemories();
+    updateCombinationLights();
+}
+
+void MainComponent::restoreCombination(int piston)
+{
+    if (piston < 0 || piston >= pistonCount) return;
+    const auto found = combinations.find(combinationKey(currentBank, piston));
+    if (found == combinations.end())
+    {
+        activePiston = piston;
+        updateCombinationLights();
+        return;
+    }
+    applyRegistrationState(found->second);
+    activePiston = piston;
+    if (voicer) voicer->rebuildUI(stopsContent, stopsViewport);
+    updateCombinationLights();
+}
+
+void MainComponent::applyRegistrationState(const MemorySlot& memory, bool includeMasterVolume)
+{
+    if (includeMasterVolume) masterVolumeSlider.setValue(memory.masterDb, juce::sendNotification);
+
+    auto& stops = engine.getStops();
+    for (const auto& stopObj : memory.stopData)
+    {
+        if (!stopObj.isObject()) continue;
+        const auto name = stopObj.getProperty("name", "").toString();
+        const int savedManual = juce::jlimit(0, SamplerEngine::maxManuals - 1, (int)stopObj.getProperty("primaryManual", 0));
+        const auto savedPerspective = canonicalPerspectiveName(
+            stopObj.getProperty("perspective", "").toString());
+        Stop* target = nullptr;
+        for (auto* stop : stops)
+            if (stop->name == name && stop->primaryManual == savedManual
+                && (savedPerspective.isEmpty()
+                    || stop->perspective.equalsIgnoreCase(savedPerspective))) { target = stop; break; }
+        if (target != nullptr)
+        {
+            const bool shouldBeEnabled = stopObj.getProperty("enabled", true);
+            target->setDb(static_cast<float>(stopObj.getProperty("db", 0.0)));
+            target->gainDb = static_cast<float>(stopObj.getProperty("gainDb", 0.0));
+            target->attackMs = static_cast<float>(stopObj.getProperty("attackMs", 0.0));
+            target->attackFadeoutMs = static_cast<float>(stopObj.getProperty("attackFadeoutMs", 0.0));
+            engine.setStopRandomPitchError(target, (float)(double)stopObj.getProperty(
+                "randomPitchErrorCents", 4.0), true);
+            // A combination or configuration carries the stop's transmissions
+            // (division, shift): the list is restored, then the stored on/off states.
+            if (stopObj.hasProperty("transmissions") || stopObj.hasProperty("transmissionMask")
+                || stopObj.hasProperty("manualMask"))
+            {
+                auto wanted = Voicer::transmissionsFromVar(stopObj, target->primaryManual);
+                bool sameList = wanted.size() == target->transmissions.size();
+                for (size_t i = 0; sameList && i < wanted.size(); ++i)
+                    sameList = wanted[i].manual == target->transmissions[i].manual
+                        && wanted[i].shift == target->transmissions[i].shift;
+                if (!sameList)
+                {
+                    // Grid cells and pool entries of the previous list would be stale.
+                    engine.replaceTransmissions(target, wanted);
+                }
+            }
+            engine.setStopEnabled(target, shouldBeEnabled);
+            std::vector<bool> on(target->transmissions.size(), false);
+            for (const auto& [division, ordinal] : storedTransmissionsOn(stopObj))
+            {
+                const int index = target->transmissionIndex(division, ordinal);
+                if (index >= 0) on[(size_t)index] = true;
+            }
+            for (int index = 0; index < (int)on.size(); ++index)
+                engine.setTransmissionEnabled(target, index, on[(size_t)index]);
+        }
+    }
+
+    {
+        const juce::ScopedLock lock(couplerLock);
+        for (const auto& state : memory.couplerData)
+            if (state.isObject())
+                if (auto* coupler = findCoupler(state.getProperty("id", "").toString()))
+                    coupler->enabled = state.getProperty("enabled", false);
+        for (int source = 0; source <= manualCount; ++source)
+            recomputeCouplersForSource(source);
+    }
+    // Tremulants are part of a combination (older memories without this
+    // information leave them untouched).
+    bool tremulantChanged = false;
+    for (const auto& state : memory.tremulantData)
+    {
+        if (!state.isObject()) continue;
+        const int manual = (int)state.getProperty("manual", -1);
+        if (manual < 0 || manual >= SamplerEngine::maxManuals) continue;
+        auto& config = manualConfigs[(size_t)manual];
+        const bool enabled = state.getProperty("enabled", false);
+        if (config.tremulantEnabled == enabled) continue;
+        config.tremulantEnabled = enabled;
+        engine.setManualTremulant(manual, enabled, config.tremulantRateHz,
+            config.tremulantDepthCents, config.tremulantRankDriftDegrees);
+        tremulantChanged = true;
+    }
+    if (tremulantChanged) saveSettings();
+    refreshCouplerRailState();
+}
+
+void MainComponent::pressPiston(int piston)
+{
+    if (combinationSetButton.getToggleState())
+        storeCombination(piston);
+    else
+        restoreCombination(piston);
+}
+
+bool MainComponent::memoryMatchesCurrent(const MemorySlot& memory) const
+{
+    struct CurrentStopState
+    {
+        juce::String name, perspective;
+        int primaryManual = 0;
+        bool enabled = false;
+        std::vector<std::pair<int, int>> transmissionsOn;   // (target division, ordinal)
+    };
+    std::vector<CurrentStopState> currentStops;
+    {
+        const juce::ScopedLock engineLock(engine.getLock());
+        currentStops.reserve((size_t)engine.getStops().size());
+        for (auto* stop : engine.getStops())
+        {
+            CurrentStopState state{ stop->name, stop->perspective, stop->primaryManual, stop->enabled, {} };
+            for (int index = 0; index < (int)stop->transmissions.size(); ++index)
+                if (stop->transmissions[(size_t)index].enabled)
+                    state.transmissionsOn.push_back({ stop->transmissions[(size_t)index].manual, stop->transmissionOrdinal(index) });
+            currentStops.push_back(std::move(state));
+        }
+    }
+    if (memory.stopData.size() != (int)currentStops.size()) return false;
+
+    // Do all JSON/string matching after releasing the audio-engine lock. This
+    // GUI lamp calculation must never hold up a small ASIO render deadline.
+    for (const auto& stop : currentStops)
+    {
+        juce::var saved;
+        for (const auto& item : memory.stopData)
+            if (item.getProperty("name", "").toString() == stop.name
+                && (int)item.getProperty("primaryManual", 0) == stop.primaryManual
+                && (item.getProperty("perspective", "").toString().isEmpty()
+                    || item.getProperty("perspective", "").toString()
+                        .equalsIgnoreCase(stop.perspective)))
+            { saved = item; break; }
+        if (!saved.isObject() || (bool)saved.getProperty("enabled", true) != stop.enabled) return false;
+        auto savedOn = storedTransmissionsOn(saved);
+        auto currentOn = stop.transmissionsOn;
+        std::sort(savedOn.begin(), savedOn.end());
+        std::sort(currentOn.begin(), currentOn.end());
+        if (savedOn != currentOn) return false;
+    }
+    for (const auto& state : memory.tremulantData)
+        if (state.isObject())
+        {
+            const int manual = (int)state.getProperty("manual", -1);
+            if (manual < 0 || manual >= SamplerEngine::maxManuals) continue;
+            if (manualConfigs[(size_t)manual].tremulantEnabled != (bool)state.getProperty("enabled", false))
+                return false;
+        }
+    const juce::ScopedLock couplerStateLock(couplerLock);
+    for (const auto& state : memory.couplerData)
+        if (state.isObject())
+        {
+            const auto id = state.getProperty("id", "").toString();
+            bool current = false;
+            for (const auto& coupler : couplers)
+                if (coupler.id == id) { current = coupler.enabled; break; }
+            if (current != (bool)state.getProperty("enabled", false)) return false;
+        }
+    return true;
+}
+
+void MainComponent::updateCombinationLights()
+{
+    std::array<bool, maxPistons> matchesByPiston{};
+    int firstMatch = -1;
+    for (int piston = 0; piston < pistonCount; ++piston)
+    {
+        const auto found = combinations.find(combinationKey(currentBank, piston));
+        const bool matches = found != combinations.end() && memoryMatchesCurrent(found->second);
+        matchesByPiston[(size_t)piston] = matches;
+        if (matches && firstMatch < 0)
+            firstMatch = piston;
+    }
+    if (activePiston < 0 || activePiston >= pistonCount)
+        activePiston = firstMatch;
+    for (int piston = 0; piston < pistonCount; ++piston)
+    {
+        if (auto* button = pistonButtons[piston])
+        {
+            const bool matches = matchesByPiston[(size_t)piston];
+            const bool selectedMatch = matches && piston == activePiston;
+            const auto ordinaryOffColour = getLookAndFeel().findColour(
+                juce::TextButton::buttonColourId);
+            button->removeColour(juce::TextButton::buttonColourId);
+            button->setColour(juce::TextButton::buttonOnColourId,
+                selectedMatch ? onColour()
+                              : ordinaryOffColour.darker(0.14f));
+            // Some JUCE look-and-feels do not redraw an already-toggled button when only
+            // buttonOnColourId changes. Give the selected match an explicit base colour too.
+            if (selectedMatch)
+                button->setColour(juce::TextButton::buttonColourId, onColour());
+            button->setToggleState(matches, juce::dontSendNotification);
+            button->repaint();
+        }
+    }
+    for (int piston = pistonCount; piston < maxPistons; ++piston)
+        if (auto* button = pistonButtons[piston])
+            button->setToggleState(false, juce::dontSendNotification);
+    combinationDisplay.setText(activePiston >= 0
+        ? juce::String(currentBank * 10 + activePiston).paddedLeft('0', 2)
+        : juce::String(currentBank) + "-",
+        juce::dontSendNotification);
+}
+
+void MainComponent::updateCombinationControls()
+{
+    bankLabel.setText("Bank " + juce::String(currentBank), juce::dontSendNotification);
+    const bool anyPistons = pistonCount > 0;
+    combinationSetButton.setEnabled(anyPistons);
+    previousCombinationButton.setEnabled(anyPistons);
+    nextCombinationButton.setEnabled(anyPistons);
+    for (int i = 0; i < maxPistons; ++i)
+        if (auto* button = pistonButtons[i]) button->setVisible(i < pistonCount);
+    updateCombinationLights();
+}
+
+void MainComponent::stepCombination(int direction)
+{
+    if (pistonCount <= 0 || direction == 0) return;
+    int target = activePiston;
+    if (target < 0)
+        target = direction > 0 ? -1 : 0;
+    target += direction > 0 ? 1 : -1;
+    if (target >= pistonCount)
+    {
+        target = 0;
+        currentBank = currentBank == maxBank ? 0 : currentBank + 1;
+    }
+    else if (target < 0)
+    {
+        target = pistonCount - 1;
+        currentBank = currentBank == 0 ? maxBank : currentBank - 1;
+    }
+    updateCombinationControls();
+    restoreCombination(target);
+    saveMemories();
+}
+
+void MainComponent::changeBank(int direction, bool persist)
+{
+    if (direction > 0)
+        currentBank = currentBank == maxBank ? 0 : currentBank + 1;
+    else if (direction < 0)
+        currentBank = currentBank == 0 ? maxBank : currentBank - 1;
+    activePiston = -1;
+    updateCombinationControls();
+    if (persist)
+        saveMemories();
+}
+
+void MainComponent::bankButtonStateChanged(int direction, bool isDown)
+{
+    if (isDown)
+    {
+        heldBankDirection = direction;
+        bankHoldStartMs = juce::Time::getMillisecondCounterHiRes();
+        lastBankRepeatMs = bankHoldStartMs;
+        changeBank(direction, false);
+    }
+    else if (heldBankDirection == direction)
+    {
+        heldBankDirection = 0;
+        saveMemories();
+    }
+}
+
+void MainComponent::updateHeldBankNavigation()
+{
+    if (heldBankDirection == 0) return;
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    const double heldMs = now - bankHoldStartMs;
+    if (heldMs < 420.0) return;
+
+    // Starts deliberately, then accelerates smoothly to about 30 banks/second.
+    const double repeatMs = juce::jlimit(32.0, 190.0,
+        190.0 * std::exp(-(heldMs - 420.0) / 1350.0));
+    if (now - lastBankRepeatMs >= repeatMs)
+    {
+        lastBankRepeatMs = now;
+        changeBank(heldBankDirection, false);
+    }
+}
+
+void MainComponent::setExpressionTarget(int manualIndex, float position)
+{
+    if (manualIndex < 0 || manualIndex >= SamplerEngine::maxManuals) return;
+    expressionTargetPositions[(size_t)manualIndex].store(
+        juce::jlimit(0.0f, 1.0f, position), std::memory_order_relaxed);
+}
+
+void MainComponent::updateExpressionInertia()
+{
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    if (lastExpressionInertiaUpdateMs <= 0.0)
+    {
+        lastExpressionInertiaUpdateMs = now;
+        return;
+    }
+
+    const float elapsedMs = (float)juce::jlimit(0.0, 100.0,
+        now - lastExpressionInertiaUpdateMs);
+    lastExpressionInertiaUpdateMs = now;
+    if (elapsedMs <= 0.0f) return;
+
+    for (int manual = 0; manual < SamplerEngine::maxManuals; ++manual)
+    {
+        auto& config = manualConfigs[(size_t)manual];
+        const float target = expressionTargetPositions[(size_t)manual].load(
+            std::memory_order_relaxed);
+        auto& stage = expressionInertiaStages[(size_t)manual];
+        auto& position = config.expressionPosition;
+        if (std::abs(target - stage) < 0.0001f
+            && std::abs(target - position) < 0.0001f)
+            continue;
+
+        // Two cascaded one-pole stages behave like a critically damped heavy
+        // linkage: gradual pickup, smooth arrival and no end overshoot. The
+        // configured time is about half of the 98 % settling duration (the
+        // shutters follow the pedal deliberately slowly).
+        const float timeConstantMs = juce::jmax(1.0f, config.expressionInertiaMs / 3.0f);
+        const float alpha = 1.0f - std::exp(-elapsedMs / timeConstantMs);
+        stage += (target - stage) * alpha;
+        position += (stage - position) * alpha;
+        if (std::abs(target - position) < 0.0001f
+            && std::abs(target - stage) < 0.0001f)
+            stage = position = target;
+
+        engine.setManualExpressionGain(manual, expressionGainFor(config));
+    }
+}
+
+void MainComponent::timerCallback()
+{
+    updateExpressionInertia();
+    updateHeldBankNavigation();
+    showMissingAudioDevicesIfDue();
+    updateEmptyHint();
+    updateMissingTreeNotices();
+    // Every 2 s (every second during the start-up wait): a route whose saved
+    // device is missing gets it back as soon as it appears.
+    if (applicationReady.load() && ++missingDeviceWatchDivider >= (missingAudioDevicesReportPending ? 40 : 80))
+    {
+        missingDeviceWatchDivider = 0;
+        watchMissingAudioDevices();
+    }
+    if (keyboardsWindow != nullptr && keyboardsWindow->isVisible())
+    {
+        if (++dialogRepaintDivider >= 8)
+        {
+            dialogRepaintDivider = 0;
+            if (voicer) voicer->updateStopStates();
+        }
+    }
+    else
+        dialogRepaintDivider = 0;
+    if (windowResizeSaveAt > 0.0
+        && juce::Time::getMillisecondCounterHiRes() >= windowResizeSaveAt)
+    {
+        windowResizeSaveAt = -1.0;
+        saveSettings();
+    }
+    if (voicingSaveAt > 0.0
+        && juce::Time::getMillisecondCounterHiRes() >= voicingSaveAt)
+    {
+        voicingSaveAt = -1.0;
+        saveSettings();
+    }
+    if (generatingLabel.isVisible() && activeFolderLoader == nullptr) generatingLabel.setVisible(false);   // the generation is over
+    if (quietTestManager != nullptr && quietTestStopAt > 0.0
+        && juce::Time::getMillisecondCounterHiRes() >= quietTestStopAt)
+    {
+        quietTestManager->removeAudioCallback(&quietTestPlayer);
+        quietTestPlayer.setSource(nullptr);
+        quietTestManager = nullptr;
+        quietTestStopAt = -1.0;
+    }
+    if (audioDeviceSelectionUnmuteAt > 0.0
+        && juce::Time::getMillisecondCounterHiRes() >= audioDeviceSelectionUnmuteAt)
+    {
+        audioDeviceSelectionUnmuteAt = -1.0;
+        engine.noteOffAll();
+        audioMuted.store(false);
+        // The device now in use is what the settings remember (a user's choice
+        // must survive the missing-device watcher and the next start).
+        if (!ignoreCurrentAudioStateUntilUserSelection) saveSettings();
+    }
+    if (applyAllRunning)
+    {
+        // One route every 100 ms so the progress dialog can actually paint.
+        if (++applyAllTickDivider >= 4)
+        {
+            applyAllTickDivider = 0;
+            continueApplyAll();
+        }
+        return;
+    }
+    if (recordingFadeOutStartedMs >= 0.0 && engine.isRecording()
+        && (engine.isRecordingFadeOutComplete()
+            || juce::Time::getMillisecondCounterHiRes() - recordingFadeOutStartedMs > 1500.0))
+    {
+        engine.stopRecording();   // the 500 ms fade-out has been written (or the audio stopped)
+        recordingFadeOutStartedMs = -1.0;
+    }
+    recordButton.setRecording(engine.isRecording());
+    // The only device reopen that happens without a direct click: after the
+    // driver's control panel window (opened by our button) has been closed.
+    pollAsioPanelWatch();
+    if (!pendingWindowsAudioResume.empty())
+    {
+        // One Windows Audio device per tick, after an ASIO reopen.
+        const auto entry = pendingWindowsAudioResume.front();
+        pendingWindowsAudioResume.erase(pendingWindowsAudioResume.begin());
+        const auto managers = allAudioManagers();
+        if (std::find(managers.begin(), managers.end(), entry.manager) != managers.end()
+            && entry.manager->getCurrentAudioDevice() == nullptr)
+            resumeWindowsAudioDevices({ entry });
+    }
+    if (++audioHealthDivider >= 40)
+    {
+        audioHealthDivider = 0;
+        checkAudioCallbackHealth();
+    }
+    if (++dialogBoundsDivider >= 10)
+    {
+        dialogBoundsDivider = 0;
+        rememberDialogBounds();
+    }
+    if ((applyAudioToAll.load() || applyAudioToAllAux.load()) && ++applyAllCheckDivider >= 40)
+    {
+        // Once a second: the shared "set for all" state is only true while every
+        // route of the scope really runs the same device.
+        applyAllCheckDivider = 0;
+        if (applyAudioToAll.load() && !allRoutesShareAudioDevice(false)) applyAudioToAll.store(false);
+        if (applyAudioToAllAux.load() && !allRoutesShareAudioDevice(true)) applyAudioToAllAux.store(false);
+    }
+    {
+        const juce::ScopedLock lock(midiButtonBindingLock);
+        if (pendingButtonLearnTarget.isNotEmpty()) return;
+    }
+    // loadManualFolder deliberately owns the engine while replacing thousands
+    // of sample objects. Never let this GUI timer wait for that lock: doing so
+    // blocks the message thread and makes the healthy loader look crashed.
+    if (activeFolderLoader == nullptr && ++combinationLightDivider >= 8)
+    {
+        combinationLightDivider = 0;
+        updateCombinationLights();
+    }
+}
+
+juce::String MainComponent::targetForComponent(const juce::Component* component) const
+{
+    if (component != nullptr)
+    {
+        const auto property = component->getProperties().getWithDefault("midiTarget", {}).toString();
+        if (property.isNotEmpty()) return property;
+    }
+    if (component == &combinationSetButton) return "set";
+    if (component == &previousCombinationButton) return "previous";
+    if (component == &nextCombinationButton) return "next";
+    if (component == &bankDownButton) return "bankDown";
+    if (component == &bankUpButton) return "bankUp";
+    if (component == &enableAllButton) return "tutti";
+    if (component == &disableAllButton) return "generalCancel";
+    if (component == &crescendoButton) return "crescendo";
+    for (int i = 0; i < pistonButtons.size(); ++i)
+        if (component == pistonButtons[i]) return "piston:" + juce::String(i);
+    for (auto* button : couplerButtons)
+        if (component == button)
+            return "coupler:" + button->getProperties().getWithDefault("couplerId", {}).toString();
+    return {};
+}
+
+void MainComponent::mouseDown(const juce::MouseEvent& event)
+{
+    for (auto* component = event.eventComponent; component != nullptr;
+         component = component->getParentComponent())
+        if (auto* selector = dynamic_cast<juce::AudioDeviceSelectorComponent*>(component))
+        {
+            ignoreCurrentAudioStateUntilUserSelection = false;
+            userTouchedAudioSelector = true;
+            audioMuted.store(true);
+            engine.noteOffAll();
+            audioDeviceSelectionUnmuteAt = juce::Time::getMillisecondCounterHiRes() + 2500.0;
+            ignoreDeviceRestartsUntil.store(juce::Time::getMillisecondCounterHiRes() + 1500.0);
+            // Touching any device selector ends "set for all"; the periodic
+            // agreement check re-confirms it only through the checkbox.
+            juce::ignoreUnused(selector);
+            applyAudioToAll.store(false); applyAudioToAllAux.store(false);
+            break;
+        }
+    if (!event.mods.isPopupMenu()) return;
+    const auto target = targetForComponent(event.eventComponent);
+    if (target.isNotEmpty()) showMidiLearnMenu(target);
+}
+
+void MainComponent::showMidiLearnMenu(const juce::String& target)
+{
+    juce::PopupMenu menu;
+    const bool continuousTarget = target.startsWith("slider:");
+    const bool triggerOnlyTarget = target.startsWith("temperament:") || target.startsWith("header:");
+    menu.addItem(1, continuousTarget ? "Learn MIDI continuous controller"
+        : (triggerOnlyTarget ? "Learn MIDI On trigger" : "Learn - normal On/Off"));
+    if (!continuousTarget && !triggerOnlyTarget) menu.addItem(2, "Learn - toggle on each press");
+    bool hasBinding = false;
+    {
+        const juce::ScopedLock lock(midiButtonBindingLock);
+        hasBinding = midiButtonBindings.count(target.toStdString()) != 0;
+    }
+    menu.addSeparator();
+    menu.addItem(3, "Clear MIDI assignment", hasBinding);
+    menu.showMenuAsync(menuOptionsAtMouse(this),[this, target, continuousTarget](int result)
+    {
+        if (result == 1 || result == 2) beginMidiLearn(target, !continuousTarget && result == 2, continuousTarget);
+        else if (result == 3) clearMidiBinding(target);
+    });
+}
+
+void MainComponent::beginMidiLearn(const juce::String& target, bool toggle, bool continuous)
+{
+    {
+        const juce::ScopedLock lock(midiButtonBindingLock);
+        pendingButtonLearnTarget = target;
+        pendingButtonLearnToggle = toggle;
+        pendingButtonLearnContinuous = continuous;
+    }
+    combinationDisplay.setText("LEARN", juce::dontSendNotification);
+    if (midiLearnWindow != nullptr) midiLearnWindow->exitModalState(0);
+    auto* learn = new juce::AlertWindow("MIDI Learn",
+        continuous ? "Move the MIDI controller to assign it to this control."
+                   : "Operate the MIDI control to assign it to this button.",
+        juce::MessageBoxIconType::NoIcon, this);
+    learn->addButton("Cancel Learn", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    midiLearnWindow = learn;
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    learn->enterModalState(true, juce::ModalCallbackFunction::create(
+        [safeThis](int completed)
+        {
+            if (safeThis == nullptr) return;
+            safeThis->midiLearnWindow = nullptr;
+            if (completed != 0) return;
+            const juce::ScopedLock lock(safeThis->midiButtonBindingLock);
+            safeThis->pendingButtonLearnTarget.clear();
+            safeThis->pendingButtonLearnToggle = false;
+            safeThis->pendingButtonLearnContinuous = false;
+        }), true);
+}
+
+void MainComponent::clearMidiBinding(const juce::String& target)
+{
+    const juce::ScopedLock lock(midiButtonBindingLock);
+    midiButtonBindings.erase(target.toStdString());
+    pendingButtonLearnTarget.clear();
+    pendingButtonLearnContinuous = false;
+    juce::MessageManager::callAsync([this] { saveSettings(); });
+}
+
+void MainComponent::showSwellLearnMenu(int manualIndex)
+{
+    if (manualIndex < 0 || manualIndex >= SamplerEngine::maxManuals) return;
+    const bool learningThis = listeningExpressionManual.load() == manualIndex;
+    const bool assigned = manualConfigs[(size_t)manualIndex].expressionController >= 0;
+    juce::PopupMenu menu;
+    menu.addItem(1, learningThis ? "Restart MIDI Learn" : "Start MIDI Learn");
+    menu.addItem(2, "Finish MIDI Learn", learningThis);
+    menu.addSeparator();
+    menu.addItem(3, "Clear MIDI assignment", assigned || learningThis);
+    menu.showMenuAsync(menuOptionsAtMouse(this),[this, manualIndex](int result)
+    {
+        auto& config = manualConfigs[(size_t)manualIndex];
+        if (result == 1)
+        {
+            config.expressionController = -1;
+            config.expressionDeviceIdentifier.clear();
+            config.expressionMinimum = 127;
+            config.expressionMaximum = 0;
+            listeningManual.store(-1);
+            listeningExpressionManual.store(manualIndex);
+            auto options = juce::MessageBoxOptions()
+                .withIconType(juce::MessageBoxIconType::NoIcon)
+                .withTitle("Swell MIDI Learn")
+                .withMessage("Move the swell controller repeatedly through its full minimum and maximum range.")
+                .withButton("Done")
+                .withButton("Clear");
+            juce::AlertWindow::showAsync(options, [this, manualIndex](int button)
+            {
+                auto& learned = manualConfigs[(size_t)manualIndex];
+                listeningExpressionManual.store(-1);
+                if (button == 2)
+                {
+                    learned.expressionDeviceIdentifier.clear();
+                    learned.expressionChannel = 1;
+                    learned.expressionController = -1;
+                    learned.expressionMinimum = 127;
+                    learned.expressionMaximum = 0;
+                    learned.expressionPosition = 1.0f;
+                    expressionTargetPositions[(size_t)manualIndex].store(1.0f);
+                    expressionInertiaStages[(size_t)manualIndex] = 1.0f;
+                    engine.setManualExpressionGain(manualIndex, 1.0f);
+                }
+                saveSettings();
+            });
+        }
+        else if (result == 2)
+        {
+            listeningExpressionManual.store(-1);
+            saveSettings();
+        }
+        else if (result == 3)
+        {
+            listeningExpressionManual.store(-1);
+            config.expressionDeviceIdentifier.clear();
+            config.expressionChannel = 1;
+            config.expressionController = -1;
+            config.expressionMinimum = 127;
+            config.expressionMaximum = 0;
+            config.expressionPosition = 1.0f;
+            expressionTargetPositions[(size_t)manualIndex].store(1.0f);
+            expressionInertiaStages[(size_t)manualIndex] = 1.0f;
+            engine.setManualExpressionGain(manualIndex, 1.0f);
+            saveSettings();
+        }
+    });
+}
+
+bool MainComponent::processMidiButtonMessage(const juce::String& sourceIdentifier,
+    const juce::MidiMessage& message)
+{
+    if (message.getRawDataSize() < 1 || message.isActiveSense() || message.isMidiClock())
+        return false;
+    int type = message.getRawData()[0] & 0xf0;
+    if (type == 0x80) type = 0x90;
+    const int number = message.getRawDataSize() > 1 ? message.getRawData()[1] : 0;
+    const int channel = message.getChannel();
+
+    juce::String learnedTarget;
+    bool learnedToggle = false;
+    bool learnedContinuous = false;
+    {
+        const juce::ScopedLock lock(midiButtonBindingLock);
+        if (pendingButtonLearnTarget.isNotEmpty())
+        {
+            if (pendingButtonLearnContinuous && !message.isController()) return false;
+            learnedTarget = pendingButtonLearnTarget;
+            learnedToggle = pendingButtonLearnToggle;
+            learnedContinuous = pendingButtonLearnContinuous;
+            pendingButtonLearnTarget.clear();
+            pendingButtonLearnContinuous = false;
+            MidiButtonBinding binding;
+            binding.deviceIdentifier = sourceIdentifier;
+            binding.channel = juce::jlimit(1, 16, channel);
+            binding.messageType = type;
+            binding.number = number;
+            binding.toggleBehaviour = learnedToggle;
+            binding.continuous = learnedContinuous;
+            midiButtonBindings[learnedTarget.toStdString()] = binding;
+        }
+    }
+    if (learnedTarget.isNotEmpty())
+    {
+        const float learnedValue = message.isController()
+            ? message.getControllerValue() / 127.0f : 0.0f;
+        juce::MessageManager::callAsync([this, learnedTarget, learnedContinuous, learnedValue]
+        {
+            if (learnedContinuous) applyMidiSliderValue(learnedTarget, learnedValue);
+            saveSettings();
+            if (midiLearnWindow != nullptr) midiLearnWindow->exitModalState(1);
+        });
+        return true;
+    }
+
+    bool consumed = false;
+    struct Action { juce::String target; bool on; bool toggle; bool pulse; bool continuous; float value; };
+    std::vector<Action> actions;
+    {
+        const juce::ScopedLock lock(midiButtonBindingLock);
+        for (auto& entry : midiButtonBindings)
+        {
+            auto& binding = entry.second;
+            if (binding.deviceIdentifier != sourceIdentifier || binding.channel != channel
+                || binding.messageType != type || binding.number != number)
+                continue;
+            const juce::String target(entry.first);
+            if (binding.continuous)
+            {
+                if (message.isController())
+                    actions.push_back({ target, true, false, false, true,
+                        message.getControllerValue() / 127.0f });
+                consumed = true;
+                continue;
+            }
+            bool isOn = true;
+            if (type == 0x90)
+                isOn = message.isNoteOn() && message.getVelocity() > 0;
+            else if (type == 0xb0)
+                isOn = message.getControllerValue() >= 64;
+            const bool pulseMessage = type == 0xc0;
+            const bool stateChanged = pulseMessage || isOn != binding.lastOn;
+            const bool rising = pulseMessage || (isOn && !binding.lastOn);
+            binding.lastOn = pulseMessage ? false : isOn;
+            const bool isBankButton = target == "bankDown" || target == "bankUp";
+            if ((isBankButton && stateChanged) || (!isBankButton && (!binding.toggleBehaviour || rising)))
+                actions.push_back({ target, isOn, binding.toggleBehaviour, pulseMessage, false, 0.0f });
+            consumed = true;
+        }
+    }
+    for (const auto& action : actions)
+        juce::MessageManager::callAsync([this, action]
+        {
+            if (action.continuous) applyMidiSliderValue(action.target, action.value);
+            else activateMidiTarget(action.target, action.on, action.toggle, action.pulse);
+        });
+    return consumed;
+}
+
+bool MainComponent::applyMidiSliderValue(const juce::String& target, float normalizedValue)
+{
+    const double normalized = juce::jlimit(0.0, 1.0, (double)normalizedValue);
+    auto setSlider = [normalized](juce::Slider& slider)
+    {
+        slider.setValue(slider.getMinimum() + normalized * (slider.getMaximum() - slider.getMinimum()),
+            juce::sendNotification);
+    };
+    if (target == "slider:global:master") { setSlider(masterVolumeSlider); return true; }
+    if (target == "slider:global:pitch") { setSlider(pitchSlider); return true; }
+    if (target == "slider:global:sustainFade") { setSlider(releaseFadeOutSlider); return true; }
+    if (target == "slider:global:releaseFade") { setSlider(releaseFadeInSlider); return true; }
+    if (target == "slider:global:releaseScale") { setSlider(releaseScalingSlider); return true; }
+    if (target == "slider:global:attackTime") { setSlider(attackMinimumSlider); return true; }
+    if (target == "slider:global:attackDelay") { setSlider(attackMinimumDelaySlider); return true; }
+    if (target == "slider:global:releaseCut") { setSlider(releaseCutSlider); return true; }
+    if (target == "slider:crescendo") { setCrescendoPosition((float)normalized); return true; }
+    if (target.startsWith("slider:reverb:"))
+    {
+        // slider:reverb:<manual>:<perspective> - dry/wet of that perspective's IR reverb
+        const auto rest = target.fromFirstOccurrenceOf("slider:reverb:", false, false);
+        const int manual = juce::jlimit(0, SamplerEngine::maxManuals - 1, rest.upToFirstOccurrenceOf(":", false, false).getIntValue());
+        const auto perspective = rest.fromFirstOccurrenceOf(":", false, false);
+        if (perspective.isEmpty()) return false;
+        auto& config = manualConfigs[(size_t)manual].perspectiveAudio[perspectiveRouteKey(manual, perspective)];
+        config.reverbWet = (float)normalized;
+        engine.setPerspectiveReverbWet(manual, perspective, config.reverbWet);
+        saveSettings();
+        return true;
+    }
+
+    if (target.startsWith("slider:division:"))
+    {
+        const auto fields = juce::StringArray::fromTokens(target, ":", "");
+        if (fields.size() < 4) return false;
+        const int manual = juce::jlimit(0, SamplerEngine::maxManuals - 1, fields[2].getIntValue());
+        auto& config = manualConfigs[(size_t)manual];
+        const auto parameter = fields[3];
+        auto scaled = [normalized](double minimum, double maximum)
+        { return (float)(minimum + normalized * (maximum - minimum)); };
+        if (parameter == "volume")
+        {
+            config.divisionVolumeDb = scaled(-60.0, 12.0);
+            engine.setManualDivisionGain(manual,
+                juce::Decibels::decibelsToGain(config.divisionVolumeDb));
+        }
+        else if (parameter == "maxSwell")
+        {
+            config.expressionMaxAttenuationDb = scaled(0.0, 60.0);
+            engine.setManualExpressionMaxAttenuationDb(manual, config.expressionMaxAttenuationDb);
+            engine.setManualExpressionGain(manual, expressionGainFor(config));
+        }
+        else if (parameter == "windDepth") config.windDepthCents = scaled(0.0, 50.0);
+        else if (parameter == "windFrequency") config.windFrequencyHz = scaled(4.0, 10.0);
+        else if (parameter == "windOscillations") config.windOscillations = scaled(0.0, 20.0);
+        else if (parameter == "windStrength") config.windOscillationStrength = scaled(0.0, 100.0);
+        else if (parameter == "windSmoothing") config.windSmoothingMs = scaled(100.0, 400.0);
+        else if (parameter == "tremulantRate")
+        {
+            config.tremulantRateHz = scaled(2.0, 11.0);
+            engine.setManualTremulant(manual, config.tremulantEnabled,
+                config.tremulantRateHz, config.tremulantDepthCents, config.tremulantRankDriftDegrees);
+            saveSettings();
+            return true;
+        }
+        else if (parameter == "tremulantDepth")
+        {
+            config.tremulantDepthCents = scaled(0.0, 50.0);
+            engine.setManualTremulant(manual, config.tremulantEnabled,
+                config.tremulantRateHz, config.tremulantDepthCents, config.tremulantRankDriftDegrees);
+            saveSettings();
+            return true;
+        }
+        else if (parameter == "tremulantRankDrift")
+        {
+            config.tremulantRankDriftDegrees = scaled(0.0, 360.0);
+            engine.setManualTremulant(manual, config.tremulantEnabled,
+                config.tremulantRateHz, config.tremulantDepthCents,
+                config.tremulantRankDriftDegrees);
+            saveSettings();
+            return true;
+        }
+        else return false;
+        engine.setWindModel(manual, config.windDepthCents, config.windFrequencyHz,
+            config.windOscillations, config.windOscillationStrength / 50.0f,
+            config.windSmoothingMs, config.windTargetMask);
+        saveSettings();
+        return true;
+    }
+
+    if (target.startsWith("slider:separation:"))
+    {
+        // slider:separation:<manual>:<perspective> - channel separation of that route
+        const auto fields = juce::StringArray::fromTokens(target, ":", "");
+        if (fields.size() < 4) return false;
+        const int manual = juce::jlimit(0, SamplerEngine::maxManuals - 1, fields[2].getIntValue());
+        const auto perspective = target.fromFirstOccurrenceOf("slider:separation:" + fields[2] + ":", false, false);
+        const auto key = perspectiveRouteKey(manual, perspective);
+        auto& config = manualConfigs[(size_t)manual].perspectiveAudio[key];
+        config.channelSeparation = juce::jlimit(0.0f, 1.0f, (float)normalized);
+        engine.setPerspectiveChannelSeparation(manual, perspective, config.channelSeparation);
+        saveSettings();
+        return true;
+    }
+
+    if (target.startsWith("slider:perspective:"))
+    {
+        const auto fields = juce::StringArray::fromTokens(target, ":", "");
+        if (fields.size() < 4) return false;
+        const int manual = juce::jlimit(0, SamplerEngine::maxManuals - 1, fields[2].getIntValue());
+        const auto prefix = "slider:perspective:" + fields[2] + ":";
+        const auto perspective = target.fromFirstOccurrenceOf(prefix, false, false);
+        float db = (float)(-31.0 + normalized * 37.0);
+        if (db > -31.0f && db < -30.0f) db = db < -30.5f ? -31.0f : -30.0f;
+        const auto key = perspectiveRouteKey(manual, perspective);
+        manualConfigs[(size_t)manual].perspectiveAudio[key].volumeDb = db;
+        engine.setPerspectiveVolumeDb(manual, perspective, db);
+        saveSettings();
+        return true;
+    }
+
+    if (target.startsWith("slider:voicing:"))
+    {
+        const auto fields = juce::StringArray::fromTokens(target, ":", "");
+        if (fields.size() < 7) return false;
+        const int manual = fields[2].getIntValue();
+        const auto parameter = fields[3];
+        const int note = fields[4].getIntValue();
+        const auto perspective = fields[5];
+        const auto prefix = "slider:voicing:" + fields[2] + ":" + fields[3] + ":"
+            + fields[4] + ":" + fields[5] + ":";
+        const auto name = target.fromFirstOccurrenceOf(prefix, false, false);
+        Stop* stop = nullptr;
+        for (auto* candidate : engine.getStops())
+            if (candidate->primaryManual == manual && candidate->name == name
+                && candidate->perspective.equalsIgnoreCase(perspective)) { stop = candidate; break; }
+        if (stop == nullptr) return false;
+        if (parameter == "randomPitch")
+            engine.setStopRandomPitchError(stop, (float)(normalized * 40.0), true);
+        else if (parameter == "formantFollow")
+            engine.setStopFormantFollow(stop, (float)normalized);
+        else if (parameter == "undulation")
+        {
+            stop->undulationManual = true;
+            engine.setStopUndulation(stop, (float)(-7.0 + normalized * 14.0));
+        }
+        else
+        {
+            const juce::ScopedLock lock(engine.getLock());
+            if (parameter == "volume") stop->setDb((float)(-24.0 + normalized * 36.0));
+            else if (parameter == "attackGain") stop->gainDb = (float)(-6.0 + normalized * 12.0);
+            else if (parameter == "attackTime") { stop->attackMs = (float)(normalized * 250.0); stop->attackFadeoutMs = stop->attackMs; }   // 0..500 ms, half hold, half fade
+            else if (parameter == "attackDecay") stop->attackFadeoutMs = (float)(normalized * 250.0);   // older bindings
+            else if (parameter == "note" && note >= 0 && note < 128)
+                stop->setNoteDb(note, (float)(-9.0 + normalized * 18.0));
+            else return false;
+        }
+        if (voicer != nullptr) voicer->updateStopStates();
+        voicingSaveAt = juce::Time::getMillisecondCounterHiRes() + 250.0;
+        return true;
+    }
+    return false;
+}
+
+void MainComponent::activateMidiTarget(const juce::String& target, bool isOn, bool toggleBehaviour,
+    bool pulseMessage)
+{
+    if (target == "bankDown" || target == "bankUp")
+    {
+        const int direction = target == "bankDown" ? -1 : 1;
+        if (pulseMessage)
+            changeBank(direction);
+        else
+        {
+            auto& button = direction < 0 ? bankDownButton : bankUpButton;
+            if (isOn)
+                button.setColour(juce::TextButton::buttonColourId,
+                    getLookAndFeel().findColour(juce::TextButton::buttonColourId).brighter(0.12f));
+            else
+                button.removeColour(juce::TextButton::buttonColourId);
+            button.repaint();
+            bankButtonStateChanged(direction, isOn);
+        }
+        return;
+    }
+    const bool trigger = toggleBehaviour ? true : isOn;
+    if (target.startsWith("temperament:"))
+    {
+        if (isOn || pulseMessage)
+            selectTemperament(target.fromFirstOccurrenceOf("temperament:", false, false));
+        return;
+    }
+    if (target == "set")
+    {
+        combinationSetButton.setToggleState(toggleBehaviour
+            ? !combinationSetButton.getToggleState() : isOn, juce::sendNotification);
+        return;
+    }
+    if (target == "crescendo")
+    {
+        setCrescendoEnabled(toggleBehaviour ? !crescendoEnabled : isOn);
+        return;
+    }
+    if (target.startsWith("coupler:"))
+    {
+        const auto id = target.fromFirstOccurrenceOf(":", false, false);
+        if (auto* coupler = findCoupler(id))
+            setCouplerEnabled(id, toggleBehaviour ? !coupler->enabled : isOn);
+        return;
+    }
+    if (target.startsWith("tremulant:"))
+    {
+        const int manual = juce::jlimit(0, SamplerEngine::maxManuals - 1,
+            target.fromFirstOccurrenceOf(":", false, false).getIntValue());
+        auto& config = manualConfigs[(size_t)manual];
+        config.tremulantEnabled = toggleBehaviour ? !config.tremulantEnabled : isOn;
+        engine.setManualTremulant(manual, config.tremulantEnabled,
+            config.tremulantRateHz, config.tremulantDepthCents, config.tremulantRankDriftDegrees);
+        saveSettings();
+        return;
+    }
+    if (target.startsWith("transmission:"))
+    {
+        auto fields = juce::StringArray::fromTokens(target, ":", "");
+        if (fields.size() >= 4)
+        {
+            const int targetManual = fields[1].getIntValue();
+            const int sourceManual = fields[2].getIntValue();
+            const auto name = fields[3];
+            const int ordinal = fields.size() >= 5 ? fields[4].getIntValue() : 0;
+            for (auto* stop : engine.getStops())
+                if (stop->primaryManual == sourceManual && stop->name == name)
+                {
+                    const int index = stop->transmissionIndex(targetManual, ordinal);
+                    if (index < 0) return;
+                    const bool currentlyOn = stop->transmissions[(size_t)index].enabled;
+                    engine.setTransmissionEnabled(stop, index, toggleBehaviour ? !currentlyOn : isOn);
+                    if (voicer) voicer->updateStopStates();
+                    return;
+                }
+        }
+    }
+    if (target.startsWith("stop:"))
+    {
+        const auto name = target.fromFirstOccurrenceOf(":", false, false);
+        for (auto* stop : engine.getStops())
+            if (stop->name == name)
+            {
+                engine.setStopEnabled(stop, toggleBehaviour ? !stop->enabled : isOn);
+                if (voicer) voicer->updateStopStates();
+                return;
+            }
+    }
+    if (!trigger) return;
+    if (target.startsWith("header:"))
+    {
+        // A top-bar button pressed from MIDI (even when the bar hides it).
+        const auto key = target.fromFirstOccurrenceOf("header:", false, false);
+        for (const auto& item : headerButtons())
+            if (key == item.key) { if (item.button->isEnabled()) item.button->triggerClick(); return; }
+        return;
+    }
+    if (target == "previous") stepCombination(-1);
+    else if (target == "next") stepCombination(1);
+    else if (target == "tutti") enableAllStops();
+    else if (target == "generalCancel") disableAllStops();
+    else if (target.startsWith("piston:")) pressPiston(target.fromFirstOccurrenceOf(":", false, false).getIntValue());
+}
+
+void MainComponent::performGlobalReset()
+{
+    auto* alert = new juce::AlertWindow("Global Reset",
+        "Reset all controls, voicing, combinations, stops and couplers to their default values.",
+        juce::MessageBoxIconType::QuestionIcon, this);
+    auto* unloadAll = new juce::ToggleButton(
+        "Unload everything: all stops and sample folders too - a clean, empty instrument (nothing below is kept)");
+    auto* resetAudio = new juce::ToggleButton(
+        "Also reset all audio output devices and channels to the system defaults");
+    auto* resetMidi = new juce::ToggleButton("Also clear all learned MIDI assignments");
+    auto* resetTransmissions = new juce::ToggleButton(
+        "Also remove all configured transmissions");
+    auto* resetPatterns = new juce::ToggleButton(
+        "Also reset the Perspective, Ignored and One-shot pattern lists to their defaults "
+        "(Direct, Diffuse, Rear / trem / Chiff)");
+    auto* resetCouplers = new juce::ToggleButton(
+        "Also reset couplers and coupler options to defaults");
+    auto* resetGrid = new juce::ToggleButton(
+        "Also reset the stop grids and the stop pool (stop positions and hidden stops)");
+    // Nothing is ticked beforehand: every option is the user's choice.
+    // AlertWindow otherwise draws each custom component's Component name as
+    // an extra heading. The button text itself remains visible beside the box.
+    unloadAll->setName({});
+    resetAudio->setName({});
+    resetMidi->setName({});
+    resetTransmissions->setName({});
+    resetPatterns->setName({});
+    resetCouplers->setName({});
+    resetGrid->setName({});
+    unloadAll->setSize(640, 28);
+    resetAudio->setSize(640, 28);
+    resetMidi->setSize(640, 28);
+    resetTransmissions->setSize(640, 28);
+    resetPatterns->setSize(640, 28);
+    resetCouplers->setSize(640, 28);
+    resetGrid->setSize(640, 28);
+    // "Unload everything" keeps nothing: the other options grey out (they all apply).
+    unloadAll->onClick = [unloadAll, resetAudio, resetMidi, resetTransmissions, resetPatterns, resetCouplers, resetGrid]
+    {
+        const bool keepNothing = unloadAll->getToggleState();
+        for (auto* other : { resetAudio, resetMidi, resetTransmissions, resetPatterns, resetCouplers, resetGrid })
+            other->setEnabled(!keepNothing);
+    };
+    alert->addCustomComponent(unloadAll);
+    alert->addCustomComponent(resetAudio);
+    alert->addCustomComponent(resetMidi);
+    alert->addCustomComponent(resetTransmissions);
+    alert->addCustomComponent(resetPatterns);
+    alert->addCustomComponent(resetCouplers);
+    alert->addCustomComponent(resetGrid);
+    alert->addButton("Reset", 1);
+    alert->addButton("Cancel", 2, juce::KeyPress(juce::KeyPress::escapeKey));
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    alert->enterModalState(true, juce::ModalCallbackFunction::create(
+        [safeThis, unloadAll, resetAudio, resetMidi, resetTransmissions, resetPatterns, resetCouplers, resetGrid](int button)
+        {
+            const bool shouldUnloadAll = unloadAll->getToggleState();
+            const bool shouldResetAudio = resetAudio->getToggleState();
+            const bool shouldResetMidi = resetMidi->getToggleState();
+            const bool shouldRemoveTransmissions = resetTransmissions->getToggleState();
+            const bool shouldClearPatterns = resetPatterns->getToggleState();
+            const bool shouldResetCouplers = resetCouplers->getToggleState();
+            const bool shouldResetGrid = resetGrid->getToggleState();
+            delete unloadAll; // AlertWindow deliberately does not own custom components.
+            delete resetAudio;
+            delete resetMidi;
+            delete resetTransmissions;
+            delete resetPatterns;
+            delete resetCouplers;
+            delete resetGrid;
+            if (safeThis == nullptr || button != 1) return;
+            safeThis->executeGlobalReset(shouldResetMidi, shouldResetAudio,
+                shouldRemoveTransmissions, shouldClearPatterns, shouldResetCouplers, shouldResetGrid, shouldUnloadAll);
+        }), true);
+}
+
+void MainComponent::executeGlobalReset(bool clearMidiLearn, bool resetAudioOutputs,
+    bool removeTransmissions, bool clearFolderPatterns, bool resetCouplers, bool resetStopGrid,
+    bool unloadEverything)
+{
+    if (unloadEverything)
+    {
+        // A clean instrument: every option applies, and the stops and sample
+        // folders go too (the tree pool, the tables, the loaded ranks).
+        clearMidiLearn = resetAudioOutputs = removeTransmissions = clearFolderPatterns = resetCouplers = resetStopGrid = true;
+        if (stopBuildWindow != nullptr) stopBuildWindow.reset();
+        audioMuted.store(true);
+        panic();
+        for (int manual = 0; manual < SamplerEngine::maxManuals; ++manual)
+        {
+            removePerspectiveAudioRoutesForManual(manual);
+            engine.unloadManual(manual);
+        }
+        clearSampleLibraryInMemory();
+        currentConfigurationFile = {};
+        configurationFingerprint.clear();
+        configurationDirty = false;
+        CrashHandler::note("Global reset: everything unloaded, the instrument is empty");
+    }
+    panic();
+    if (keyboardsWindow != nullptr) keyboardsWindow.reset();
+    keyboardsWindowManual = -2;
+    // Dialogs open centred again after a global reset; stops and couplers
+    // return to their load order (the stop order is cleared in voicer->resetAll()).
+    dialogBounds.clear();
+    trackedDialogs.clear();
+    if (resetCouplers) couplerOrder.clear();   // the coupler grid belongs to the couplers option
+
+    // Global sound controls.
+    masterVolumeSlider.setValue(-20.0, juce::dontSendNotification);
+    masterGainLinear.store(juce::Decibels::decibelsToGain(-20.0f));
+    masterLabel.setText("Master: -20.0 dB", juce::dontSendNotification);
+    pitchSlider.setValue(0.0, juce::dontSendNotification);
+    pitchLabel.setText("Pitch: 0 cents", juce::dontSendNotification);
+    releaseFadeOutSlider.setValue(70.0, juce::dontSendNotification);
+    releaseFadeOutLabel.setText("Sustain fade-out: 70 ms", juce::dontSendNotification);
+    releaseFadeInSlider.setValue(70.0, juce::dontSendNotification);
+    releaseFadeInLabel.setText("Release fade-in: 70 ms", juce::dontSendNotification);
+    releaseScalingSlider.setValue(0.0, juce::dontSendNotification);
+    releaseScalingLabel.setText("Release scaling: 0.0 dB", juce::dontSendNotification);
+    attackMinimumSlider.setValue(80.0, juce::dontSendNotification);
+    attackMinimumLabel.setText("Attack min. time: 80 ms", juce::dontSendNotification);
+    attackMinimumDelaySlider.setValue(2.0, juce::dontSendNotification);
+    attackMinimumDelayLabel.setText("Attack min. delay: 2 ms", juce::dontSendNotification);
+    releaseCutPercent = 100.0f;
+    releaseCutSlider.setValue(100.0, juce::dontSendNotification);
+    releaseCutLabel.setText("Release cut: 100 %", juce::dontSendNotification);
+    engine.setReleaseCutPercent(100.0f);
+    engine.setGlobalPitchCents(0.0f);
+    engine.setMaxPolyphony(30000);
+    engine.setReleaseFadeOutMs(70.0f);
+    engine.setReleaseFadeInMs(70.0f);
+    velocityFadeInMs = 40.0f;
+    engine.setVelocityFadeInMs(velocityFadeInMs);
+    velocityShelfDb = 9.0f; velocityShelfMs = 80.0f;
+    engine.setVelocityShelfDb(velocityShelfDb);
+    engine.setVelocityShelfMs(velocityShelfMs);
+    engine.setReleaseScalingDb(0.0f);
+    engine.setAttackMinimumMs(80.0f);
+    engine.setAttackMinimumDelayMs(2.0f);
+
+    // A factory reset removes remembered folders/routing and every division
+    // control.  Keep only MIDI assignments when that was explicitly chosen.
+    for (int manual = 0; manual < SamplerEngine::maxManuals; ++manual)
+    {
+        const auto old = manualConfigs[(size_t)manual];
+        manualConfigs[(size_t)manual] = ManualConfig{};
+        applyDefaultWindProfile(manual);
+        applyDefaultTremulantProfile(manual);
+        expressionTargetPositions[(size_t)manual].store(1.0f);
+        expressionInertiaStages[(size_t)manual] = 1.0f;
+        if (!clearMidiLearn)
+        {
+            auto& reset = manualConfigs[(size_t)manual];
+            reset.deviceIdentifier = old.deviceIdentifier;
+            reset.midiChannel = old.midiChannel;
+            reset.expressionDeviceIdentifier = old.expressionDeviceIdentifier;
+            reset.expressionChannel = old.expressionChannel;
+            reset.expressionController = old.expressionController;
+            reset.expressionMinimum = old.expressionMinimum;
+            reset.expressionMaximum = old.expressionMaximum;
+        }
+        if (!resetAudioOutputs)
+        {
+            auto& reset = manualConfigs[(size_t)manual];
+            reset.outputChannels = old.outputChannels;
+            reset.audioDeviceStateXml = old.audioDeviceStateXml;
+            reset.perspectiveAudio = old.perspectiveAudio;
+            for (auto& entry : reset.perspectiveAudio)
+            {
+                entry.second.volumeDb = 0.0f;
+                entry.second.reverbIrPath.clear();
+                entry.second.reverbWet = 0.3f;
+            }
+        }
+
+        engine.setManualExpressionGain(manual, 1.0f);
+        engine.setManualDivisionGain(manual, 1.0f);
+        engine.setManualOutputChannels(manual,
+            resetAudioOutputs ? std::vector<int>{ 0, 1 } : old.outputChannels);
+        for (const auto& perspective : engine.getPerspectivesForManual(manual))
+        {
+            std::vector<int> outputs{ 0, 1 };
+            engine.setPerspectiveReverb(manual, perspective, {}, 0.3f);   // reverbs are part of the reset
+            if (!resetAudioOutputs)
+            {
+                const auto key = perspectiveRouteKey(manual, perspective);
+                if (auto found = old.perspectiveAudio.find(key); found != old.perspectiveAudio.end())
+                    outputs = found->second.outputChannels;
+                else
+                    outputs = old.outputChannels;
+            }
+            engine.setPerspectiveOutputChannels(manual, perspective, std::move(outputs));
+            engine.setPerspectiveVolumeDb(manual, perspective, 0.0f);
+        }
+        engine.setManualRandomTuningAllowed(manual, true);
+        engine.setManualPipeCouplingAllowed(manual, true);
+    }
+
+    listeningManual.store(-1);
+    listeningExpressionManual.store(-1);
+    {
+        const juce::ScopedLock lock(midiButtonBindingLock);
+        if (clearMidiLearn)
+            midiButtonBindings.clear();
+        else
+            for (auto& entry : midiButtonBindings) entry.second.lastOn = false;
+        pendingButtonLearnTarget.clear();
+        pendingButtonLearnToggle = false;
+        pendingButtonLearnContinuous = false;
+    }
+
+    // Stop controls and every voicing parameter.  Ranks themselves default
+    // to enabled, while the logical stop and all transmissions default off.
+    for (auto* stop : engine.getStops()) engine.setStopEnabled(stop, false);
+    if (voicer != nullptr) voicer->resetAll(resetStopGrid);
+    for (auto* s : engine.getStops())
+    {
+        if (removeTransmissions) engine.replaceTransmissions(s, {});
+        else
+            for (int index = 0; index < (int)s->transmissions.size(); ++index)
+                engine.setTransmissionEnabled(s, index, false);
+        {
+            const juce::ScopedLock lock(engine.getLock());
+            s->setDb(0.0f);
+            s->gainDb = 0.0f;
+            s->attackMs = 75.0f;
+            s->attackFadeoutMs = 75.0f;
+            s->voicingExpanded = false;
+            s->rankEnabled = true;
+            for (auto& rank : s->ranks) rank->rankEnabled = true;
+        }
+        engine.setStopRandomPitchError(s, 4.0f, true);
+    }
+
+    // Combination and coupler defaults.
+    combinationSetButton.setToggleState(false, juce::dontSendNotification);
+    combinations.clear();
+    pistonCount = maxPistons;
+    currentBank = 0;
+    activePiston = -1;
+    heldBankDirection = 0;
+    pistonCountBox.setSelectedId(pistonCount + 1, juce::dontSendNotification);
+    if (resetCouplers)
+    {
+        melodyBassNewKeysOnly = true;
+        melodyBassGraceTime = true;
+        {
+            const juce::ScopedLock lock(couplerLock);
+            couplers.clear();
+        }
+        // The regenerated catalog starts completely off, including I/II.
+        rebuildCouplerCatalog();
+        rebuildCouplerRail();
+    }
+    else
+        refreshCouplerRailState();
+    updateCombinationControls();
+
+    if (clearFolderPatterns)
+    {
+        // Back to the defaults, not to empty lists.
+        engine.setOneShotPatterns(SamplerEngine::defaultOneShotPatterns());
+        engine.setIgnoredPatterns(SamplerEngine::defaultIgnoredPatterns());
+        engine.setPerspectivePatterns(SamplerEngine::defaultPerspectivePatterns());
+    }
+    allVoicingVisible = false;
+    toggleAllVoicingButton.setButtonText("Hide all voicing");
+    voicingSaveAt = -1.0;
+    windowResizeSaveAt = -1.0;
+    ignoreCurrentAudioStateUntilUserSelection = resetAudioOutputs;
+    setCurrentConfigurationName({});
+
+    if (resetAudioOutputs) resetAudioOutputsToDefault();
+    if (voicer != nullptr)
+    {
+        voicer->setActiveManualCount(manualCount + 1);
+        voicer->rebuildUI(stopsContent, stopsViewport);
+        voicer->saveState(voicerStateFile);
+    }
+
+    saveMemories();
+    saveSettings();
+    if (unloadEverything)
+    {
+        const bool haveStops = !engine.getStops().isEmpty();
+        saveStopSettingsButton.setEnabled(haveStops);
+        loadStopSettingsButton.setEnabled(haveStops);
+        mergeStopsButton.setEnabled(false);
+        refreshConfigurationEditor();
+        if (stopPoolRefresh) stopPoolRefresh();
+        audioMuted.store(false);
+    }
+    resized();
+    repaint();
+}
+
+void MainComponent::resetAudioOutputsToDefault()
+{
+    audioMuted.store(true);
+    engine.noteOffAll();
+    audioDeviceSelectionUnmuteAt = -1.0;
+    ignoreDeviceRestartsUntil.store(juce::Time::getMillisecondCounterHiRes() + 6000.0);
+    applyAudioToAll.store(false); applyAudioToAllAux.store(false);
+
+    if (quietTestManager != nullptr)
+    {
+        quietTestManager->removeAudioCallback(&quietTestPlayer);
+        quietTestPlayer.setSource(nullptr);
+        quietTestManager = nullptr;
+        quietTestStopAt = -1.0;
+    }
+
+    // Detach every callback before closing a possibly shared ASIO or aggregate
+    // device. This avoids callbacks retaining buffers owned by the old driver.
+    for (auto& entry : perspectiveAudioRoutes)
+        if (entry.second->managerInUse != nullptr && entry.second->callback != nullptr)
+            entry.second->managerInUse->removeAudioCallback(entry.second->callback.get());
+    perspectiveAudioRoutes.clear();
+
+    deviceManager.removeAudioCallback(primaryAudioCallback.get());
+    for (auto& host : asioHosts) host->removeAudioCallback(primaryAudioCallback.get());
+    for (int manual = 1; manual < SamplerEngine::maxManuals; ++manual)
+    {
+        auto* callback = extraAudioCallbacks[(size_t)(manual - 1)].get();
+        extraAudioManagers[(size_t)(manual - 1)]->removeAudioCallback(callback);
+        for (auto& host : asioHosts) host->removeAudioCallback(callback);
+    }
+    manualAsioHost.fill(nullptr);
+    if (asioPanelWatch.manager != nullptr && isAsioHost(asioPanelWatch.manager))
+    {
+        asioPanelWatch.active = false;
+        asioPanelWatch.manager = nullptr;
+    }
+    pendingWindowsAudioResume.clear();
+    for (auto& host : asioHosts) host->closeAudioDevice();
+    asioHosts.clear();
+
+    // Every division in use back on the system's default Windows Audio output
+    // (one shared stream); the others without a device.
+    for (int manual = 0; manual < SamplerEngine::maxManuals; ++manual)
+    {
+        manualConfigs[(size_t)manual].audioDeviceStateXml.clear();
+        attachDivisionRoute(manual, manual <= manualCount ? "Windows Audio" : "none", {}, nullptr);
+    }
+
+    keyboardsWindowAudioTab = "default";
+    rebuildPerspectiveAudioRoutes();
+    audioDeviceSelectionUnmuteAt = juce::Time::getMillisecondCounterHiRes() + 1200.0;
+}
+
+//==============================================================================
+// The polyphony measurement ("Measure the maximum polyphony", Configuration Editor)
+//==============================================================================
+struct MainComponent::PolyphonyMeasurement
+{
+    MemorySlot registration;          // restored afterwards
+    int previousLimit = 0;
+    bool previousMuted = false;
+    double previousAttackMinimumMs = 0.0, previousAttackDelayMs = 0.0;   // bypassed for the run: 16 strikes a second must get through
+    // The stimulus grows, not the limit (a limit below what the organ produces
+    // would only measure the stealing of voices): keys struck on every division
+    // per level, then the same at twice the rate. The limit is out of the way
+    // (the ceiling, 300 000) while measuring; the result is the most voices reached cleanly.
+    // A regulator, not a fixed list: the target polyphony grows step by step and
+    // the stimulus (keys struck on every division, then the rate) is raised
+    // whenever the voices stop rising below the target - a dry set needs many
+    // keys, a wet set with several perspectives only a few. Every target reached
+    // is held for a few seconds and judged.
+    int targetVoices = 2000;
+    int currentKeys = 1, currentStrikes = 2;
+    int second = 0;                   // seconds since the start of the strikes
+    int secondsSinceChange = 0;       // since the stimulus last changed
+    int secondsHeld = 0;              // in the hold at the current target
+    bool holding = false;
+    int peakSecond = 0, lastPeakSecond = 0;   // the polyphony of the last second (sampled with every stroke), and of the one before
+    bool keysDown = false;
+    int strikeIntervalMs = 250;       // keys toggled every 250 ms = 2 strikes a second
+    int highestCleanPeak = 0, highestCleanKeys = 0, highestCleanStrikes = 0;
+    int firstFailingPeak = 0, firstFailingKeys = 0, firstFailingStrikes = 0;
+    juce::String failReason;          // what ended the climb (for the report)
+    bool exhausted = false;           // all 61 keys at the top rate and the voices still below the target
+    bool couplersOn = false;          // the octave couplers of every division to itself (16' and 4', whether on the grid or not): after all 61 keys, before a faster rate
+    // Refinement after the first breakup: the stimulus halfway between the last
+    // clean and the failing key count (same rate), twice; the tails die away
+    // first ("draining"), then the voices build up to their plateau and are judged.
+    int refinements = 0, refineLowKeys = 0, refineHighKeys = 0;
+    bool refining = false, draining = false;
+    int drainSeconds = 0;
+    bool lateRetried = false;         // one more chance per level after a late callback with callbacks within budget
+    // Of the current hold
+    float holdShare = 0.0f, holdWorstBlock = 0.0f; int holdLate = 0, holdPeak = 0;
+    // "No longer rising": the polyphony of the second before the last one.
+    int peakHistory[2]{ 0, 0 };
+    int peakSecondBeforeChange() const noexcept { return peakHistory[0]; }
+    void rememberPeakSecond() noexcept { peakHistory[0] = peakHistory[1]; peakHistory[1] = lastPeakSecond; }
+    int idleAsioOver15 = 0;           // the driver's own jitter at rest (reference)
+    double idleAsioMaxGapMs = 0.0;
+    // Of the current step (the warm-up second excluded)
+    float worstBlock = 0.0f;
+    juce::String worstRoute;
+    float busiest = 0.0f;             // the busiest device thread (the render of all its routes together)
+    float callbackShare = 0.0f;       // the longest whole driver callback / its period (render, bookkeeping, everything)
+    int lateCallbacks = 0;
+    double maxGapMs = 0.0;
+    int peak = 0;
+    // Of the whole run
+    struct StepResult { int target; int keys; int strikesPerSecond; int peak; float callbackShare; float worstBlock; int late; bool clean; };
+    std::vector<StepResult> results;  // every target held and judged
+    std::map<juce::String, float> threadLoads;   // "manual N perspective" of a device thread's first route -> highest load seen
+    int routeCount = 0;
+    juce::String summary;             // the routes, devices and IRs under test (shown in the dialog and the report)
+    juce::Component::SafePointer<juce::DialogWindow> window;
+    juce::Component::SafePointer<juce::Label> label;
+};
+
+MainComponent::DeviceClock* MainComponent::deviceClockFor(void* device, bool asio) noexcept
+{
+    if (device == nullptr) return nullptr;
+    for (auto& clock : deviceClocks)
+        if (clock.device.load(std::memory_order_acquire) == device) { clock.asio.store(asio); return &clock; }
+    for (auto& clock : deviceClocks)
+    {
+        void* expected = nullptr;
+        if (clock.device.compare_exchange_strong(expected, device, std::memory_order_acq_rel))
+        {
+            clock.asio.store(asio);
+            clock.lastFirst.store(0); clock.lastEnd.store(0); clock.late.store(0); clock.over15.store(0); clock.over2.store(0); clock.maxGapMs.store(0.0);
+            return &clock;
+        }
+    }
+    // All slots taken (devices come and go): reuse the one whose device is gone.
+    for (auto& clock : deviceClocks)
+    {
+        void* current = clock.device.load(std::memory_order_acquire);
+        bool inUse = false;
+        auto uses = [&](DivisionAudioCallback* callback) { if (callback != nullptr && callback->device() == current) inUse = true; };
+        uses(primaryAudioCallback.get());
+        for (auto& callback : extraAudioCallbacks) uses(callback.get());
+        for (auto& entry : perspectiveAudioRoutes) if (entry.second != nullptr) uses(entry.second->callback.get());
+        if (!inUse)
+        {
+            clock.device.store(device, std::memory_order_release);
+            clock.asio.store(asio);
+            clock.lastFirst.store(0); clock.lastEnd.store(0); clock.late.store(0); clock.over15.store(0); clock.over2.store(0); clock.maxGapMs.store(0.0);
+            return &clock;
+        }
+    }
+    return nullptr;
+}
+
+MainComponent::DeviceLateness MainComponent::takeDeviceLateCallbacks() noexcept
+{
+    DeviceLateness result;
+    for (auto& clock : deviceClocks)
+    {
+        if (clock.device.load(std::memory_order_acquire) == nullptr) continue;
+        const int late = clock.late.exchange(0, std::memory_order_relaxed);
+        const int n15 = clock.over15.exchange(0, std::memory_order_relaxed);
+        const int n2 = clock.over2.exchange(0, std::memory_order_relaxed);
+        const double gap = clock.maxGapMs.exchange(0.0, std::memory_order_relaxed);
+        const float share = clock.maxCallbackShare.exchange(0.0f, std::memory_order_relaxed);
+        if (clock.asio.load(std::memory_order_relaxed))
+        {
+            result.asioLate += late; result.asioOver15 += n15; result.asioOver2 += n2;
+            result.asioMaxGapMs = juce::jmax(result.asioMaxGapMs, gap);
+            result.asioMaxCallbackShare = juce::jmax(result.asioMaxCallbackShare, share);
+        }
+        else
+        {
+            result.otherLate += late;
+            result.otherMaxGapMs = juce::jmax(result.otherMaxGapMs, gap);
+            result.otherMaxCallbackShare = juce::jmax(result.otherMaxCallbackShare, share);
+        }
+    }
+    return result;
+}
+
+bool MainComponent::canMeasurePolyphony() const
+{
+    return !engine.getStops().isEmpty() && activeFolderLoader == nullptr && polyphonyMeasurement == nullptr && !applyAllRunning;
+}
+
+int MainComponent::takeLateCallbacksOfAllRoutes()
+{
+    int late = 0;
+    auto take = [&](DivisionAudioCallback* callback)
+    {
+        if (callback == nullptr) return;
+        const int n = callback->takeLateCallbacks();
+        if (n > 0 && polyphonyMeasurement != nullptr)
+            CrashHandler::note("Polyphony measurement: " + juce::String(n) + " late callback(s) on " + callback->label());
+        late += n;
+    };
+    take(primaryAudioCallback.get());
+    for (auto& callback : extraAudioCallbacks) take(callback.get());
+    for (auto& entry : perspectiveAudioRoutes) if (entry.second != nullptr) take(entry.second->callback.get());
+    return late;
+}
+
+void MainComponent::startPolyphonyMeasurement()
+{
+    if (!canMeasurePolyphony()) return;
+    auto state = std::make_shared<PolyphonyMeasurement>();
+    polyphonyMeasurement = state;
+    state->registration = captureCurrentState();
+    state->previousLimit = engine.getMaxPolyphony();
+    state->previousMuted = audioMuted.load();
+    engine.setMaxPolyphony(SamplerEngine::maxVoices);   // out of the way while measuring
+    // The attack minimum time and delay would hold the fast strikes back: off for the run.
+    state->previousAttackMinimumMs = attackMinimumSlider.getValue();
+    state->previousAttackDelayMs = attackMinimumDelaySlider.getValue();
+    engine.setAttackMinimumMs(0.0f);
+    engine.setAttackMinimumDelayMs(0.0f);
+    {
+        // What is under test: the routes by device (type and name, one stream
+        // each for ASIO and Windows Audio), and how many carry an IR.
+        std::map<juce::String, std::map<juce::String, int>> routesByType;   // type -> device -> routes
+        int irRoutes = 0;
+        for (int manual = 0; manual <= manualCount; ++manual)
+            for (const auto& perspective : engine.getPerspectivesForManual(manual))
+            {
+                auto* manager = managerForRoute(manual, perspective);
+                auto* device = manager != nullptr ? manager->getCurrentAudioDevice() : nullptr;
+                if (device == nullptr) continue;
+                ++state->routeCount;
+                ++routesByType[manager->getCurrentAudioDeviceType()][device->getName()];
+                const auto& entries = manualConfigs[(size_t)manual].perspectiveAudio;
+                const auto found = entries.find(perspectiveRouteKey(manual, perspective));
+                if (found != entries.end() && found->second.reverbIrPath.isNotEmpty()) ++irRoutes;
+            }
+        // Grouped by type ("Windows Audio: 2 on "A", 1 on "B"") so ten devices do
+        // not take ten clauses; the progress window is sized to the result.
+        juce::String devices;
+        for (const auto& type : routesByType)
+        {
+            devices << (devices.isEmpty() ? "" : "; ") << type.first << ": ";
+            bool first = true;
+            for (const auto& entry : type.second)
+            {
+                devices << (first ? "" : ", ") << entry.second << " on \"" << entry.first << "\"";
+                first = false;
+            }
+        }
+        state->summary = juce::String(engine.getStops().size()) + " stops, " + juce::String(state->routeCount) + " audio routes - " + devices
+            + "; IR reverb on " + juce::String(irRoutes) + " route(s)";
+    }
+    CrashHandler::note("Polyphony measurement started: " + state->summary + ", previous limit " + juce::String(state->previousLimit));
+    // Very quiet output (-42 dB, reached within 50 ms - before the first strike); the engine renders as if it were heard.
+    engine.noteOffAll();
+    outputGainTarget.store(0.0079f);
+    audioMuted.store(false);
+    engine.takeMaxBlockLoad();
+    takeLateCallbacksOfAllRoutes();
+
+    // Progress window (the palette of the other dialogs; Cancel restores everything).
+    // Its height follows the text: the summary wraps over as many lines as the
+    // routes and devices need, then the three lines of progress.
+    auto* content = new juce::Component();
+    auto* label = new juce::Label();
+    label->setJustificationType(juce::Justification::centred);
+    label->setFont(juce::FontOptions(16.0f));
+    label->setText("Preparing...", juce::dontSendNotification);
+    int labelHeight = 150;
+    {
+        juce::AttributedString measured;
+        measured.append(state->summary + "\n\nTarget 000000 voices - the voices building up\n"
+            "00 keys on every division, 00 strikes a second, 000000 voices now   (clean so far: 000000)\n",
+            juce::Font(juce::FontOptions(16.0f)));
+        juce::TextLayout layout;
+        layout.createLayout(measured, 736.0f);
+        labelHeight = juce::jlimit(150, 560, (int)std::ceil(layout.getHeight()) + 36);
+    }
+    label->setBounds(12, 0, 736, labelHeight);
+    content->addAndMakeVisible(label);
+    auto* cancel = new juce::TextButton("Cancel");
+    cancel->setBounds(330, labelHeight + 10, 100, 28);
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    cancel->onClick = [safeThis] { if (safeThis != nullptr) safeThis->cancelPolyphonyMeasurement(); };
+    content->addAndMakeVisible(cancel);
+    content->setSize(760, labelHeight + 50);
+    juce::DialogWindow::LaunchOptions options;
+    options.dialogTitle = "Measuring the maximum polyphony";
+    options.dialogBackgroundColour = juce::Colours::darkgrey;
+    options.content.setOwned(new ScrollableContent(content));
+    options.componentToCentreAround = this;
+    options.escapeKeyTriggersCloseButton = false;
+    options.useNativeTitleBar = true;
+    options.resizable = false;
+    state->window = options.launchAsync();
+    state->label = label;
+
+    // The keys of a level are spread evenly over 36-96 on every division.
+    auto keys = [safeThis, state](bool on)
+    {
+        if (safeThis == nullptr) return;
+        const int count = juce::jlimit(1, 61, state->currentKeys);
+        for (int manual = 0; manual <= safeThis->manualCount; ++manual)
+            for (int i = 0; i < count; ++i)
+            {
+                const int note = count == 1 ? 60 : 36 + juce::roundToInt(60.0 * i / (count - 1));
+                safeThis->routeKeyboardNote(manual, note, on ? 127 : 0, on);
+            }
+    };
+    auto alive = [safeThis, state] { return safeThis != nullptr && safeThis->polyphonyMeasurement == state; };
+
+    // The keys struck again and again ("bashing": attacks and releases pile up -
+    // the worst case for any set); the polyphony sampled with every stroke.
+    auto bash = std::make_shared<std::function<void()>>();
+    *bash = [safeThis, state, keys, alive, bash]
+    {
+        if (!alive()) return;
+        if (state->draining)
+        {
+            if (state->keysDown) { keys(false); state->keysDown = false; }
+            juce::Timer::callAfterDelay(state->strikeIntervalMs, [bash] { (*bash)(); });
+            return;
+        }
+        state->keysDown = !state->keysDown;
+        keys(state->keysDown);
+        const int now = safeThis->engine.getCurrentPolyphony();
+        state->peak = juce::jmax(state->peak, now);
+        state->peakSecond = juce::jmax(state->peakSecond, now);
+        state->holdPeak = juce::jmax(state->holdPeak, now);
+        juce::Timer::callAfterDelay(state->strikeIntervalMs, [bash] { (*bash)(); });
+    };
+
+    auto describe = [state]
+    {
+        return juce::String(state->currentKeys) + " keys on every division, struck " + juce::String(state->currentStrikes) + " times a second"
+            + (state->couplersOn ? ", octave couplers on" : "");
+    };
+    auto setStimulus = [safeThis, state, alive, keys, describe](int keyCount, int strikes)
+    {
+        if (!alive()) return;
+        if (state->keysDown) { keys(false); state->keysDown = false; }   // the old set of keys up before the count changes
+        state->currentKeys = juce::jlimit(1, 61, keyCount);
+        state->currentStrikes = juce::jlimit(1, 16, strikes);
+        state->strikeIntervalMs = juce::jmax(30, 500 / state->currentStrikes);
+        state->secondsSinceChange = 0;
+        state->lateRetried = false;
+        CrashHandler::note("Polyphony measurement: stimulus " + describe() + " (target " + juce::String(state->targetVoices) + " voices)");
+    };
+    auto showProgress = [state, describe]
+    {
+        if (state->label == nullptr) return;
+        juce::String head;
+        if (state->refining)
+            head = state->draining ? "Narrowing down: letting the tails die away"
+                : (state->holding ? "Narrowing down: holding and judging" : "Narrowing down between " + juce::String(state->refineLowKeys) + " and "
+                    + juce::String(state->refineHighKeys) + " keys - the voices building up");
+        else head = "Target " + juce::String(state->targetVoices) + " voices" + (state->holding ? " - holding and judging" : " - the voices building up");
+        state->label->setText(state->summary + "\n\n" + head + "\n" + describe() + ", " + juce::String(state->lastPeakSecond) + " voices now"
+            + (state->highestCleanPeak > 0 ? "   (clean so far: " + juce::String(state->highestCleanPeak) + ")" : juce::String()),
+            juce::dontSendNotification);
+    };
+    // After a breakup: halfway between the clean and the failing key count, twice.
+    // Returns false when there is nothing left to try (the run is over).
+    auto startRefine = [safeThis, state, alive, keys]() -> bool
+    {
+        if (!alive()) return false;
+        const int mid = (state->refineLowKeys + state->refineHighKeys) / 2;
+        if (state->refinements >= 2 || mid <= state->refineLowKeys || mid >= state->refineHighKeys) return false;
+        ++state->refinements;
+        state->refining = true;
+        state->draining = true;
+        state->drainSeconds = 0;
+        state->holding = false;
+        if (state->keysDown) { keys(false); state->keysDown = false; }
+        CrashHandler::note("Polyphony measurement: narrowing down between " + juce::String(state->refineLowKeys) + " and "
+            + juce::String(state->refineHighKeys) + " keys: " + juce::String(mid) + " keys next, the tails dying away first");
+        return true;
+    };
+
+    auto tick = std::make_shared<std::function<void()>>();
+    *tick = [safeThis, state, alive, setStimulus, showProgress, describe, startRefine, tick]
+    {
+        if (!alive()) return;
+        ++state->second;
+        ++state->secondsSinceChange;
+        state->lastPeakSecond = state->peakSecond;
+        state->peakSecond = 0;
+        if (state->draining)
+        {
+            // The tails of the failed level die away before the narrowed-down level starts.
+            safeThis->engine.takeMaxBlockLoad();
+            safeThis->takeLateCallbacksOfAllRoutes();
+            safeThis->takeDeviceLateCallbacks();
+            if (++state->drainSeconds >= 8 || safeThis->engine.getCurrentPolyphony() < state->highestCleanPeak / 2)
+            {
+                state->draining = false;
+                setStimulus((state->refineLowKeys + state->refineHighKeys) / 2, state->currentStrikes);
+                state->peak = 0; state->holdPeak = 0; state->peakSecond = 0; state->lastPeakSecond = 0;   // the failed level's voices are gone
+                state->peakHistory[0] = state->peakHistory[1] = 0;
+            }
+            state->rememberPeakSecond();
+            showProgress();
+            juce::Timer::callAfterDelay(1000, [tick] { (*tick)(); });
+            return;
+        }
+        int worstRouteIndex = -1;
+        const float worst = safeThis->engine.takeMaxBlockLoad(&worstRouteIndex);
+        safeThis->takeLateCallbacksOfAllRoutes();   // the per-route counters (health log), cleared
+        const auto lateness = safeThis->takeDeviceLateCallbacks();
+        const int late = lateness.asioLate + lateness.otherLate;
+        const double gapMs = juce::jmax(lateness.asioMaxGapMs, lateness.otherMaxGapMs);
+        float loads[8]{}; int loadRoutes[8]{};
+        const int loadCount = safeThis->engine.getRenderLoads(loads, loadRoutes, 8);
+        float busiestNow = 0.0f;
+        for (int i = 0; i < loadCount; ++i) busiestNow = juce::jmax(busiestNow, loads[i]);
+        const float callbackShare = juce::jmax(lateness.asioMaxCallbackShare, lateness.otherMaxCallbackShare);
+        {
+            // Where the callback's time went besides the render: the note bookkeeping (control tick) and its phases.
+            int ticks = 0, started = 0; double tickMs = 0.0; float phases[4]{};
+            safeThis->engine.takeControlStats(ticks, tickMs, started, phases);
+            CrashHandler::note("Polyphony measurement: control " + juce::String(ticks) + " ticks, " + juce::String(tickMs, 1) + " ms, "
+                + juce::String(started) + " voices started, longest tick " + juce::String(safeThis->engine.takeMaxControlTickMs(), 2)
+                + " ms, phases reclaim " + juce::String(phases[0], 2) + " / MIDI " + juce::String(phases[1], 2) + " / pending "
+                + juce::String(phases[2], 2) + " / stale " + juce::String(phases[3], 2) + " ms");
+        }
+        for (int i = 0; i < loadCount; ++i)
+        {
+            const auto name = safeThis->engine.routeLabel(loadRoutes[i]);
+            state->threadLoads[name] = juce::jmax(state->threadLoads[name], loads[i]);
+        }
+        if (worst > state->worstBlock) { state->worstBlock = worst; state->worstRoute = safeThis->engine.routeLabel(worstRouteIndex); }
+        CrashHandler::note("Polyphony measurement: second " + juce::String(state->second) + ", " + describe() + ", target " + juce::String(state->targetVoices)
+            + ": polyphony " + juce::String(state->lastPeakSecond) + " (peak " + juce::String(state->peak)
+            + "), longest driver callback " + juce::String(juce::roundToInt(callbackShare * 100.0f)) + " % of the period, busiest thread render "
+            + juce::String(juce::roundToInt(busiestNow * 100.0f)) + " %, worst block " + juce::String(juce::roundToInt(worst * 100.0f))
+            + " % (" + safeThis->engine.routeLabel(worstRouteIndex) + "), late driver callbacks: ASIO " + juce::String(lateness.asioLate)
+            + " (gaps over 1.5 periods " + juce::String(lateness.asioOver15) + ", over 2 " + juce::String(lateness.asioOver2) + ", longest "
+            + juce::String(lateness.asioMaxGapMs, 1) + " ms), other devices " + juce::String(lateness.otherLate) + " (longest " + juce::String(lateness.otherMaxGapMs, 1) + " ms)");
+        if (state->second == 4) CrashHandler::note("Polyphony measurement: voices per route: " + safeThis->engine.routeVoiceSummary());
+
+        // Breaking up at any moment ends the run: the voices of that second are
+        // where this organ stops being clean on this computer.
+        bool brokeUp = late > 0 || callbackShare > 1.0f || worst > 1.0f;
+        // A late driver callback while every callback stayed within its period
+        // comes from outside as often as not (the system, another program): the
+        // level gets one more chance; a second time it counts.
+        if (brokeUp && late > 0 && callbackShare <= 0.85f && worst <= 0.85f && !state->lateRetried && state->second >= 2)
+        {
+            state->lateRetried = true;
+            brokeUp = false;
+            if (state->holding) { state->secondsHeld = 0; state->holdShare = 0.0f; state->holdWorstBlock = 0.0f; state->holdLate = 0; }
+            CrashHandler::note("Polyphony measurement: " + juce::String(late) + " late driver callback(s) with every callback within its period - this level once more");
+        }
+        // A failure (a breakup, or a hold judged unclean): the failing level is
+        // remembered and the run narrows down between the clean and the failing
+        // key count - or ends when there is nothing left between them.
+        auto failAt = [safeThis, state, startRefine, describe](int voices, const juce::String& why)
+        {
+            if (state->firstFailingPeak == 0 || voices < state->firstFailingPeak || state->refining)
+            {
+                state->firstFailingPeak = voices;
+                state->firstFailingKeys = state->currentKeys;
+                state->firstFailingStrikes = state->currentStrikes;
+                state->failReason = why;
+            }
+            CrashHandler::note("Polyphony measurement: failed at " + juce::String(voices) + " voices (" + describe() + "): " + why);
+            if (state->highestCleanStrikes == state->currentStrikes && state->highestCleanKeys > 0)
+            {
+                state->refineLowKeys = state->highestCleanKeys;
+                state->refineHighKeys = state->currentKeys;
+                if (startRefine()) return;
+            }
+            safeThis->finishPolyphonyMeasurement(false);
+        };
+        if (brokeUp && state->secondsSinceChange >= 1 && state->second >= 2)
+        {
+            failAt(juce::jmax(state->lastPeakSecond, state->holdPeak), late > 0
+                ? juce::String(late) + " late driver callback(s) (a gap of more than 1.5 periods between two callbacks of the driver), the longest callback at "
+                    + juce::String(juce::roundToInt(callbackShare * 100.0f)) + " % of the period"
+                : "a callback took " + juce::String(juce::roundToInt(juce::jmax(callbackShare, worst) * 100.0f)) + " % of its period");
+            if (!alive() || state->draining) { if (alive()) juce::Timer::callAfterDelay(1000, [tick] { (*tick)(); }); return; }
+            return;
+        }
+        if (state->second > 400) { safeThis->finishPolyphonyMeasurement(false); return; }   // enough
+
+        if (state->holding)
+        {
+            // The target is reached: held for four seconds and judged.
+            state->holdShare = juce::jmax(state->holdShare, callbackShare);
+            state->holdWorstBlock = juce::jmax(state->holdWorstBlock, worst);
+            state->holdLate += late;
+            if (++state->secondsHeld >= 4)
+            {
+                const bool clean = state->holdShare <= 0.85f && state->holdWorstBlock <= 0.85f && state->holdLate == 0;
+                state->results.push_back({ state->targetVoices, state->currentKeys, state->currentStrikes, state->holdPeak, state->holdShare, state->holdWorstBlock, state->holdLate, clean });
+                CrashHandler::note("Polyphony measurement: target " + juce::String(state->targetVoices) + (clean ? " clean" : " FAILED") + " at " + describe()
+                    + " (peak " + juce::String(state->holdPeak) + " voices, longest driver callback " + juce::String(juce::roundToInt(state->holdShare * 100.0f))
+                    + " % of the period, worst block " + juce::String(juce::roundToInt(state->holdWorstBlock * 100.0f)) + " %, late driver callbacks " + juce::String(state->holdLate) + ")");
+                if (!clean)
+                {
+                    failAt(state->holdPeak, "over four seconds at that level the longest callback took " + juce::String(juce::roundToInt(state->holdShare * 100.0f))
+                        + " % of its period (85 % is the limit)" + (state->holdLate > 0 ? ", " + juce::String(state->holdLate) + " late driver callback(s)" : juce::String())
+                        + (state->holdWorstBlock > 0.85f ? ", one route alone " + juce::String(juce::roundToInt(state->holdWorstBlock * 100.0f)) + " %" : juce::String()));
+                    if (alive() && state->draining) juce::Timer::callAfterDelay(1000, [tick] { (*tick)(); });
+                    return;
+                }
+                state->highestCleanPeak = juce::jmax(state->highestCleanPeak, state->holdPeak);
+                state->highestCleanKeys = state->currentKeys;
+                state->highestCleanStrikes = state->currentStrikes;
+                state->holding = false;
+                if (state->refining)
+                {
+                    // Clean at the narrowed-down level: the next one lies above it.
+                    state->refineLowKeys = state->currentKeys;
+                    if (!startRefine()) { safeThis->finishPolyphonyMeasurement(false); return; }
+                    juce::Timer::callAfterDelay(1000, [tick] { (*tick)(); });
+                    return;
+                }
+                // The next target: a step above what was really reached (more keys
+                // overshoot a target by thousands of voices; the targets in between
+                // would be met without doing anything) - 2 000 voices up to 20 000,
+                // then a tenth.
+                const int reached = juce::jmax(state->targetVoices, (state->holdPeak / 100) * 100);
+                state->targetVoices = reached + (reached < 20000 ? 2000 : juce::jmax(2000, (reached / 10 / 100) * 100));
+                if (state->targetVoices > SamplerEngine::maxVoices) { safeThis->finishPolyphonyMeasurement(false); return; }
+            }
+        }
+        else if (state->refining)
+        {
+            // The narrowed-down level: held as soon as its voices stop rising.
+            if (state->secondsSinceChange >= 3 && state->lastPeakSecond < juce::roundToInt(state->peakSecondBeforeChange() * 1.05))
+            {
+                state->holding = true;
+                state->secondsHeld = 0;
+                state->holdShare = 0.0f; state->holdWorstBlock = 0.0f; state->holdLate = 0; state->holdPeak = state->lastPeakSecond;
+            }
+        }
+        else if (state->lastPeakSecond >= state->targetVoices)
+        {
+            state->holding = true;
+            state->secondsHeld = 0;
+            state->holdShare = 0.0f; state->holdWorstBlock = 0.0f; state->holdLate = 0; state->holdPeak = state->lastPeakSecond;
+        }
+        else if (state->secondsSinceChange >= 2 && state->lastPeakSecond < juce::roundToInt(state->peakSecondBeforeChange() * 1.05))
+        {
+            // Below the target and no longer rising: more keys at once - as many as
+            // the shortfall suggests (the voices grow about in proportion), at
+            // least one more, at most half as many again, so the target is not
+            // overshot by much - then the octave couplers (every division pulled
+            // at 16' and 4' onto itself - the catalog has them whether they are
+            // on the grid or not: three pipes per key), then a faster rate.
+            if (state->currentKeys < 61)
+            {
+                const int have = juce::jmax(1, state->lastPeakSecond);
+                const int wanted = (int)std::ceil((double)state->currentKeys * (double)state->targetVoices / (double)have);
+                setStimulus(juce::jlimit(state->currentKeys + 1, juce::jmax(state->currentKeys + 1, state->currentKeys * 3 / 2), wanted), state->currentStrikes);
+            }
+            else if (!state->couplersOn)
+            {
+                state->couplersOn = true;
+                for (int manual = 0; manual <= safeThis->manualCount; ++manual)
+                    for (const char* footage : { "16", "4" })
+                        safeThis->setCouplerEnabled(juce::String(manual) + "-" + juce::String(manual) + "-" + footage, true);
+                CrashHandler::note("Polyphony measurement: the octave couplers (16' and 4') of every division engaged");
+                state->secondsSinceChange = 0;
+            }
+            else if (state->currentStrikes < 16) setStimulus(61, state->currentStrikes * 2);
+            else
+            {
+                state->exhausted = true;   // all 61 keys 16 times a second: this organ has no more voices to give
+                state->highestCleanPeak = juce::jmax(state->highestCleanPeak, state->peak);
+                state->highestCleanKeys = 61; state->highestCleanStrikes = 16;
+                safeThis->finishPolyphonyMeasurement(false);
+                return;
+            }
+        }
+        state->rememberPeakSecond();
+        showProgress();
+        juce::Timer::callAfterDelay(1000, [tick] { (*tick)(); });
+    };
+
+    // The filled-pipe copies still loading or building (right after the organ
+    // loads) would steal CPU from the measurement: wait for them first.
+    auto begin = std::make_shared<std::function<void(int)>>();
+    *begin = [safeThis, state, alive, setStimulus, showProgress, bash, tick, begin](int waited)
+    {
+        if (!alive()) return;
+        if (safeThis->engine.pendingBackgroundWorkers() > 0 && waited < 1200)   // at most 10 minutes
+        {
+            if (state->label != nullptr)
+                state->label->setText("Waiting for the filled pipes (their copies) to finish building...", juce::dontSendNotification);
+            juce::Timer::callAfterDelay(500, [begin, waited] { (*begin)(waited + 1); });
+            return;
+        }
+        // Two idle seconds first: the driver's own jitter and the thread's idle
+        // load, logged as the reference the steps are compared with. The level is
+        // down by now; the stops are engaged only after that, right before the strikes.
+        if (state->label != nullptr) state->label->setText("Listening to the idle audio devices...", juce::dontSendNotification);
+        safeThis->engine.takeMaxBlockLoad();
+        safeThis->takeLateCallbacksOfAllRoutes();
+        safeThis->takeDeviceLateCallbacks();
+        juce::Timer::callAfterDelay(2000, [safeThis, state, alive, setStimulus, showProgress, bash, tick]
+        {
+            if (!alive()) return;
+            const auto idle = safeThis->takeDeviceLateCallbacks();
+            state->idleAsioOver15 = idle.asioOver15;
+            state->idleAsioMaxGapMs = idle.asioMaxGapMs;
+            CrashHandler::note("Polyphony measurement: idle 2 s: ASIO gaps over 1.5 periods " + juce::String(idle.asioOver15) + ", over 2 "
+                + juce::String(idle.asioOver2) + ", longest " + juce::String(idle.asioMaxGapMs, 1) + " ms, longest callback "
+                + juce::String(juce::roundToInt(idle.asioMaxCallbackShare * 100.0f)) + " % of the period; other devices longest gap "
+                + juce::String(idle.otherMaxGapMs, 1) + " ms");
+            safeThis->enableAllStops();
+            safeThis->engine.takeMaxBlockLoad();
+            safeThis->takeLateCallbacksOfAllRoutes();
+            safeThis->takeDeviceLateCallbacks();
+            setStimulus(1, 2);
+            showProgress();
+            (*bash)();
+            juce::Timer::callAfterDelay(1000, [tick] { (*tick)(); });
+        });
+    };
+    juce::Timer::callAfterDelay(600, [begin] { (*begin)(0); });
+}
+
+void MainComponent::cancelPolyphonyMeasurement()
+{
+    if (polyphonyMeasurement == nullptr) return;
+    CrashHandler::note("Polyphony measurement cancelled");
+    finishPolyphonyMeasurement(true);
+}
+
+void MainComponent::finishPolyphonyMeasurement(bool cancelled)
+{
+    auto state = polyphonyMeasurement;
+    if (state == nullptr) return;
+    polyphonyMeasurement = nullptr;   // the timers see this and stop
+    // Keys up, everything back as it was: the registration, the mute state, the sound.
+    for (int manual = 0; manual <= manualCount; ++manual)
+        for (int note = 36; note <= 96; ++note) routeKeyboardNote(manual, note, 0, false);
+    engine.noteOffAll();
+    engine.setAttackMinimumMs((float)state->previousAttackMinimumMs);
+    engine.setAttackMinimumDelayMs((float)state->previousAttackDelayMs);
+    applyRegistrationState(state->registration, false);
+    if (voicer) voicer->updateStopStates();
+    updateCombinationLights();
+    refreshCouplerRailState();
+    audioMuted.store(state->previousMuted);
+    if (state->window != nullptr) state->window->exitModalState(0);   // deletes itself (launched asynchronously)
+
+    // Cancelled, or over before anything happened: everything back, no report.
+    // (A breakup before the first target counts as a result: the report then
+    // says the sound broke already at that few voices and why.)
+    if (cancelled || (state->results.empty() && state->firstFailingPeak == 0 && !state->exhausted))
+    {
+        outputGainTarget.store(1.0f);   // the level glides back over two seconds
+        engine.setMaxPolyphony(state->previousLimit);
+        refreshConfigurationEditor();
+        CrashHandler::note(cancelled ? "Polyphony measurement cancelled: everything restored" : "Polyphony measurement ended without a result");
+        return;
+    }
+    // The level stays down while the report is open: the release tails of the
+    // run are still sounding, and they must not jump up. It glides back (over
+    // two seconds) after the report's OK.
+
+    // The verdict: the most voices the organ produced while the audio stayed
+    // clean is the new maximum polyphony; the slider is there for anyone who
+    // wants it lower (more headroom) or higher (the brave).
+    const int highestCleanKeys = state->highestCleanKeys, firstFailingKeys = state->firstFailingKeys;
+    auto hundreds = [](int v) { return juce::jlimit(64, SamplerEngine::maxVoices, (v / 100) * 100); };
+    const int newLimit = hundreds(state->highestCleanPeak > 0 ? state->highestCleanPeak : juce::jmax(200, state->firstFailingPeak / 2));
+    engine.setMaxPolyphony(newLimit);
+    saveSettings();
+    refreshConfigurationEditor();
+
+    static const juce::String names[8]{ "Pedal", "I.", "II.", "III.", "IV.", "V.", "VI.", "VII." };
+    juce::String text;
+    text << state->summary << "\n\n";
+    text << "Maximum polyphony set to " << newLimit << " voices";
+    auto levelText = [](int keysOf, int rate)
+    {
+        return juce::String(keysOf) + " keys struck " + juce::String(rate) + " times a second on every division";
+    };
+    if (firstFailingKeys > 0 && state->highestCleanPeak > 0)
+        text << ": the most voices this organ produced while the audio stayed clean (" << levelText(highestCleanKeys, state->highestCleanStrikes)
+             << ", " << state->routeCount << " audio routes); at " << state->firstFailingPeak << " voices ("
+             << levelText(firstFailingKeys, state->firstFailingStrikes) << ") it broke: " << state->failReason
+             << ". Clean means every single callback within 85 % of its period and the driver never called late; the DSP field shows a "
+                "peak that fades over a fraction of a second, so it may read lower at the moment the run ends. Above the limit the sound may "
+                "still be fine most of the time - until the first callback that is not.";
+    else if (firstFailingKeys > 0)
+        text << ": the sound broke up already at " << state->firstFailingPeak << " voices (" << levelText(firstFailingKeys, state->firstFailingStrikes)
+             << "), so half of that. Look at the advice below.";
+    else if (state->exhausted)
+        text << ": this organ has no more voices to give - all 61 keys struck 16 times a second on every division reached "
+             << state->highestCleanPeak << " voices and the audio stayed clean. The computer is not the limit here.";
+    else
+        text << ": every target up to " << state->highestCleanPeak << " voices stayed clean.";
+    text << " The slider is yours: lower it for more headroom (couplers, long releases, other programs running), raise it if you dare."
+            "\n\nSave the configuration: the value belongs to this organ (its routes, IRs, drivers and buffers), not to the computer alone.";
+    // Advice: where the time goes. Routes on Windows Audio (one thread each),
+    // auxiliary routes (every pipe once more), and the ASIO buffer size.
+    juce::String advice;
+    auto loadOf = [&state](int manual, const juce::String& perspective)
+    {
+        float load = 0.0f;
+        const auto label = "manual " + juce::String(manual) + " " + perspective;
+        for (const auto& entry : state->threadLoads) if (entry.first.equalsIgnoreCase(label)) load = juce::jmax(load, entry.second);
+        return load;
+    };
+    // One paragraph for the aggregated routes and one for the auxiliary routes
+    // (ten routes on an aggregate used to give ten paragraphs saying the same).
+    juce::String aggregatedRoutes, auxiliaryRoutes;
+    int aggregatedCount = 0, auxiliaryCount = 0;
+    for (int manual = 0; manual <= manualCount; ++manual)
+        for (const auto& perspective : engine.getPerspectivesForManual(manual))
+        {
+            auto* manager = managerForRoute(manual, perspective);
+            auto* device = manager != nullptr ? manager->getCurrentAudioDevice() : nullptr;
+            if (device == nullptr) continue;
+            const bool shared = isSharedHostType(manager->getCurrentAudioDeviceType());   // ASIO or Windows Audio: one stream per device, the whole pool
+            const bool auxiliary = isAuxiliaryPerspective(perspective);
+            if (shared && !auxiliary) continue;
+            const float load = loadOf(manual, perspective);
+            juce::String item = names[juce::jlimit(0, 7, manual)] + " / " + perspective;
+            if (load > 0.0f) item << " (" << juce::roundToInt(load * 100.0f) << " % of its period)";
+            if (auxiliary)
+            {
+                auxiliaryRoutes << (auxiliaryCount++ > 0 ? ", " : "") << item << " on \"" << device->getName() << "\"";
+            }
+            else
+            {
+                aggregatedRoutes << (aggregatedCount++ > 0 ? ", " : "") << item;
+            }
+        }
+    if (aggregatedCount > 0)
+        advice << "\n\n" << (aggregatedCount == 1 ? "One route plays" : juce::String(aggregatedCount) + " routes play") << " through Aggregated WASAPI, each rendered by its own thread "
+                  "(\"Render threads for Aggregated WASAPI\"): " << aggregatedRoutes << ". For the most polyphony move them to one ASIO driver or Windows Audio device "
+                  "(all routes of a device rendered by the whole pool), or set to none what should not play; save the configuration and measure again.";
+    if (auxiliaryCount > 0)
+        advice << "\n\n" << (auxiliaryCount == 1 ? "One auxiliary route has a device" : juce::String(auxiliaryCount) + " auxiliary routes have a device")
+               << " - every pipe of the division rendered once more: " << auxiliaryRoutes
+               << ". If you do not need them, set them to none, save the configuration and measure again.";
+    // The heaviest single route and its IR: a convolution costs its share at every
+    // period whatever the polyphony - on a dry set with IRs it is the main cost.
+    if (state->worstBlock > 0.15f && state->worstRoute.isNotEmpty())
+    {
+        juce::String irName;
+        for (int manual = 0; manual <= manualCount; ++manual)
+            for (const auto& entry : manualConfigs[(size_t)manual].perspectiveAudio)
+            {
+                const auto perspective = juce::String(entry.first).fromFirstOccurrenceOf("|", false, false);
+                if (("manual " + juce::String(manual) + " " + perspective).equalsIgnoreCase(state->worstRoute) && entry.second.reverbIrPath.isNotEmpty())
+                    irName = juce::File(entry.second.reverbIrPath).getFileName();
+            }
+        advice << "\n\nThe heaviest single route was " << state->worstRoute << ": up to " << juce::roundToInt(state->worstBlock * 100.0f)
+               << " % of its period on its own";
+        if (irName.isNotEmpty())
+            advice << ", carrying the IR \"" << irName << "\". A convolution costs this at every period whatever the polyphony: a shorter "
+                      "Decay, a stereo instead of a true-stereo IR, or fewer routes with an IR lower it.";
+        else advice << ".";
+    }
+    if (state->couplersOn)
+        advice << "\n\nThe octave couplers (16' and 4') of every division were engaged from 61 keys on to pile up more voices; they are restored as they were.";
+    {
+        // Hyper-threads render slower than the physical cores alone (measured: more
+        // and higher peaks) - the one setting of the computer worth a word.
+        const int threads = engine.getRenderWorkerCount() + 1;
+        const int physical = juce::jmax(1, juce::SystemStats::getNumPhysicalCpus());
+        if (threads > physical)
+            advice << "\n\nRender threads: " << threads << ", more than the " << physical << " physical cores. Hyper-threads add nothing to this "
+                      "memory-bound work and only cause peaks (measured); set \"Render threads\" to all physical cores and measure again.";
+    }
+    int asioBlock = 0; double asioRate = 0.0;
+    auto asioOf = [&](DivisionAudioCallback* callback)
+    {
+        if (callback != nullptr && callback->isAsio() && callback->blockSize() > 0) { asioBlock = callback->blockSize(); asioRate = callback->sampleRate(); }
+    };
+    asioOf(primaryAudioCallback.get());
+    for (auto& callback : extraAudioCallbacks) asioOf(callback.get());
+    for (auto& entry : perspectiveAudioRoutes) if (entry.second != nullptr) asioOf(entry.second->callback.get());
+    if (asioBlock > 0 && asioRate > 0.0 && firstFailingKeys > 0)
+    {
+        const double ms = 1000.0 * asioBlock / asioRate;
+        advice << "\n\nThe ASIO buffer is " << asioBlock << " samples (" << juce::String(ms, 1) << " ms). A buffer of " << asioBlock * 2
+               << " gives every block twice the time and roughly doubles the polyphony, at " << juce::String(2.0 * ms, 1)
+               << " ms of latency - still fine for an organ. It is set in the driver's control panel.";
+    }
+    // Aggregated WASAPI below the Windows audio engine's 10 ms packet: the
+    // blocks arrive in bursts with shorter deadlines and no less latency.
+    {
+        int smallAggregateBlock = 0; double aggregateRate = 48000.0;
+        for (int manual = 0; manual <= manualCount; ++manual)
+            for (const auto& perspective : engine.getPerspectivesForManual(manual))
+            {
+                auto* manager = managerForRoute(manual, perspective);
+                auto* device = manager != nullptr ? manager->getCurrentAudioDevice() : nullptr;
+                if (device == nullptr || !manager->getCurrentAudioDeviceType().equalsIgnoreCase("Aggregated WASAPI")) continue;
+                const int block = device->getCurrentBufferSizeSamples();
+                const int packet = juce::roundToInt(device->getCurrentSampleRate() / 100.0);
+                if (block > 0 && block < packet && (smallAggregateBlock == 0 || block < smallAggregateBlock))
+                {
+                    smallAggregateBlock = block;
+                    aggregateRate = device->getCurrentSampleRate();
+                }
+            }
+        if (smallAggregateBlock > 0 && firstFailingKeys > 0)
+            advice << "\n\nAggregated WASAPI routes run at a buffer of " << smallAggregateBlock << " samples. The Windows audio engine feeds a "
+                      "shared stream in 10 ms packets (" << juce::roundToInt(aggregateRate / 100.0) << " samples): a smaller buffer only splits "
+                      "the packet into shorter deadlines - an IR's tail FFT alone can exceed a block of " << smallAggregateBlock
+                   << " - and does not lower the latency. Set the buffer to " << juce::roundToInt(aggregateRate / 100.0)
+                   << " or more on those routes, save the configuration and measure again.";
+    }
+    CrashHandler::note("Polyphony measurement done: limit set to " + juce::String(newLimit) + " (highest clean level "
+        + juce::String(highestCleanKeys) + " keys, " + juce::String(state->highestCleanPeak) + " voices; first failing level "
+        + juce::String(firstFailingKeys) + " keys, " + juce::String(state->firstFailingPeak) + " voices)");
+    // The report in a window of its own (an alert box cannot scroll, and the
+    // advice names every route on Windows Audio and every auxiliary route). The
+    // level glides back after OK.
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    struct Report final : public juce::Component
+    {
+        Report(const juce::String& body, std::function<void()> onClose) : closeAction(std::move(onClose))
+        {
+            editor.setMultiLine(true, true);
+            editor.setReadOnly(true);
+            editor.setScrollbarsShown(true);
+            editor.setCaretVisible(false);
+            editor.setFont(juce::FontOptions(16.0f));
+            editor.setColour(juce::TextEditor::backgroundColourId, juce::Colour(0xff2b2b2b));
+            editor.setColour(juce::TextEditor::outlineColourId, juce::Colour(0xff555555));
+            editor.setColour(juce::TextEditor::focusedOutlineColourId, juce::Colour(0xff555555));
+            editor.setColour(juce::TextEditor::textColourId, juce::Colours::white);
+            editor.setText(body, false);
+            addAndMakeVisible(editor);
+            ok.setButtonText("OK");
+            ok.onClick = [this]
+            {
+                if (auto* window = findParentComponentOfClass<juce::DialogWindow>()) window->closeButtonPressed();
+            };
+            addAndMakeVisible(ok);
+            setSize(820, 560);
+        }
+        ~Report() override { if (closeAction) closeAction(); }
+        void resized() override
+        {
+            auto area = getLocalBounds().reduced(12);
+            ok.setBounds(area.removeFromBottom(30).withSizeKeepingCentre(110, 30));
+            area.removeFromBottom(10);
+            editor.setBounds(area);
+        }
+        juce::TextEditor editor;
+        juce::TextButton ok;
+        std::function<void()> closeAction;
+    };
+    juce::DialogWindow::LaunchOptions options;
+    options.dialogTitle = "Maximum polyphony measured";
+    options.dialogBackgroundColour = juce::Colours::darkgrey;
+    options.content.setOwned(new Report(text + advice, [safeThis] { if (safeThis != nullptr) safeThis->outputGainTarget.store(1.0f); }));
+    options.componentToCentreAround = this;
+    options.useNativeTitleBar = true;
+    options.resizable = true;
+    options.launchAsync();
+}
+
+void MainComponent::enableAllStops()
+{
+    for (auto* s : engine.getStops())
+    {
+        engine.setStopEnabled(s, true);
+        for (int index = 0; index < (int)s->transmissions.size(); ++index)
+            engine.setTransmissionEnabled(s, index, true);
+    }
+    updateCombinationLights();
+    if (voicer) voicer->rebuildUI(stopsContent, stopsViewport);
+}
+
+void MainComponent::disableAllStops()
+{
+    // General cancel: every stop, transmission, coupler and tremulant off.
+    for (auto* s : engine.getStops())
+    {
+        engine.setStopEnabled(s, false);
+        for (int index = 0; index < (int)s->transmissions.size(); ++index)
+            engine.setTransmissionEnabled(s, index, false);
+    }
+    {
+        const juce::ScopedLock lock(couplerLock);
+        for (auto& coupler : couplers) coupler.enabled = false;
+        for (int source = 0; source <= manualCount; ++source) recomputeCouplersForSource(source);
+    }
+    for (int manual = 0; manual < SamplerEngine::maxManuals; ++manual)
+    {
+        auto& config = manualConfigs[(size_t)manual];
+        if (!config.tremulantEnabled) continue;
+        config.tremulantEnabled = false;
+        engine.setManualTremulant(manual, false, config.tremulantRateHz,
+            config.tremulantDepthCents, config.tremulantRankDriftDegrees);
+    }
+    saveSettings();
+    updateCombinationLights();
+    rebuildCouplerRail();
+    if (voicer) voicer->rebuildUI(stopsContent, stopsViewport);
+}
+
+void MainComponent::editOneShotPatterns()
+{
+    class PatternsDialog : public juce::Component,
+        public juce::Button::Listener
+    {
+    public:
+        PatternsDialog(const std::vector<juce::String>& initialPatterns,
+            std::function<void(const std::vector<juce::String>&)> onSave)
+            : currentPatterns(initialPatterns), saveCallback(onSave)
+        {
+            addAndMakeVisible(instructionLabel);
+            instructionLabel.setText("Enter one pattern per line (e.g., chiff, attack, perc). No quotes.", juce::dontSendNotification);
+            instructionLabel.setFont(juce::FontOptions(12.0f));
+            instructionLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+
+            addAndMakeVisible(textEditor);
+            textEditor.setMultiLine(true);
+            textEditor.setScrollbarsShown(true);
+            textEditor.setReturnKeyStartsNewLine(true);
+            textEditor.setText(getPatternsAsString(), false);
+
+            addAndMakeVisible(okButton);
+            okButton.setButtonText("OK");
+            okButton.addListener(this);
+
+            addAndMakeVisible(cancelButton);
+            cancelButton.setButtonText("Cancel");
+            cancelButton.addListener(this);
+        }
+
+        void resized() override
+        {
+            auto area = getLocalBounds().reduced(10);
+
+            instructionLabel.setBounds(area.removeFromTop(35));
+            textEditor.setBounds(area.removeFromTop(260));
+
+            auto buttons = area.removeFromTop(40);
+            okButton.setBounds(buttons.removeFromLeft(90).withHeight(32));
+            cancelButton.setBounds(buttons.removeFromLeft(90).withHeight(32));
+        }
+
+        void buttonClicked(juce::Button* button) override
+        {
+            if (button == &okButton)
+            {
+                std::vector<juce::String> newPatterns;
+                juce::StringArray lines;
+                lines.addLines(textEditor.getText());
+
+                for (auto& line : lines)
+                {
+                    juce::String trimmed = line.trim();
+                    if (trimmed.isNotEmpty())
+                        newPatterns.push_back(trimmed);
+                }
+
+                if (saveCallback)
+                    saveCallback(newPatterns);
+            }
+
+            // Close the dialog on OK, Cancel, or X button
+            if (auto* dw = findParentComponentOfClass<juce::DialogWindow>())
+                dw->exitModalState(0);
+        }
+
+    private:
+        std::vector<juce::String> currentPatterns;
+        std::function<void(const std::vector<juce::String>&)> saveCallback;
+
+        juce::Label instructionLabel;
+        juce::TextEditor textEditor;
+        juce::TextButton okButton, cancelButton;
+
+        juce::String getPatternsAsString() const
+        {
+            juce::String result;
+            for (const auto& p : currentPatterns)
+                result << p << "\n";
+            return result;
+        }
+    };
+
+    // ------------------------------------------------------------------
+
+    auto currentPatterns = engine.getOneShotPatterns();
+
+    auto* content = new PatternsDialog(currentPatterns, [this](const std::vector<juce::String>& newPatterns)
+        {
+            engine.setOneShotPatterns(newPatterns);
+            saveSettings();
+
+            if (topFolder != juce::File() && voicer != nullptr)
+            {
+                voicer->rebuildUI(stopsContent, stopsViewport);
+                if (voicerStateFile.existsAsFile())
+                    voicer->loadState(voicerStateFile);
+
+                repaint();
+            }
+        });
+
+    // === Correct way for JUCE 8 ===
+    juce::DialogWindow::LaunchOptions options;
+
+    content->setSize(600, 400);
+    options.content.setOwned(new ScrollableContent(content));   // DialogWindow takes ownership
+    options.dialogTitle = "One-shot Patterns";
+    options.dialogBackgroundColour = juce::Colours::grey;
+    options.escapeKeyTriggersCloseButton = true;
+    options.useNativeTitleBar = true;
+    options.resizable = true;
+
+    // Centred around the main component: the dialog takes its interface size as well.
+    options.componentToCentreAround = this;
+
+    // Launch the dialog (non-blocking, automatic lifetime management)
+    if (auto* window = options.launchAsync()) placeDialog(*window, "oneShotPatterns", 600, 400);
+}
+
+//==============================================================================
+int MainComponent::workersForCurrentPreset() const
+{
+    // The audio callback thread is a render lane too, so "N threads" = N - 1 workers.
+    const int logical = juce::jmax(1, juce::SystemStats::getNumCpus());
+    const int physical = juce::jmax(1, juce::SystemStats::getNumPhysicalCpus());
+    int lanes = juce::jmin(physical, logical);
+    if (renderThreadPreset == "all") lanes = logical;
+    else if (renderThreadPreset == "allMinusOne") lanes = logical - 1;
+    else if (renderThreadPreset == "physicalMinusOne") lanes = physical - 1;
+    return juce::jlimit(0, 62, lanes - 1);
+}
+
+void MainComponent::applyRenderThreadSetting()
+{
+    // renderThreads holds the total thread count (audio thread included), 0 = preset.
+    engine.setRenderThreadCount(renderThreads > 0 ? juce::jlimit(0, 62, renderThreads - 1) : workersForCurrentPreset());
+}
+
+void MainComponent::showAboutDialog(const juce::String& manualSection, const juce::String& fallbackSection)
+{
+    // The user manual and the licences of the program and of everything it
+    // contains, embedded in the executable (Source/ManualData.h from USER_MANUAL.md,
+    // Source/LicencesData.h from ThirdParty/): a list on the left, the chosen text
+    // on the right. Nothing is read from disk. The manual has a chapter box above
+    // its text (every heading of the manual); choosing a chapter - or the "?" of
+    // an option - scrolls the text so that the heading is at the top and paints
+    // the heading orange. The scrolling is done once the window is on screen (a
+    // TextEditor lays its text out at its final width only then).
+    struct Entry { const char* title; const char* const* parts; int partCount; };
+    static const Entry entries[]
+    {
+        { "User manual", kManualTextParts, kManualTextPartCount },
+        { "OrganSampler - GNU GPL v3", kLicenceOrganSamplerParts, kLicenceOrganSamplerPartCount },
+        { "GNU General Public License v3 (text)", kLicenceGpl3Parts, kLicenceGpl3PartCount },
+        { "JUCE 9 - GNU AGPL v3", kLicenceJuceNoticeParts, kLicenceJuceNoticePartCount },
+        { "GNU Affero General Public License v3 (text)", kLicenceAgpl3Parts, kLicenceAgpl3PartCount },
+        { "Steinberg ASIO SDK 2.3.4 - GPL v3 option", kLicenceAsioNoticeParts, kLicenceAsioNoticePartCount },
+        { "Signalsmith Stretch - MIT", kLicenceSignalsmithStretchParts, kLicenceSignalsmithStretchPartCount },
+        { "Signalsmith Linear - MIT", kLicenceSignalsmithLinearParts, kLicenceSignalsmithLinearPartCount },
+    };
+    // The manual's text with hyperlinks: a click on a link (a chapter named in
+    // the text) jumps to that chapter; the mouse shows a hand over it.
+    class LinkedText final : public juce::TextEditor
+    {
+    public:
+        struct Link { int start = 0, end = 0, chapter = -1; };
+        std::vector<Link> links;
+        std::function<void(int)> onLinkClicked;
+        int linkAt(const juce::MouseEvent& e) const
+        {
+            const int index = getTextIndexAt(e.x, e.y);
+            for (const auto& link : links)
+                if (index >= link.start && index < link.end) return link.chapter;
+            return -1;
+        }
+        void mouseMove(const juce::MouseEvent& e) override
+        {
+            juce::TextEditor::mouseMove(e);
+            setMouseCursor(linkAt(e) >= 0 ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::IBeamCursor);
+        }
+        void mouseUp(const juce::MouseEvent& e) override
+        {
+            juce::TextEditor::mouseUp(e);
+            if (e.mouseWasDraggedSinceMouseDown() || e.mods.isPopupMenu()) return;
+            const int chapter = linkAt(e);
+            if (chapter >= 0 && onLinkClicked) onLinkClicked(chapter);
+        }
+    };
+    class AboutComponent final : public juce::Component, private juce::ListBoxModel
+    {
+    public:
+        AboutComponent()
+        {
+            text.onLinkClicked = [this](int chapter) { showChapter(chapter); };
+            // The program's palette: the dark grey dialog, the list and the text on
+            // the same ground as the combo boxes of the Configuration Editor, no
+            // outlines, the chosen entry in the orange "on" colour, white text.
+            // The boxes themselves are transparent: paint() draws their rounded
+            // ground and outline (the combo-box look) underneath them.
+            list.setModel(this);
+            list.setRowHeight(26);
+            list.setColour(juce::ListBox::backgroundColourId, juce::Colours::transparentBlack);
+            list.setOutlineThickness(0);
+            addAndMakeVisible(list);
+            text.setMultiLine(true, true);   // word wrap: the manual's paragraphs are one line each
+            text.setReadOnly(true);
+            text.setScrollbarsShown(true);
+            text.setCaretVisible(false);
+            text.setColour(juce::TextEditor::backgroundColourId, juce::Colours::transparentBlack);
+            text.setColour(juce::TextEditor::textColourId, juce::Colours::white);
+            text.setColour(juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
+            text.setColour(juce::TextEditor::focusedOutlineColourId, juce::Colours::transparentBlack);
+            text.setLineSpacing(1.2f);
+            addAndMakeVisible(text);
+            // The manual (markdown) laid out for reading: headings as blocks of their
+            // own (bold, larger), paragraphs and list items joined into one line each
+            // so that they wrap at the window's width, a blank line after every
+            // paragraph and every item, emphasis marks and code marks dropped.
+            {
+                juce::String manual;
+                for (int i = 0; i < kManualTextPartCount; ++i) manual += juce::String(juce::CharPointer_UTF8(kManualTextParts[i]));
+                juce::StringArray lines;
+                lines.addLines(manual);
+                juce::String paragraph;
+                auto clean = [](const juce::String& s) { return s.removeCharacters("*`"); };
+                auto flush = [&]
+                {
+                    // Paragraphs keep their markers: the emphasis and the quotes mark the links.
+                    if (paragraph.isNotEmpty()) blocks.push_back({ paragraph, 0, -1 });
+                    paragraph.clear();
+                };
+                bool inCode = false;
+                juce::String code;
+                for (const auto& raw : lines)
+                {
+                    const auto line = raw.trimEnd();
+                    const auto trimmed = line.trim();
+                    // A fenced code block (```): kept line by line, monospaced - the folder trees.
+                    if (trimmed.startsWith("```"))
+                    {
+                        if (inCode) { blocks.push_back({ code, -1, -1 }); code.clear(); }
+                        else flush();
+                        inCode = !inCode;
+                        continue;
+                    }
+                    if (inCode) { code += (code.isEmpty() ? "" : "\n") + line; continue; }
+                    if (trimmed.startsWith("#"))
+                    {
+                        flush();
+                        Chapter chapter;
+                        chapter.level = 0;
+                        while (chapter.level < trimmed.length() && trimmed[chapter.level] == '#') ++chapter.level;
+                        chapter.heading = trimmed.trimCharactersAtStart("#").trim();
+                        chapter.block = (int)blocks.size();
+                        blocks.push_back({ clean(chapter.heading), juce::jlimit(1, 3, chapter.level), (int)chapters.size() });
+                        chapters.push_back(chapter);
+                    }
+                    else if (trimmed.isEmpty() || trimmed == "---") flush();
+                    else if (trimmed.startsWith("- ")) { flush(); paragraph = juce::String(juce::CharPointer_UTF8("\xE2\x80\xA2 ")) + trimmed.substring(2); }
+                    else if (trimmed.length() > 2 && juce::CharacterFunctions::isDigit(trimmed[0]) && trimmed.contains(". ")
+                             && trimmed.indexOf(". ") <= 2 && !line.startsWith(" ")) { flush(); paragraph = trimmed; }
+                    else paragraph = paragraph.isEmpty() ? line.trimCharactersAtStart(" \t") : paragraph + " " + trimmed;   // a no-break-space indent (the contents) is kept
+                }
+                flush();
+                chapterLabel.setText("Chapter:", juce::dontSendNotification);
+                addChildComponent(chapterLabel);
+                backButton.setButtonText("< Back");
+                backButton.setTooltip("Back to the place you read before the last jump (a link, a chapter, a \"?\")");
+                backButton.setEnabled(false);
+                backButton.onClick = [this] { goBack(); };
+                addChildComponent(backButton);
+                // The chapter box: parts at the left, their sections indented, the
+                // option chapters indented twice (no-break spaces: JUCE's trim() would
+                // strip ordinary spaces, and the layout keeps these).
+                const juce::String indent(juce::CharPointer_UTF8("\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0"));
+                for (int i = 0; i < (int)chapters.size(); ++i)
+                    chapterBox.addItem(juce::String::repeatedString(indent, juce::jmax(0, chapters[(size_t)i].level - 1)) + chapters[(size_t)i].heading, i + 1);
+                chapterBox.setTextWhenNothingSelected("Choose a chapter...");
+                chapterBox.onChange = [this] { if (chapterBox.getSelectedId() > 0) showChapter(chapterBox.getSelectedId() - 1); };
+                addChildComponent(chapterBox);
+            }
+            // Search in the shown text: Enter or "Next" finds the next occurrence
+            // (round the end), "Previous" the one before; the match is selected and
+            // brought into view.
+            findLabel.setText("Find:", juce::dontSendNotification);
+            addAndMakeVisible(findLabel);
+            findBox.setTextToShowWhenEmpty("word or phrase", juce::Colours::lightgrey);
+            findBox.setTooltip("Type a word and press Enter: the next occurrence in the text is selected and shown");
+            findBox.onReturnKey = [this] { findText(true); };
+            addAndMakeVisible(findBox);
+            findNext.setButtonText("Next");
+            findNext.onClick = [this] { findText(true); };
+            addAndMakeVisible(findNext);
+            findPrevious.setButtonText("Previous");
+            findPrevious.onClick = [this] { findText(false); };
+            addAndMakeVisible(findPrevious);
+            text.setColour(juce::TextEditor::highlightColourId, onColour().withAlpha(0.6f));
+            text.setColour(juce::TextEditor::highlightedTextColourId, juce::Colours::white);
+            close.setButtonText("Close");
+            close.onClick = [this] { if (auto* window = findParentComponentOfClass<juce::DialogWindow>()) window->closeButtonPressed(); };
+            addAndMakeVisible(close);
+            list.selectRow(0);
+            setSize(1100, 760);
+        }
+        // The chapter of an option: the heading named exactly like it, else a heading
+        // containing its name, else the heading of the option's section.
+        void openChapter(const juce::String& section, const juce::String& fallback)
+        {
+            auto find = [this](const juce::String& wanted, bool exact)
+            {
+                if (wanted.isEmpty()) return -1;
+                for (int i = 0; i < (int)chapters.size(); ++i)
+                {
+                    const auto& heading = chapters[(size_t)i].heading;
+                    if (exact ? heading.equalsIgnoreCase(wanted) : heading.containsIgnoreCase(wanted)) return i;
+                }
+                return -1;
+            };
+            int index = find(section, true);
+            if (index < 0) index = find(section, false);
+            if (index < 0) index = find(fallback, true);
+            if (index < 0) index = find(fallback, false);
+            if (index < 0) CrashHandler::note("Manual: no chapter for \"" + section + "\" (section \"" + fallback + "\")");
+            list.selectRow(0);
+            if (index >= 0) showChapter(index);
+        }
+        void resized() override
+        {
+            auto area = getLocalBounds().reduced(8);
+            close.setBounds(area.removeFromBottom(36).removeFromRight(100).reduced(3));
+            list.setBounds(area.removeFromLeft(330).reduced(3));
+            area.removeFromLeft(8);
+            {
+                // The top line: the chapter box (manual only) and, at the right, the search.
+                auto top = area.removeFromTop(32);
+                findPrevious.setBounds(top.removeFromRight(84).reduced(3));
+                findNext.setBounds(top.removeFromRight(64).reduced(3));
+                findBox.setBounds(top.removeFromRight(200).reduced(3));
+                findLabel.setBounds(top.removeFromRight(44).reduced(3));
+                if (chapterBox.isVisible())
+                {
+                    backButton.setBounds(top.removeFromLeft(70).reduced(3));
+                    chapterLabel.setBounds(top.removeFromLeft(66).reduced(3));
+                    chapterBox.setBounds(top.reduced(3));
+                }
+                area.removeFromTop(4);
+            }
+            text.setBounds(area.reduced(3));
+            // The window has its final size now: scroll to the chapter asked for.
+            if (pendingChapter >= 0 && text.getWidth() > 0)
+            {
+                const int chapter = pendingChapter;
+                pendingChapter = -1;
+                juce::Component::SafePointer<AboutComponent> safeThis(this);
+                juce::MessageManager::callAsync([safeThis, chapter] { if (safeThis != nullptr) safeThis->scrollToChapter(chapter); });
+            }
+        }
+        void paint(juce::Graphics& g) override
+        {
+            // Rounded boxes with the outline of the program's combo boxes, under the
+            // list and the text (which sit 3 px inside, clear of the rounded corners).
+            const auto ground = getLookAndFeel().findColour(juce::ComboBox::backgroundColourId);
+            const auto outline = getLookAndFeel().findColour(juce::ComboBox::outlineColourId);
+            for (const auto& box : { list.getBounds(), text.getBounds() })
+            {
+                const auto frame = box.toFloat().expanded(3.0f);
+                g.setColour(ground);
+                g.fillRoundedRectangle(frame, 5.0f);
+                g.setColour(outline);
+                g.drawRoundedRectangle(frame.reduced(0.5f), 5.0f, 1.0f);
+            }
+        }
+        int getNumRows() override { return (int)std::size(entries); }
+        void paintListBoxItem(int row, juce::Graphics& g, int width, int height, bool selected) override
+        {
+            if (row < 0 || row >= getNumRows()) return;
+            if (selected) g.fillAll(onColour());
+            g.setColour(juce::Colours::white);
+            g.setFont(juce::FontOptions(14.0f));
+            g.drawText(entries[row].title, 8, 0, width - 12, height, juce::Justification::centredLeft, true);
+        }
+        void findText(bool forward)
+        {
+            const auto needle = findBox.getText().trim();
+            if (needle.isEmpty()) return;
+            const auto haystack = text.getText();
+            const auto selected = text.getHighlightedRegion();
+            int position = -1;
+            if (forward)
+            {
+                const int from = selected.isEmpty() ? text.getCaretPosition() : selected.getEnd();
+                position = haystack.indexOfIgnoreCase(from, needle);
+                if (position < 0) position = haystack.indexOfIgnoreCase(0, needle);   // round the end
+            }
+            else
+            {
+                const int before = selected.isEmpty() ? text.getCaretPosition() : selected.getStart();
+                position = haystack.substring(0, juce::jmax(0, before)).lastIndexOfIgnoreCase(needle);
+                if (position < 0) position = haystack.lastIndexOfIgnoreCase(needle);   // round the start
+            }
+            findBox.setColour(juce::TextEditor::textColourId, position < 0 ? juce::Colours::orange : juce::Colours::white);
+            findBox.applyColourToAllText(position < 0 ? juce::Colours::orange : juce::Colours::white);
+            if (position < 0) return;
+            text.setCaretPosition(position);
+            text.scrollEditorToPositionCaret(0, text.getHeight() / 3);   // the match a third down the window
+            text.setHighlightedRegion({ position, position + needle.length() });
+        }
+        void selectedRowsChanged(int row) override
+        {
+            if (row < 0 || row >= getNumRows()) return;
+            const bool manual = row == 0;
+            if (manual != chapterBox.isVisible())
+            {
+                chapterBox.setVisible(manual);
+                chapterLabel.setVisible(manual);
+                backButton.setVisible(manual);
+                resized();
+            }
+            if (row == shownRow) return;
+            shownRow = row;
+            highlightedChapter = -1;
+            chapterBox.setSelectedId(0, juce::dontSendNotification);
+            setTextWithHighlight(row, -1);
+            text.moveCaretToTop(false);
+        }
+        // Where the reader is now (the manual only): the text index at the top of the
+        // view, so that "Back" can return there after a jump.
+        void rememberPlace()
+        {
+            if (shownRow != 0 || text.getWidth() <= 0) return;
+            history.push_back({ text.getTextIndexAt(4, 4), highlightedChapter });
+            if (history.size() > 50) history.erase(history.begin());
+            backButton.setEnabled(true);
+        }
+        void goBack()
+        {
+            if (history.empty()) return;
+            const auto place = history.back();
+            history.pop_back();
+            backButton.setEnabled(!history.empty());
+            if (list.getSelectedRow() != 0) list.selectRow(0);
+            if (shownRow != 0) selectedRowsChanged(0);
+            if (highlightedChapter != place.second) setTextWithHighlight(0, place.second);
+            chapterBox.setSelectedId(place.second + 1, juce::dontSendNotification);
+            pendingIndex = place.first;
+            scrollToIndex(place.first);
+            juce::Component::SafePointer<AboutComponent> safeThis(this);
+            juce::MessageManager::callAsync([safeThis] { if (safeThis != nullptr && safeThis->pendingIndex >= 0) { safeThis->scrollToIndex(safeThis->pendingIndex); safeThis->pendingIndex = -1; } });
+        }
+        void showChapter(int chapter)
+        {
+            if (chapter < 0 || chapter >= (int)chapters.size()) return;
+            rememberPlace();
+            if (list.getSelectedRow() != 0) list.selectRow(0);
+            if (shownRow != 0) selectedRowsChanged(0);
+            chapterBox.setSelectedId(chapter + 1, juce::dontSendNotification);
+            if (highlightedChapter != chapter) setTextWithHighlight(0, chapter);
+            if (text.getWidth() > 0) scrollToChapter(chapter);
+            // The text's layout (its height) is settled only after this message:
+            // scroll again then, otherwise the view is clamped to the old height.
+            pendingChapter = chapter;
+            juce::Component::SafePointer<AboutComponent> safeThis(this);
+            juce::MessageManager::callAsync([safeThis] { if (safeThis != nullptr) safeThis->rescroll(); });
+        }
+        // Once the window is on screen: the chapter asked for at the top again (the
+        // text may have been laid out anew when the window took its final size).
+        void rescroll()
+        {
+            if (pendingChapter >= 0 && text.getWidth() > 0) { scrollToChapter(pendingChapter); pendingChapter = -1; }
+            else if (highlightedChapter >= 0) scrollToChapter(highlightedChapter);
+        }
+    private:
+        struct Chapter { juce::String heading; int level = 1, block = 0, start = 0; };
+        struct Block { juce::String text; int level = 0; int chapter = -1; };   // level 0: paragraph; 1-3: heading
+        // The text of an entry. The manual is inserted block by block with its font
+        // (headings bold and larger); the heading of 'chapter' is painted orange
+        // (the "on" colour of the stops). Licences keep a monospaced font.
+        // The chapter a piece of text names: a heading equal to it, else (for a
+        // long enough text) a heading beginning with it ("Filled pipes: release
+        // length" names "Filled pipes: release length (pitch shift)").
+        // A heading without its outline number ("2.3 The crescendo" -> "The crescendo").
+        static juce::String unnumbered(const juce::String& heading)
+        {
+            int i = 0;
+            while (i < heading.length() && (juce::CharacterFunctions::isDigit(heading[i]) || heading[i] == '.')) ++i;
+            return i > 0 && i < heading.length() && heading[i] == ' ' ? heading.substring(i + 1) : heading;
+        }
+        int chapterNamed(const juce::String& name) const
+        {
+            const auto wanted = name.trimCharactersAtStart(juce::String(juce::CharPointer_UTF8(" \t\xC2\xA0"))).trimEnd();
+            if (wanted.isEmpty()) return -1;
+            for (int i = 0; i < (int)chapters.size(); ++i)
+                if (chapters[(size_t)i].heading.equalsIgnoreCase(wanted) || unnumbered(chapters[(size_t)i].heading).equalsIgnoreCase(wanted)) return i;
+            if (wanted.length() < 14) return -1;
+            for (int i = 0; i < (int)chapters.size(); ++i)
+                if (unnumbered(chapters[(size_t)i].heading).startsWithIgnoreCase(wanted)) return i;
+            return -1;
+        }
+        int partChapter(int part) const
+        {
+            const auto prefix = juce::String(part) + ". ";
+            for (int i = 0; i < (int)chapters.size(); ++i)
+                if (chapters[(size_t)i].level == 1 && chapters[(size_t)i].heading.startsWith(prefix)) return i;
+            return -1;
+        }
+        void insertLink(const juce::String& shown, int chapter, const juce::Font& body)
+        {
+            LinkedText::Link link;
+            link.start = text.getTotalNumChars();
+            link.end = link.start + shown.length();
+            link.chapter = chapter;
+            text.links.push_back(link);
+            text.setFont(juce::Font(juce::FontOptions(body.getHeight(), juce::Font::underlined)));
+            text.setColour(juce::TextEditor::textColourId, juce::Colours::lightskyblue);
+            text.insertTextAtCaret(shown);
+            text.setFont(body);
+            text.setColour(juce::TextEditor::textColourId, juce::Colours::white);
+        }
+        // Plain text, with every "part N" turned into a link to that part.
+        void insertPlain(const juce::String& plain, const juce::Font& body)
+        {
+            int from = 0;
+            while (from < plain.length())
+            {
+                int at = plain.indexOfIgnoreCase(from, "part ");
+                int part = -1;
+                while (at >= 0)
+                {
+                    const juce::juce_wchar digit = plain[at + 5];
+                    const juce::juce_wchar after = plain[at + 6];
+                    const bool wordStart = at == 0 || !juce::CharacterFunctions::isLetter(plain[at - 1]);
+                    if (wordStart && digit >= '1' && digit <= '9' && !juce::CharacterFunctions::isLetterOrDigit(after)) { part = partChapter((int)(digit - '0')); if (part >= 0) break; }
+                    at = plain.indexOfIgnoreCase(at + 5, "part ");
+                }
+                if (at < 0 || part < 0)
+                {
+                    text.setFont(body);
+                    text.setColour(juce::TextEditor::textColourId, juce::Colours::white);
+                    text.insertTextAtCaret(plain.substring(from));
+                    return;
+                }
+                text.setFont(body);
+                text.setColour(juce::TextEditor::textColourId, juce::Colours::white);
+                text.insertTextAtCaret(plain.substring(from, at));
+                insertLink(plain.substring(at, at + 6), part, body);
+                from = at + 6;
+            }
+        }
+        // A paragraph of the manual: a chapter name in quotes or in emphasis (*...*)
+        // becomes a link (the quotes stay, the emphasis marks go); a paragraph that
+        // is a chapter name itself (the contents) is one link; "part N" links too.
+        void insertParagraph(const juce::String& raw, const juce::Font& body)
+        {
+            // No trim() here: JUCE's trim() also strips the no-break spaces that
+            // indent the contents entries (iswspace counts U+00A0 as a space).
+            const auto whole = raw.removeCharacters("*`").trimCharactersAtStart(" \t").trimEnd();
+            const juce::String nbsp(juce::CharPointer_UTF8("\xC2\xA0"));
+            const auto entry = whole.trimCharactersAtStart(nbsp);
+            const int wholeChapter = chapterNamed(entry);   // the contents: indented entries
+            if (wholeChapter >= 0)
+            {
+                // The indent as plain text (not underlined), then the link.
+                if (entry.length() < whole.length()) insertPlain(whole.substring(0, whole.length() - entry.length()), body);
+                insertLink(entry, wholeChapter, body);
+                return;
+            }
+            juce::String plain;
+            auto flushPlain = [&] { if (plain.isNotEmpty()) { insertPlain(plain.removeCharacters("`"), body); plain.clear(); } };
+            int i = 0;
+            while (i < raw.length())
+            {
+                const juce::juce_wchar c = raw[i];
+                if (c == '"' || c == '*')
+                {
+                    const int end = raw.indexOfChar(i + 1, c);
+                    if (end > i + 1)
+                    {
+                        const auto inner = raw.substring(i + 1, end).removeCharacters("*`");
+                        const int chapter = chapterNamed(inner);
+                        if (chapter >= 0)
+                        {
+                            if (c == '"') plain += c;
+                            flushPlain();
+                            insertLink(inner, chapter, body);
+                            if (c == '"') plain += c;
+                            i = end + 1;
+                            continue;
+                        }
+                    }
+                }
+                if (c != '*') plain += c;
+                ++i;
+            }
+            flushPlain();
+        }
+        void setTextWithHighlight(int row, int chapter)
+        {
+            text.clear();
+            text.links.clear();
+            text.setColour(juce::TextEditor::textColourId, juce::Colours::white);
+            if (row == 0)
+            {
+                const juce::Font body(juce::FontOptions(16.0f));
+                for (const auto& block : blocks)
+                {
+                    if (block.level < 0)
+                    {
+                        // A code block: monospaced, line by line (the folder trees).
+                        text.setFont(juce::Font(juce::FontOptions(juce::Font::getDefaultMonospacedFontName(), 14.0f, juce::Font::plain)));
+                        text.insertTextAtCaret(block.text);
+                    }
+                    else if (block.level > 0)
+                    {
+                        const float size = block.level == 1 ? 24.0f : block.level == 2 ? 20.0f : 17.0f;
+                        text.setFont(juce::Font(juce::FontOptions(size, juce::Font::bold)));
+                        if (block.chapter >= 0) chapters[(size_t)block.chapter].start = text.getTotalNumChars();
+                        text.setColour(juce::TextEditor::textColourId, block.chapter == chapter ? onColour() : juce::Colours::white);
+                        text.insertTextAtCaret(block.text);
+                        text.setColour(juce::TextEditor::textColourId, juce::Colours::white);
+                    }
+                    else insertParagraph(block.text, body);
+                    text.setFont(body);
+                    text.insertTextAtCaret("\n\n");
+                }
+            }
+            else
+            {
+                juce::String joined;
+                for (int i = 0; i < entries[row].partCount; ++i) joined += juce::String(juce::CharPointer_UTF8(entries[row].parts[i]));
+                text.setFont(juce::Font(juce::FontOptions(juce::Font::getDefaultMonospacedFontName(), 13.0f, juce::Font::plain)));
+                text.insertTextAtCaret(joined);
+            }
+            highlightedChapter = row == 0 ? chapter : -1;
+        }
+        void scrollToChapter(int chapter)
+        {
+            if (chapter < 0 || chapter >= (int)chapters.size()) return;
+            scrollToIndex(chapters[(size_t)chapter].start);   // the heading at the top of the text
+        }
+        void scrollToIndex(int index)
+        {
+            text.setCaretPosition(juce::jlimit(0, text.getTotalNumChars(), index));
+            text.scrollEditorToPositionCaret(0, 0);
+        }
+        juce::ListBox list;
+        LinkedText text;
+        juce::TextButton close;
+        juce::Label chapterLabel;
+        juce::ComboBox chapterBox;
+        juce::Label findLabel;
+        juce::TextEditor findBox;
+        juce::TextButton findNext, findPrevious;
+        std::vector<Chapter> chapters;
+        std::vector<Block> blocks;
+        juce::TextButton backButton;
+        std::vector<std::pair<int, int>> history;   // (text index at the top of the view, highlighted chapter)
+        int shownRow = -1, highlightedChapter = -1, pendingChapter = -1, pendingIndex = -1;
+    };
+    auto* content = new AboutComponent();
+    if (manualSection.isNotEmpty()) content->openChapter(manualSection, fallbackSection);
+    juce::DialogWindow::LaunchOptions options;
+    options.content.setOwned(new ScrollableContent(content));
+    options.dialogTitle = "About OrganSampler, user manual & licences";
+    options.dialogBackgroundColour = juce::Colours::darkgrey;   // like every other dialog of the program
+    options.componentToCentreAround = this;
+    options.escapeKeyTriggersCloseButton = true;
+    options.useNativeTitleBar = true;
+    options.resizable = true;
+    aboutWindow.reset(options.create());
+    aboutWindow->setVisible(true);
+    juce::Component::SafePointer<AboutComponent> safeContent(content);
+    juce::MessageManager::callAsync([safeContent] { if (safeContent != nullptr) safeContent->rescroll(); });
+}
+
+void MainComponent::showConfigurationEditor()
+{
+    // Always rebuilt, so every row shows the current value.
+    configurationWindow.reset();
+
+    class Editor final : public juce::Component
+    {
+    public:
+        ~Editor() override { owner.configEditorRefresh = nullptr; }
+        explicit Editor(MainComponent& o) : owner(o)
+        {
+            build();
+            viewport.setViewedComponent(&content, false);
+            viewport.setScrollBarsShown(true, false);
+            addAndMakeVisible(viewport);
+            openFolder.setButtonText("Show settings.json");
+            openFolder.onClick = [this] { this->owner.settingsFile.revealToUser(); };
+            addAndMakeVisible(openFolder);
+            reloadAll.setButtonText("Refresh values");
+            reloadAll.onClick = [this] { rows.clear(); content.removeAllChildren(); build(); resized(); };
+            addAndMakeVisible(reloadAll);
+            // Actions that change what the editor shows (swapping divisions, the
+            // second window, folder loads, console size) refresh it themselves.
+            owner.configEditorRefresh = [this] { rows.clear(); content.removeAllChildren(); build(); resized(); };
+            // About: the program is free software (GPLv3); the dialog carries every licence text.
+            aboutLabel.setText("OrganSampler " + juce::String(ProjectInfo::versionString)
+                + " - free software under the GNU GPL v3, built with JUCE (AGPLv3), the Steinberg ASIO SDK (GPLv3) and Signalsmith Stretch (MIT)",
+                juce::dontSendNotification);
+            aboutLabel.setFont(juce::FontOptions(14.0f));
+            aboutLabel.setJustificationType(juce::Justification::centredLeft);
+            addAndMakeVisible(aboutLabel);
+            licences.setButtonText("About & licences...");
+            licences.setTooltip("The licences of OrganSampler and of the software it contains, in full.");
+            licences.onClick = [this] { this->owner.showAboutDialog(); };
+            addAndMakeVisible(licences);
+            close.setButtonText("Close");
+            close.onClick = [this]
+            {
+                if (auto* window = findParentComponentOfClass<juce::DialogWindow>()) window->closeButtonPressed();
+            };
+            addAndMakeVisible(close);
+        }
+
+        void resized() override
+        {
+            auto area = getLocalBounds().reduced(8);
+            // The About bar at the very top: version, licence summary, the licences button.
+            auto about = area.removeFromTop(34);
+            licences.setBounds(about.removeFromRight(170).reduced(3));
+            aboutLabel.setBounds(about.reduced(3));
+            auto buttons = area.removeFromBottom(36);
+            close.setBounds(buttons.removeFromRight(100).reduced(3));
+            reloadAll.setBounds(buttons.removeFromRight(130).reduced(3));
+            openFolder.setBounds(buttons.removeFromLeft(160).reduced(3));
+            viewport.setBounds(area);
+            const int width = juce::jmax(700, viewport.getWidth() - viewport.getScrollBarThickness() - 4);
+            const int labelWidth = 330;
+            int y = 4;
+            bool hidden = false;   // rows of a collapsed section are not shown
+            for (auto& row : rows)
+            {
+                if (row.header)
+                {
+                    hidden = row.collapsible && collapsedSections[row.title];
+                    if (auto* label = dynamic_cast<juce::Label*>(row.label.get()))
+                        label->setText(row.collapsible ? (hidden ? "+ " : "- ") + row.title : row.title,
+                            juce::dontSendNotification);
+                    row.label->setBounds(4, y + 10, width - 8, 26);
+                    y += 42;
+                    continue;
+                }
+                row.label->setVisible(! hidden);
+                if (row.control) row.control->setVisible(! hidden);
+                if (row.help) row.help->setVisible(! hidden);
+                if (hidden) continue;
+                row.label->setBounds(12, y, labelWidth, row.height);
+                const int helpWidth = row.help ? 30 : 0;
+                if (row.control) row.control->setBounds(labelWidth + 20, y + 2, width - labelWidth - 32 - helpWidth, row.height - 4);
+                if (row.help) row.help->setBounds(width - 12 - 26, y + 3, 26, row.height - 6);
+                y += row.height + 2;
+            }
+            content.setSize(width, juce::jmax(y + 8, viewport.getHeight()));
+        }
+
+    private:
+        struct Row
+        {
+            std::unique_ptr<juce::Component> label, control;
+            std::unique_ptr<juce::TextButton> help;   // "?": opens the user manual at the row's section
+            int height = 30;
+            bool header = false;
+            bool collapsible = false;
+            juce::String title;
+        };
+        // Section header that toggles its section when clicked.
+        struct HeaderLabel : public juce::Label
+        {
+            std::function<void()> onClick;
+            void mouseDown(const juce::MouseEvent&) override { if (onClick) onClick(); }
+        };
+        MainComponent& owner;
+        juce::Viewport viewport;
+        juce::Component content;
+        std::vector<Row> rows;
+        std::map<juce::String, bool> collapsedSections;   // survives "Refresh values"
+        juce::TextButton openFolder, reloadAll, close, licences;
+        juce::Label aboutLabel;
+        juce::Array<juce::MidiDeviceInfo> midiDevices;
+
+        void addSection(const juce::String& title, bool collapsible = false, bool collapsedByDefault = false)
+        {
+            Row row;
+            auto label = std::make_unique<HeaderLabel>();
+            label->setText(title, juce::dontSendNotification);
+            label->setFont(juce::FontOptions(18.0f, juce::Font::bold));
+            label->setColour(juce::Label::textColourId, juce::Colours::orange);
+            if (collapsible)
+            {
+                // The folding is remembered across sessions (settings.json).
+                if (collapsedSections.find(title) == collapsedSections.end())
+                {
+                    const auto remembered = owner.configEditorCollapsed.find(title);
+                    collapsedSections[title] = remembered != owner.configEditorCollapsed.end() ? remembered->second : collapsedByDefault;
+                }
+                label->setMouseCursor(juce::MouseCursor::PointingHandCursor);
+                label->setTooltip("Click to show or hide this section");
+                label->onClick = [this, title]
+                {
+                    collapsedSections[title] = ! collapsedSections[title];
+                    owner.configEditorCollapsed[title] = collapsedSections[title];
+                    owner.saveSettings();
+                    resized();
+                };
+            }
+            content.addAndMakeVisible(*label);
+            row.label = std::move(label);
+            row.header = true;
+            row.collapsible = collapsible;
+            row.title = title;
+            rows.push_back(std::move(row));
+            currentSection = title;
+        }
+        juce::String currentSection;   // the section the rows being added belong to (the manual chapter to fall back on)
+
+        // Development: ORGAN_DUMP_OPTIONS=<file> appends every option of the editor
+        // (section, label, kind and range, tooltip) to that file as it is built - the
+        // list the user manual's reference chapter is written from.
+        void dumpOption(const juce::String& kind, const juce::String& text, const juce::String& tooltip)
+        {
+            static const char* env = std::getenv("ORGAN_DUMP_OPTIONS");
+            if (env == nullptr) return;
+            juce::File(juce::String::fromUTF8(env)).appendText(currentSection + "\t" + text + "\t" + kind + "\t"
+                + tooltip.replaceCharacters("\t\n", "  ") + "\n", false, false, "\n");
+        }
+
+        // Every row gets a "?" button at its right that opens the user manual (embedded
+        // in the executable) at the chapter of that very option: the manual has a
+        // heading for every option, named like it (helpSection overrides the name
+        // looked up; the row's section is the fallback). enabled false: the control
+        // greyed out (a setting that does not apply to the method chosen).
+        void addRow(const juce::String& text, std::unique_ptr<juce::Component> control, int height = 30,
+            const juce::String& tooltip = {}, const juce::String& helpSectionIn = {}, bool enabled = true)
+        {
+            const juce::String helpSection = helpSectionIn.isNotEmpty() ? helpSectionIn : text;
+            Row row;
+            auto label = std::make_unique<juce::Label>();
+            label->setText(text, juce::dontSendNotification);
+            label->setJustificationType(juce::Justification::centredLeft);
+            if (tooltip.isNotEmpty()) label->setTooltip(tooltip);
+            if (!enabled) label->setAlpha(0.45f);
+            content.addAndMakeVisible(*label);
+            row.label = std::move(label);
+            if (control)
+            {
+                if (tooltip.isNotEmpty())
+                    if (auto* client = dynamic_cast<juce::SettableTooltipClient*>(control.get()))
+                        client->setTooltip(tooltip);
+                control->setEnabled(enabled);
+                if (!enabled) control->setAlpha(0.45f);
+                content.addAndMakeVisible(*control);
+            }
+            if (helpSection.isNotEmpty())
+            {
+                auto help = std::make_unique<juce::TextButton>("?");
+                help->setTooltip("Opens the user manual at \"" + helpSection + "\".");
+                MainComponent& o = owner;
+                const juce::String fallback = currentSection;
+                help->onClick = [&o, helpSection, fallback] { o.showManualSection(helpSection, fallback); };
+                content.addAndMakeVisible(*help);
+                row.help = std::move(help);
+            }
+            row.control = std::move(control);
+            row.height = height;
+            rows.push_back(std::move(row));
+        }
+
+        void addInfo(const juce::String& text, const juce::String& value)
+        {
+            auto label = std::make_unique<juce::Label>();
+            label->setText(value, juce::dontSendNotification);
+            label->setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+            label->setMinimumHorizontalScale(0.5f);
+            dumpOption("info", text, value);
+            addRow(text, std::move(label));
+        }
+
+        void addButton(const juce::String& text, const juce::String& caption, std::function<void()> onClick,
+            const juce::String& tooltip = {}, const juce::String& helpSection = {}, bool enabled = true)
+        {
+            auto button = std::make_unique<juce::TextButton>(caption);
+            button->onClick = std::move(onClick);
+            dumpOption("button \"" + caption + "\"", text, tooltip);
+            addRow(text, std::move(button), 30, tooltip, helpSection, enabled);
+        }
+
+        void addSlider(const juce::String& text, double minimum, double maximum, double step,
+            const juce::String& suffix, double value, double defaultValue,
+            std::function<void(double)> onChange, const juce::String& tooltip = {},
+            const juce::String& helpSection = {}, bool enabled = true)
+        {
+            auto slider = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight);
+            slider->setRange(minimum, maximum, step);
+            slider->setTextValueSuffix(suffix);
+            slider->setTextBoxStyle(juce::Slider::TextBoxRight, false, 90, 22);
+            slider->setValue(value, juce::dontSendNotification);
+            slider->setDoubleClickReturnValue(true, defaultValue);
+            slider->setScrollWheelEnabled(true);
+            auto* raw = slider.get();
+            slider->onValueChange = [raw, onChange] { if (onChange) onChange(raw->getValue()); };
+            dumpOption("slider " + juce::String(minimum) + ".." + juce::String(maximum) + " step " + juce::String(step) + suffix
+                + ", default " + juce::String(defaultValue) + suffix, text, tooltip);
+            addRow(text, std::move(slider), 30, tooltip, helpSection, enabled);
+        }
+
+        void addCombo(const juce::String& text, const juce::StringArray& items, int selectedIndex,
+            std::function<void(int)> onChange, const juce::String& tooltip = {}, const juce::String& helpSection = {})
+        {
+            auto combo = std::make_unique<juce::ComboBox>();
+            for (int i = 0; i < items.size(); ++i) combo->addItem(items[i], i + 1);
+            combo->setSelectedId(selectedIndex + 1, juce::dontSendNotification);
+            auto* raw = combo.get();
+            combo->onChange = [raw, onChange] { if (onChange && raw->getSelectedId() > 0) onChange(raw->getSelectedId() - 1); };
+            dumpOption("choice: " + items.joinIntoString(" | "), text, tooltip);
+            addRow(text, std::move(combo), 30, tooltip, helpSection);
+        }
+
+        void addToggle(const juce::String& text, bool state, std::function<void(bool)> onChange,
+            const juce::String& tooltip = {}, const juce::String& helpSection = {})
+        {
+            auto toggle = std::make_unique<juce::ToggleButton>(state ? "enabled" : "disabled");
+            toggle->setToggleState(state, juce::dontSendNotification);
+            auto* raw = toggle.get();
+            toggle->onClick = [raw, onChange]
+            {
+                raw->setButtonText(raw->getToggleState() ? "enabled" : "disabled");
+                if (onChange) onChange(raw->getToggleState());
+            };
+            dumpOption("on/off", text, tooltip);
+            addRow(text, std::move(toggle), 30, tooltip, helpSection);
+        }
+
+        void addText(const juce::String& text, const juce::String& value, bool multiline,
+            std::function<void(const juce::String&)> onCommit, const juce::String& tooltip = {},
+            const juce::String& helpSection = {})
+        {
+            auto editor = std::make_unique<juce::TextEditor>();
+            editor->setMultiLine(multiline, false);
+            editor->setReturnKeyStartsNewLine(multiline);
+            editor->setScrollbarsShown(multiline);
+            editor->setText(value, false);
+            auto* raw = editor.get();
+            auto commit = [raw, onCommit] { if (onCommit) onCommit(raw->getText()); };
+            editor->onFocusLost = commit;
+            if (!multiline) editor->onReturnKey = commit;
+            dumpOption(multiline ? "text (lines)" : "text", text, tooltip);
+            addRow(text, std::move(editor), multiline ? 78 : 30, tooltip, helpSection);
+        }
+
+        static juce::String channelsToText(const std::vector<int>& channels)
+        {
+            juce::StringArray names;
+            for (const int channel : channels) names.add(juce::String(channel + 1));
+            return names.joinIntoString(", ");
+        }
+        static std::vector<int> textToChannels(const juce::String& text)
+        {
+            juce::StringArray tokens;
+            tokens.addTokens(text, ",; ", "");
+            std::vector<int> channels;
+            for (const auto& token : tokens)
+                if (token.getIntValue() > 0) channels.push_back(token.getIntValue() - 1);
+            std::sort(channels.begin(), channels.end());
+            channels.erase(std::unique(channels.begin(), channels.end()), channels.end());
+            return channels;
+        }
+        static juce::String patternsToText(const std::vector<juce::String>& patterns)
+        {
+            juce::String result;
+            for (const auto& pattern : patterns) result << pattern << "\n";
+            return result;
+        }
+        static std::vector<juce::String> textToPatterns(const juce::String& text)
+        {
+            std::vector<juce::String> result;
+            juce::StringArray lines;
+            lines.addLines(text);
+            for (const auto& line : lines) if (line.trim().isNotEmpty()) result.push_back(line.trim());
+            return result;
+        }
+
+        void build()
+        {
+            auto& o = owner;
+            auto& engine = o.engine;
+            const int logical = juce::jmax(1, juce::SystemStats::getNumCpus());
+            const int physical = juce::jmax(1, juce::SystemStats::getNumPhysicalCpus());
+            midiDevices = juce::MidiInput::getAvailableDevices();
+
+            //---------------------------------------------------------------- Engine
+            addSection("Engine");
+            addInfo("This computer", juce::SystemStats::getCpuModel().trim() + "  -  " + juce::String(physical)
+                + " physical cores, " + juce::String(logical) + " logical CPUs, "
+                + juce::String(juce::SystemStats::getMemorySizeInMegabytes() / 1024) + " GB RAM");
+            {
+                // Presets first, then every explicit thread count (1 = the audio
+                // driver thread renders alone, no worker threads).
+                const juce::StringArray presetIds{ "physical", "physicalMinusOne", "all", "allMinusOne" };
+                juce::StringArray items;
+                items.add("All physical cores (" + juce::String(physical) + " threads)  [default]");
+                items.add("All physical cores - 1 (" + juce::String(physical - 1) + " threads)");
+                items.add("All logical CPUs (" + juce::String(logical) + " threads, hyper-threading, not recommended)");
+                items.add("All logical CPUs - 1 (" + juce::String(logical - 1) + " threads, not recommended)");
+                const int maxThreads = juce::jlimit(1, 63, logical);
+                for (int threads = 1; threads <= maxThreads; ++threads)
+                    items.add(threads == 1 ? juce::String("1 thread (audio driver thread only)")
+                                           : juce::String(threads) + " threads");
+                int selected = presetIds.indexOf(o.renderThreadPreset);
+                if (o.renderThreads > 0) selected = presetIds.size() + juce::jlimit(1, maxThreads, o.renderThreads) - 1;
+                if (selected < 0) selected = 0;
+                addCombo("Render threads", items, selected, [&o, presetIds](int index)
+                {
+                    if (index < presetIds.size())
+                    {
+                        o.renderThreadPreset = presetIds[index];
+                        o.renderThreads = 0;
+                    }
+                    else
+                    {
+                        o.renderThreadPreset = "custom";
+                        o.renderThreads = index - presetIds.size() + 1;
+                    }
+                    o.applyRenderThreadSetting();
+                    o.saveSettings();
+                }, "CPU threads rendering pipes, the audio driver thread included. Hyper-threads share a "
+                   "core's memory pipeline and only add crackle. Changing this briefly mutes the engine.");
+                addInfo("Currently active", juce::String(engine.getRenderWorkerCount() + 1) + " render threads, "
+                    + (engine.isUsingSimd() ? "AVX2" : "scalar") + " interpolation kernel");
+            }
+            {
+                juce::StringArray items;
+                const int maxThreads = juce::jlimit(1, 63, logical);
+                for (int threads = 1; threads <= maxThreads; ++threads)
+                    items.add(threads == 1 ? juce::String("1 thread (audio driver thread only)  [default]")
+                                           : juce::String(threads) + " threads");
+                addCombo("Render threads for Aggregated WASAPI", items,
+                    juce::jlimit(1, maxThreads, o.renderThreadsWasapi) - 1, [&o](int index)
+                {
+                    o.renderThreadsWasapi = index + 1;
+                    o.wasapiRenderLanes.store(o.renderThreadsWasapi);
+                    o.saveSettings();
+                }, "Used by divisions/perspectives on Windows Audio or Aggregated WASAPI devices. "
+                   "Their large buffers need few threads; more threads only add crackle. ASIO uses the setting above.");
+            }
+            addCombo("Sample storage in RAM", { "32-bit float (less polyphony, full fidelity)",
+                "16-bit integer (more polyphony, more hiss)" },
+                o.sampleStorageFloat ? 0 : 1, [&o](int index)
+            {
+                o.sampleStorageFloat = index == 0;
+                o.engine.setSampleStorageFloat(o.sampleStorageFloat);
+                o.saveSettings();
+            }, "Takes effect the next time a division folder is loaded.");
+            addCombo("Sample rate on loading", { "Resample everything to 48 kHz (the base rate, windowed sinc)",
+                "Keep each file's own rate (faster loading, played by interpolation)" },
+                o.resampleOnLoad ? 0 : 1, [&o](int index)
+            {
+                o.resampleOnLoad = index == 0;
+                o.engine.setResampleOnLoad(o.resampleOnLoad);
+                o.saveSettings();
+            }, "Files recorded at 96 or 44.1 kHz: resampling them once while loading takes longer but they then play "
+               "exactly like 48 kHz files and need half the RAM (96 kHz). Takes effect the next time a division folder is loaded.");
+            addSlider("Maximum polyphony", 64.0, (double)SamplerEngine::maxVoices, 1.0, " voices", engine.getMaxPolyphony(), 30000.0,
+                [&o](double value) { o.engine.setMaxPolyphony((int)value); o.saveSettings(); },
+                "Oldest voices are faded out when this many pipes sound at once.");
+            addButton("Measure the maximum polyphony", "Measure...", [&o] { o.startPolyphonyMeasurement(); },
+                "Finds the limit for THIS organ on THIS computer: with the loaded sample set, every stop engaged and the "
+                "keys struck repeatedly on every division (heard very quietly, at -42 dB), the limit is raised step by step "
+                "until the busiest audio thread exceeds 85 % of its period or the driver calls late, then narrowed down; the "
+                "maximum polyphony is set to the highest clean limit (lower it on the slider for more headroom, raise it if you dare). "
+                "The reachable polyphony depends on the whole configuration - the number of audio routes (every perspective "
+                "of every division renders its own voices), the auxiliary routes, the IR reverbs, the drivers and buffer "
+                "sizes - so the set must be loaded and its audio outputs configured first, and the result belongs to this "
+                "configuration: save it afterwards. Takes one to two minutes; the registration is restored afterwards.",
+                "Measure the maximum polyphony", o.canMeasurePolyphony());
+
+            //---------------------------------------------------------------- Global sound
+            addSection("Global sound");
+            // Each row: caption, a checkbox "show on the main panel", the slider.
+            struct ToggleSliderRow final : public juce::Component
+            {
+                juce::ToggleButton shown;
+                juce::Slider slider{ juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight };
+                void resized() override
+                {
+                    auto area = getLocalBounds();
+                    shown.setBounds(area.removeFromLeft(26));
+                    slider.setBounds(area);
+                }
+            };
+            auto bindSlider = [this, &o](const juce::String& text, juce::Slider& target, const juce::String& suffix,
+                double defaultValue, MainComponent::GlobalSlider which)
+            {
+                auto row = std::make_unique<ToggleSliderRow>();
+                row->shown.setToggleState(o.globalSliderShown[(size_t)which], juce::dontSendNotification);
+                row->shown.setTooltip("Show this slider on the main panel");
+                auto* shownButton = &row->shown;
+                row->shown.onClick = [&o, which, shownButton]
+                {
+                    o.globalSliderShown[(size_t)which] = shownButton->getToggleState();
+                    o.resized();
+                    o.saveSettings();
+                };
+                row->slider.setRange(target.getMinimum(), target.getMaximum(), target.getInterval());
+                row->slider.setTextValueSuffix(suffix);
+                row->slider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 90, 22);
+                row->slider.setValue(target.getValue(), juce::dontSendNotification);
+                row->slider.setDoubleClickReturnValue(true, defaultValue);
+                row->slider.setScrollWheelEnabled(true);
+                auto* raw = &row->slider;
+                row->slider.onValueChange = [raw, &target] { target.setValue(raw->getValue(), juce::sendNotification); };
+                row->addAndMakeVisible(row->shown);
+                row->addAndMakeVisible(row->slider);
+                dumpOption("slider " + juce::String(target.getMinimum()) + ".." + juce::String(target.getMaximum()) + suffix
+                    + ", default " + juce::String(defaultValue) + suffix + ", with a \"show on the main panel\" box", text, target.getTooltip());
+                addRow(text, std::move(row), 30, "The checkbox shows the slider on the main panel");
+            };
+            bindSlider("Master volume", o.masterVolumeSlider, " dB", -20.0, MainComponent::gsMaster);
+            bindSlider("Global pitch", o.pitchSlider, " cents", 0.0, MainComponent::gsPitch);
+            bindSlider("Sustain fade-out on key release", o.releaseFadeOutSlider, " ms", 70.0, MainComponent::gsReleaseFadeOut);
+            bindSlider("Release sample fade-in", o.releaseFadeInSlider, " ms", 70.0, MainComponent::gsReleaseFadeIn);
+            bindSlider("Release sample volume", o.releaseScalingSlider, " dB", 0.0, MainComponent::gsReleaseScaling);
+            bindSlider("Release cutting", o.releaseCutSlider, " %", 100.0, MainComponent::gsReleaseCut);
+            bindSlider("Attack minimum time", o.attackMinimumSlider, " ms", 80.0, MainComponent::gsAttackMin);
+            bindSlider("Attack minimum delay", o.attackMinimumDelaySlider, " ms", 2.0, MainComponent::gsAttackDelay);
+
+            //---------------------------------------------------------------- Advanced global audio
+            addSection("Advanced global audio", true, true);   // collapsible, collapsed by default: rarely needed
+            // Depth of the high shelf at full attenuation by each modulator; 0 dB
+            // switches that modulator's part of the filter off (no render cost when all are 0).
+            auto harmonicChanged = [&o] { o.engine.setHarmonicFilterDb(o.harmonicSwellDb, o.harmonicWindDb, o.harmonicTremulantDb); o.saveSettings(); };
+            // --- Swell
+            addSlider("Swell: harmonic filter", 0.0, 12.0, 0.5, " dB", o.harmonicSwellDb, 8.0,
+                [&o, harmonicChanged](double value) { o.harmonicSwellDb = (float)value; harmonicChanged(); },
+                "High shelf above ~3 kHz that follows the swell: this much high-frequency loss with the shutters closed.");
+            // --- Wind
+            addSlider("Wind: harmonic filter", 0.0, 12.0, 0.5, " dB", o.harmonicWindDb, 2.0,
+                [&o, harmonicChanged](double value) { o.harmonicWindDb = (float)value; harmonicChanged(); },
+                "High shelf that follows the wind sag: this much high-frequency loss at the full sag.");
+            addSlider("Wind: volume change per cent of sag", 0.0, 0.6, 0.01, " dB/cent", o.windLevelDbPerCent, 0.2,
+                [&o](double value) { o.windLevelDbPerCent = (float)value; o.applyAdvancedAudioSettings(); o.saveSettings(); },
+                "How much quieter a pipe gets for every cent the wind sag lowers its pitch.");
+            addSlider("Wind: one stop's share of the full sag", 2.0, 100.0, 1.0, " %", o.windOneStopShare * 100.0, 20.0,
+                [&o](double value) { o.windOneStopShare = (float)(value / 100.0); o.applyAdvancedAudioSettings(); o.saveSettings(); },
+                "Sag of a single 8' stop relative to the sag with many stops drawn (smaller footages count less).");
+            addSlider("Wind: one pipe's share of the full sag", 2.0, 100.0, 1.0, " %", o.windOnePipeShare * 100.0, 50.0,
+                [&o](double value) { o.windOnePipeShare = (float)(value / 100.0); o.applyAdvancedAudioSettings(); o.saveSettings(); },
+                "Sag with one key held relative to the sag with many keys held.");
+            addSlider("Wind: two pipes' share of the full sag", 2.0, 100.0, 1.0, " %", o.windTwoPipesShare * 100.0, 50.0,
+                [&o](double value) { o.windTwoPipesShare = (float)(value / 100.0); o.applyAdvancedAudioSettings(); o.saveSettings(); },
+                "Sag with two keys held; from three keys on the rest of the sag closes gradually.");
+            addSlider("Wind: maximum wind model effect", 0.0, 100.0, 1.0, " %", o.windMaxEffect * 100.0, 100.0,
+                [&o](double value) { o.windMaxEffect = (float)(value / 100.0); o.applyAdvancedAudioSettings(); o.saveSettings(); },
+                "Strength of the whole wind model. The steady sag follows it; every key stroke shakes the wind with a "
+                "random 40 to 100 % of it, so no two strokes are alike. 0 % switches the wind model off.");
+            // --- Tremulant
+            addSlider("Tremulant: harmonic filter", 0.0, 12.0, 0.5, " dB", o.harmonicTremulantDb, 4.0,
+                [&o, harmonicChanged](double value) { o.harmonicTremulantDb = (float)value; harmonicChanged(); },
+                "High shelf that follows the tremulant: this much high-frequency loss at the bottom of its dip.");
+            addSlider("Tremulant: harmonic filter phase", 0.0, 360.0, 1.0, " deg", o.tremulantShelfPhaseDegrees, 90.0,
+                [&o](double value)
+                {
+                    o.tremulantShelfPhaseDegrees = (float)value;
+                    o.engine.setTremulantShelfPhaseDegrees(o.tremulantShelfPhaseDegrees);
+                    o.saveSettings();
+                }, "Phase of the harmonic filter's oscillation behind the volume oscillation: 0 = the tone dips exactly "
+                   "when the level does, 90 = a quarter cycle later, 180 = the tone dips when the level peaks.");
+            // --- Key velocity
+            addSlider("Key velocity: fade-in at the lowest velocity", 0.0, 300.0, 1.0, " ms", o.velocityFadeInMs, 40.0,
+                [&o](double value)
+                {
+                    o.velocityFadeInMs = (float)value;
+                    o.engine.setVelocityFadeInMs(o.velocityFadeInMs);
+                    o.saveSettings();
+                }, "Organ keys never play softer when struck gently. A stop without velocity layers (\"_070\" files) softens a "
+                   "gentle stroke with a short fade-in instead: this long at the lowest velocity, shrinking linearly to nothing "
+                   "at velocity 127. Stops with velocity layers pick the layer and get no fade-in. With \"Ignore MIDI velocity\" "
+                   "on for a division there is never any fade-in.");
+            addSlider("Key velocity: treble cut on the attack at the lowest velocity", 0.0, 24.0, 0.5, " dB", o.velocityShelfDb, 9.0,
+                [&o](double value)
+                {
+                    o.velocityShelfDb = (float)value;
+                    o.engine.setVelocityShelfDb(o.velocityShelfDb);
+                    o.saveSettings();
+                }, "The chiff of a gently struck key is blunted: the pipe starts with this much high-frequency loss (a high "
+                   "shelf above the tone start frequency, like \"Treble per key\") at velocity 1, less for firmer strokes, none at "
+                   "127; the loss opens to nothing over the time below. Stops with velocity layers are not touched.");
+            addSlider("Key velocity: treble cut opens over", 5.0, 1000.0, 1.0, " ms", o.velocityShelfMs, 80.0,
+                [&o](double value)
+                {
+                    o.velocityShelfMs = (float)value;
+                    o.engine.setVelocityShelfMs(o.velocityShelfMs);
+                    o.saveSettings();
+                }, "How long the treble cut of a gentle key takes to open fully after the key goes down.");
+            addSlider("Tremulant: volume change per cent of pitch", 0.0, 0.6, 0.001, " dB/cent", o.tremulantLevelDbPerCent, 0.187,
+                [&o](double value) { o.tremulantLevelDbPerCent = (float)value; o.applyAdvancedAudioSettings(); o.saveSettings(); },
+                "Volume modulation of the tremulant relative to its pitch modulation.");
+            // --- Missing pipes
+            addSlider("Missing pipes: neighbours borrowed as a group", 1.0, 12.0, 1.0, " pipes", o.fillGroupSize, 12.0,
+                [&o](double value)
+                {
+                    o.fillGroupSize = juce::jlimit(1, 12, juce::roundToInt(value));
+                    o.engine.setFillGroupSize(o.fillGroupSize);
+                    o.saveSettings();
+                },
+                "Pipes a rank does not have (beyond its compass, gaps inside it, the extra octave of an extension) are "
+                "filled from the nearest real pipes: this many adjacent pipes are taken as a group and transposed by the "
+                "group's width, the group repeats for further pipes. 12 = every missing pipe is the octave transposition "
+                "of a real one; 1 = the edge pipe serves alone.");
+            addCombo("Filled pipes: transposition method",
+                { "Resampling", "Pitch shift (resampling + timbre correction)",
+                  "Pitch shift + time stretch (attack and release)",
+                  "Phase vocoder (Signalsmith Stretch)" },
+                juce::jlimit(0, 3, o.transposeMethod), [&o](int index)
+                {
+                    o.transposeMethod = juce::jlimit(0, 3, index);
+                    o.engine.setTransposeMethod(o.transposeMethod);
+                    o.saveSettings();
+                    // The sliders that apply to this method light up, the others grey out.
+                    juce::MessageManager::callAsync([&o] { o.refreshConfigurationEditor(); });
+                },
+                "How a pipe beyond the compass (or a gap) gets its pitch from a neighbour's sample. Resampling plays the "
+                "sample faster or slower at every key press: an octave down lasts twice as long, release included, and "
+                "sounds like a slowed recording. Pitch shift builds a copy of every filled pipe's attacks and releases "
+                "when the stop loads or the compass changes (in the background; until then the pipe plays resampled): "
+                "the sample resampled with a windowed sinc - every harmonic kept, nothing added - its spectral envelope "
+                "(the formants) corrected by one static equaliser as the settings below say, the loops kept at whole "
+                "periods, the releases cut to the length below, the loudness matched. The copies cost RAM, a few MB per rank. "
+                "Pitch shift + time stretch: the same, and the attack (downwards) and the release are time-stretched back "
+                "towards the source's duration (the two time stretch sliders). Phase vocoder (Signalsmith): the length "
+                "and the loops kept, the block sized from the pitch so that deep pipes keep their harmonics - excellent "
+                "within an octave either way, two octaves lose level and body.");
+            addSlider("Filled pipes: release length (pitch shift)", 25.0, 200.0, 5.0, " %", o.transposeReleaseLengthPct, 100.0,
+                [&o](double value)
+                {
+                    o.transposeReleaseLengthPct = (float)value;
+                    o.engine.setTransposeReleaseLength(o.transposeReleaseLengthPct / 100.0f);
+                    o.saveSettings();
+                }, "Pitch shift method only: how long a filled pipe's release (the room decay) is, as a share of its "
+                   "source's duration. The resampling alone would make a release shifted two octaves down four times as "
+                   "long and one shifted two octaves up a quarter - but the room does not grow or shrink with the pipe. "
+                   "So the decay is laid out again to this length in both directions (100 % = exactly the source's "
+                   "duration; the pipe's own stopping transient at the start stays as resampled). The timbre of a "
+                   "stop's filled pipes (\"Formants\") is set in the stop's voicing, per stop and per transmission. "
+                   "Changing it rebuilds the release copies in the background; the copies already on disk are kept.",
+                   {}, o.transposeMethod == 1);
+            addSlider("Filled pipes: time stretch of the attack", 0.0, 100.0, 5.0, " %", o.transposeAttackTimingPct, 50.0,
+                [&o](double value)
+                {
+                    o.transposeAttackTimingPct = (float)value;
+                    o.engine.setTransposeAttackTiming(o.transposeAttackTimingPct / 100.0f);
+                    o.saveSettings();
+                }, "\"Pitch shift + time stretch\" only: how far the attack (everything before the first loop) is stretched "
+                   "back from the resampled length towards the source's. 0 % leaves it as resampled - two octaves down the "
+                   "attack is four times as slow; 100 % gives it the source's duration; 50 % is half way on a logarithmic "
+                   "scale (two octaves down: twice as slow, which the ear accepts where four times is too much). The "
+                   "attack is laid out again by overlap-add of windows three periods long at the positions where the "
+                   "waveform matches (no periodicity assumed, the loops are never touched). Changing it rebuilds the copies.",
+                   {}, o.transposeMethod == 2);
+            addSlider(o.transposeMethod >= 3 ? "Filled pipes: time stretch of the release (upwards)" : "Filled pipes: time stretch of the release",
+                0.0, 100.0, 5.0, " %", o.transposeReleaseTimingPct, 55.0,
+                [&o](double value)
+                {
+                    o.transposeReleaseTimingPct = (float)value;
+                    o.engine.setTransposeReleaseTiming(o.transposeReleaseTimingPct / 100.0f);
+                    o.saveSettings();
+                }, o.transposeMethod >= 3
+                   ? "Phase vocoder: a release shifted upwards keeps the source's length, too long for a smaller pipe. This "
+                     "time-stretches it towards the length the resampling would give: 100 % keeps the source's duration, 0 % "
+                     "the resampled one (an octave up: half), 55 % lies between on a logarithmic scale. Shifts downwards are "
+                     "left alone. Changing it rebuilds the release copies."
+                   : "\"Pitch shift + time stretch\": how far the release is time-stretched back from the resampled length "
+                     "towards the source's. 100 % gives it the source's duration in both directions (a 32' extension's room "
+                     "decay as long as the 8' pipe's, no longer), 0 % leaves it as resampled, 55 % lies between on a "
+                     "logarithmic scale. Changing it rebuilds the release copies.",
+                "Filled pipes: time stretch of the release", o.transposeMethod >= 2);
+            addSlider("Filled pipes: release played from", 0.0, 300.0, 5.0, " ms", o.transposeReleaseTrimMs, 140.0,
+                [&o](double value)
+                {
+                    o.transposeReleaseTrimMs = (float)value;
+                    o.engine.setTransposeReleaseTrim(o.transposeReleaseTrimMs);
+                    o.saveSettings();
+                }, "Every pitch-shift method: a filled pipe's release copy is played from this many milliseconds in, "
+                   "skipping its start, where the methods leave their worst (a stop transient that no longer belongs, a "
+                   "level that does not follow the sustain). Applied when the key is released: nothing is rebuilt, the "
+                   "change is heard at once.",
+                {}, o.transposeMethod >= 1);
+            addToggle("Filled pipes: release level matched to the source", o.transposeReleaseLevelMatch, [&o](bool state)
+                {
+                    o.transposeReleaseLevelMatch = state;
+                    o.engine.setTransposeReleaseLevelMatch(state);
+                    o.saveSettings();
+                }, "Every pitch-shift method: a filled pipe's release copy is played at the level relation the source "
+                   "pipe's release has to its sustain (measured when the copy was built), so the step at the key release "
+                   "is the real pipe's. Off: the copy plays at its own level. Applied at playback: nothing is rebuilt.");
+            addSlider("Filled pipes: loop crossfade", 0.0, 100.0, 5.0, " %", o.transposeLoopCrossfadePct, 40.0,
+                [&o](double value)
+                {
+                    o.transposeLoopCrossfadePct = (float)value;
+                    o.engine.setCopyLoopCrossfade(o.transposeLoopCrossfadePct / 100.0f);
+                    o.saveSettings();
+                }, "The splice of the loops of the filled pipes' copies, as a share of each loop's length. 0 % is the "
+                   "ordinary 50 ms splice (the loop points of a pitch-shifted copy are moved to whole periods of its "
+                   "pitch anyway); a longer blend hides a seam that is not quite periodic, at the cost of a slight "
+                   "chorus inside the loop. Applied to the existing copies at once, nothing is rebuilt.");
+            addToggle("Filled pipes: loudness kept when pitch shifting", o.transposeKeepLoudness, [&o](bool state)
+                {
+                    o.transposeKeepLoudness = state;
+                    o.engine.setTransposeKeepLoudness(state);
+                    o.saveSettings();
+                }, "Pitch shift method only: every shifted copy is brought to the loudness (RMS) of its source sample, so a "
+                   "filled pipe is as strong as the pipe it was made from. Off: the copy keeps whatever level the shift left it with.");
+            addToggle("Filled pipes: keep the generated copies on disk (cache)", o.copyCacheEnabled, [&o](bool state)
+                {
+                    o.copyCacheEnabled = state;
+                    o.engine.setCopyCache(state, o.copyCacheDirectory());
+                    o.saveSettings();
+                }, "The anti-alias or pitch-shifted copies of the filled pipes are written to files in the cache folder as "
+                   "they are built, and read from there the next time the same stops load with the same settings: the "
+                   "build after loading then takes seconds instead of minutes. One file per rank and sample set, whatever "
+                   "the settings: a set built with other settings replaces its file, so the cache never holds two versions "
+                   "of the same copies and takes as much room as the copies in RAM. A copy is used only when the settings "
+                   "it was built with match.");
+            addButton("Filled pipes cache: " + juce::File::descriptionOfSizeInBytes(o.engine.copyCacheBytes()) + " in "
+                + o.copyCacheDirectory().getFullPathName(), "Empty the cache", [&o]
+                {
+                    o.engine.clearCopyCache();
+                    o.refreshConfigurationEditor();
+                }, "Deletes every cached copy file; the copies are built again when they are needed.", "Filled pipes cache: Empty the cache");
+            addButton("Filled pipes cache: files of stops not loaded now", "Remove them", [&o]
+                {
+                    const int removed = o.engine.removeCopyCacheFilesOfUnloadedRanks();
+                    o.refreshConfigurationEditor();
+                    juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, "Filled pipes cache",
+                        juce::String(removed) + " file(s) of stops that are not loaded removed.");
+                }, "Deletes the cache files of ranks that are not loaded now: the stops of other configurations and of "
+                   "folders that are gone. The files of the loaded stops stay.");
+            addButton("Filled pipes cache folder" + juce::String(o.copyCacheFolder.isNotEmpty() ? "" : " (default)"), "Choose...", [&o]
+                {
+                    o.cacheFolderChooser = std::make_unique<juce::FileChooser>("Folder for the filled pipes cache", o.copyCacheDirectory());
+                    juce::Component::SafePointer<MainComponent> safeThis(&o);
+                    o.cacheFolderChooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                        [safeThis](const juce::FileChooser& chooser)
+                        {
+                            if (safeThis == nullptr) return;
+                            const auto folder = chooser.getResult();
+                            if (!folder.isDirectory()) return;
+                            const auto previous = safeThis->copyCacheDirectory();
+                            safeThis->copyCacheFolder = folder.getFullPathName();
+                            // The files already built move along (same drive: instant; otherwise copied).
+                            int moved = 0;
+                            if (previous != folder && previous.isDirectory())
+                                for (const auto& file : previous.findChildFiles(juce::File::findFiles, false, "*.ospc"))
+                                    if (file.moveFileTo(folder.getChildFile(file.getFileName()))) ++moved;
+                            CrashHandler::note("Filled pipes cache folder: " + folder.getFullPathName() + " (" + juce::String(moved) + " file(s) moved)");
+                            safeThis->engine.setCopyCache(safeThis->copyCacheEnabled, safeThis->copyCacheDirectory());
+                            safeThis->saveSettings();
+                            safeThis->refreshConfigurationEditor();
+                        });
+                }, "Where the cache files live (the application-data folder by default). Choosing another folder moves the "
+                   "files already built there, so a cache on a big drive beside the samples costs nothing in time.",
+                "Filled pipes cache folder");
+            addCombo("Filled pipes: resampling quality",
+                { "Linear (as every other voice)", "Cubic interpolation", "Cubic + anti-alias filter (default)" },
+                juce::jlimit(0, 2, o.transposeQuality), [&o](int index)
+                {
+                    o.transposeQuality = juce::jlimit(0, 2, index);
+                    o.engine.setTransposeQuality(o.transposeQuality);
+                    o.saveSettings();
+                },
+                "How the sample of a neighbouring pipe is played at another pitch. Cubic interpolation lowers the "
+                "interpolation images by about 20 dB; the anti-alias filter additionally removes what would fold back "
+                "when a pipe is transposed upwards (a low-passed copy of the source, built only for those filled pipes, "
+                "a few MB per rank). Real pipes are never touched.");
+            // --- Per-key tone
+            addSlider("Treble per key: shelf start frequency", 120.0, 5000.0, 10.0, " Hz", o.toneStartHz, 1800.0,
+                [&o](double value) { o.toneStartHz = (float)value; o.applyAdvancedAudioSettings(); o.saveSettings(); },
+                "The \"Treble per key\" sliders of the voicing raise or lower everything above this frequency (a high "
+                "shelf whose transition band runs from here to about twice this frequency). A pipe whose recorded "
+                "fundamental (smpl chunk) lies higher starts its shelf at that fundamental instead.");
+            // --- Celeste
+            addSlider("Celeste beats: top of compass vs bottom", 1.0, 20.0, 0.5, " x", o.undulationBeatRatio, 12.0,
+                [&o](double value)
+                {
+                    o.undulationBeatRatio = (float)value;
+                    o.engine.setUndulationBeatRatio(o.undulationBeatRatio);
+                    if (o.voicer) o.voicer->refreshUndulationLabels();   // the cents shown in the voicing rows
+                    o.saveSettings();
+                },
+                "Undulating (celeste) stops beat this many times faster at the top of their compass than at the "
+                "bottom; the a1 key always beats as set in the stop's voicing. Equal beats (1x) detune the bass most.");
+
+            //---------------------------------------------------------------- Console
+            addSection("Console");
+            {
+                {
+                    // Applied when the drag ends (or 400 ms after a wheel step / typed value), never
+                    // while dragging: applying re-lays every window out, which must not happen
+                    // under the mouse.
+                    auto slider = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight);
+                    slider->setRange(UIScale::minPercent, UIScale::maxPercent, 5.0);
+                    slider->setTextValueSuffix(" %");
+                    slider->setTextBoxStyle(juce::Slider::TextBoxRight, false, 90, 22);
+                    slider->setValue(o.uiScalePercent, juce::dontSendNotification);
+                    slider->setDoubleClickReturnValue(true, UIScale::estimatePercent());
+                    slider->setScrollWheelEnabled(true);
+                    juce::Component::SafePointer<juce::Slider> safeSlider(slider.get());
+                    auto pending = std::make_shared<int>(0);
+                    auto applyNow = [&o, safeSlider, pending]
+                    {
+                        ++*pending;   // cancels a scheduled apply
+                        if (safeSlider != nullptr) o.setUiScalePercent((int)std::round(safeSlider->getValue()));
+                    };
+                    slider->onDragEnd = applyNow;
+                    slider->onValueChange = [safeSlider, pending, applyNow]
+                    {
+                        const int token = ++*pending;
+                        juce::Timer::callAfterDelay(400, [safeSlider, pending, token, applyNow]
+                        {
+                            if (token != *pending || safeSlider == nullptr) return;
+                            if (safeSlider->isMouseButtonDown()) { --*pending; safeSlider->onValueChange(); return; }   // still dragging: later
+                            applyNow();
+                        });
+                    };
+                    dumpOption("slider 50..300 %, default estimated from the screen", "Interface size", "see the manual");
+                    addRow("Interface size", std::move(slider), 30,
+                        "The size of every window, button, slider and text, in per cent of the design size (a 2560 x 1440 "
+                        "screen at the system's 100 %). The first start estimates it from the screen so that Full HD, 4K and "
+                        "Retina screens show the console alike; double-click returns to that estimate. Applied when the "
+                        "slider is released: every open window keeps its place and size on the screen, only its content "
+                        "changes size.");
+                }
+                juce::StringArray divisions;
+                for (int count = 1; count < SamplerEngine::maxManuals; ++count) divisions.add(juce::String(count) + " manuals + pedal");
+                addCombo("Divisions", divisions, o.manualCount - 1, [&o](int index)
+                { o.manualCountBox.setSelectedId(index + 1, juce::sendNotification); });
+                juce::StringArray pistons;
+                for (int count = 0; count <= MainComponent::maxPistons; ++count) pistons.add(juce::String(count));
+                addCombo("Combination pistons", pistons, o.pistonCount, [&o](int index)
+                { o.pistonCountBox.setSelectedId(index + 1, juce::sendNotification); });
+                addCombo("Program windows", { "One window", "Two windows (each division chooses its window)" },
+                    o.twoWindows ? 1 : 0, [&o](int index) { o.setTwoWindows(index == 1); },
+                    "With two windows every division section below offers \"Shown in window\"; the second window "
+                    "starts empty and can be moved to another screen. Its position is remembered.");
+                // Which buttons the top bar shows.
+                for (const auto& item : o.headerButtons())
+                {
+                    const juce::String key(item.key);
+                    if (key == "configurationEditor") continue;   // the way back here stays
+                    addToggle(juce::String("Top bar: ") + item.label, o.isHeaderButtonShown(key), [&o, key](bool state)
+                    {
+                        o.headerButtonShown[key] = state;
+                        o.saveSettings();
+                        o.resized();
+                    }, "Shows or hides this button in the top bar of the main window.");
+                }
+            }
+            addToggle("Melody/bass couplers: new extreme key only", o.melodyBassNewKeysOnly, [&o](bool state)
+            {
+                o.melodyBassNewKeysOnly = state;
+                {
+                    const juce::ScopedLock lock(o.couplerLock);
+                    for (int source = 0; source <= o.manualCount; ++source) o.recomputeCouplersForSource(source);
+                }
+                o.saveSettings();
+            });
+            addToggle("Melody couplers: legato grace time", o.melodyBassGraceTime, [&o](bool state)
+            { o.melodyBassGraceTime = state; o.saveSettings(); });
+            addToggle("Load the last configuration at startup", o.loadLastConfigurationAtStartup, [&o](bool state)
+            { o.loadLastConfigurationAtStartup = state; o.saveSettings(); });
+            {
+                juce::StringArray names;
+                int baseIndex = 0, selectedIndex = 0;
+                for (int i = 0; i < (int)o.temperaments.size(); ++i)
+                {
+                    names.add(o.temperaments[(size_t)i].name);
+                    if (o.temperaments[(size_t)i].name.equalsIgnoreCase(o.baseTemperamentName)) baseIndex = i;
+                    if (o.temperaments[(size_t)i].name.equalsIgnoreCase(o.selectedTemperamentName)) selectedIndex = i;
+                }
+                addCombo("Samples' base temperament", names, baseIndex, [&o, names](int index)
+                { o.setBaseTemperament(names[index]); });
+                addCombo("Target temperament", names, selectedIndex, [&o, names](int index)
+                { o.selectTemperament(names[index]); });
+            }
+            addInfo("Window size", juce::String(o.getWidth()) + " x " + juce::String(o.getHeight()) + " (saved automatically)");
+
+            //---------------------------------------------------------------- Patterns
+            addSection("Folder name patterns (one per line)");
+            addText("One-shot stops (folder contains)", patternsToText(engine.getOneShotPatterns()), true,
+                [&o](const juce::String& text)
+            {
+                o.engine.setOneShotPatterns(textToPatterns(text));
+                o.saveSettings();
+                if (o.voicer) o.voicer->rebuildUI(o.stopsContent, o.stopsViewport);
+            }, "Samples in these folders play once without looping (e.g. chiff, percussion).");
+            addText("Ignored folders (folder contains)", patternsToText(engine.getIgnoredPatterns()), true,
+                [&o](const juce::String& text) { o.engine.setIgnoredPatterns(textToPatterns(text)); o.saveSettings(); },
+                "Folders containing these words are not loaded. Applies to the next folder load.");
+            addText("Perspective prefixes", patternsToText(engine.getPerspectivePatterns()), true,
+                [&o](const juce::String& text) { o.engine.setPerspectivePatterns(textToPatterns(text)); o.saveSettings(); },
+                "Folder name prefixes that mark a microphone perspective (e.g. dir-, dif-, rear-). Applies to the next folder load.");
+
+            //---------------------------------------------------------------- Divisions
+            static const juce::String names[8]{ "Pedal", "Manual I", "Manual II", "Manual III", "Manual IV", "Manual V", "Manual VI", "Manual VII" };
+            static const juce::String shortNames[8]{ "P.", "I.", "II.", "III.", "IV.", "V.", "VI.", "VII." };
+            for (int manual = 0; manual <= o.manualCount && manual < SamplerEngine::maxManuals; ++manual)
+            {
+                auto& config = o.manualConfigs[(size_t)manual];
+                addSection(names[manual], true, true);   // collapsed by default, like Advanced global audio
+                // The division's stops and folder trees live in the Stop building table
+                // (load/unload/move trees, swap divisions, folder per perspective).
+                {
+                    juce::String treeList;
+                    int tree = 1;
+                    for (const auto& path : o.divisionTrees(manual)) treeList << "\nFolder tree " << tree++ << ": " << path;
+                    addButton("Stops and sample folders", "Stop building...", [&o, manual] { o.showStopBuildingDialog(manual); },
+                        (treeList.isEmpty() ? juce::String("No sample folder loaded yet.") : "Loaded:" + treeList)
+                        + "\n\nThe table loads and unloads folder trees, moves them between divisions, swaps divisions and "
+                          "decides which folder forms which perspective of which stop.");
+                }
+                if (o.twoWindows)
+                    addCombo("Shown in window", { "Window 1 (main)", "Window 2" }, juce::jlimit(0, 1, o.divisionScreen[(size_t)manual]),
+                        [&o, manual](int index)
+                        {
+                            o.divisionScreen[(size_t)manual] = juce::jlimit(0, 1, index);
+                            if (index == 1 && !o.twoWindows) o.setTwoWindows(true);   // the second window opens when asked for
+                            o.saveSettings();
+                            if (o.voicer) o.voicer->rebuildUI(o.stopsContent, o.stopsViewport);
+                        }, "A division is shown in one window only; the others share out the remaining width by their weights.");
+                {
+                    juce::StringArray devices{ "None" };
+                    int selected = 0;
+                    for (int i = 0; i < midiDevices.size(); ++i)
+                    {
+                        devices.add(midiDevices[i].name);
+                        if (midiDevices[i].identifier == config.deviceIdentifier) selected = i + 1;
+                    }
+                    addCombo("MIDI keyboard device", devices, selected, [&o, &config, this](int index)
+                    {
+                        config.deviceIdentifier = index > 0 && index - 1 < midiDevices.size()
+                            ? midiDevices[index - 1].identifier : juce::String();
+                        o.saveSettings();
+                    });
+                    juce::StringArray channels;
+                    for (int ch = 1; ch <= 16; ++ch) channels.add("Channel " + juce::String(ch));
+                    addCombo("MIDI channel", channels, juce::jlimit(1, 16, config.midiChannel) - 1, [&o, &config](int index)
+                    { config.midiChannel = index + 1; o.saveSettings(); });
+                }
+                addToggle("Ignore MIDI velocity (organ keys)", config.disableVelocity, [&o, &config](bool state)
+                { config.disableVelocity = state; o.saveSettings(); });
+                addCombo("Bass octave layout", { "Standard", "Short octave", "C D D# ...", "C D E ..." },
+                    juce::jlimit(0, 3, config.bassOctaveLayout), [&o, &config](int index)
+                {
+                    if (config.bassOctaveLayout == index) return;
+                    o.panic();
+                    config.bassOctaveLayout = index;
+                    o.saveSettings();
+                });
+                {
+                    juce::StringArray semitoneNames;
+                    for (int semitones = -24; semitones <= 24; ++semitones)
+                        semitoneNames.add((semitones > 0 ? "+" : "") + juce::String(semitones) + " st");
+                    addCombo("MIDI transposition", semitoneNames, juce::jlimit(-24, 24, config.midiTranspose) + 24,
+                        [&o, &config](int index)
+                    {
+                        const int semitones = index - 24;
+                        if (config.midiTranspose == semitones) return;
+                        o.panic();
+                        config.midiTranspose = semitones;
+                        o.refreshMidiRouting();
+                        o.saveSettings();
+                    }, "The keys of this division's MIDI keyboard play this many semitones away from what they send: "
+                       "-12 makes key 036 play the pipe of 024. Default 0.");
+                }
+                addInfo("Swell pedal controller", config.expressionController >= 0
+                    ? "CC " + juce::String(config.expressionController) + " on channel " + juce::String(config.expressionChannel)
+                        + ", learned range " + juce::String(config.expressionMinimum) + " .. " + juce::String(config.expressionMaximum)
+                    : juce::String("not assigned (right-click the swell bar in the division header to learn)"));
+                addSlider("Swell: maximum attenuation when closed", 0.0, 60.0, 0.1, " dB",
+                    config.expressionMaxAttenuationDb, 13.0, [&o, &config, manual](double value)
+                {
+                    config.expressionMaxAttenuationDb = (float)value;
+                    o.engine.setManualExpressionMaxAttenuationDb(manual, config.expressionMaxAttenuationDb);
+                    o.engine.setManualExpressionGain(manual, o.expressionGainFor(config));
+                    o.saveSettings();
+                });
+                addSlider("Swell: shutter inertia (settling time)", 50.0, 2000.0, 10.0, " ms",
+                    config.expressionInertiaMs, 300.0, [&o, &config](double value)
+                { config.expressionInertiaMs = (float)value; o.saveSettings(); },
+                    "How slowly the shutters follow the pedal. Larger = heavier, smoother movement.");
+                addSlider("Division volume", -60.0, 12.0, 0.1, " dB", config.divisionVolumeDb, 0.0,
+                    [&o, &config, manual](double value)
+                {
+                    config.divisionVolumeDb = (float)value;
+                    o.engine.setManualDivisionGain(manual, juce::Decibels::decibelsToGain(config.divisionVolumeDb));
+                    o.saveSettings();
+                });
+                addText("Audio output channels (default perspective)", channelsToText(config.outputChannels), false,
+                    [&o, &config, manual](const juce::String& text)
+                {
+                    config.outputChannels = textToChannels(text);
+                    o.engine.setManualOutputChannels(manual, config.outputChannels);
+                    o.engine.setPerspectiveOutputChannels(manual, "default", config.outputChannels);
+                    o.saveSettings();
+                }, "Channel numbers of the division's audio device, e.g. 1, 2");
+                // Only the perspectives this division has now (the loaded ranks and the
+                // Stop List's columns): entries left over from earlier pattern lists
+                // ("difMk2H" before it joined the Diffuse line) are not shown.
+                std::vector<juce::String> livePerspectives = o.engine.getPerspectivesForManual(manual);
+                for (const auto& column : config.stopBuild.perspectives) livePerspectives.push_back(column);
+                auto isLive = [&livePerspectives](const juce::String& perspective)
+                {
+                    for (const auto& live : livePerspectives) if (live.equalsIgnoreCase(perspective)) return true;
+                    return false;
+                };
+                for (const auto& entry : config.perspectiveAudio)
+                {
+                    const auto perspective = juce::String(entry.first).fromFirstOccurrenceOf("|", false, false);
+                    if (perspective.equalsIgnoreCase("default") || !isLive(perspective)) continue;
+                    const auto key = entry.first;
+                    addText("Perspective \"" + perspective + "\" output channels", channelsToText(entry.second.outputChannels), false,
+                        [&o, &config, manual, perspective, key](const juce::String& text)
+                    {
+                        auto& route = config.perspectiveAudio[key];
+                        route.outputChannels = textToChannels(text);
+                        o.engine.setPerspectiveOutputChannels(manual, perspective, route.outputChannels);
+                        o.saveSettings();
+                    }, "Channel numbers of the perspective's audio device, e.g. 3, 4", "Perspective output channels");
+                    addSlider("Perspective \"" + perspective + "\" volume", -31.0, 6.0, 0.1, " dB",
+                        entry.second.volumeDb, 0.0, [&o, &config, manual, perspective, key](double value)
+                    {
+                        auto& route = config.perspectiveAudio[key];
+                        route.volumeDb = (float)value;
+                        o.engine.setPerspectiveVolumeDb(manual, perspective, route.volumeDb);
+                        o.saveSettings();
+                    }, "-31 dB switches the perspective off completely.", "Perspective volume");
+                    addSlider("Perspective \"" + perspective + "\" channel separation", 0.0, 100.0, 1.0, " %",
+                        entry.second.channelSeparation * 100.0, 100.0, [&o, &config, manual, perspective, key](double value)
+                    {
+                        auto& route = config.perspectiveAudio[key];
+                        route.channelSeparation = (float)(value / 100.0);
+                        o.engine.setPerspectiveChannelSeparation(manual, perspective, route.channelSeparation);
+                        o.saveSettings();
+                    }, "100 % = every pipe only on its own channel pair; less lets the other channels carry that share too; "
+                       "0 % = all channels carry the same sum.", "Perspective channel separation");
+                }
+                addToggle("Random tuning error of pipes", config.allowRandomTuningError, [&o, &config, manual](bool state)
+                { config.allowRandomTuningError = state; o.engine.setManualRandomTuningAllowed(manual, state); o.saveSettings(); });
+                addToggle("Pipe coupling (detuned pipes pull together)", config.allowPipeCoupling, [&o, &config, manual](bool state)
+                { config.allowPipeCoupling = state; o.engine.setManualPipeCouplingAllowed(manual, state); o.saveSettings(); });
+
+                auto applyTremulant = [&o, &config, manual]
+                {
+                    o.engine.setManualTremulant(manual, config.tremulantEnabled, config.tremulantRateHz,
+                        config.tremulantDepthCents, config.tremulantRankDriftDegrees);
+                    o.saveSettings();
+                };
+                // (No tremulant on/off here: that is registration, like a stop, not a setting.)
+                addSlider("Tremulant rate", 2.0, 11.0, 0.1, " Hz", config.tremulantRateHz, 4.4,
+                    [&config, applyTremulant](double value) { config.tremulantRateHz = (float)value; applyTremulant(); });
+                addSlider("Tremulant depth", 0.0, 50.0, 0.1, " cents", config.tremulantDepthCents, 6.0,
+                    [&config, applyTremulant](double value) { config.tremulantDepthCents = (float)value; applyTremulant(); });
+                addSlider("Tremulant phase drift between ranks", 0.0, 360.0, 1.0, " deg", config.tremulantRankDriftDegrees, 260.0,
+                    [&config, applyTremulant](double value) { config.tremulantRankDriftDegrees = (float)value; applyTremulant(); });
+
+                auto applyWind = [&o, &config, manual]
+                {
+                    o.engine.setWindModel(manual, config.windDepthCents, config.windFrequencyHz, config.windOscillations,
+                        config.windOscillationStrength / 50.0f, config.windSmoothingMs, config.windTargetMask);
+                    o.saveSettings();
+                };
+                addSlider("Wind: depth (maximum pitch sag)", 0.0, 50.0, 0.1, " cents", config.windDepthCents, 8.0,
+                    [&config, applyWind](double value) { config.windDepthCents = (float)value; applyWind(); });
+                addSlider("Wind: oscillation frequency", 4.0, 10.0, 0.1, " Hz", config.windFrequencyHz, 7.5,
+                    [&config, applyWind](double value) { config.windFrequencyHz = (float)value; applyWind(); });
+                addSlider("Wind: number of oscillations", 0.0, 20.0, 0.1, "x", config.windOscillations, 7.0,
+                    [&config, applyWind](double value) { config.windOscillations = (float)value; applyWind(); });
+                addSlider("Wind: oscillation strength", 0.0, 100.0, 0.5, " %", config.windOscillationStrength, 40.0,
+                    [&config, applyWind](double value) { config.windOscillationStrength = (float)value; applyWind(); },
+                    "100 % is twice the impulse of 50 %; the sag ceiling grows with it.");
+                addSlider("Wind: sag settling lag", 100.0, 400.0, 1.0, " ms", config.windSmoothingMs, 255.0,
+                    [&config, applyWind](double value) { config.windSmoothingMs = (float)value; applyWind(); });
+                {
+                    class TargetRow final : public juce::Component
+                    {
+                    public:
+                        TargetRow(MainComponent::ManualConfig& c, int self, int count, std::function<void()> apply)
+                            : config(c)
+                        {
+                            for (int target = 0; target < SamplerEngine::maxManuals; ++target)
+                            {
+                                auto& button = buttons[(size_t)target];
+                                button.setButtonText(shortNames[target]);
+                                button.setToggleState(target == self || (config.windTargetMask & (1u << target)) != 0,
+                                    juce::dontSendNotification);
+                                button.setEnabled(target != self);
+                                button.setVisible(target < count);
+                                button.onClick = [this, self, apply]
+                                {
+                                    uint8_t mask = (uint8_t)(1u << self);
+                                    for (int t = 0; t < SamplerEngine::maxManuals; ++t)
+                                        if (buttons[(size_t)t].getToggleState()) mask |= (uint8_t)(1u << t);
+                                    config.windTargetMask = mask;
+                                    apply();
+                                };
+                                addAndMakeVisible(button);
+                            }
+                        }
+                        void resized() override
+                        {
+                            int x = 0;
+                            for (auto& button : buttons) { button.setBounds(x, 0, 58, getHeight()); x += 62; }
+                        }
+                    private:
+                        MainComponent::ManualConfig& config;
+                        std::array<juce::ToggleButton, SamplerEngine::maxManuals> buttons;
+                    };
+                    dumpOption("tick boxes, one per division", "Wind: also affects divisions",
+                        "Other divisions fed from this wind supply receive half of its sag.");
+                    addRow("Wind: also affects divisions", std::make_unique<TargetRow>(config, manual, o.manualCount + 1, applyWind),
+                        30, "Other divisions fed from this wind supply receive half of its sag.");
+                }
+            }
+        }
+    };
+
+    class ModelessWindow final : public juce::DialogWindow
+    {
+    public:
+        ModelessWindow() : juce::DialogWindow("Configuration Editor", juce::Colours::darkgrey, true, true) {}
+        float getDesktopScaleFactor() const override { return UIScale::factor(); }
+        void closeButtonPressed() override { setVisible(false); }
+    };
+
+    auto* content = new Editor(*this);
+    content->setSize(1020, 820);
+    configurationWindow = std::make_unique<ModelessWindow>();
+    configurationWindow->setUsingNativeTitleBar(true);
+    configurationWindow->setResizable(true, true);
+    configurationWindow->setContentOwned(content, true);
+    placeDialog(*configurationWindow, "configuration", 1020, 820);
+    configurationWindow->setVisible(true);
+    configurationWindow->toFront(true);
+}
+
+// ========== NOVÁ METODA: IGNORED PATTERNS ==========
+void MainComponent::editFolderPatterns(bool perspectives)
+{
+    class IgnoredPatternsDialog : public juce::Component,
+        public juce::Button::Listener
+    {
+    public:
+        IgnoredPatternsDialog(const std::vector<juce::String>& initialPatterns,
+            juce::String instruction,
+            std::function<void(const std::vector<juce::String>&)> onSave)
+            : currentPatterns(initialPatterns), saveCallback(onSave)
+        {
+            addAndMakeVisible(instructionLabel);
+            instructionLabel.setText(instruction, juce::dontSendNotification);
+            instructionLabel.setFont(juce::FontOptions(12.0f));
+            instructionLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+
+            addAndMakeVisible(textEditor);
+            textEditor.setMultiLine(true);
+            textEditor.setScrollbarsShown(true);
+            textEditor.setReturnKeyStartsNewLine(true);
+            textEditor.setText(getPatternsAsString(), false);
+
+            addAndMakeVisible(okButton);
+            okButton.setButtonText("OK");
+            okButton.addListener(this);
+
+            addAndMakeVisible(cancelButton);
+            cancelButton.setButtonText("Cancel");
+            cancelButton.addListener(this);
+        }
+
+        void resized() override
+        {
+            auto area = getLocalBounds().reduced(10);
+
+            instructionLabel.setBounds(area.removeFromTop(instructionHeight));
+            textEditor.setBounds(area.removeFromTop(juce::jmax(80, area.getHeight() - 50)));
+
+            auto buttons = area.removeFromTop(40);
+            okButton.setBounds(buttons.removeFromLeft(90).withHeight(32));
+            cancelButton.setBounds(buttons.removeFromLeft(90).withHeight(32));
+        }
+
+        void buttonClicked(juce::Button* button) override
+        {
+            if (button == &okButton)
+            {
+                std::vector<juce::String> newPatterns;
+                juce::StringArray lines;
+                lines.addLines(textEditor.getText());
+
+                for (auto& line : lines)
+                {
+                    juce::String trimmed = line.trim();
+                    if (trimmed.isNotEmpty())
+                        newPatterns.push_back(trimmed);
+                }
+
+                if (saveCallback)
+                    saveCallback(newPatterns);
+            }
+
+            // Close the dialog on OK, Cancel, or X button
+            if (auto* dw = findParentComponentOfClass<juce::DialogWindow>())
+                dw->exitModalState(0);
+        }
+
+        int instructionHeight = 35;   // the perspective instructions take three lines
+
+    private:
+        std::vector<juce::String> currentPatterns;
+        std::function<void(const std::vector<juce::String>&)> saveCallback;
+
+        juce::Label instructionLabel;
+        juce::TextEditor textEditor;
+        juce::TextButton okButton, cancelButton;
+
+        juce::String getPatternsAsString() const
+        {
+            juce::String result;
+            for (const auto& p : currentPatterns)
+                result << p << "\n";
+            return result;
+        }
+    };
+
+    // ------------------------------------------------------------------
+
+    auto currentPatterns = perspectives ? engine.getPerspectivePatterns() : engine.getIgnoredPatterns();
+
+    auto* content = new IgnoredPatternsDialog(currentPatterns,
+        perspectives
+            ? "One perspective prefix per line (for example dir-, dif-, rear-). Prefixes are removed before ranks are grouped into stops.\n"
+              "Several prefixes on ONE line separated by ';' (for example dirMk2H-; dirMk4-) form one perspective: all their ranks "
+              "play through one audio output, whose tab in the Division settings is named after the FIRST prefix of the line."
+            : "Enter one pattern per line (e.g., trem). Folders whose name contains a pattern will NOT be loaded.",
+        [this, perspectives](const std::vector<juce::String>& newPatterns)
+        {
+            if (perspectives) engine.setPerspectivePatterns(newPatterns);
+            else engine.setIgnoredPatterns(newPatterns);
+            saveSettings();
+        });
+    if (perspectives) content->instructionHeight = 66;
+
+    juce::DialogWindow::LaunchOptions options;
+
+    content->setSize(600, 400);
+    options.content.setOwned(new ScrollableContent(content));   // DialogWindow takes ownership
+    options.dialogTitle = perspectives ? "Perspective Patterns" : "Ignored Patterns";
+    options.dialogBackgroundColour = juce::Colours::grey;
+    options.escapeKeyTriggersCloseButton = true;
+    options.useNativeTitleBar = true;
+    options.resizable = true;
+    options.componentToCentreAround = this;
+
+    if (auto* window = options.launchAsync()) placeDialog(*window, "patternLists", 600, 400);
+}
+// ========== KONEC NOVÉ METODY ==========

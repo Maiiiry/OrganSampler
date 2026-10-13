@@ -1,0 +1,236 @@
+#pragma once
+
+#include <JuceHeader.h>
+#include <functional>
+#include <vector>
+
+// The "on" colour of every switchable button (stops, transmissions, couplers,
+// tremulants, pistons, crescendo): orange one shade darker than before, which
+// was the mouse-over shade; the look-and-feel darkens it one more shade on hover.
+inline juce::Colour onColour() { return juce::Colour(0xffffa500).contrasting(0.05f); }
+
+// Section header that folds its section when clicked (the Configuration Editor
+// style: orange bold caption with a "+ " / "- " prefix). Shared by the dialogs.
+class SectionHeaderLabel : public juce::Label
+{
+public:
+    std::function<void()> onClick;
+    SectionHeaderLabel()
+    {
+        setFont(juce::FontOptions(16.0f, juce::Font::bold));
+        setColour(juce::Label::textColourId, juce::Colours::orange);
+        setMouseCursor(juce::MouseCursor::PointingHandCursor);
+        setTooltip("Click to show or hide this section");
+    }
+    void setSection(const juce::String& title, bool expanded)
+    {
+        setText((expanded ? "- " : "+ ") + title, juce::dontSendNotification);
+    }
+    void mouseDown(const juce::MouseEvent&) override { if (onClick) onClick(); }
+};
+
+// A dialog's content inside a viewport: the content keeps its design size at
+// least, so when the window is smaller (a large interface size on a small
+// screen, a remembered small window) scrollbars appear instead of controls
+// vanishing under the window's edge. A larger window lets the content grow
+// with it (its own layout spreads out). Every dialog of the program uses it.
+class ScrollableContent final : public juce::Component
+{
+public:
+    explicit ScrollableContent(juce::Component* ownedContent)
+        : content(ownedContent), designWidth(ownedContent->getWidth()), designHeight(ownedContent->getHeight())
+    {
+        viewport.setViewedComponent(content.get(), false);
+        viewport.setScrollBarsShown(true, true);
+        viewport.setScrollOnDragMode(juce::Viewport::ScrollOnDragMode::never);
+        addAndMakeVisible(viewport);
+        setSize(designWidth, designHeight);
+    }
+    void resized() override
+    {
+        viewport.setBounds(getLocalBounds());
+        const int bar = viewport.getScrollBarThickness();
+        const bool vertical = designHeight > getHeight();
+        const bool horizontal = designWidth > getWidth() - (vertical ? bar : 0);
+        content->setSize(juce::jmax(designWidth, getWidth() - (vertical ? bar : 0)),
+                         juce::jmax(designHeight, getHeight() - (horizontal ? bar : 0)));
+    }
+    juce::Component& inner() noexcept { return *content; }
+    int getDesignWidth() const noexcept { return designWidth; }
+    int getDesignHeight() const noexcept { return designHeight; }
+private:
+    std::unique_ptr<juce::Component> content;
+    juce::Viewport viewport;
+    int designWidth, designHeight;
+};
+
+// "Swipe switching": press a stop, coupler or tremulant button and drag across
+// any other such button to give it the same state. All families share one
+// registry, so one drag can run from the stops into the couplers and back.
+namespace SwipeSwitch
+{
+    struct Target
+    {
+        juce::Component* component = nullptr;
+        std::function<void(bool)> apply;   // must be idempotent
+    };
+    inline std::vector<Target>& targets() { static std::vector<Target> list; return list; }
+    inline bool active = false;
+    inline bool enable = false;
+
+    inline void add(juce::Component* component, std::function<void(bool)> apply)
+    {
+        targets().push_back({ component, std::move(apply) });
+    }
+    inline void remove(juce::Component* component)
+    {
+        auto& list = targets();
+        list.erase(std::remove_if(list.begin(), list.end(),
+            [component](const Target& t) { return t.component == component; }), list.end());
+    }
+    inline void begin(bool enableState) { active = true; enable = enableState; }
+    inline void end() { active = false; }
+    // Applies the swipe state to the registered button under the screen position.
+    inline bool applyAt(juce::Point<int> screenPosition)
+    {
+        if (!active) return false;
+        for (auto& t : targets())
+            if (t.component != nullptr && t.component->isShowing()
+                && t.component->getScreenBounds().contains(screenPosition))
+            {
+                // Copy first: applying may rebuild the UI and change the registry.
+                const auto apply = t.apply;
+                if (apply) apply(enable);
+                return true;
+            }
+        return false;
+    }
+}
+
+// JUCE sliders already support wheel movement.  This small wrapper only keeps
+// a popup click from also moving the control before MIDI Learn is displayed.
+class LearnableSlider : public juce::Slider
+{
+public:
+    using juce::Slider::Slider;
+    void mouseDown(const juce::MouseEvent& event) override
+    {
+        if (!event.mods.isPopupMenu()) juce::Slider::mouseDown(event);
+    }
+};
+
+// The large stop workspace must only move when its scrollbars are dragged.
+// Wheel gestures are reserved for the controls inside the workspace.
+class NoWheelScrollBar final : public juce::ScrollBar
+{
+public:
+    explicit NoWheelScrollBar(bool vertical) : juce::ScrollBar(vertical) {}
+    void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override {}
+};
+
+class NoWheelViewport : public juce::Viewport
+{
+public:
+    using juce::Viewport::Viewport;
+    // The owner may allow the wheel for some positions (the stop workspace: over
+    // a division without an open voicing the wheel scrolls; over an open voicing
+    // it belongs to the sliders).
+    std::function<bool(const juce::MouseEvent&)> allowWheel;
+    void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override
+    {
+        if (allowWheel && allowWheel(event)) juce::Viewport::mouseWheelMove(event, wheel);
+    }
+
+protected:
+    juce::ScrollBar* createScrollBarComponent(bool isVertical) override
+    {
+        return new NoWheelScrollBar(isVertical);
+    }
+};
+
+// Momentary buttons with onStateChange must not regard a right-click used for
+// MIDI Learn as a physical press.
+class LeftOnlyTextButton : public juce::TextButton
+{
+public:
+    using juce::TextButton::TextButton;
+    void mouseDown(const juce::MouseEvent& event) override
+    {
+        acceptedLeftPress = event.mods.isLeftButtonDown();
+        if (acceptedLeftPress) juce::TextButton::mouseDown(event);
+    }
+    void mouseUp(const juce::MouseEvent& event) override
+    {
+        if (acceptedLeftPress) juce::TextButton::mouseUp(event);
+        acceptedLeftPress = false;
+    }
+private:
+    bool acceptedLeftPress = false;
+};
+
+// Record button: an ordinary TextButton (standard look, colours and border)
+// showing a dark red disc when idle and a bright red disc while recording; the
+// button is drawn in its "on" state while recording.
+class RecordButton : public LeftOnlyTextButton   // the right button is MIDI learn, like the other top-bar buttons
+{
+public:
+    RecordButton() : LeftOnlyTextButton("") { setTooltip("Record the stereo mix of all outputs to a WAV file"); }
+    void setRecording(bool shouldBeRecording)
+    {
+        if (recording == shouldBeRecording) return;
+        recording = shouldBeRecording;
+        setToggleState(recording, juce::dontSendNotification);
+        repaint();
+    }
+    bool isRecording() const noexcept { return recording; }
+    void paintButton(juce::Graphics& g, bool highlighted, bool down) override
+    {
+        juce::TextButton::paintButton(g, highlighted, down);   // the usual background and border
+        const auto area = getLocalBounds().toFloat();
+        const float diameter = juce::jmin(area.getWidth(), area.getHeight()) * 0.5f;
+        const auto disc = juce::Rectangle<float>(diameter, diameter).withCentre(area.getCentre());
+        g.setColour(recording ? juce::Colours::red : juce::Colour(0xff8b1a1a));
+        g.fillEllipse(disc);
+        g.setColour(juce::Colours::black.withAlpha(0.4f));
+        g.drawEllipse(disc, 1.0f);
+    }
+private:
+    bool recording = false;
+};
+
+// The one display look of the console (combination display, swell bar,
+// polyphony display): black rounded panel, dark grey frame, lime text.
+class DisplayLabel : public juce::Label
+{
+public:
+    using juce::Label::Label;
+    void paint(juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat().reduced(1.0f);
+        g.setColour(juce::Colours::black);
+        g.fillRoundedRectangle(r, 3.0f);
+        g.setColour(juce::Colours::darkgrey);
+        g.drawRoundedRectangle(r, 3.0f, 1.0f);
+        g.setColour(findColour(juce::Label::textColourId));
+        g.setFont(getFont());
+        g.drawFittedText(getText(), getLocalBounds().reduced(4, 2), getJustificationType(), 1, 0.6f);
+    }
+};
+
+class LeftOnlyToggleButton : public juce::ToggleButton
+{
+public:
+    using juce::ToggleButton::ToggleButton;
+    void mouseDown(const juce::MouseEvent& event) override
+    {
+        acceptedLeftPress = event.mods.isLeftButtonDown();
+        if (acceptedLeftPress) juce::ToggleButton::mouseDown(event);
+    }
+    void mouseUp(const juce::MouseEvent& event) override
+    {
+        if (acceptedLeftPress) juce::ToggleButton::mouseUp(event);
+        acceptedLeftPress = false;
+    }
+private:
+    bool acceptedLeftPress = false;
+};

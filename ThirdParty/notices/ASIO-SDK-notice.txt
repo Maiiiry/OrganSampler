@@ -1,0 +1,15 @@
+Steinberg ASIO SDK 2.3.4
+(c) 2025, Steinberg Media Technologies GmbH, All Rights Reserved
+
+ASIO is a trademark and software of Steinberg Media Technologies GmbH.
+
+The ASIO SDK is dual-licensed: under the proprietary Steinberg ASIO License, or
+alternatively under the terms of the GNU General Public License (GPL) version 3.
+OrganSampler uses the ASIO SDK under the GPL version 3 option; the full text is
+the entry "GNU General Public License v3 (text)" of this list. The files of the
+SDK carry their licence notice; the SDK itself (LICENSE.txt, README.md, the
+licensing agreement and the trademark usage guidelines) is included in the
+source repository under ASIOSDK/.
+
+ASIO support exists in the Windows build only; macOS and Linux use the audio
+interfaces of their systems (CoreAudio; ALSA and JACK).

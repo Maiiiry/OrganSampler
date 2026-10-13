@@ -1,0 +1,51 @@
+# CMake build trees
+build/
+build-*/
+out/
+
+# Visual Studio / MSBuild outputs of the Projucer project
+OrganSampler/Builds/**/x64/
+OrganSampler/Builds/**/Debug/
+OrganSampler/Builds/**/Release/
+OrganSampler/Builds/**/.vs/
+OrganSampler/Builds/**/*.user
+OrganSampler/Builds/**/*.log
+OrganSampler/Builds/**/*.tlog
+OrganSampler/Builds/**/*.ipch
+OrganSampler/Builds/**/*.pdb
+OrganSampler/Builds/**/*.idb
+OrganSampler/Builds/**/*.obj
+OrganSampler/Builds/**/*.ilk
+OrganSampler/Builds/**/*.exp
+OrganSampler/Builds/**/*.lib
+
+# Local notes, session logs and tooling of the maintainer - not part of the program
+sessions.txt
+OrganSampler/CLAUDE_REPORTS.md
+OrganSampler/DoUserManualu.txt
+OrganSampler/*Nastaven*.txt
+OrganSampler/15000
+OrganSampler/Builds/**/15000
+OrganSampler/*.jucer.bak-*
+.local-tools/
+issues/
+
+# Local copies, experiments, backups and screenshots - not part of the program
+OrganSampler/SourcesOLD/
+OrganSampler/Source/SourceAuxiliaryCestaAudio/
+OrganSampler/*.jpg
+OrganSampler/*.png
+OrganSampler/*.bak-*
+OrganSampler/Builds/**/*.bak-*
+ThirdParty/tmp_*/
+ThirdParty/*.zip
+!OrganSampler/Source/*.png
+!OrganSampler/Source/*.jpg
+
+# Editor and OS files
+.vs/
+*.suo
+*.swp
+Thumbs.db
+desktop.ini
+.claude/

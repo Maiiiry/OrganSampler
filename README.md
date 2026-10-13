@@ -1,0 +1,87 @@
+# OrganSampler
+
+**Pipe organ sampler for creative minds.** Design your console, build your stop
+list, perform.
+
+OrganSampler plays sampled pipe organs from plain folders of WAV files - one
+folder per stop, one file per pipe - and turns any number of such folders into
+an organ with up to seven manuals and a pedal: massive polyphony, per-key
+voicing, divisions and microphone perspectives with independent audio routes on
+any number of sound cards, IR reverb per route, wind and tremulant models,
+temperaments, transmissions with transposition (extensions), velocity layers,
+general crescendo and combinations. No organ definition file is needed: you load
+the folders, the program proposes the organ, you shape it and save it as a
+configuration. Free software under the GNU GPL v3. Windows, macOS and Linux.
+
+- Website: https://zurek-jiri.github.io/OrganSampler/
+- Downloads: https://github.com/zurek-jiri/OrganSampler/releases
+- User manual: [`OrganSampler/USER_MANUAL.md`](OrganSampler/USER_MANUAL.md)
+  (also inside the program: Configuration Editor > About & licences)
+- Changes: [`OrganSampler/CHANGELOG.md`](OrganSampler/CHANGELOG.md)
+- Organ configurations to share and download: [`configurations/`](configurations/README.md)
+- Problems and ideas: [issues](https://github.com/zurek-jiri/OrganSampler/issues/new/choose)
+  (attach the log bundle from `OrganSampler/Tools/collect_logs.ps1`); see
+  [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- Third-party software and licences: [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md)
+
+The executable is portable: every data table and every licence text is embedded
+at build time, nothing is read beside the executable. Settings live in the
+user's application-data folder (`%APPDATA%\OrganSampler` on Windows,
+`~/Library/Application Support/OrganSampler` on macOS, `~/.config/OrganSampler`
+on Linux).
+
+## Building
+
+Everything the build needs is in the repository (JUCE as a git submodule, the
+Steinberg ASIO SDK under its GPLv3 option, Signalsmith Stretch); nothing refers
+to a path outside it.
+
+```
+git clone --recurse-submodules https://github.com/zurek-jiri/OrganSampler.git
+cd OrganSampler
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release
+```
+
+The JUCE submodule is pinned to JUCE 9.0.3. JUCE 9 needs CMake 3.22 or newer,
+and on Linux the XInput2 and EGL development packages in addition to the usual
+ones.
+
+The result is `build/OrganSampler_artefacts/Release/OrganSampler.exe`
+(Windows), `OrganSampler.app` (macOS) or `OrganSampler` (Linux).
+
+Linux needs the usual JUCE development packages (ALSA, JACK, X11, FreeType,
+fontconfig, Mesa; the list is in `.github/workflows/build.yml`). Audio on macOS
+is CoreAudio, on Linux ALSA or JACK; ASIO, Windows Audio and the aggregated
+Windows Audio device exist in the Windows build only.
+
+Windows developers may also use the Projucer project
+`OrganSampler/OrganSampler.jucer` (Visual Studio 2026 exporter under
+`OrganSampler/Builds`). Its paths are relative to the repository as well.
+
+### Continuous integration
+
+`.github/workflows/build.yml` builds Release on Windows, macOS and Linux for
+every push and pull request, runs the engine self-test on a synthetic sample set
+(Windows and Linux) and uploads the executables as artifacts. A tag `v*` also
+attaches them to a GitHub release. The macOS and Linux builds are not signed:
+macOS asks for confirmation the first time (right-click > Open), Linux needs
+`chmod +x OrganSampler`.
+
+## Self-test
+
+```
+OrganSampler --selftest "<division sample folder>"
+```
+
+Loads the folder without the GUI, exercises the engine (kernels, transmissions,
+filled pipes, velocity layers, pitch-shifted copies, tutti stress, recording)
+and writes `selftest.txt` into the application-data folder.
+
+## Sample sets
+
+No sample set is part of this repository. Sample folders are named after the
+stops and hold one WAV per key (`060-C4.wav`; velocity layers `060-C4_070.wav`;
+releases in `rel`, `rel500` ... subfolders), with loop points and pitch in the
+WAV's `smpl` chunk. See "How the sample folders must be organised" in the user
+manual, and the website for where sample sets come from.

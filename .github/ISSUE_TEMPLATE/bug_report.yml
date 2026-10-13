@@ -1,0 +1,83 @@
+name: Bug report
+description: Something went wrong - a crash, a dropout, a wrong sound, a dialog that misbehaves.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you. A report with the activity log attached is usually fixed in the next release; one without it often cannot be.
+        **Attach the log bundle:** run `Tools/collect_logs.ps1` (Windows, right-click > Run with PowerShell) or `Tools/collect_logs.sh` (macOS, Linux)
+        from the [repository](https://github.com/zurek-jiri/OrganSampler/tree/main/Tools), or zip the folder `%APPDATA%\OrganSampler\CrashLogs`
+        (`~/Library/Application Support/OrganSampler/CrashLogs` on macOS, `~/.config/OrganSampler/CrashLogs` on Linux) by hand,
+        and drag the zip into the "Logs" field below. Screenshots can be dragged into any text field.
+  - type: input
+    id: version
+    attributes:
+      label: OrganSampler version
+      description: Shown in the window title and in Configuration Editor > About & licences.
+      placeholder: "0.8.49"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS
+        - Linux
+    validations:
+      required: true
+  - type: input
+    id: audio
+    attributes:
+      label: Audio driver and device
+      description: The driver type and device of the routes involved (Divisions dialog > audio tabs).
+      placeholder: "ASIO, RME Fireface UCX, buffer 256 at 48 kHz"
+    validations:
+      required: true
+  - type: input
+    id: sampleset
+    attributes:
+      label: Sample set and configuration
+      description: Which sample set (and which organ configuration file, if you loaded one). Attach the configuration .json if the problem concerns it.
+      placeholder: "Sonus Paradisi Stralsund, my own configuration (attached)"
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you saw or heard, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Step by step, from the start of the program. Say whether it happens every time.
+      placeholder: |
+        1. Load the configuration ...
+        2. Open the Divisions dialog of manual I, audio tab "Direct" ...
+        3. Untick every channel ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Drag the zip from collect_logs here (it holds activity.log, crash logs, settings.json and selftest.txt - no sample data). Or paste the last lines of activity.log.
+      placeholder: Drag the zip file into this field.
+    validations:
+      required: true
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: Drag images here (the dialog in question, the polyphony display, the Stop List ...).
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Computer
+      description: CPU, RAM, audio interface. (collect_logs writes this into system.txt in the zip; then leave it empty.)
+      placeholder: "AMD Ryzen 9 5950X, 64 GB, RME Fireface UCX"

@@ -1,0 +1,26 @@
+# Text files are stored with LF and checked out in the platform's convention;
+# shell scripts must stay LF everywhere (a CRLF script does not run on Linux/macOS).
+* text=auto
+*.sh text eol=lf
+*.yml text eol=lf
+*.ps1 text
+*.cpp text
+*.h text
+*.md text
+*.txt text
+*.json text
+*.jucer text
+*.vcxproj text
+*.filters text
+*.sln text
+*.rc text
+CMakeLists.txt text
+
+# Binaries
+*.png binary
+*.jpg binary
+*.ico binary
+*.wav binary
+*.pdf binary
+*.eps binary
+*.zip binary

@@ -1,0 +1,24 @@
+name: Feature request
+description: Something the program should do, or do better.
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: task
+    attributes:
+      label: What are you trying to do?
+      description: The musical or practical task, not the solution. What does the program make hard or impossible today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What should the program do?
+      description: A concrete example helps - which dialog, which control, what happens then.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: OrganSampler version
+      placeholder: "0.8.49"
