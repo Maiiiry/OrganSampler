@@ -6,17 +6,17 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thank you. A report with the activity log attached is usually fixed in the next release; one without it often cannot be.
-        **Attach the log bundle:** run `Tools/collect_logs.ps1` (Windows, right-click > Run with PowerShell) or `Tools/collect_logs.sh` (macOS, Linux)
-        from the [repository](https://github.com/zurek-jiri/OrganSampler/tree/main/Tools), or zip the folder `%APPDATA%\OrganSampler\CrashLogs`
-        (`~/Library/Application Support/OrganSampler/CrashLogs` on macOS, `~/.config/OrganSampler/CrashLogs` on Linux) by hand,
-        and drag the zip into the "Logs" field below. Screenshots can be dragged into any text field.
+        Thank you. A report with the program's log bundle attached is usually fixed in the next release; one without it often cannot be.
+        **The easy way:** in OrganSampler open *Configuration Editor > Report a problem...* - it fills this form in, bundles the
+        activity log, crash reports, settings, the last self-test and a description of your computer and audio devices into one zip,
+        takes screenshots of its windows and puts everything into a folder on your Desktop. Then drag the zip into "Logs" and the
+        pictures into "Screenshots" below. Screenshots can be dragged into any text field.
   - type: input
     id: version
     attributes:
       label: OrganSampler version
       description: Shown in the window title and in Configuration Editor > About & licences.
-      placeholder: "0.8.49"
+      placeholder: "0.8.50"
     validations:
       required: true
   - type: dropdown
@@ -39,10 +39,10 @@ body:
     validations:
       required: true
   - type: input
-    id: sampleset
+    id: samples
     attributes:
-      label: Sample set and configuration
-      description: Which sample set (and which organ configuration file, if you loaded one). Attach the configuration .json if the problem concerns it.
+      label: Sample folders and configuration
+      description: Which sample folders (and which organ configuration file, if you loaded one). Attach the configuration .json if the problem concerns it - never the samples.
       placeholder: "Sonus Paradisi Stralsund, my own configuration (attached)"
   - type: textarea
     id: what
@@ -66,7 +66,7 @@ body:
     id: logs
     attributes:
       label: Logs
-      description: Drag the zip from collect_logs here (it holds activity.log, crash logs, settings.json and selftest.txt - no sample data). Or paste the last lines of activity.log.
+      description: Drag the zip made by "Report a problem" here (it holds activity.log, crash logs, settings.json, selftest.txt and system.txt - no sample data). Or zip the CrashLogs folder of the application-data folder by hand.
       placeholder: Drag the zip file into this field.
     validations:
       required: true
@@ -74,10 +74,10 @@ body:
     id: screenshots
     attributes:
       label: Screenshots
-      description: Drag images here (the dialog in question, the polyphony display, the Stop List ...).
+      description: Drag images here - the pictures from the report folder (the program's windows at the time) and any of your own.
   - type: textarea
     id: hardware
     attributes:
       label: Computer
-      description: CPU, RAM, audio interface. (collect_logs writes this into system.txt in the zip; then leave it empty.)
+      description: CPU, RAM, audio interface. (The report's system.txt has this; then leave it empty.)
       placeholder: "AMD Ryzen 9 5950X, 64 GB, RME Fireface UCX"

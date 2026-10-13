@@ -141,7 +141,7 @@ Contents
 
 ## 1.1 What you need
 
-- A sample set: folders of WAV files, one folder per stop. Sonus Paradisi
+- Samples: folders of WAV files, one folder per stop. Sonus Paradisi
   sample folders (wave format) usually work with OrganSampler as they are.
   Other samples must follow the conventions explained in "How the sample
   folders must be organised" below.
@@ -253,7 +253,7 @@ the program asks where it is.
 
 ## 1.4 How the sample folders must be organised
 
-A sample set is a tree of folders: a top folder (the one you load with *Load
+The samples form a tree of folders: a top folder (the one you load with *Load
 folder...*) holding one folder per stop, each stop folder holding the WAV
 files of its pipes and, inside it, the folders of the release samples. A set
 with several microphone perspectives has the stop folders several times, each
@@ -397,7 +397,7 @@ Principal 8
   line, an unknown one gets a line of its own, which you can then merge by
   hand.
 - **Sample rates.** Everything is converted to 48 kHz while loading (96 and
-  44.1 kHz files included), with a high-quality filter, so sets of different
+  44.1 kHz files included), with a high-quality filter, so samples of different
   rates sound alike and need the same RAM. The audio device may run at any
   rate.
 - **One-shot stops.** A folder whose name matches one of the patterns listed
@@ -432,7 +432,7 @@ with an empty instrument; nothing stops you from loading folders and playing
 without any configuration at all.
 
 Paths inside a configuration are stored relative to the common folder of the
-sample trees where possible, so a configuration kept beside its sample sets
+sample trees where possible, so a configuration kept beside its sample folders
 travels with them (another drive letter, another computer). Trees on a
 different disk get absolute paths. A configuration whose trees are not on
 this computer loads all the same, with the trees that are here: every
@@ -769,7 +769,7 @@ ticked the plain files play anyway - a key never falls silent. The choice is
 saved with the voicing. The keyboard drawing of the Divisions dialog shows the
 MIDI velocity of the key pressed last in a small badge, so you can see which
 layer a stroke reaches. The special use the tick boxes are there for: some
-sets keep the original recordings as "_070" and fine-tuned versions (the
+organs keep the original recordings as "_070" and fine-tuned versions (the
 harmonics tuned inside the audio, a rare treatment for detuned mixtures) as
 the plain files. Untick "_070" and only the fine-tuned samples sound, whatever
 the velocity. *Ignore MIDI velocity (organ keys)* in a division's settings
@@ -799,7 +799,7 @@ plays that perspective of the stop.
 
 ## 4.1 Folder trees and the pool
 
-- **Load folder...** loads a folder tree (a sample set, or a part of it) and
+- **Load folder...** loads a folder tree (the samples of an organ, or a part of them) and
   asks which division its stops go to. A tree is loaded once and its folders
   can serve any division. When a tree of the organ is missing on this
   computer (a configuration from elsewhere: the division header says
@@ -844,6 +844,12 @@ plays that perspective of the stop.
   the table already is not offered). The x at a row's start
   removes the stop (its folders become free). **Remove empty stops** removes
   every row without folders that has no children.
+- **Aliases from folders** gives every stop without an alias the bare name
+  of its sample folder: no parent folders ("TA - fletna" becomes "fletna",
+  shown as "fletna 8'"), no perspective prefix, a footage at the end of the
+  folder name with its foot mark; a stop without a footage in its name shows
+  the measured one (a mixture's first sounding harmonic). Aliases you typed
+  stay. Applied with *Apply and reload*.
 - **Add perspective...** adds a column (a known perspective name or a new
   one); the x in a column header removes it. "default" is the route of folders
   without a perspective prefix.
@@ -922,7 +928,7 @@ mechanically.
 ## 5.3 The audio tabs
 
 Every perspective of the division has an audio tab (the default perspective,
-Direct, Diffuse, Rear ... as the sample set has them), plus one tab
+Direct, Diffuse, Rear ... as the sample folders have them), plus one tab
 **auxiliary** (see "The auxiliary route" below). Every tab is one **audio
 route**: the pipes of that perspective rendered to that device and those
 channels. Which devices and drivers to use is explained in "Audio drivers:
@@ -992,7 +998,7 @@ What it is good for:
 - **Monitoring.** Send the auxiliary route to headphones or to the speakers of
   a control room: you hear the whole division in one mix while the
   perspectives play through their own outputs.
-- **Dry sample sets with IR reverb.** Here the auxiliary route is
+- **Dry samples with IR reverb.** Here the auxiliary route is
   irreplaceable. A dry set (close microphones, no room) gets its room from an
   impulse response on its routes. Give the auxiliary route the rear speakers
   and a *different* IR than the main routes (a rear or more distant impulse
@@ -1002,7 +1008,7 @@ What it costs: an auxiliary route with a device means every sounding pipe is
 rendered twice (once in its perspective, once in the mix), so it uses up the
 DSP time twice as fast and the reachable polyphony is halved. For normal use
 leave the auxiliary device at *none* - then the route costs nothing at all.
-With a dry sample set the halved polyphony does not matter: dry sets have a
+With dry samples the halved polyphony does not matter: dry samples have a
 single perspective and are light to render anyway.
 
 *Set for the auxiliary routes of all divisions* on the auxiliary tab copies
@@ -1085,7 +1091,7 @@ So the polyphony a computer reaches is not a property of the computer alone:
 it depends on the whole configuration of the organ - the number of audio
 routes (every perspective of every division, every auxiliary route with a
 device), the IR reverbs on them, the drivers and their buffer sizes, and the
-sample set itself (its number of perspectives, the length of its releases).
+samples themselves (their number of perspectives, the length of their releases).
 The same computer that renders 25 000 voices of a one-perspective dry set
 may manage a third of that with three perspectives, an auxiliary route and
 IRs. This is why *Maximum polyphony* is saved with the configuration, and
@@ -1194,7 +1200,7 @@ Two temperaments matter:
   smpl chunks, measures how each pitch class deviates, and compares the
   result with the tables. When two thirds or more of the ranks agree on one
   temperament it is chosen by itself ("Base temperament set from the
-  samples" in the activity log) - for most sets you never touch it. When the
+  samples" in the activity log) - for most sample folders you never touch it. When the
   ranks disagree, or when the set has no smpl pitches, choose it by hand:
   **double-click** the temperament in the dialog (or pick it in
   *Configuration Editor > Console > Samples' base temperament*). The voicing
@@ -1210,10 +1216,10 @@ Two temperaments matter:
   switched from a MIDI control (right-click it).
 
 **a1 = 440 Hz** (the button in the dialog) retunes every pipe from its recorded
-pitch to a1 = 440 Hz. Its purpose is to bring sample sets from different organs
+pitch to a1 = 440 Hz. Its purpose is to bring the samples of different organs
 onto one pitch: organs are recorded at different temperatures and different
 diapasons (a1 = 435, 440, 442, 465 Hz ...), and an organ built from the stops
-of two such sets would be out of tune with itself. With every set at 440 Hz
+of two such organs would be out of tune with itself. With every organ at 440 Hz
 the stops agree, and celeste beats and the global *Pitch* slider (Global
 sound, cents on top of everything) mean what they say. The voicing row's
 *Undulation* line reads "needs 440 Hz" until this is done.
@@ -1242,7 +1248,7 @@ stop (the recording ends with a short fade).
 
 Every rank is completed to the full keyboard: pipes it does not have are
 played from neighbouring real pipes, transposed. This covers the extra octave
-of an extension (a 16' or 4' transmission of an 8' stop), a sample set whose
+of an extension (a 16' or 4' transmission of an 8' stop), sample folders whose
 top or bottom keys are missing, and gaps inside the compass. Only the pipes
 that a stop can be asked to play are filled: the compass of its own division and, for
 every transmission, the compass of the receiving division shifted by the
@@ -1383,7 +1389,7 @@ instead of being computed: the build after loading takes seconds instead of
 minutes. A long build that is interrupted (by an operation in the voicing)
 still writes the pipes it has finished.
 
-**What is stored.** One file per rank and sample set (per perspective of a
+**What is stored.** One file per rank and folder tree (per perspective of a
 stop), whatever the settings. The settings a file was built with are written
 inside it; a file built with other settings is simply replaced by the new
 build, so the cache never holds two versions of the same copies and never
@@ -1396,7 +1402,7 @@ removed by themselves.
 
 - The row *Filled pipes cache: <size> in <folder>* shows how much the cache
   holds and where. Its button **Empty the cache** deletes every file. Use it
-  to get the disk space back, or after changing sample sets wholesale; the
+  to get the disk space back, or after replacing the samples wholesale; the
   copies are built again (and cached again) the next time they are needed.
   Nothing else is lost.
 - *Filled pipes cache: files of stops not loaded now* - **Remove them**
@@ -1506,7 +1512,7 @@ configuration. The easiest way to find it is the button below it,
 outputs are configured. By hand:
 
 1. Engage a large number of stops with long releases (a full registration of
-   a wet sample set).
+   wet samples).
 2. Bash the keys: play many quick staccato notes over many keys at once
    (palm smearing - repeated fast strokes with the flat hands over the
    keyboards), so that as many releases as possible sound at the same time:
@@ -1530,7 +1536,7 @@ reachable polyphony dramatically.
 
 *Measure...* does the procedure above for you, with the loaded organ and its
 configured audio outputs - every route, auxiliary route, IR reverb and
-driver as it is. The button is greyed out until a sample set is loaded: a
+driver as it is. The button is greyed out until samples are loaded: a
 measurement without the organ would not say anything about it. What
 happens:
 
@@ -1581,7 +1587,7 @@ happens:
    the computer is the limit.
 
 Then save the configuration: the value belongs to this organ. Measure again
-after changing the audio routes, the IRs, the buffer size or the sample set.
+after changing the audio routes, the IRs, the buffer size or the samples.
 The run takes one to two minutes; *Cancel* restores everything.
 
 ## 8.2 Global sound
@@ -1832,7 +1838,7 @@ Off by default. On: the copies of the filled pipes are written to files as
 they are built and read back the next time the same stops load with the same
 settings, so the build after loading takes seconds instead of minutes - the
 build of a large organ otherwise takes a minute or more at every load. One
-file per rank and sample set, whatever the settings: a set built with other
+file per rank and folder tree, whatever the settings: a tree built with other
 settings replaces its file, so the cache takes about as much room on disk as
 the copies in RAM (hundreds of MB for a large organ) and never plays a stale
 copy. Switch it on when the build after loading annoys you; switch it off
@@ -1843,7 +1849,7 @@ describes it in full.
 
 The row shows the size of the cache and the folder it lives in. *Empty the
 cache* deletes every cached file at once - to get the disk space back, or
-after you have replaced your sample sets. The copies are built again, and
+after you have replaced your sample folders. The copies are built again, and
 cached again, the next time they are needed; nothing else is lost.
 
 ### Filled pipes cache: files of stops not loaded now
@@ -2222,7 +2228,25 @@ Everything the program does at a coarse level - devices opened, divisions
 loaded, builds of the filled pipes' copies - is noted in `CrashLogs\activity.log`
 in the application-data folder; a crash writes a file beside it. When the
 window answers nothing for eight seconds the log records where it was waiting.
-That folder is what to send with a report.
+That folder is what a report needs - and *Report a problem...* sends it for
+you.
+
+### Report a problem
+
+*Report a problem...* at the top of the Configuration Editor opens a dialog
+for what happened and how to reproduce it. When you press *Create the report
+and open GitHub*, the program writes a folder `OrganSampler-report-<date>`
+onto your Desktop with `logs.zip` (the activity log, the crash reports,
+`settings.json`, the last self-test report and `system.txt` - the version,
+the computer, every audio route with its device, buffer, rate and channels;
+no samples, no voicing, no combinations) and PNG screenshots of every window
+of the program as it is at that moment (keep the dialog in question open;
+untick the box if you do not want them), plus any screenshot files you add
+with *Add screenshot files...*. Then the GitHub bug report opens in your
+browser with its fields filled in from the dialog: drag `logs.zip` into
+"Logs" and the pictures into "Screenshots", check the text, submit. A free
+GitHub account is needed to submit; the report is public, like every issue
+of a free program.
 
 ## 8.8 Free software, licences, platforms
 

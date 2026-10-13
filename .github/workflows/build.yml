@@ -46,9 +46,9 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel
 
-      # The engine self-test on a synthetic velocity-layer set (no audio device, no
+      # The engine self-test on synthetic velocity-layer folders (no audio device, no
       # window). It must not block the artifacts, so a failure only marks the step.
-      - name: Self-test (engine, synthetic sample set)
+      - name: Self-test (engine, synthetic sample folders)
         if: runner.os != 'macOS'
         continue-on-error: true
         shell: pwsh

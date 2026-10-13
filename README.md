@@ -19,9 +19,10 @@ configuration. Free software under the GNU GPL v3. Windows, macOS and Linux.
   (also inside the program: Configuration Editor > About & licences)
 - Changes: [`OrganSampler/CHANGELOG.md`](OrganSampler/CHANGELOG.md)
 - Organ configurations to share and download: [`configurations/`](configurations/README.md)
-- Problems and ideas: [issues](https://github.com/zurek-jiri/OrganSampler/issues/new/choose)
-  (attach the log bundle from `OrganSampler/Tools/collect_logs.ps1`); see
-  [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- Problems and ideas: *Configuration Editor > Report a problem...* in the
+  program bundles the logs and opens the
+  [bug report](https://github.com/zurek-jiri/OrganSampler/issues/new/choose);
+  see [`CONTRIBUTING.md`](CONTRIBUTING.md)
 - Third-party software and licences: [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md)
 
 The executable is portable: every data table and every licence text is embedded
@@ -62,8 +63,8 @@ Windows developers may also use the Projucer project
 ### Continuous integration
 
 `.github/workflows/build.yml` builds Release on Windows, macOS and Linux for
-every push and pull request, runs the engine self-test on a synthetic sample set
-(Windows and Linux) and uploads the executables as artifacts. A tag `v*` also
+every push and pull request, runs the engine self-test on synthetic sample
+folders (Windows and Linux) and uploads the executables as artifacts. A tag `v*` also
 attaches them to a GitHub release. The macOS and Linux builds are not signed:
 macOS asks for confirmation the first time (right-click > Open), Linux needs
 `chmod +x OrganSampler`.
@@ -78,10 +79,13 @@ Loads the folder without the GUI, exercises the engine (kernels, transmissions,
 filled pipes, velocity layers, pitch-shifted copies, tutti stress, recording)
 and writes `selftest.txt` into the application-data folder.
 
-## Sample sets
+## Samples
 
-No sample set is part of this repository. Sample folders are named after the
-stops and hold one WAV per key (`060-C4.wav`; velocity layers `060-C4_070.wav`;
-releases in `rel`, `rel500` ... subfolders), with loop points and pitch in the
-WAV's `smpl` chunk. See "How the sample folders must be organised" in the user
-manual, and the website for where sample sets come from.
+No samples are part of this repository or of any release: they are bought or
+downloaded elsewhere - from [Sonus Paradisi](https://www.sonusparadisi.cz/)
+above all - and remain the property of their authors. OrganSampler plays
+plain folders of WAV files: one folder per stop, named after the stop, with
+one WAV per key (`060-C4.wav`; velocity layers `060-C4_070.wav`; releases in
+`rel`, `rel500` ... subfolders) and the loop points and pitch in the WAV's
+`smpl` chunk. See "How the sample folders must be organised" in the user
+manual, and the website for where the samples come from.

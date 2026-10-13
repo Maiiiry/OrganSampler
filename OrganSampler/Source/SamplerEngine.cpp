@@ -89,6 +89,40 @@ namespace
         return result;
     }
 
+    // The perspective prefix of a folder name taken off ("dir-Principal 8" ->
+    // "Principal 8"). One pattern line may list several prefixes separated by
+    // ';': ranks with any of them belong to one perspective (one audio output)
+    // named after the first prefix of the line.
+    juce::String stripPerspectivePrefix(const std::vector<juce::String>& perspectives, juce::String name, juce::String* matchedPerspective)
+    {
+        for (const auto& rawLine : perspectives)
+        {
+            auto alternatives = juce::StringArray::fromTokens(rawLine, ";", "");
+            alternatives.trim();
+            alternatives.removeEmptyStrings();
+            if (alternatives.isEmpty()) continue;
+            const juce::String perspectiveName = alternatives[0];
+            for (const auto& pattern : alternatives)
+            {
+                const auto comparablePattern = comparableFolderName(pattern);
+                if (comparablePattern.isEmpty() || !comparableFolderName(name).startsWith(comparablePattern)) continue;
+                int significant = 0, consumed = 0;
+                while (consumed < name.length() && significant < comparablePattern.length())
+                {
+                    const auto c = name[consumed];
+                    if (c != '-' && c != '_' && !juce::CharacterFunctions::isWhitespace(c)) ++significant;
+                    ++consumed;
+                }
+                while (consumed < name.length()
+                    && (name[consumed] == '-' || name[consumed] == '_' || juce::CharacterFunctions::isWhitespace(name[consumed])))
+                    ++consumed;
+                if (matchedPerspective != nullptr) *matchedPerspective = perspectiveName;
+                return name.substring(consumed).trim();
+            }
+        }
+        return name;
+    }
+
     float windStopContribution(juce::String name)
     {
         name = name.trimEnd();
@@ -7512,6 +7546,22 @@ juce::String SamplerEngine::footageLabel(int semitones)
     return footageName(semitones).upToFirstOccurrenceOf(" (", false, false);
 }
 
+juce::String SamplerEngine::folderStopAlias(const juce::File& folder) const
+{
+    // The bare folder name: no parent folders ("TA - fletna 8'" -> "fletna 8'"),
+    // the perspective prefix off, underscores to spaces, a footage at the end
+    // with its foot mark. Without a footage in the name, the stop's display
+    // name adds the measured one (the first sounding harmonic of a mixture).
+    std::vector<juce::String> perspectives;
+    {
+        const juce::ScopedLock sl(controlLock);
+        perspectives = perspectivePatterns;
+    }
+    juce::String leaf = stripPerspectivePrefix(perspectives, folder.getFileName(), nullptr);
+    if (leaf.trim().isEmpty()) leaf = folder.getFileName();
+    return footageDisplayName(displayFolderName(leaf).trim());
+}
+
 namespace
 {
     // "113", "135", "223", "513", "1023": a mutation footage written without
@@ -8293,35 +8343,7 @@ std::vector<SamplerEngine::FolderAssignment> SamplerEngine::scanTreeAssignments(
 
     auto stripPerspective = [&perspectives](juce::String name, juce::String* matchedPerspective)
     {
-        for (const auto& rawLine : perspectives)
-        {
-            // One line may list several prefixes separated by ';': ranks with any
-            // of them belong to one perspective (one audio output) that is named
-            // after the first prefix of the line.
-            auto alternatives = juce::StringArray::fromTokens(rawLine, ";", "");
-            alternatives.trim();
-            alternatives.removeEmptyStrings();
-            if (alternatives.isEmpty()) continue;
-            const juce::String perspectiveName = alternatives[0];
-            for (const auto& pattern : alternatives)
-            {
-                const auto comparablePattern = comparableFolderName(pattern);
-                if (comparablePattern.isEmpty() || !comparableFolderName(name).startsWith(comparablePattern)) continue;
-                int significant = 0, consumed = 0;
-                while (consumed < name.length() && significant < comparablePattern.length())
-                {
-                    const auto c = name[consumed];
-                    if (c != '-' && c != '_' && !juce::CharacterFunctions::isWhitespace(c)) ++significant;
-                    ++consumed;
-                }
-                while (consumed < name.length()
-                    && (name[consumed] == '-' || name[consumed] == '_' || juce::CharacterFunctions::isWhitespace(name[consumed])))
-                    ++consumed;
-                if (matchedPerspective != nullptr) *matchedPerspective = perspectiveName;
-                return name.substring(consumed).trim();
-            }
-        }
-        return name;
+        return stripPerspectivePrefix(perspectives, name, matchedPerspective);
     };
 
     std::vector<FolderAssignment> assignments;

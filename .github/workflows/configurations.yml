@@ -1,0 +1,48 @@
+name: Configurations check
+
+# The configurations folder carries organ configurations only - never samples.
+# A pull request or push that puts anything else there fails here: audio files
+# outside an IR subfolder, files named like pipe samples (036-C.wav), files of
+# other kinds, or anything above 40 MB.
+on:
+  push:
+    paths: [ 'configurations/**' ]
+  pull_request:
+    paths: [ 'configurations/**' ]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Only configurations, READMEs and IRs
+        shell: bash
+        run: |
+          set -e
+          fail=0
+          while IFS= read -r -d '' f; do
+            name="$(basename "$f")"
+            lower="$(echo "$name" | tr '[:upper:]' '[:lower:]')"
+            size=$(stat -c %s "$f")
+            case "$lower" in
+              *.json|*.md|*.txt|*.png|*.jpg|*.jpeg) ;;
+              *.wav)
+                case "$f" in
+                  */IR/*|*/ir/*) ;;
+                  *) echo "::error file=$f::a WAV file outside an IR folder - samples are never published here"; fail=1 ;;
+                esac ;;
+              *) echo "::error file=$f::file type not allowed in configurations/ ($name)"; fail=1 ;;
+            esac
+            if echo "$name" | grep -Eq '^[0-9]{3}[-_.]'; then
+              echo "::error file=$f::named like a pipe sample ($name) - samples are never published here"; fail=1
+            fi
+            if [ "$size" -gt 41943040 ]; then
+              echo "::error file=$f::larger than 40 MB"; fail=1
+            fi
+          done < <(find configurations -type f -print0)
+          if [ "$fail" -ne 0 ]; then
+            echo "The configurations folder takes organ configurations (.json), their README and the IR files they use - no samples. Samples are bought or downloaded elsewhere (Sonus Paradisi)."
+            exit 1
+          fi
+          echo "configurations/ is clean"

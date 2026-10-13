@@ -319,6 +319,16 @@ private:
     // Stop building helpers (see ManualConfig::StopBuild).
     std::vector<juce::String> divisionTrees(int manual) const;   // the pool trees the division's table uses (or its legacy lists)
     juce::File resolveStopBuildFolder(int manual, const ManualConfig::StopBuild::FolderRef& ref) const;
+    // Every stop without an alias gets the bare name of its sample folder as its
+    // alias (no parent folders, no perspective prefix); applied to the tables,
+    // the loaded stops and the grid at once. Returns how many were filled.
+    int fillAliasesFromFolders();
+    // "Report a problem...": the dialog that bundles the logs, settings, a
+    // description of the computer and the audio devices and screenshots into a
+    // folder on the Desktop and opens the GitHub bug report with the fields filled in.
+    void showProblemReportDialog();
+    juce::File writeProblemReport(const juce::String& what, const juce::String& steps, bool windowShots,
+        const juce::Array<juce::File>& extraShots, juce::URL& issueUrl);
     std::shared_ptr<std::vector<SamplerEngine::FolderAssignment>> stopBuildMap(int manual) const;   // nullptr while inactive
     ManualConfig::StopBuild deriveStopBuildFromEngine(int manual) const;   // the table as the loaded stops are
     void extendStopBuildWithTree(int manual, const juce::File& tree, int treeIndex);   // a tree added to a built division

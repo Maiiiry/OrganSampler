@@ -16,8 +16,8 @@ ASIO is a trademark and software of Steinberg Media Technologies GmbH. ASIO
 support is compiled into the Windows build only; the macOS and Linux builds use
 CoreAudio and ALSA/JACK through JUCE.
 
-No sample set is part of this repository or of any release; sample sets remain
-the property of their authors.
+No samples are part of this repository or of any release; the sample folders
+you play (Sonus Paradisi and others) remain the property of their authors.
 
 The licence texts: `LICENSE` (GPLv3), `ThirdParty/licence-texts/AGPL-3.0.txt`,
 `ASIOSDK/LICENSE.txt`, `ThirdParty/signalsmith/LICENSE-signalsmith-stretch.txt`,

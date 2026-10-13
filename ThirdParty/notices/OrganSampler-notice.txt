@@ -20,5 +20,5 @@ Third-party software in this program:
    ASIO is a trademark and software of Steinberg Media Technologies GmbH
  - Signalsmith Stretch and Signalsmith Linear (Signalsmith Audio Ltd) - MIT
 
-The full texts follow in the list on the left. No sample set is part of this
-program; sample sets remain the property of their authors.
+The full texts follow in the list on the left. No samples are part of this
+program; the sample folders you play remain the property of their authors.

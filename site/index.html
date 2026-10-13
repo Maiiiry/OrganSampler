@@ -15,7 +15,7 @@
   <a class="skip-link" href="#main">Skip to content</a>
   <header class="site-header wrap">
     <a class="brand" href="#" aria-label="OrganSampler home"><img src="assets/icon.png" width="52" height="52" alt=""><span>OrganSampler</span></a>
-    <nav aria-label="Main navigation"><a href="#explore">Inside</a><a href="#download">Download</a><a href="#samples">Sample sets</a><a href="#configurations">Configurations</a><a href="#support">Problems</a></nav>
+    <nav aria-label="Main navigation"><a href="#explore">Inside</a><a href="#download">Download</a><a href="#samples">Samples</a><a href="#configurations">Configurations</a><a href="#support">Problems</a></nav>
   </header>
   <main id="main">
     <section class="hero wrap">
@@ -25,7 +25,7 @@
         <p class="intro">OrganSampler plays sampled pipe organs from plain folders of WAV files - one folder per stop, one recording per pipe - and turns any number of such folders into an organ of your own design.</p>
         <p>No organ definition file, no installer, no account. Load the folders, let the program propose the organ, shape it - divisions, stops, perspectives, audio routes, voicing - and save it as a configuration. Free software under the GNU GPL v3 for Windows, macOS and Linux.</p>
         <div class="actions"><a class="button primary" href="#download">Download <span aria-hidden="true">&darr;</span></a><a class="button secondary" href="#explore">What is inside</a></div>
-        <p class="availability"><span class="status-dot" aria-hidden="true"></span> Version <span data-version>0.8.49</span> &middot; Windows x64 &middot; macOS &middot; Linux x64 &middot; one portable executable</p>
+        <p class="availability"><span class="status-dot" aria-hidden="true"></span> Version <span data-version>0.8.50</span> &middot; Windows x64 &middot; macOS &middot; Linux x64 &middot; one portable executable</p>
       </div>
       <div class="hero-art">
         <img src="assets/pipes.png" width="1250" height="1250" alt="Three metal organ pipes on a dark background" loading="eager">
@@ -36,7 +36,7 @@
       <p><strong>Up to 300 000 voices</strong><span>measured on your organ by the program itself</span></p>
       <p><strong>Any number of sound cards</strong><span>every perspective and division on its own device and channels</span></p>
       <p><strong>Seven manuals and pedal</strong><span>couplers, combinations, crescendo, swell, tremulant, wind</span></p>
-      <p><strong>Plain WAV folders</strong><span>no proprietary format, no encryption, your samples stay yours</span></p>
+      <p><strong>Plain WAV folders</strong><span>no format of its own, no encryption: the samples you buy or download, as they are</span></p>
     </div></div>
 
     <section id="explore" class="section wrap">
@@ -48,18 +48,18 @@
         <button type="button" aria-pressed="false" data-view="editor">Configuration Editor</button>
       </div>
       <figure class="app-preview">
-        <a id="screenshot-link" href="assets/main.png" target="_blank" rel="noopener" aria-label="Open the screenshot at full size in a new tab"><img id="screenshot" src="assets/main.png" width="1920" height="1080" alt="The main window: top bar, combination pistons, the global sound sliders with the polyphony display and the stop grids of four divisions." loading="lazy"></a>
+        <a id="screenshot-link" href="assets/main.png" target="_blank" rel="noopener" aria-label="Open the screenshot at full size in a new tab"><img id="screenshot" src="assets/main.png" width="1920" height="1080" alt="The main window: top bar, combination pistons, the global sound sliders with the polyphony display and the stop grids of the divisions." loading="lazy"></a>
         <figcaption><span id="screenshot-caption" aria-live="polite">The console: one column per division, the stops as buttons, couplers and tremulants in the headers, pistons and the crescendo above.</span><a id="full-size" href="assets/main.png" target="_blank" rel="noopener">Full size &#8599;</a></figcaption>
       </figure>
       <div class="feature-grid">
-        <article><span class="feature-number">01</span><h3>Build the organ yourself</h3><p>Load the folder tree of a sample set; the program recognises the stops, their footages and pitches from the files, the microphone perspectives from the folder prefixes, and proposes the divisions. Move stops between divisions, add transmissions and extensions (a 16' from an 8' by transposition, a mutation from a principal), merge stops, arrange the grid.</p></article>
+        <article><span class="feature-number">01</span><h3>Build the organ yourself</h3><p>Load a folder tree of samples; the program recognises the stops, their footages and pitches from the files, the microphone perspectives from the folder prefixes, and proposes the divisions. Move stops between divisions, add transmissions and extensions (a 16' from an 8' by transposition, a mutation from a principal), merge stops, arrange the grid.</p></article>
         <article><span class="feature-number">02</span><h3>Every route on any sound card</h3><p>Every perspective of every division is an audio route with its own device, buffer size and output channels - ASIO and Windows Audio side by side, several interfaces at once, an aggregated device for the rest. One IR reverb per route, mixed in parallel on the render workers. A measurement button finds the polyphony your computer reaches with this very organ.</p></article>
         <article><span class="feature-number">03</span><h3>Voice every pipe</h3><p>Per-key volume, pitch and tuning errors, celeste detection, temperaments (historical and your own), velocity layers, round-robin variants, a wind model with pressure drops and oscillation, tremulants per division, swell boxes, a general crescendo, combination banks, MIDI learn on every control.</p></article>
         <article><span class="feature-number">04</span><h3>Missing pipes, filled</h3><p>A rank with gaps, or a stop that exists only as an 8', is completed by pitch-shifted copies of the neighbouring pipes - several transposition methods, rebuilt offline into a cache, so that nothing is interpolated on the fly and nothing is altered silently.</p></article>
-        <article><span class="feature-number">05</span><h3>Fast, measured, honest</h3><p>The sound engine renders on all cores with a lock-free control thread; the polyphony display shows the real peak, the DSP field the busiest audio callback. Every start, device, load and crash is written to an activity log that makes a bug report fixable.</p></article>
+        <article><span class="feature-number">05</span><h3>Fast, measured, honest</h3><p>The sound engine renders on all cores with a lock-free control thread; the polyphony display shows the real peak, the DSP field the busiest audio callback. Every start, device, load and crash is written to an activity log, and "Report a problem" in the Configuration Editor turns it into a bug report with one click.</p></article>
         <article><span class="feature-number">06</span><h3>The manual lives inside</h3><p>The complete user manual is embedded: the question mark beside every option of the Configuration Editor opens the chapter that explains it, chapter names in the text are links, and a Find box searches it. Nothing is read from beside the executable; one file is the whole program.</p></article>
       </div>
-      <p class="note">What you need: a sample set as folders of WAV files (below), an audio interface (ASIO for the lowest latency on Windows; CoreAudio on macOS; ALSA or JACK on Linux), a MIDI keyboard or an organ console with MIDI out. RAM for the samples: a large wet set with several perspectives needs tens of gigabytes; a small dry set runs on a laptop.</p>
+      <p class="note">What you need: sample folders (below), an audio interface (ASIO for the lowest latency on Windows; CoreAudio on macOS; ALSA or JACK on Linux), a MIDI keyboard or an organ console with MIDI out. RAM for the samples: a large wet organ with several perspectives needs tens of gigabytes; a small dry one runs on a laptop.</p>
     </section>
 
     <section id="download" class="band">
@@ -77,13 +77,13 @@
           <a class="button primary" href="https://github.com/zurek-jiri/OrganSampler/releases" data-repo-suffix="/releases">Releases &amp; changelog &rarr;</a>
           <a class="text-link" href="https://github.com/zurek-jiri/OrganSampler/blob/main/OrganSampler/USER_MANUAL.md" data-repo-path="OrganSampler/USER_MANUAL.md">Read the user manual &#8599;</a>
           <a class="text-link" href="https://github.com/zurek-jiri/OrganSampler#building" data-repo-suffix="#building">Build from source &#8599;</a>
-          <p class="small">Version <span data-version>0.8.49</span>. Source, issues and configurations on <a href="https://github.com/zurek-jiri/OrganSampler" data-repo-suffix="">GitHub</a>.</p>
+          <p class="small">Version <span data-version>0.8.50</span>. Source, issues and configurations on <a href="https://github.com/zurek-jiri/OrganSampler" data-repo-suffix="">GitHub</a>.</p>
         </div>
       </div>
     </section>
 
     <section id="samples" class="section wrap">
-      <div class="section-heading"><p class="eyebrow">Sample sets</p><h2>Folders of WAV files - that is all.</h2><p>OrganSampler has no format of its own. A sample set is a tree of folders: a top folder holding one folder per stop, each stop folder holding one WAV per pipe named after its MIDI key (<code>036-C.wav</code>, <code>037-C#.wav</code> ...), with the releases in a <code>rel</code> subfolder and the microphone perspectives as prefixes (<code>dir-</code>, <code>dif-</code>, <code>rear-</code>). Loop points and the recorded pitch come from the WAV's <code>smpl</code> chunk; from the pitch the program learns the footage, the tuning and the temperament of every rank.</p></div>
+      <div class="section-heading"><p class="eyebrow">Samples</p><h2>Folders of WAV files - that is all.</h2><p>OrganSampler has no format of its own and needs no organ definition file. What it plays is a tree of folders: a top folder holding one folder per stop, each stop folder holding one WAV per pipe named after its MIDI key (<code>036-C.wav</code>, <code>037-C#.wav</code> ...), with the releases in a <code>rel</code> subfolder and the microphone perspectives as prefixes (<code>dir-</code>, <code>dif-</code>, <code>rear-</code>). Loop points and the recorded pitch come from the WAV's <code>smpl</code> chunk; from the pitch the program learns the footage, the tuning and the temperament of every rank. In OrganSampler the words "sample set" keep their original, plain meaning: a bunch of WAV samples organised in folders - not a packaged virtual organ with a definition file.</p></div>
       <pre><code>Organ Samples                 &lt;- the top folder you load
 ├── Principal 8
 │   ├── 036-C.wav             &lt;- one WAV per pipe, named after its key
@@ -93,13 +93,13 @@
 ├── dif-Trompete 8            &lt;- the "Diffuse" perspective
 └── Mixtura</code></pre>
       <div class="cards">
-        <article><h3>Sets you can buy</h3><ul>
-          <li><a href="https://www.sonusparadisi.cz/" rel="noopener">Sonus Paradisi</a> - sample sets in wave format usually work with OrganSampler as they are (the Stralsund, Jakobi Wegscheider organ is the set the program grew up with).</li>
-          <li>Other producers' sets work when their WAV files are not encrypted and follow the folder conventions above - or can be renamed to.</li>
+        <article><h3>Where the samples come from</h3><ul>
+          <li>OrganSampler ships no samples and never will: they are bought or downloaded elsewhere and stay the property of their authors.</li>
+          <li><a href="https://www.sonusparadisi.cz/" rel="noopener">Sonus Paradisi</a> - sample folders in wave format usually work with OrganSampler as they are. The Stralsund, St. Jakobi, Wegscheider organ is the instrument the program grew up with.</li>
         </ul></article>
-        <article><h3>Free sets</h3><ul>
-          <li><a href="https://piotrgrabowski.pl/" rel="noopener">Piotr Grabowski</a> publishes free sample sets of real organs; their unencrypted WAV files can be loaded once unpacked into folders.</li>
-          <li>A small <strong>starter set</strong> (a trimmed version of the Kobrle organ samples) with its configuration is planned for free download here, so that OrganSampler can be tried without buying a set first. Not yet available.</li>
+        <article><h3>Free samples</h3><ul>
+          <li>Sonus Paradisi's <a href="https://www.sonusparadisi.cz/en/free-stuff.html" rel="noopener">Free stuff</a> page: free instruments and impulse responses to begin with.</li>
+          <li>A small set of <strong>starter folders</strong> (a trimmed version of the Kobrle organ samples) with its configuration is planned for free download here, so that OrganSampler can be tried at once. Not yet available.</li>
         </ul></article>
         <article><h3>Your own recordings</h3><ul>
           <li>Record the pipes, write loop points and the pitch into the <code>smpl</code> chunk with any audio editor, name the files after the keys, put them in a folder per stop. Missing pipes are filled by transposition; missing loops are no obstacle.</li>
@@ -110,13 +110,13 @@
 
     <section id="configurations" class="band">
       <div class="wrap">
-        <div class="section-heading"><p class="eyebrow">Organ configurations</p><h2>Someone kind has done the work for you.</h2><p>A configuration is a complete organ built in OrganSampler - stop list, voicing, audio routes, couplers, combinations, crescendo - saved as one <code>.json</code> file. With a published configuration, a player who owns the same sample set loads the whole organ in one step. The samples themselves are never published; a configuration only names the set it needs.</p></div>
+        <div class="section-heading"><p class="eyebrow">Organ configurations</p><h2>Someone kind has done the work for you.</h2><p>A configuration is a complete organ built in OrganSampler - stop list, voicing, audio routes, couplers, combinations, crescendo - saved as one <code>.json</code> file. With a published configuration, a player who owns the same sample folders loads the whole organ in one step. <strong>The samples themselves are never published; a configuration only names the sample folders it needs</strong>, and the repository refuses anything else in its configurations folder. The samples are bought or downloaded elsewhere - from Sonus Paradisi above all.</p></div>
         <div class="two">
           <div class="plain">
             <h3>Using one</h3>
             <ol>
-              <li>Get the sample set the configuration names (its README says which and where from).</li>
-              <li>Put the <code>.json</code> beside the sample set - in the folder that contains the set's top folder. Paths inside a configuration are relative to that folder, so the samples are found without a question.</li>
+              <li>Get the sample folders the configuration names (its README says which and where from).</li>
+              <li>Put the <code>.json</code> beside them - in the folder that contains the top folder of the samples. Paths inside a configuration are relative to that folder, so the samples are found without a question.</li>
               <li>Copy the impulse responses published with it next to the <code>.json</code>.</li>
               <li><em>Load Configuration</em> in the top bar. If a folder tree is not where the configuration expects it, the organ loads with the trees it finds and the division shows "Sample folder not found" with the folder's name: load that folder in the Stop List and it takes the missing tree's place.</li>
             </ol>
@@ -126,8 +126,8 @@
             <h3>Publishing yours</h3>
             <ol>
               <li>Save the configuration without MIDI (the console's MIDI devices are of no use to others), with the IR files beside it.</li>
-              <li>Write the short README: organ, sample set and its source, the folder trees expected, the audio layout, the measured polyphony, the OrganSampler version.</li>
-              <li>Open a pull request adding a folder under <code>configurations/</code>, or open an "Organ configuration" issue and attach the files - the maintainer adds them.</li>
+              <li>Write the short README: organ, the sample folders and their source, the folder trees expected, the audio layout, the measured polyphony, the OrganSampler version.</li>
+              <li>Open a pull request adding a folder under <code>configurations/</code>, or open an "Organ configuration" issue and attach the files - the maintainer adds them. Only the <code>.json</code>, the README and IR files: no sample is accepted, ever.</li>
             </ol>
             <a class="text-link" href="https://github.com/zurek-jiri/OrganSampler/issues/new/choose" data-repo-suffix="/issues/new/choose">Submit a configuration &#8599;</a>
           </div>
@@ -141,8 +141,8 @@
         <div>
           <details open><summary>Reporting a bug</summary>
             <ol>
-              <li>Run <code>Tools/collect_logs.ps1</code> (Windows: right-click &rarr; Run with PowerShell) or <code>Tools/collect_logs.sh</code> (macOS, Linux) from the repository. It zips the log folder, your settings, the last self-test and a description of the computer - no sample data - onto your Desktop.</li>
-              <li>Open a bug report, fill in the version, the system, the audio driver, what happened and how to reproduce it; drag the zip and your screenshots into the form.</li>
+              <li>In the program: <em>Configuration Editor &rarr; Report a problem...</em> Describe what happened and how to reproduce it; the program bundles its activity log, crash reports, settings, the last self-test and a description of the computer and the audio devices into one zip, takes screenshots of its own windows (recommended - keep the dialog in question open), and lets you add screenshot files of your own.</li>
+              <li>It then opens the GitHub bug report in your browser with the fields filled in and the report folder on your Desktop: drag the zip into "Logs", the pictures into "Screenshots", and submit. A free GitHub account is needed to submit.</li>
             </ol>
             <a class="text-link" href="https://github.com/zurek-jiri/OrganSampler/issues/new/choose" data-repo-suffix="/issues/new/choose">Open a report &#8599;</a>
           </details>

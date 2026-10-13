@@ -12,6 +12,29 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.50] - 2026-10-13
+
+### Added
+- "Report a problem..." in the Configuration Editor: a dialog for what
+  happened and how to reproduce it; the program bundles its activity log,
+  crash reports, settings, the last self-test and a description of the
+  computer and the audio routes into logs.zip, takes screenshots of its own
+  windows (and takes screenshot files of yours), puts everything into a
+  folder on the Desktop and opens the GitHub bug report with the fields
+  filled in. The report scripts of 0.8.49 are gone.
+- "Aliases from folders" in the Stop List: every stop without an alias gets
+  the bare name of its sample folder - no parent folders ("TA - fletna"
+  becomes "fletna 8'"), no perspective prefix, the footage with its foot
+  mark (a mixture's first sounding harmonic as the program measures it).
+  Aliases typed by hand stay.
+
+### Changed
+- Wording everywhere (manual, program, website, repository): "sample
+  folders" and "folder trees" instead of "sample set"; no samples are ever
+  part of the program or the repository, they are bought or downloaded
+  elsewhere. The configurations folder of the repository takes
+  configurations only - a check refuses samples.
+
 ## [0.8.49] - 2026-10-13
 
 ### Fixed

@@ -24,8 +24,8 @@ static const char* const kLicenceOrganSampler_part0 =
     "   ASIO is a trademark and software of Steinberg Media Technologies GmbH\n"
     " - Signalsmith Stretch and Signalsmith Linear (Signalsmith Audio Ltd) - MIT\n"
     "\n"
-    "The full texts follow in the list on the left. No sample set is part of this\n"
-    "program; sample sets remain the property of their authors.\n"
+    "The full texts follow in the list on the left. No samples are part of this\n"
+    "program; the sample folders you play remain the property of their authors.\n"
     "\n"
     ;
 static const char* const kLicenceOrganSamplerParts[] = { kLicenceOrganSampler_part0 };

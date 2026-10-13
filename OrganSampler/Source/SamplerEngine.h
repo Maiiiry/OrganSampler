@@ -1161,6 +1161,10 @@ public:
     const std::vector<juce::String>& getIgnoredPatterns() const { return ignoredPatterns; }
     bool isIgnoredFolderName(const juce::String& folderName) const;
     void setPerspectivePatterns(const std::vector<juce::String>& patterns) { perspectivePatterns = patterns; }
+    // An alias for a stop from the bare name of its sample folder (no parent
+    // folders, no perspective prefix, the footage with its foot mark): what the
+    // Stop List's "Aliases from folders" fills in where no alias is set.
+    juce::String folderStopAlias(const juce::File& folder) const;
     const std::vector<juce::String>& getPerspectivePatterns() const { return perspectivePatterns; }
 
     struct Impl;

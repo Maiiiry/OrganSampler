@@ -1,5 +1,7 @@
 :root { color-scheme: dark; --ink: #ecebe6; --muted: #b9b7ae; --paper: #1c1d1f; --panel: #26282b; --line: #3a3d41; --accent: #e8a33d; --accent-dark: #b57a1f; --green: #7fc29b; }
 * { box-sizing: border-box; }
+::selection { background: var(--accent); color: #1a1407; }
+::-moz-selection { background: var(--accent); color: #1a1407; }
 html { scroll-behavior: smooth; scroll-padding-top: 2rem; }
 body { margin: 0; background: var(--paper); color: var(--ink); font: 1.15rem/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
 a { color: inherit; text-underline-offset: .22em; }

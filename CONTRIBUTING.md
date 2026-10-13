@@ -2,16 +2,19 @@
 
 ## Reporting a problem
 
-Open a [bug report](https://github.com/zurek-jiri/OrganSampler/issues/new/choose)
-and attach the log bundle: run `OrganSampler/Tools/collect_logs.ps1` (Windows:
-right-click > Run with PowerShell) or `OrganSampler/Tools/collect_logs.sh`
-(macOS, Linux). It zips the program's `CrashLogs` folder (the activity log and
-the crash reports), `settings.json`, the last self-test report and a short
-description of the computer - no sample data - and places the zip on your
-Desktop (home folder on macOS and Linux). Drag it into the "Logs" field of the
-report, add screenshots where they help, and describe what you did step by
-step. The activity log is what makes a report fixable: it records every
-device, every load and the last minutes before a crash.
+In the program: *Configuration Editor > Report a problem...* Describe what
+happened and how to reproduce it. The program bundles its activity log, the
+crash reports, `settings.json`, the last self-test report and a description of
+the computer and the audio devices into one zip (no samples, no voicing, no
+combinations), takes screenshots of its own windows - keep the dialog in
+question open - and lets you add screenshot files of your own. It then opens
+the [bug report form](https://github.com/zurek-jiri/OrganSampler/issues/new/choose)
+in your browser with the fields filled in, and the report folder on your
+Desktop: drag the zip into "Logs", the pictures into "Screenshots", submit. A
+free GitHub account is needed to submit.
+
+The activity log is what makes a report fixable: it records every device,
+every load and the last minutes before a crash.
 
 The maintainer reads the reports with `OrganSampler/Tools/fetch_issues.ps1`,
 which downloads every issue with its comments and attachments into a local
@@ -21,14 +24,19 @@ folder for analysis.
 
 See `configurations/README.md`: what a published configuration must contain
 and how to submit it (pull request or the "Organ configuration" issue form).
+Configurations only - never samples; the `Configurations check` workflow
+refuses them.
 
 ## Changing the code
 
 - Build with CMake (`README.md`) or the Projucer project under
   `OrganSampler/`; both compile the same sources.
 - C++17, JUCE 9. Windows-only code (ASIO, WASAPI aggregate, the crash
-  handler's dbghelp, window enumeration) stays under `#if JUCE_WINDOWS` /
-  `JUCE_MSVC` with a fallback, so macOS and Linux keep building.
+  handler's dbghelp, window enumeration, message pumps) stays under
+  `#if JUCE_WINDOWS` / `JUCE_MSVC` with a fallback, so macOS and Linux keep
+  building. GCC and clang are stricter than MSVC: `alignas` before `static`,
+  explicit `juce::int64`/`juce::uint64` for `jmax` and `countNumberOfBits`,
+  `std::max<size_t>` instead of `jmax<size_t>`, `juce::File()` instead of `{}`.
 - Nothing may refer to a path outside the repository; nothing is read from
   beside the executable at run time (data tables and licence texts are
   embedded at build time).

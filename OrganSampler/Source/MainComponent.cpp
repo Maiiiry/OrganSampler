@@ -1339,6 +1339,27 @@ MainComponent::MainComponent()
                 safeThis->resolveAndApplyPortableConfiguration(configuration, file);
         });
     }
+    // Development: ORGAN_FILL_ALIASES_SAVE=1 fills the aliases from the folder
+    // names 25 s after start (as the Stop List button does) and writes the open
+    // configuration file back (MIDI kept as the file had it).
+    if (std::getenv("ORGAN_FILL_ALIASES_SAVE") != nullptr)
+    {
+        juce::Component::SafePointer<MainComponent> safeThis(this);
+        juce::Timer::callAfterDelay(25000, [safeThis]
+        {
+            if (safeThis == nullptr) return;
+            const int filled = safeThis->fillAliasesFromFolders();
+            const auto file = safeThis->currentConfigurationFile;
+            if (file.existsAsFile())
+            {
+                const auto parsed = juce::JSON::parse(file.loadFileAsString());
+                const bool midi = (bool)parsed.getProperty("containsMidiMappings", false);
+                safeThis->savePortableConfiguration(file, midi);
+                CrashHandler::note("ORGAN_FILL_ALIASES_SAVE: " + juce::String(filled) + " alias(es) filled, configuration saved to " + file.getFullPathName());
+            }
+            else CrashHandler::note("ORGAN_FILL_ALIASES_SAVE: " + juce::String(filled) + " alias(es) filled, no configuration file open");
+        });
+    }
     // Development: ORGAN_LOAD_TREE="<division>|<folder>" loads the folder into
     // the division 25 s after start, as "Load folder..." of the Stop List would
     // (a tree of the same name as a missing pool tree takes its place).
@@ -3953,6 +3974,270 @@ bool MainComponent::applyAggregateSelection(int manualIndex, const juce::String&
     }
     CrashHandler::note("Aggregated WASAPI " + routeName + " plays through " + aggregate->selectionDescription());
     return changed;
+}
+
+int MainComponent::fillAliasesFromFolders()
+{
+    int filled = 0;
+    bool layoutChanged = false;
+    for (int manual = 0; manual <= manualCount && manual < SamplerEngine::maxManuals; ++manual)
+    {
+        auto& build = manualConfigs[(size_t)manual].stopBuild;
+        if (!build.active) continue;
+        for (auto& entry : build.entries)
+        {
+            if (entry.alias.isNotEmpty() || entry.folders.empty() || entry.isTransmission()) continue;
+            juce::File folder;
+            for (const auto& [perspective, ref] : entry.folders)
+            {
+                folder = resolveStopBuildFolder(manual, ref);
+                if (folder != juce::File()) break;
+            }
+            if (folder == juce::File()) continue;
+            const auto alias = engine.folderStopAlias(folder);
+            if (alias.isEmpty()) continue;
+            entry.alias = alias;
+            ++filled;
+            for (auto* stop : engine.getStops())
+                if (stop != nullptr && stop->primaryManual == manual && stopBuildKey(stop->name) == stopBuildKey(entry.name) && stop->alias != alias)
+                {
+                    stop->alias = alias;
+                    layoutChanged = true;
+                }
+        }
+    }
+    if (filled > 0)
+    {
+        CrashHandler::note("Aliases from folders: " + juce::String(filled) + " stop(s) got the bare folder name as alias");
+        if (layoutChanged && voicer) voicer->rebuildUI(stopsContent, stopsViewport);
+        saveSettings();
+    }
+    return filled;
+}
+
+juce::File MainComponent::writeProblemReport(const juce::String& what, const juce::String& steps, bool windowShots,
+    const juce::Array<juce::File>& extraShots, juce::URL& issueUrl)
+{
+    // The report folder on the Desktop: logs.zip (activity log, crash reports,
+    // settings, self-test report, system.txt) and the screenshots as PNG files,
+    // so each goes into its field of the GitHub form by drag and drop.
+    const auto stamp = juce::Time::getCurrentTime().formatted("%Y-%m-%d_%H-%M");
+    auto desktop = juce::File::getSpecialLocation(juce::File::userDesktopDirectory);
+    if (!desktop.isDirectory()) desktop = juce::File::getSpecialLocation(juce::File::userHomeDirectory);
+    const auto folder = desktop.getChildFile("OrganSampler-report-" + stamp);
+    folder.createDirectory();
+
+    // The computer, the program and the audio devices as they are now.
+    juce::String system;
+    const juce::String version(ProjectInfo::versionString);
+    const auto os = juce::SystemStats::getOperatingSystemName();
+    const auto cpu = juce::SystemStats::getCpuModel().trim();
+    const int physical = juce::SystemStats::getNumPhysicalCpus(), logical = juce::SystemStats::getNumCpus();
+    const int ramMb = juce::SystemStats::getMemorySizeInMegabytes();
+    system << "OrganSampler " << version << "\n"
+           << "time: " << juce::Time::getCurrentTime().toString(true, true, true, true) << "\n"
+           << "os: " << os << "\n"
+           << "cpu: " << cpu << "  (" << physical << " physical / " << logical << " logical)\n"
+           << "ram: " << juce::String(ramMb / 1024.0, 1) << " GB\n";
+    if (auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
+        system << "display: " << display->totalArea.getWidth() << "x" << display->totalArea.getHeight() << " at " << juce::roundToInt(display->scale * 100.0) << " %\n";
+    system << "render threads: " << (engine.getRenderWorkerCount() + 1) << "  (preset " << renderThreadPreset << ")\n"
+           << "polyphony limit: " << engine.getMaxPolyphony() << "\n"
+           << "configuration: " << (currentConfigurationName.isNotEmpty() ? currentConfigurationName : juce::String("(none)")) << "\n"
+           << "divisions: " << (manualCount + 1) << ", stops: " << engine.getStops().size() << ", folder trees: " << (int)sampleTrees.size() << "\n";
+    for (const auto& tree : sampleTrees) system << "  tree: " << tree << (juce::File(tree).isDirectory() ? "" : "  (not found)") << "\n";
+    juce::String audio;
+    static const juce::String names[8]{ "Pedal", "I.", "II.", "III.", "IV.", "V.", "VI.", "VII." };
+    for (int manual = 0; manual <= manualCount && manual < SamplerEngine::maxManuals; ++manual)
+        for (const auto& perspective : engine.getPerspectivesForManual(manual))
+        {
+            auto* manager = managerForRoute(manual, perspective);
+            auto* device = manager != nullptr ? manager->getCurrentAudioDevice() : nullptr;
+            const auto& channels = perspective.equalsIgnoreCase("default") ? manualConfigs[(size_t)manual].outputChannels
+                : manualConfigs[(size_t)manual].perspectiveAudio[perspectiveRouteKey(manual, perspective)].outputChannels;
+            juce::String channelList;
+            for (const auto channel : channels) channelList << (channelList.isEmpty() ? "" : ",") << (channel + 1);
+            system << "route " << names[juce::jlimit(0, 7, manual)] << " / " << perspective << ": ";
+            if (device == nullptr) system << "none\n";
+            else
+            {
+                system << manager->getCurrentAudioDeviceType() << " \"" << device->getName() << "\" buffer " << device->getCurrentBufferSizeSamples()
+                       << " rate " << juce::String(device->getCurrentSampleRate(), 0) << " channels " << channelList << "\n";
+                if (audio.isEmpty()) audio = manager->getCurrentAudioDeviceType() + ", " + device->getName() + ", buffer "
+                    + juce::String(device->getCurrentBufferSizeSamples()) + " at " + juce::String(device->getCurrentSampleRate(), 0);
+            }
+        }
+    system << "\nwhat happened:\n" << what << "\n\nsteps:\n" << steps << "\n";
+    const auto systemFile = folder.getChildFile("system.txt");
+    systemFile.replaceWithText(system);
+
+    // The zip: everything of CrashLogs, the settings, the last self-test, system.txt.
+    const auto zipPath = folder.getChildFile("logs.zip");
+    {
+        juce::ZipFile::Builder builder;
+        const auto logs = CrashHandler::detail::logDirectory();
+        for (const auto& entry : juce::RangedDirectoryIterator(logs, false, "*", juce::File::findFiles))
+            builder.addFile(entry.getFile(), 6, "CrashLogs/" + entry.getFile().getFileName());
+        if (settingsFile.existsAsFile()) builder.addFile(settingsFile, 6, "settings.json");
+        const auto selfTest = settingsFile.getParentDirectory().getChildFile("selftest.txt");
+        if (selfTest.existsAsFile()) builder.addFile(selfTest, 6, "selftest.txt");
+        builder.addFile(systemFile, 6, "system.txt");
+        juce::FileOutputStream out(zipPath);
+        if (out.openedOk()) builder.writeToStream(out, nullptr);
+    }
+
+    // Screenshots: every window of the program (the report dialog left out), and the user's own files.
+    int shots = 0;
+    if (windowShots)
+    {
+        auto& desk = juce::Desktop::getInstance();
+        for (int i = 0; i < desk.getNumComponents(); ++i)
+        {
+            auto* component = desk.getComponent(i);
+            if (component == nullptr || !component->isVisible() || component->getWidth() < 80 || component->getHeight() < 40) continue;
+            if (component->getName().startsWithIgnoreCase("Report a problem")) continue;
+            auto image = component->createComponentSnapshot(component->getLocalBounds());
+            if (!image.isValid()) continue;
+            juce::String name = component->getName().isNotEmpty() ? component->getName() : juce::String("window");
+            name = name.replaceCharacters("\\/:*?\"<>|", "_________").substring(0, 60);
+            juce::FileOutputStream png(folder.getChildFile("window-" + juce::String(++shots) + "-" + name + ".png"));
+            if (png.openedOk()) juce::PNGImageFormat().writeImageToStream(image, png);
+        }
+    }
+    for (const auto& extra : extraShots)
+        if (extra.existsAsFile()) extra.copyFileTo(folder.getChildFile(extra.getFileName()));
+
+    // The GitHub form with its fields filled in (the dropdown wants one of its options).
+    juce::String osOption = "Linux";
+    if (os.startsWithIgnoreCase("Windows 11")) osOption = "Windows 11";
+    else if (os.startsWithIgnoreCase("Windows")) osOption = "Windows 10";
+    else if (os.containsIgnoreCase("mac") || os.containsIgnoreCase("OSX")) osOption = "macOS";
+    issueUrl = juce::URL("https://github.com/zurek-jiri/OrganSampler/issues/new")
+        .withParameter("template", "bug_report.yml")
+        .withParameter("title", "[Bug] " + what.upToFirstOccurrenceOf("\n", false, false).substring(0, 70))
+        .withParameter("version", version)
+        .withParameter("os", osOption)
+        .withParameter("audio", audio.isNotEmpty() ? audio : juce::String("no audio device"))
+        .withParameter("samples", currentConfigurationName.isNotEmpty() ? "configuration \"" + currentConfigurationName + "\"" : juce::String())
+        .withParameter("what", what)
+        .withParameter("steps", steps)
+        .withParameter("hardware", cpu + ", " + juce::String(ramMb / 1024.0, 0) + " GB RAM");
+    CrashHandler::note("Problem report written to " + folder.getFullPathName() + " (" + juce::String(shots) + " window shot(s), "
+        + juce::String(extraShots.size()) + " file(s) added)");
+    return folder;
+}
+
+void MainComponent::showProblemReportDialog()
+{
+    // What happened, how to reproduce it, the program's own screenshots
+    // (recommended: keep the dialog in question open) and screenshot files of
+    // the user's own; "Create report" writes the folder and opens GitHub.
+    struct Content final : public juce::Component
+    {
+        explicit Content(MainComponent& o) : owner(o)
+        {
+            auto label = [this](juce::Label& l, const juce::String& text)
+            {
+                l.setText(text, juce::dontSendNotification);
+                l.setFont(juce::FontOptions(15.0f));
+                addAndMakeVisible(l);
+            };
+            label(intro, "What went wrong? The program adds its activity log, crash reports, settings, the last self-test and a description of "
+                "the computer and the audio devices by itself (no samples, no voicing). Then the GitHub bug report opens in your browser with the "
+                "fields filled in, and the report folder on your Desktop: drag logs.zip into \"Logs\" and the pictures into \"Screenshots\". "
+                "A free GitHub account is needed to submit.");
+            intro.setMinimumHorizontalScale(1.0f);
+            label(whatLabel, "What happened (what you saw or heard, and what you expected):");
+            label(stepsLabel, "Steps to reproduce (from the start of the program; does it happen every time?):");
+            for (auto* editor : { &what, &steps })
+            {
+                editor->setMultiLine(true, true);
+                editor->setReturnKeyStartsNewLine(true);
+                editor->setFont(juce::FontOptions(15.0f));
+                addAndMakeVisible(editor);
+            }
+            windowShots.setButtonText("Take screenshots of the program's windows now (recommended - keep the dialog in question open)");
+            windowShots.setToggleState(true, juce::dontSendNotification);
+            addAndMakeVisible(windowShots);
+            addFiles.setButtonText("Add screenshot files...");
+            addFiles.onClick = [this]
+            {
+                chooser = std::make_unique<juce::FileChooser>("Screenshots to add to the report", juce::File(), "*.png;*.jpg;*.jpeg;*.gif");
+                chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles
+                    | juce::FileBrowserComponent::canSelectMultipleItems, [this](const juce::FileChooser& c)
+                {
+                    for (const auto& file : c.getResults()) if (file.existsAsFile()) extra.addIfNotAlreadyThere(file);
+                    juce::StringArray names;
+                    for (const auto& file : extra) names.add(file.getFileName());
+                    filesLabel.setText(names.isEmpty() ? juce::String("No files added.") : names.joinIntoString(", "), juce::dontSendNotification);
+                });
+            };
+            addAndMakeVisible(addFiles);
+            label(filesLabel, "No files added.");
+            filesLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+            create.setButtonText("Create the report and open GitHub");
+            create.onClick = [this]
+            {
+                const auto whatText = what.getText().trim();
+                if (whatText.isEmpty())
+                {
+                    juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, "Report a problem",
+                        "Say what happened first - a report without it cannot be worked on.");
+                    return;
+                }
+                juce::URL url;
+                const auto folder = owner.writeProblemReport(whatText, steps.getText().trim(), windowShots.getToggleState(), extra, url);
+                if (auto* window = findParentComponentOfClass<juce::DialogWindow>()) window->exitModalState(0);
+                folder.revealToUser();
+                url.launchInDefaultBrowser();
+                juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, "Report a problem",
+                    "The report folder is on your Desktop (" + folder.getFileName() + ") and the GitHub form is opening in your browser.\n\n"
+                    "Drag logs.zip into the \"Logs\" field and the PNG pictures into \"Screenshots\", check the text, press \"Submit new issue\".");
+            };
+            addAndMakeVisible(create);
+            cancel.setButtonText("Cancel");
+            cancel.onClick = [this] { if (auto* window = findParentComponentOfClass<juce::DialogWindow>()) window->exitModalState(0); };
+            addAndMakeVisible(cancel);
+            setSize(760, 560);
+        }
+        void resized() override
+        {
+            auto area = getLocalBounds().reduced(14);
+            intro.setBounds(area.removeFromTop(96));
+            area.removeFromTop(6);
+            whatLabel.setBounds(area.removeFromTop(22));
+            what.setBounds(area.removeFromTop(120));
+            area.removeFromTop(8);
+            stepsLabel.setBounds(area.removeFromTop(22));
+            steps.setBounds(area.removeFromTop(110));
+            area.removeFromTop(10);
+            windowShots.setBounds(area.removeFromTop(26));
+            auto files = area.removeFromTop(30);
+            addFiles.setBounds(files.removeFromLeft(190).reduced(0, 2));
+            files.removeFromLeft(10);
+            filesLabel.setBounds(files);
+            auto buttons = area.removeFromBottom(34);
+            cancel.setBounds(buttons.removeFromRight(100).reduced(2));
+            buttons.removeFromRight(8);
+            create.setBounds(buttons.removeFromRight(280).reduced(2));
+        }
+        MainComponent& owner;
+        juce::Label intro, whatLabel, stepsLabel, filesLabel;
+        juce::TextEditor what, steps;
+        juce::ToggleButton windowShots;
+        juce::TextButton addFiles, create, cancel;
+        juce::Array<juce::File> extra;
+        std::unique_ptr<juce::FileChooser> chooser;
+    };
+    juce::DialogWindow::LaunchOptions options;
+    options.dialogTitle = "Report a problem";
+    options.dialogBackgroundColour = juce::Colours::darkgrey;
+    options.content.setOwned(new Content(*this));
+    options.componentToCentreAround = this;
+    options.escapeKeyTriggersCloseButton = true;
+    options.useNativeTitleBar = true;
+    options.resizable = false;
+    options.launchAsync();
 }
 
 juce::AudioDeviceManager* MainComponent::managerForRoute(int manualIndex, const juce::String& perspective)
@@ -10870,6 +11155,29 @@ void MainComponent::showStopBuildingDialog(int)
             setup(removeEmptyButton, "Remove empty stops", "Removes every row without folders that has no stops or transmissions "
                 "indented under it (empty stop folders, stops whose folder tree was unloaded). Rows are never dropped otherwise.",
                 [this] { removeEmptyStops(); });
+            setup(aliasesButton, "Aliases from folders", "Every stop without an alias gets the bare name of its sample folder as its "
+                "alias: no parent folders (\"TA - fletna\" becomes \"fletna\"), no perspective prefix, the footage with its foot mark. "
+                "Aliases you typed stay. Applied with \"Apply and reload\".", [this]
+            {
+                commitEditors();
+                int filled = 0;
+                for (int m = 0; m <= owner.manualCount && m < kDivisions; ++m)
+                    for (auto& entry : drafts[(size_t)m].entries)
+                    {
+                        if (entry.alias.isNotEmpty() || entry.folders.empty() || entry.isTransmission()) continue;
+                        juce::File folder;
+                        for (const auto& [perspective, ref] : entry.folders) { folder = resolve(m, ref); if (folder != juce::File()) break; }
+                        if (folder == juce::File()) continue;
+                        const auto alias = owner.engine.folderStopAlias(folder);
+                        if (alias.isEmpty()) continue;
+                        entry.alias = alias;
+                        ++filled;
+                    }
+                rebuildGrid();
+                updateApplyState();
+                showBriefMessage("Aliases from folders", filled > 0 ? juce::String(filled) + " stop(s) got an alias from the folder name."
+                    : juce::String("Every stop with folders has an alias already."));
+            });
             setup(loadFolderButton, "Load folder...", "Loads a sample folder tree; you choose the division its stops go to. "
                 "The stops enter the table by the automatic rules and can then be moved and edited.", [this] { loadFolderMenu(); });
             setup(unloadFolderButton, "Unload folder...", "Removes one of a division's folder trees (or all of them).", [this] { unloadFolderMenu(); });
@@ -10911,6 +11219,7 @@ void MainComponent::showStopBuildingDialog(int)
             addStopButton.setBounds(buttons.removeFromLeft(96).reduced(2));
             addPerspectiveButton.setBounds(buttons.removeFromLeft(150).reduced(2));
             removeEmptyButton.setBounds(buttons.removeFromLeft(150).reduced(2));
+            aliasesButton.setBounds(buttons.removeFromLeft(160).reduced(2));
             buttons.removeFromLeft(12);
             loadFolderButton.setBounds(buttons.removeFromLeft(120).reduced(2));
             unloadFolderButton.setBounds(buttons.removeFromLeft(130).reduced(2));
@@ -11214,7 +11523,7 @@ void MainComponent::showStopBuildingDialog(int)
         juce::Label divisionHeader, nameHeader, aliasHeader, transmissionHeader;
         std::vector<HeaderCell> headers;
         std::vector<std::unique_ptr<Row>> rows;
-        juce::TextButton addStopButton, addPerspectiveButton, removeEmptyButton, loadFolderButton, unloadFolderButton, swapButton,
+        juce::TextButton addStopButton, addPerspectiveButton, removeEmptyButton, aliasesButton, loadFolderButton, unloadFolderButton, swapButton,
             resetButton, applyButton, closeButton;
         juce::ToggleButton showTrsmButton;
         bool showTransmissions = false;   // transmission rows shown (they are always in the drafts)
@@ -16542,6 +16851,11 @@ void MainComponent::showConfigurationEditor()
             licences.setTooltip("The licences of OrganSampler and of the software it contains, in full.");
             licences.onClick = [this] { this->owner.showAboutDialog(); };
             addAndMakeVisible(licences);
+            report.setButtonText("Report a problem...");
+            report.setTooltip("Bundles the activity log, crash reports, settings and screenshots into a folder on your Desktop "
+                "and opens the GitHub bug report with the fields filled in.");
+            report.onClick = [this] { this->owner.showProblemReportDialog(); };
+            addAndMakeVisible(report);
             close.setButtonText("Close");
             close.onClick = [this]
             {
@@ -16556,6 +16870,7 @@ void MainComponent::showConfigurationEditor()
             // The About bar at the very top: version, licence summary, the licences button.
             auto about = area.removeFromTop(34);
             licences.setBounds(about.removeFromRight(170).reduced(3));
+            report.setBounds(about.removeFromRight(170).reduced(3));
             aboutLabel.setBounds(about.reduced(3));
             auto buttons = area.removeFromBottom(36);
             close.setBounds(buttons.removeFromRight(100).reduced(3));
@@ -16612,7 +16927,7 @@ void MainComponent::showConfigurationEditor()
         juce::Component content;
         std::vector<Row> rows;
         std::map<juce::String, bool> collapsedSections;   // survives "Refresh values"
-        juce::TextButton openFolder, reloadAll, close, licences;
+        juce::TextButton openFolder, reloadAll, close, licences, report;
         juce::Label aboutLabel;
         juce::Array<juce::MidiDeviceInfo> midiDevices;
 
@@ -16901,7 +17216,7 @@ void MainComponent::showConfigurationEditor()
                 [&o](double value) { o.engine.setMaxPolyphony((int)value); o.saveSettings(); },
                 "Oldest voices are faded out when this many pipes sound at once.");
             addButton("Measure the maximum polyphony", "Measure...", [&o] { o.startPolyphonyMeasurement(); },
-                "Finds the limit for THIS organ on THIS computer: with the loaded sample set, every stop engaged and the "
+                "Finds the limit for THIS organ on THIS computer: with the loaded samples, every stop engaged and the "
                 "keys struck repeatedly on every division (heard very quietly, at -42 dB), the limit is raised step by step "
                 "until the busiest audio thread exceeds 85 % of its period or the driver calls late, then narrowed down; the "
                 "maximum polyphony is set to the highest clean limit (lower it on the slider for more headroom, raise it if you dare). "
@@ -17154,8 +17469,8 @@ void MainComponent::showConfigurationEditor()
                     o.saveSettings();
                 }, "The anti-alias or pitch-shifted copies of the filled pipes are written to files in the cache folder as "
                    "they are built, and read from there the next time the same stops load with the same settings: the "
-                   "build after loading then takes seconds instead of minutes. One file per rank and sample set, whatever "
-                   "the settings: a set built with other settings replaces its file, so the cache never holds two versions "
+                   "build after loading then takes seconds instead of minutes. One file per rank and folder tree, whatever "
+                   "the settings: a tree built with other settings replaces its file, so the cache never holds two versions "
                    "of the same copies and takes as much room as the copies in RAM. A copy is used only when the settings "
                    "it was built with match.");
             addButton("Filled pipes cache: " + juce::File::descriptionOfSizeInBytes(o.engine.copyCacheBytes()) + " in "

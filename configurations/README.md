@@ -3,20 +3,27 @@
 A configuration is a complete organ built in OrganSampler - the folder trees
 of the samples, the Stop List, the voicing, the audio routes, couplers,
 combinations and crescendo - saved with *Save Configuration* as one `.json`
-file. With a published configuration a player who owns the same sample set
-loads the whole organ in one step instead of building it.
+file. With a published configuration a player who owns the same sample
+folders loads the whole organ in one step instead of building it.
 
-No sample data is ever published here. Every configuration names the sample
-set it needs and where that set comes from.
+**No samples are ever published here.** A configuration only names the
+sample folders it needs; the samples themselves are bought or downloaded
+elsewhere - from [Sonus Paradisi](https://www.sonusparadisi.cz/) above all
+(their [Free stuff](https://www.sonusparadisi.cz/en/free-stuff.html) page has
+free instruments and impulse responses to begin with) - and remain the
+property of their authors. A check in the repository (`Configurations check`
+workflow) refuses any audio file outside an `IR` subfolder, any file named
+like a pipe sample (`036-C.wav`), any file above 40 MB and any file type
+other than `.json`, `.md`, `.txt` and pictures.
 
 ## Using a published configuration
 
-1. Get the sample set the configuration was made for (see the configuration's
-   README; the website lists where sample sets come from).
-2. Put the `.json` file **beside the sample set** - in the folder that
-   contains the set's top folder. A configuration stores its sample paths
-   relative to the common folder of its sample trees (the "library root"),
-   so when the file lies beside that root it finds the samples by itself:
+1. Get the sample folders the configuration was made for (its README says
+   which and where from).
+2. Put the `.json` file **beside the samples** - in the folder that contains
+   their top folder. A configuration stores its sample paths relative to the
+   common folder of its sample trees (the "library root"), so when the file
+   lies beside that root it finds the samples by itself:
 
    ```
    D:\Samples\                          <- put Stralsund.json here ...
@@ -31,8 +38,8 @@ set it needs and where that set comes from.
    tree folders it expects (the configuration also carries them as
    `sampleLibraryRootName` and `folderRelativePath`).
 3. Copy the impulse responses published with it (the `.wav` files of the IR
-   reverb) into the same folder as the `.json`: their paths are relative to
-   the configuration file.
+   reverb, in its `IR` folder) next to the `.json`: their paths are relative
+   to the configuration file.
 4. In OrganSampler: *Load Configuration* in the top bar, choose the file.
 
 If the samples lie elsewhere, the configuration loads all the same (since
@@ -51,14 +58,16 @@ configurations/
 └── stralsund-jakobi-wegscheider/
     ├── README.md                      <- required, see below
     ├── Stralsund Jakobi Wegscheider.json
-    └── Rural Church Front.wav         <- the IRs the configuration uses, if any (and if their licence allows)
+    └── IR/
+        └── Rural Church Front.wav     <- the IRs the configuration uses, if any (and if their licence allows)
 ```
 
 The README of a configuration:
 
 - **Organ**: the instrument, builder, place, year.
-- **Sample set**: name, producer, a link to the page where it is sold or
-  downloaded, which edition (wave format, which perspectives).
+- **Samples**: the name of the sample folders, their producer, a link to the
+  page where they are sold or downloaded, which edition (wave format, which
+  perspectives).
 - **Expects**: the library root folder name and the tree folders the
   configuration refers to, exactly as saved (the Stop List shows them, the
   file carries them as `sampleLibraryRootName` and `folderRelativePath`).
@@ -69,16 +78,16 @@ The README of a configuration:
 - **Author** and the date.
 
 Save the configuration **without MIDI** when asked (the MIDI devices of your
-console are of no use to anybody else) and keep the IR files beside the
-`.json` when you save, so their paths are stored relative to it. Then either
-open a pull request adding the folder, or open an issue with the
-"Organ configuration" template and attach the files; the maintainer adds
-them. Published configurations are under the repository's licence (GPLv3);
-the sample sets remain the property of their producers.
+console are of no use to anybody else) and keep the IR files in an `IR`
+folder beside the `.json` when you save, so their paths are stored relative
+to it. Then either open a pull request adding the folder, or open an issue
+with the "Organ configuration" template and attach the files; the maintainer
+adds them. Published configurations are under the repository's licence
+(GPLv3).
 
-## Starter sample set
+## Starter folders
 
-A small sample set that can be downloaded freely, with its configuration, is
-planned for this folder (a trimmed version of the Kobrle organ samples), so
-that OrganSampler can be tried without buying a set first. Until it is here,
-the free sets listed on the website are the way to start.
+A small set of sample folders that can be downloaded freely, with its
+configuration, is planned for this folder (a trimmed version of the Kobrle
+organ samples), so that OrganSampler can be tried at once. Until it is here,
+Sonus Paradisi's Free stuff page is the way to start.
