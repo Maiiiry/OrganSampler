@@ -183,8 +183,11 @@ bottom of the Configuration Editor writes that entry
 (`~/.local/share/applications/organsampler.desktop`, pointing at the
 executable where it is now) and the icon in every size from 16 to 512 px
 under `~/.local/share/icons/hicolor` - the same hand-tuned images as the
-Windows icon, size for size. Start OrganSampler from the menu afterwards;
-install again after moving the executable. On macOS the application bundle
+Windows icon, size for size. Then open the application menu (the launcher
+button in the panel, or the Super/Windows key) and type "Organ": OrganSampler
+is there, in the Multimedia (Sound & Video) group, with its icon; right-click
+it to pin it to the panel or the dock. Install again after moving the
+executable. On macOS the application bundle
 carries the icon. The window itself shows it on every platform.
 
 ## 1.3 The first start, step by step

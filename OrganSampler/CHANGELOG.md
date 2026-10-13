@@ -12,6 +12,15 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.58] - 2026-10-13
+
+### Fixed
+- Linux: the menu entry written by "Install menu entry and icon" had Windows
+  line endings, which makes a .desktop file invalid - KDE and GNOME ignored
+  it. Written with Unix line endings now, the KDE menu cache rebuilt, and the
+  message says where the entry is (the application menu, type "Organ";
+  Multimedia group).
+
 ## [0.8.57] - 2026-10-13
 
 ### Changed

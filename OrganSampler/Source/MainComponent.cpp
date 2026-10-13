@@ -10340,17 +10340,25 @@ void MainComponent::installLinuxDesktopEntry()
     text << "[Desktop Entry]\nType=Application\nName=OrganSampler\nComment=Pipe organ sampler for creative minds\n"
          << "Exec=" << exe.getFullPathName().quoted() << "\nIcon=organsampler\nTerminal=false\nCategories=AudioVideo;Audio;Music;\n"
          << "StartupWMClass=OrganSampler\nStartupNotify=false\n";
-    const bool ok = entry.replaceWithText(text) && icons > 0;
-    // The menu and icon caches, where the tools exist (harmless where they do not).
-    juce::ChildProcess update;
-    if (update.start("update-desktop-database " + apps.getFullPathName().quoted())) update.waitForProcessToFinish(4000);
-    juce::ChildProcess cache;
-    if (cache.start("gtk-update-icon-cache -f -t " + share.getChildFile("icons/hicolor").getFullPathName().quoted())) cache.waitForProcessToFinish(6000);
+    // Unix line endings: JUCE writes "\r\n" by default, and a .desktop file with
+    // carriage returns is invalid (KDE and GNOME ignore it).
+    const bool ok = entry.replaceWithText(text, false, false, "\n") && icons > 0;
+    // The menu and icon caches, where the tools exist (harmless where they do not):
+    // GNOME reads the folder by itself, KDE needs its cache rebuilt.
+    for (const auto& command : { "update-desktop-database " + apps.getFullPathName().quoted(),
+                                 "gtk-update-icon-cache -f -t " + share.getChildFile("icons/hicolor").getFullPathName().quoted(),
+                                 juce::String("kbuildsycoca6"), juce::String("kbuildsycoca5") })
+    {
+        juce::ChildProcess process;
+        if (process.start(command)) process.waitForProcessToFinish(8000);
+    }
     CrashHandler::note(juce::String("Linux desktop entry ") + (ok ? "installed: " : "FAILED: ") + entry.getFullPathName() + ", " + juce::String(icons) + " icon size(s)");
     juce::AlertWindow::showMessageBoxAsync(ok ? juce::MessageBoxIconType::InfoIcon : juce::MessageBoxIconType::WarningIcon, "Menu entry and icon",
-        ok ? "Installed: " + entry.getFullPathName() + " and the icon in " + juce::String(icons) + " sizes under ~/.local/share/icons/hicolor. "
-             "OrganSampler now appears in the application menu with its icon; the entry starts " + exe.getFullPathName()
-             + " - install again after moving the executable. Log out and in if the menu does not show it at once."
+        ok ? "Installed: " + entry.getFullPathName() + " and the icon in " + juce::String(icons) + " sizes under ~/.local/share/icons/hicolor.\n\n"
+             "Where to find it: open the application menu (the launcher button or the Super/Windows key) and type \"Organ\" - OrganSampler "
+             "is in the Multimedia / Sound & Video group with its icon; right-click it there to pin it to the panel or dock.\n\n"
+             "The entry starts " + exe.getFullPathName() + " - install again after moving the executable. "
+             "Log out and in if the menu does not show it at once."
            : "The entry could not be written under ~/.local/share - see the activity log.");
    #endif
 }
