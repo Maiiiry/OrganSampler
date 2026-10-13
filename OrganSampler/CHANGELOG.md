@@ -12,6 +12,14 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.57] - 2026-10-13
+
+### Changed
+- Manual, "Audio on Linux": the "Pro Audio" profile of a sound card (system
+  settings) hands every channel of the card to the program as a port of its
+  own, unmixed, under the card's name - the setting to make for the interface
+  the organ plays through.
+
 ## [0.8.56] - 2026-10-13
 
 ### Fixed

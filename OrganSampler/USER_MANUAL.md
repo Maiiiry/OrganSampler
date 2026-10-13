@@ -1133,13 +1133,28 @@ with `pw-metadata -n settings 0 clock.force-quantum 256` and
 lists no device, PipeWire's JACK library was not found (the package is
 `pipewire-jack`); start the program with `pw-jack ./OrganSampler` then.
 
-The names in the JACK list are PipeWire's names of the cards' outputs
-("Analog Stereo 1/2" for a Komplete Audio 6 - with all its six outputs as
-channels 1-6), not the cards' model names; only clients with audio ports are
-listed (PipeWire also exposes MIDI bridges to JACK, which are no audio
-devices). Tick the channels of every route as on Windows: where you send a
-route, there it plays. No patchbay (qpwgraph, Patchance, Carla) is needed:
-OrganSampler connects its outputs to the chosen device's channels itself.
+**Set the interface to the "Pro Audio" profile.** In the system settings
+(Settings > Sound, or `pavucontrol` > Configuration) every sound card has a
+profile. The usual profiles ("Analog Stereo Output 1/2", "Stereo Output 5/6
+(S/PDIF)" ...) make the card a desktop output: a stereo pair with the
+desktop's mixing, volume and channel mapping in front of it, and the other
+channels often hidden. **Pro Audio** hands the card over as it is: every
+output and every input becomes a port of its own, nothing is mixed or
+remapped, and the card runs at PipeWire's clock. In the JACK list the card
+then appears under its own name ("Komplete Audio 6") with all its channels
+(the Komplete: playback_AUX0 ... AUX5 = outputs 1-6, the S/PDIF pair
+included) - with the stereo profile the same card appeared as "Analog Stereo
+1/2". Choose Pro Audio for the interface the organ plays through; the
+desktop's own sounds then no longer go to it unless you pick it as the
+system output. After switching the profile, choose the device again in the
+audio tabs (its name changed).
+
+The names in the JACK list are PipeWire's names of the cards, not of the
+drivers; only clients with audio ports are listed (PipeWire also exposes MIDI
+bridges to JACK, which are no audio devices). Tick the channels of every
+route as on Windows: where you send a route, there it plays. No patchbay
+(qpwgraph, Patchance, Carla) is needed: OrganSampler connects its outputs to
+the chosen device's channels itself.
 
 The ALSA default device stays for a quick stereo start; the hardware device
 of a card ("Direct hardware device without any conversions") opens only when

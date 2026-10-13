@@ -1147,13 +1147,28 @@ static const char* const kManualText_part5 =
     "lists no device, PipeWire's JACK library was not found (the package is\n"
     "`pipewire-jack`); start the program with `pw-jack ./OrganSampler` then.\n"
     "\n"
-    "The names in the JACK list are PipeWire's names of the cards' outputs\n"
-    "(\"Analog Stereo 1/2\" for a Komplete Audio 6 - with all its six outputs as\n"
-    "channels 1-6), not the cards' model names; only clients with audio ports are\n"
-    "listed (PipeWire also exposes MIDI bridges to JACK, which are no audio\n"
-    "devices). Tick the channels of every route as on Windows: where you send a\n"
-    "route, there it plays. No patchbay (qpwgraph, Patchance, Carla) is needed:\n"
-    "OrganSampler connects its outputs to the chosen device's channels itself.\n"
+    "**Set the interface to the \"Pro Audio\" profile.** In the system settings\n"
+    "(Settings > Sound, or `pavucontrol` > Configuration) every sound card has a\n"
+    "profile. The usual profiles (\"Analog Stereo Output 1/2\", \"Stereo Output 5/6\n"
+    "(S/PDIF)\" ...) make the card a desktop output: a stereo pair with the\n"
+    "desktop's mixing, volume and channel mapping in front of it, and the other\n"
+    "channels often hidden. **Pro Audio** hands the card over as it is: every\n"
+    "output and every input becomes a port of its own, nothing is mixed or\n"
+    "remapped, and the card runs at PipeWire's clock. In the JACK list the card\n"
+    "then appears under its own name (\"Komplete Audio 6\") with all its channels\n"
+    "(the Komplete: playback_AUX0 ... AUX5 = outputs 1-6, the S/PDIF pair\n"
+    "included) - with the stereo profile the same card appeared as \"Analog Stereo\n"
+    "1/2\". Choose Pro Audio for the interface the organ plays through; the\n"
+    "desktop's own sounds then no longer go to it unless you pick it as the\n"
+    "system output. After switching the profile, choose the device again in the\n"
+    "audio tabs (its name changed).\n"
+    "\n"
+    "The names in the JACK list are PipeWire's names of the cards, not of the\n"
+    "drivers; only clients with audio ports are listed (PipeWire also exposes MIDI\n"
+    "bridges to JACK, which are no audio devices). Tick the channels of every\n"
+    "route as on Windows: where you send a route, there it plays. No patchbay\n"
+    "(qpwgraph, Patchance, Carla) is needed: OrganSampler connects its outputs to\n"
+    "the chosen device's channels itself.\n"
     "\n"
     "The ALSA default device stays for a quick stereo start; the hardware device\n"
     "of a card (\"Direct hardware device without any conversions\") opens only when\n"
@@ -1197,6 +1212,8 @@ static const char* const kManualText_part5 =
     "  that has an IR, at every audio period. The convolutions run on the render\n"
     "  workers, in parallel, one buffer behind the dry signal (that buffer is\n"
     "  part of the pre-delay), so they take render time away from the pipes but\n"
+    ;
+static const char* const kManualText_part6 =
     "  do not pile up on the audio thread. A true stereo IR (four channels)\n"
     "  costs twice as much as a stereo one, a long IR more than a short one\n"
     "  (*Decay* shortens it). A route that has been silent for longer than its\n"
@@ -1212,8 +1229,6 @@ static const char* const kManualText_part5 =
     "- **The buffer size: do not chase the smallest one.** A small buffer\n"
     "  (64 or 128 samples) cuts the reachable polyphony dramatically, because\n"
     "  every block must be rendered in a fraction of the time. An organ does not\n"
-    ;
-static const char* const kManualText_part6 =
     "  need it: the action of a real organ has its own delay, and a latency of\n"
     "  about 10 ms (512 samples at 48 kHz) is absolutely fine for organ playing -\n"
     "  even 20 ms (1024 samples) is still perfectly comfortable. Choose the\n"
@@ -1399,6 +1414,8 @@ static const char* const kManualText_part6 =
     "**Pitch shift + time stretch (attack and release).** The same copy, and the\n"
     "attack (downwards) and the release are time-stretched back towards the\n"
     "source's duration (*time stretch of the attack*, *time stretch of the\n"
+    ;
+static const char* const kManualText_part7 =
     "release*). Upwards the attack is left as resampled (shorter), which the ear\n"
     "accepts. Weaknesses: downwards the time stretch frays the attack - the\n"
     "speaking of the pipe becomes rough or choppy, worse the larger the shift; try\n"
@@ -1414,8 +1431,6 @@ static const char* const kManualText_part6 =
     "analysis block (half a second for a 32' pipe) and inharmonic content can\n"
     "tremulate. And it often breaks the loops: the loop points are kept, but the\n"
     "vocoder's output at the loop end no longer matches the loop start exactly, so\n"
-    ;
-static const char* const kManualText_part7 =
     "the seam becomes audible as a click or a bump at every repeat. The setting\n"
     "*Filled pipes: loop crossfade* exists for this - a long blend over the seam\n"
     "hides it at least partly. The slowest build of the three, though still\n"
@@ -1601,6 +1616,8 @@ static const char* const kManualText_part7 =
     "The value belongs to the organ, not to the computer alone: the number of\n"
     "audio routes, the auxiliary routes, the IR reverbs, the drivers and the buffer\n"
     "sizes all change it (see \"Getting the most polyphony\"). It is saved with the\n"
+    ;
+static const char* const kManualText_part8 =
     "configuration. The easiest way to find it is the button below it,\n"
     "\"Measure the maximum polyphony\", once the organ is loaded and its audio\n"
     "outputs are configured. By hand:\n"
@@ -1616,8 +1633,6 @@ static const char* const kManualText_part7 =
     "   completely.\n"
     "3. Watch *DSP* and *PEAK* while you do it. At the moment the audio starts to\n"
     "   break up (crackle, dropouts), note the *PEAK* value.\n"
-    ;
-static const char* const kManualText_part8 =
     "4. Enter a somewhat lower number as the limit.\n"
     "5. Repeat until no breaking up of the audio (dropouts, crackle) is ever heard.\n"
     "\n"
@@ -1803,6 +1818,8 @@ static const char* const kManualText_part8 =
     "How far the tone oscillation lags the volume oscillation (0 to 360 degrees,\n"
     "default 90): 0 = the tone dips exactly when the level does, 90 = a quarter cycle\n"
     "later, 180 = the tone dips when the level peaks. Real tremulants differ here;\n"
+    ;
+static const char* const kManualText_part9 =
     "listen with a soft flute.\n"
     "\n"
     "### Key velocity: fade-in at the lowest velocity\n"
@@ -1818,8 +1835,6 @@ static const char* const kManualText_part8 =
     "\n"
     "The chiff of a gently struck key is blunted: the pipe starts with this much\n"
     "high-frequency loss (a high shelf above the treble start frequency) at velocity\n"
-    ;
-static const char* const kManualText_part9 =
     "1, less for firmer strokes, none at 127 (default 9 dB). The level itself stays\n"
     "normal. Stops with velocity layers are not touched.\n"
     "\n"
@@ -2005,6 +2020,8 @@ static const char* const kManualText_part9 =
     "\n"
     "How many manuals the console has (1 to 7; the pedal is always there). Reducing\n"
     "the number forgets everything about the removed divisions (folders, audio,\n"
+    ;
+static const char* const kManualText_part10 =
     "MIDI, grid); a division added later starts empty, with the wind and tremulant\n"
     "profiles of a neighbouring division.\n"
     "\n"
@@ -2020,8 +2037,6 @@ static const char* const kManualText_part9 =
     "second window's position is remembered; closing it returns to one window.\n"
     "\n"
     "### Top bar: PANIC\n"
-    ;
-static const char* const kManualText_part10 =
     "\n"
     "Shows or hides the PANIC button, which silences every sounding pipe at once.\n"
     "\n"
@@ -2207,6 +2222,8 @@ static const char* const kManualText_part10 =
     "\n"
     "The keys of this division's MIDI keyboard play this many semitones away from\n"
     "what they send (-24 to +24, default 0): with -12 the key 036 plays the pipe\n"
+    ;
+static const char* const kManualText_part11 =
     "of 024, with +12 the pipe of 048. For a keyboard that sends the wrong octave,\n"
     "or for playing a part transposed. Keys that land outside the MIDI range are\n"
     "silent. In the Divisions dialog the box is the last line of the MIDI column.\n"
@@ -2222,8 +2239,6 @@ static const char* const kManualText_part10 =
     "default 13). The harmonic filter (*Swell: harmonic filter*) dulls the tone at\n"
     "the same time.\n"
     "\n"
-    ;
-static const char* const kManualText_part11 =
     "### Swell: shutter inertia (settling time)\n"
     "\n"
     "How slowly the shutters follow the pedal (50 to 2000 ms, default 300). Larger\n"
