@@ -33,3 +33,6 @@ Source/SourceAuxiliaryCestaAudio/
 Thumbs.db
 desktop.ini
 .claude/
+
+# The hand-tuned icon sizes are part of the program (Linux menu icon, macOS bundle)
+!Source/Icons/*.png

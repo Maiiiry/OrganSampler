@@ -52,3 +52,5 @@ ThirdParty/*.zip
 Thumbs.db
 desktop.ini
 .claude/
+
+!OrganSampler/Source/Icons/*.png
