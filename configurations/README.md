@@ -77,17 +77,22 @@ The README of a configuration:
 - **Saved with**: the OrganSampler version.
 - **Author** and the date.
 
-Save the configuration **without MIDI** when asked (the MIDI devices of your
-console are of no use to anybody else) and keep the IR files in an `IR`
-folder beside the `.json` when you save, so their paths are stored relative
-to it. Then either open a pull request adding the folder, or open an issue
+Save the configuration with **Portable configuration (to share with
+others)** ticked in the Save Configuration box: it then carries the organ
+only - no MIDI devices, no audio devices or channels, nothing of your
+computer (the manual chapter of the same name explains it) - and keep the IR
+files in an `IR` folder beside the `.json` when you save, so their paths are
+stored relative to it. Then either open a pull request adding the folder, or open an issue
 with the "Organ configuration" template and attach the files; the maintainer
 adds them. Published configurations are under the repository's licence
 (GPLv3).
 
-## Starter folders
+## The demo organ: Rural Organ
 
-A small set of sample folders that can be downloaded freely, with its
-configuration, is planned for this folder (a trimmed version of the Kobrle
-organ samples), so that OrganSampler can be tried at once. Until it is here,
-Sonus Paradisi's Free stuff page is the way to start.
+The one exception to "no samples here": **Rural Organ**, a small village
+organ - three divisions, fifteen stops, dry recordings with IR reverb -
+packaged with its sample folders and its portable configuration so that
+OrganSampler can be tried at once. See [`rural-organ/README.md`](rural-organ/README.md);
+the package `RuralOrgan.zip` (about 1 GB) is attached to the release
+https://github.com/zurek-jiri/OrganSampler/releases/tag/rural-organ-0.8.
+The samples are provided by Sonus Paradisi free of charge to try the program.

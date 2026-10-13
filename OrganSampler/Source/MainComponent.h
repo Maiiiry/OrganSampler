@@ -952,7 +952,14 @@ private:
     void launchConfigurationLoadChooser();
     void loadConfigurationFile(const juce::File& file);   // the chosen file: parsed, checked, applied
     void chooseConfigurationToLoad();
-    void savePortableConfiguration(const juce::File& file, bool includeMidi);
+    // portable: for another computer - no MIDI, no audio devices or channels,
+    // no machine settings, no unused trees (see the manual, "Portable
+    // configuration (to share with others)").
+    void savePortableConfiguration(const juce::File& file, bool includeMidi, bool portable = false);
+    // A portable configuration was loaded: once the organ is up, a message says
+    // what to set on this computer (MIDI, audio tabs, measure, save).
+    bool portableNoticePending = false;
+    void showPortableNoticeIfDue();
     void resolveAndApplyPortableConfiguration(juce::var configuration,
         const juce::File& configurationFile, const juce::File& selectedLibraryRoot = {});
     void applyPortableConfiguration(juce::var configuration,

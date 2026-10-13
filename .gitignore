@@ -3,6 +3,9 @@ build/
 build-*/
 out/
 
+# Packages built for the releases (the Rural Organ demo with its samples)
+dist/
+
 # Visual Studio / MSBuild outputs of the Projucer project
 OrganSampler/Builds/**/x64/
 OrganSampler/Builds/**/Debug/

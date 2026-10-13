@@ -431,6 +431,27 @@ Starting the program without *Load the last configuration at startup* begins
 with an empty instrument; nothing stops you from loading folders and playing
 without any configuration at all.
 
+### Portable configuration (to share with others)
+
+A configuration saved as it is carries the sound cards, the output channels
+and the MIDI keyboards of *your* computer, which another computer does not
+have. To give an organ to somebody else, tick **Portable configuration (to
+share with others)** in the *Save Configuration* box (its "?" opens this
+chapter). Such a configuration holds the
+organ only - the folder trees, the Stop List, the voicing, the IR reverbs of
+the routes, couplers, combinations, crescendo, temperaments - and nothing of
+the computer it came from: no MIDI devices, no audio devices, every route
+on the output channels 1-2, the auxiliary routes none (with their reverbs,
+which belong to those devices), no render-thread, interface-size, window or
+cache settings, no measured polyphony. Loaded on another computer it plays
+through that computer's default sound device at once, keeps that computer's
+own interface size and thread settings, and a message says what to set up:
+the MIDI keyboard of every division (*Settings* in the division header,
+right-click the keyboard icon for *MIDI Learn*), the sound card, buffer and
+output channels of every route in the audio tabs, then *Measure the maximum
+polyphony* in the Configuration Editor and *Save Configuration*. Published
+configurations (see "Organ configurations" on the website) are saved this way.
+
 Paths inside a configuration are stored relative to the common folder of the
 sample trees where possible, so a configuration kept beside its sample folders
 travels with them (another drive letter, another computer). Trees on a
@@ -845,11 +866,11 @@ plays that perspective of the stop.
   removes the stop (its folders become free). **Remove empty stops** removes
   every row without folders that has no children.
 - **Aliases from folders** gives every stop without an alias the bare name
-  of its sample folder: no parent folders ("TA - fletna" becomes "fletna",
-  shown as "fletna 8'"), no perspective prefix, a footage at the end of the
-  folder name with its foot mark; a stop without a footage in its name shows
-  the measured one (a mixture's first sounding harmonic). Aliases you typed
-  stay. Applied with *Apply and reload*.
+  of its sample folder: no parent folders ("TA - fletna" becomes "Fletna",
+  shown as "Fletna 8'"), no perspective prefix, a capital first letter, a
+  footage at the end of the folder name with its foot mark; a stop without a
+  footage in its name shows the measured one (a mixture's first sounding
+  harmonic). Aliases you typed stay. Applied with *Apply and reload*.
 - **Add perspective...** adds a column (a known perspective name or a new
   one); the x in a column header removes it. "default" is the route of folders
   without a perspective prefix.

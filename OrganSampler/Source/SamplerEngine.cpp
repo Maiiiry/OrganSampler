@@ -7559,7 +7559,10 @@ juce::String SamplerEngine::folderStopAlias(const juce::File& folder) const
     }
     juce::String leaf = stripPerspectivePrefix(perspectives, folder.getFileName(), nullptr);
     if (leaf.trim().isEmpty()) leaf = folder.getFileName();
-    return footageDisplayName(displayFolderName(leaf).trim());
+    auto alias = footageDisplayName(displayFolderName(leaf).trim());
+    // A capital first letter: the labels of a grid look even that way ("fletna 8'" -> "Fletna 8'").
+    if (alias.isNotEmpty()) alias = alias.substring(0, 1).toUpperCase() + alias.substring(1);
+    return alias;
 }
 
 namespace

@@ -12,6 +12,29 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.51] - 2026-10-13
+
+### Added
+- "For another computer (sharing)" in the Save Configuration box: the
+  configuration carries the organ only - no MIDI devices, no audio devices
+  or channels (every route on channels 1-2, the auxiliary routes none), no
+  render-thread, interface-size, window, cache or measured-polyphony
+  settings, no unused folder trees. Loaded elsewhere it plays through the
+  default sound device, keeps that computer's own interface and thread
+  settings, and a message says what to set up (MIDI, audio tabs, measure,
+  save). Published configurations are saved this way.
+- Rural Organ: a small demo organ (dry recordings of three divisions with IR
+  reverb) with its sample folders and a shared configuration, downloadable
+  from the website - the only package that ever carries samples.
+- An IR inside the sample library is also stored relative to the library
+  root, so it is found wherever the library is (a shared package).
+
+### Changed
+- "Aliases from folders" writes the alias with a capital first letter
+  ("Fletna 8'"): the labels of a grid look even that way.
+- Every build on GitHub is marked pre-release (for testers) until the first
+  release the project is satisfied with.
+
 ## [0.8.50] - 2026-10-13
 
 ### Added

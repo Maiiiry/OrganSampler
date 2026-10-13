@@ -1360,6 +1360,19 @@ MainComponent::MainComponent()
             else CrashHandler::note("ORGAN_FILL_ALIASES_SAVE: " + juce::String(filled) + " alias(es) filled, no configuration file open");
         });
     }
+    // Development: ORGAN_SAVE_PORTABLE=<file> saves the loaded organ as a
+    // portable configuration into that file 25 s after start.
+    if (const char* savePortable = std::getenv("ORGAN_SAVE_PORTABLE"))
+    {
+        const juce::File target = juce::File(juce::String(savePortable));   // not File target(String(x)): the vexing parse makes it a function
+        juce::Component::SafePointer<MainComponent> safeThis(this);
+        juce::Timer::callAfterDelay(25000, [safeThis, target]
+        {
+            if (safeThis == nullptr) return;
+            safeThis->savePortableConfiguration(target, false, true);
+            CrashHandler::note("ORGAN_SAVE_PORTABLE: written " + target.getFullPathName());
+        });
+    }
     // Development: ORGAN_LOAD_TREE="<division>|<folder>" loads the folder into
     // the division 25 s after start, as "Load folder..." of the Stop List would
     // (a tree of the same name as a missing pool tree takes its place).
@@ -8838,21 +8851,47 @@ void MainComponent::chooseCombinationsFileToLoad()
 void MainComponent::chooseConfigurationToSave(std::function<void(bool saved)> then)
 {
     auto* alert = new juce::AlertWindow("Save Configuration",
-        "The configuration will include folders, voicing, transmissions, couplers, audio routing and all control values.",
+        "The configuration will include folders, voicing, transmissions, couplers, audio routing, MIDI and all control values.",
         juce::MessageBoxIconType::QuestionIcon, this);
-    auto* includeMidi = new juce::ToggleButton("Include learned MIDI devices and controller assignments");
-    includeMidi->setName({});
-    includeMidi->setToggleState(true, juce::dontSendNotification);
-    includeMidi->setSize(470, 28);
-    alert->addCustomComponent(includeMidi);
+    // One choice: as it is (this computer's devices included), or portable for
+    // another computer - the "?" opens the manual chapter that explains it.
+    struct PortableRow final : public juce::Component
+    {
+        explicit PortableRow(MainComponent& o)
+        {
+            MainComponent* owner = &o;   // the reference parameter dies with the constructor; the pointer lives on
+            toggle.setButtonText("Portable configuration (to share with others)");
+            toggle.setTooltip("No MIDI devices, no audio devices or channels, nothing of this computer: the organ only. "
+                "Plays through the default sound device elsewhere; the recipient sets the rest.");
+            addAndMakeVisible(toggle);
+            help.setButtonText("?");
+            help.setTooltip("The manual chapter about portable configurations");
+            help.onClick = [owner] { owner->showManualSection("Portable configuration (to share with others)"); };
+            addAndMakeVisible(help);
+            setSize(500, 28);
+        }
+        void resized() override
+        {
+            auto area = getLocalBounds();
+            help.setBounds(area.removeFromRight(28).reduced(2));
+            area.removeFromRight(6);
+            toggle.setBounds(area);
+        }
+        juce::ToggleButton toggle;
+        juce::TextButton help;
+    };
+    auto* row = new PortableRow(*this);
+    row->setName({});
+    alert->addCustomComponent(row);
     alert->addButton("Save", 1);
     alert->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
     juce::Component::SafePointer<MainComponent> safeThis(this);
     alert->enterModalState(true, juce::ModalCallbackFunction::create(
-        [safeThis, includeMidi, then](int result)
+        [safeThis, row, then](int result)
         {
-            const bool withMidi = includeMidi->getToggleState();
-            delete includeMidi;
+            const bool portable = row->toggle.getToggleState();
+            const bool withMidi = !portable;
+            delete row;
             if (safeThis == nullptr || result != 1) { if (then) then(false); return; }
             const auto start = safeThis->lastSettingsDirectory.isDirectory()
                 ? safeThis->lastSettingsDirectory.getChildFile("Organ configuration.json")
@@ -8864,13 +8903,13 @@ void MainComponent::chooseConfigurationToSave(std::function<void(bool saved)> th
                 juce::FileBrowserComponent::saveMode
                     | juce::FileBrowserComponent::canSelectFiles
                     | juce::FileBrowserComponent::warnAboutOverwriting,
-                [safeThis, withMidi, then](const juce::FileChooser& chooser)
+                [safeThis, withMidi, portable, then](const juce::FileChooser& chooser)
                 {
                     if (safeThis == nullptr) return;
                     auto file = chooser.getResult();
                     if (file == juce::File()) { if (then) then(false); return; }
                     if (!file.hasFileExtension("json")) file = file.withFileExtension("json");
-                    safeThis->savePortableConfiguration(file, withMidi);
+                    safeThis->savePortableConfiguration(file, withMidi, portable);
                     if (then) then(true);
                 });
         }), true);
@@ -8927,12 +8966,27 @@ void MainComponent::loadConfigurationFile(const juce::File& file)
     resolveAndApplyPortableConfiguration(configuration, file);
 }
 
-void MainComponent::savePortableConfiguration(const juce::File& file, bool includeMidi)
+namespace
+{
+    // What belongs to a computer, not to an organ: left out of a portable
+    // configuration, and taken from the local settings when one is loaded.
+    const juce::StringArray& machineSpecificKeys()
+    {
+        static const juce::StringArray keys{ "windowX", "windowY", "windowWidth", "windowHeight", "windowMaximised", "twoWindows",
+            "divisionScreen", "dialogBounds", "uiScalePercent", "copyCacheFolder", "copyCacheEnabled", "sampleStorageFloat",
+            "renderThreads", "renderThreadPreset", "renderThreadsWasapi", "configEditorCollapsed", "configurationFile",
+            "loadLastConfigurationAtStartup", "maxPolyphony" };
+        return keys;
+    }
+}
+
+void MainComponent::savePortableConfiguration(const juce::File& file, bool includeMidi, bool portable)
 {
     saveSettings();
     auto configuration = juce::JSON::parse(settingsFile.loadFileAsString());
     auto* root = configuration.getDynamicObject();
     if (root == nullptr) return;
+    if (portable) includeMidi = false;   // another computer has other keyboards
     root->setProperty("portableConfigurationVersion", 1);
     root->setProperty("containsMidiMappings", includeMidi);
 
@@ -9032,6 +9086,11 @@ void MainComponent::savePortableConfiguration(const juce::File& file, bool inclu
                             if (!ir.existsAsFile()) continue;
                             const auto relative = ir.getRelativePathFrom(file.getParentDirectory());
                             routeObject->setProperty("reverbIrRelative", juce::File::isAbsolutePath(relative) ? juce::String() : relative);
+                            // An IR inside the sample library travels with it: its path from the
+                            // library root is tried wherever the root is found (a shared package).
+                            if (libraryRoot != juce::File() && ir.isAChildOf(libraryRoot))
+                                routeObject->setProperty("reverbIrLibraryRelative", ir.getRelativePathFrom(libraryRoot));
+                            else routeObject->removeProperty("reverbIrLibraryRelative");
                         }
                 // A tree below the library root travels as a relative path only;
                 // one elsewhere keeps its absolute path (found again on this
@@ -9052,6 +9111,68 @@ void MainComponent::savePortableConfiguration(const juce::File& file, bool inclu
         CrashHandler::note("Save configuration: " + juce::String(absoluteOnly.size()) + " folder tree(s) outside the library root '"
             + libraryRoot.getFullPathName() + "' saved with absolute paths: " + absoluteOnly.joinIntoString(" | "));
     if (!includeMidi) root->setProperty("midiButtonBindings", juce::Array<juce::var>());
+
+    if (portable)
+    {
+        // The organ only: every route on the default sound device of the
+        // computer that loads it (channels 1-2), the auxiliary routes none (their
+        // reverbs belong to those devices), nothing of this computer's settings,
+        // and no folder tree that no division's table uses.
+        root->setProperty("portable", true);
+        for (const auto& key : machineSpecificKeys()) root->removeProperty(key);
+        std::set<int> usedTrees;
+        if (auto* array = manuals.getArray())
+            for (auto& itemVar : *array)
+                if (auto* item = itemVar.getDynamicObject())
+                {
+                    item->setProperty("audioDeviceStateXml", "");
+                    item->setProperty("outputChannels", juce::Array<juce::var>{ 0, 1 });
+                    if (auto* routes = item->getProperty("perspectiveAudio").getArray())
+                        for (auto& routeVar : *routes)
+                            if (auto* routeObject = routeVar.getDynamicObject())
+                            {
+                                const auto name = routeObject->getProperty("name").toString();
+                                if (isAuxiliaryPerspective(name))
+                                {
+                                    routeObject->setProperty("audioDeviceStateXml",
+                                        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<DEVICESETUP audioOutputDeviceName=\"\" audioInputDeviceName=\"\"/>");
+                                    routeObject->removeProperty("reverbIr");
+                                    routeObject->removeProperty("reverbIrRelative");
+                                }
+                                else routeObject->setProperty("audioDeviceStateXml", "");
+                                routeObject->setProperty("outputChannels", juce::Array<juce::var>{ 0, 1 });
+                            }
+                    if (auto* entries = item->getProperty("stopBuild").getProperty("entries", juce::var()).getArray())
+                        for (const auto& entry : *entries)
+                            if (auto* folders = entry.getProperty("folders", juce::var()).getArray())
+                                for (const auto& folder : *folders) usedTrees.insert((int)folder.getProperty("tree", 0));
+                }
+        if (auto* pool = root->getProperty("sampleTrees").getArray())
+        {
+            std::map<int, int> remap;
+            juce::Array<juce::var> kept;
+            for (int i = 0; i < pool->size(); ++i)
+                if (usedTrees.count(i) != 0) { remap[i] = kept.size(); kept.add(pool->getReference(i)); }
+            if (kept.size() != pool->size())
+            {
+                CrashHandler::note("Portable configuration: " + juce::String(pool->size() - kept.size()) + " unused folder tree(s) left out");
+                if (auto* array = manuals.getArray())
+                    for (auto& itemVar : *array)
+                        if (auto* item = itemVar.getDynamicObject())
+                            if (auto* entries = item->getProperty("stopBuild").getProperty("entries", juce::var()).getArray())
+                                for (auto& entry : *entries)
+                                    if (auto* folders = entry.getProperty("folders", juce::var()).getArray())
+                                        for (auto& folderVar : *folders)
+                                            if (auto* folder = folderVar.getDynamicObject())
+                                            {
+                                                const auto found = remap.find((int)folder->getProperty("tree"));
+                                                if (found != remap.end()) folder->setProperty("tree", found->second);
+                                            }
+                root->setProperty("sampleTrees", kept);
+            }
+        }
+        CrashHandler::note("Portable configuration saved (no MIDI, no audio devices, no machine settings): " + file.getFullPathName());
+    }
 
     if (!file.replaceWithText(juce::JSON::toString(configuration, true)))
         juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,
@@ -9180,6 +9301,18 @@ void MainComponent::applyPortableConfiguration(juce::var configuration,
     const auto localConfiguration = juce::JSON::parse(settingsFile.loadFileAsString());
     auto* root = configuration.getDynamicObject();
     if (root == nullptr) return;
+    // A portable configuration (from another computer) carries the organ only:
+    // this computer keeps its own interface size, threads, windows, cache and
+    // polyphony limit, and a message says what to set up once the organ is loaded.
+    if ((bool)root->getProperty("portable"))
+    {
+        for (const auto& key : machineSpecificKeys())
+            if (!root->hasProperty(key) && localConfiguration.hasProperty(key))
+                root->setProperty(key, localConfiguration.getProperty(key, juce::var()));
+        root->removeProperty("portable");   // the settings of this computer from now on
+        portableNoticePending = true;
+        CrashHandler::note("Portable configuration loaded: this computer's own settings kept, audio on the default device");
+    }
     auto manuals = root->getProperty("manualKeyboards");
     if (auto* array = manuals.getArray())
         for (int manual = 0; manual < array->size(); ++manual)
@@ -9233,9 +9366,22 @@ void MainComponent::applyPortableConfiguration(juce::var configuration,
                         if (auto* routeObject = routeVar.getDynamicObject())
                         {
                             const auto irRelative = routeObject->getProperty("reverbIrRelative").toString();
-                            if (irRelative.isEmpty()) continue;
-                            const auto candidate = configurationFile.getParentDirectory().getChildFile(irRelative);
-                            if (candidate.existsAsFile()) routeObject->setProperty("reverbIr", candidate.getFullPathName());
+                            const auto irLibraryRelative = routeObject->getProperty("reverbIrLibraryRelative").toString();
+                            const auto configDir = configurationFile.getParentDirectory();
+                            juce::Array<juce::File> candidates;
+                            if (irRelative.isNotEmpty()) candidates.add(configDir.getChildFile(irRelative));
+                            if (irLibraryRelative.isNotEmpty())
+                            {
+                                // Where the library root may be, as for the folder trees.
+                                const auto rootName = configuration.getProperty("sampleLibraryRootName", "").toString();
+                                const auto rootRelative = configuration.getProperty("sampleLibraryRootRelative", "").toString();
+                                if (libraryRoot != juce::File()) candidates.add(libraryRoot.getChildFile(irLibraryRelative));
+                                if (rootRelative.isNotEmpty()) candidates.add(configDir.getChildFile(rootRelative).getChildFile(irLibraryRelative));
+                                if (rootName.isNotEmpty()) candidates.add(configDir.getChildFile(rootName).getChildFile(irLibraryRelative));
+                                candidates.add(configDir.getChildFile(irLibraryRelative));
+                            }
+                            for (const auto& candidate : candidates)
+                                if (candidate.existsAsFile()) { routeObject->setProperty("reverbIr", candidate.getFullPathName()); break; }
                         }
             }
 
@@ -13828,6 +13974,21 @@ void MainComponent::updateEmptyHint()
     if (empty) emptyHintPanel.toFront(false);
 }
 
+void MainComponent::showPortableNoticeIfDue()
+{
+    if (!portableNoticePending || !applicationReady.load() || activeFolderLoader != nullptr) return;
+    portableNoticePending = false;
+    juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, "Configuration from another computer",
+        "This configuration was saved to be shared: it brings the organ - folders, stops, voicing, reverbs, couplers, combinations - "
+        "but nothing of the computer it came from. Right now it plays through this computer's default sound device, every route on "
+        "the output channels 1-2, with no MIDI keyboard assigned and the auxiliary routes off.\n\n"
+        "To set it up for this computer:\n"
+        "1. Settings in each division's header: the MIDI keyboard (right-click the keyboard icon for MIDI Learn and press a key).\n"
+        "2. The audio tabs of the same dialog: the sound card, buffer size and output channels of every route.\n"
+        "3. Configuration Editor: Measure the maximum polyphony.\n"
+        "4. Save Configuration.");
+}
+
 juce::String MainComponent::missingTreeNotice(int manual, bool detail) const
 {
     // The trees of the division that are not on this computer: the notice under
@@ -14295,6 +14456,7 @@ void MainComponent::timerCallback()
     updateExpressionInertia();
     updateHeldBankNavigation();
     showMissingAudioDevicesIfDue();
+    showPortableNoticeIfDue();
     updateEmptyHint();
     updateMissingTreeNotices();
     // Every 2 s (every second during the start-up wait): a route whose saved

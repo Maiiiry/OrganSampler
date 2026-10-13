@@ -85,6 +85,11 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+      # Every build is a pre-release for testers until the first release the
+      # project is satisfied with; the badge says so on the releases page.
       - uses: softprops/action-gh-release@v2
         with:
           files: artifacts/**/*
+          prerelease: true
+          body: |
+            Pre-release build for testers - not an official release yet. Windows: `OrganSampler.exe`; macOS: `OrganSampler-macos.zip` (unsigned: right-click > Open the first time); Linux: `OrganSampler` (`chmod +x` first). Changes: see `OrganSampler/CHANGELOG.md`.

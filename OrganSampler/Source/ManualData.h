@@ -439,6 +439,27 @@ static const char* const kManualText_part2 =
     "with an empty instrument; nothing stops you from loading folders and playing\n"
     "without any configuration at all.\n"
     "\n"
+    "### Portable configuration (to share with others)\n"
+    "\n"
+    "A configuration saved as it is carries the sound cards, the output channels\n"
+    "and the MIDI keyboards of *your* computer, which another computer does not\n"
+    "have. To give an organ to somebody else, tick **Portable configuration (to\n"
+    "share with others)** in the *Save Configuration* box (its \"?\" opens this\n"
+    "chapter). Such a configuration holds the\n"
+    "organ only - the folder trees, the Stop List, the voicing, the IR reverbs of\n"
+    "the routes, couplers, combinations, crescendo, temperaments - and nothing of\n"
+    "the computer it came from: no MIDI devices, no audio devices, every route\n"
+    "on the output channels 1-2, the auxiliary routes none (with their reverbs,\n"
+    "which belong to those devices), no render-thread, interface-size, window or\n"
+    "cache settings, no measured polyphony. Loaded on another computer it plays\n"
+    "through that computer's default sound device at once, keeps that computer's\n"
+    "own interface size and thread settings, and a message says what to set up:\n"
+    "the MIDI keyboard of every division (*Settings* in the division header,\n"
+    "right-click the keyboard icon for *MIDI Learn*), the sound card, buffer and\n"
+    "output channels of every route in the audio tabs, then *Measure the maximum\n"
+    "polyphony* in the Configuration Editor and *Save Configuration*. Published\n"
+    "configurations (see \"Organ configurations\" on the website) are saved this way.\n"
+    "\n"
     "Paths inside a configuration are stored relative to the common folder of the\n"
     "sample trees where possible, so a configuration kept beside its sample folders\n"
     "travels with them (another drive letter, another computer). Trees on a\n"
@@ -585,6 +606,8 @@ static const char* const kManualText_part2 =
     "menus, tooltips and message boxes follow it; text stays sharp at every size.\n"
     "\n"
     "## 2.8 Dialogs on small screens\n"
+    ;
+static const char* const kManualText_part3 =
     "\n"
     "Every dialog sits in a scrolling viewport: when its window is smaller than the\n"
     "dialog, scrollbars appear and every control stays reachable.\n"
@@ -606,8 +629,6 @@ static const char* const kManualText_part2 =
     "time) and voicing row.\n"
     "\n"
     "A button whose caption ends in \"(Trsm.)\" or \"(Ext.)\" is a **transmission**:\n"
-    ;
-static const char* const kManualText_part3 =
     "the pipes of another stop played here, possibly transposed. \"(Ext.)\" marks an\n"
     "extension - the stop's own pipes in its own division at another footage (a\n"
     "16' or 4' extension of an 8' stop); \"(Trsm.)\" marks a transmission into\n"
@@ -787,6 +808,8 @@ static const char* const kManualText_part3 =
     "\n"
     "## 3.6 Stop-Merging\n"
     "\n"
+    ;
+static const char* const kManualText_part4 =
     "*Stop-Merging* (top bar, hidden by default) renders the engaged stops and\n"
     "transmissions, with their whole voicing (volume, treble, attack, per-key\n"
     "settings, transposition), into one new stop per perspective: a folder named\n"
@@ -808,8 +831,6 @@ static const char* const kManualText_part3 =
     "plays that perspective of the stop.\n"
     "\n"
     "## 4.1 Folder trees and the pool\n"
-    ;
-static const char* const kManualText_part4 =
     "\n"
     "- **Load folder...** loads a folder tree (the samples of an organ, or a part of them) and\n"
     "  asks which division its stops go to. A tree is loaded once and its folders\n"
@@ -857,11 +878,11 @@ static const char* const kManualText_part4 =
     "  removes the stop (its folders become free). **Remove empty stops** removes\n"
     "  every row without folders that has no children.\n"
     "- **Aliases from folders** gives every stop without an alias the bare name\n"
-    "  of its sample folder: no parent folders (\"TA - fletna\" becomes \"fletna\",\n"
-    "  shown as \"fletna 8'\"), no perspective prefix, a footage at the end of the\n"
-    "  folder name with its foot mark; a stop without a footage in its name shows\n"
-    "  the measured one (a mixture's first sounding harmonic). Aliases you typed\n"
-    "  stay. Applied with *Apply and reload*.\n"
+    "  of its sample folder: no parent folders (\"TA - fletna\" becomes \"Fletna\",\n"
+    "  shown as \"Fletna 8'\"), no perspective prefix, a capital first letter, a\n"
+    "  footage at the end of the folder name with its foot mark; a stop without a\n"
+    "  footage in its name shows the measured one (a mixture's first sounding\n"
+    "  harmonic). Aliases you typed stay. Applied with *Apply and reload*.\n"
     "- **Add perspective...** adds a column (a known perspective name or a new\n"
     "  one); the x in a column header removes it. \"default\" is the route of folders\n"
     "  without a perspective prefix.\n"
@@ -989,6 +1010,8 @@ static const char* const kManualText_part4 =
     "  its right channel to the next. With an **even** number of ticked channels\n"
     "  the pairs are fixed (the first and second, the third and fourth ...) and\n"
     "  neighbouring keys alternate between the pairs. With an **odd** number of\n"
+    ;
+static const char* const kManualText_part5 =
     "  ticked channels the pairs shift by one channel from key to key, so the\n"
     "  stereo samples circulate through all the channels.\n"
     "- With a single output channel everything plays on it (a stereo sample mixed\n"
@@ -1010,8 +1033,6 @@ static const char* const kManualText_part4 =
     "- **Monitoring.** Send the auxiliary route to headphones or to the speakers of\n"
     "  a control room: you hear the whole division in one mix while the\n"
     "  perspectives play through their own outputs.\n"
-    ;
-static const char* const kManualText_part5 =
     "- **Dry samples with IR reverb.** Here the auxiliary route is\n"
     "  irreplaceable. A dry set (close microphones, no room) gets its room from an\n"
     "  impulse response on its routes. Give the auxiliary route the rear speakers\n"
@@ -1191,6 +1212,8 @@ static const char* const kManualText_part5 =
     "- **Unison Off** silences the division's own pitch: key 60 held on that\n"
     "  division does not sound 60 there; its couplers still work.\n"
     "- **Melody coupler**: only the highest key held on the division is coupled;\n"
+    ;
+static const char* const kManualText_part6 =
     "  **bass coupler**: only the lowest. *Melody/bass couplers: new extreme key\n"
     "  only* and *Melody couplers: legato grace time* (Configuration Editor >\n"
     "  Console) refine their behaviour.\n"
@@ -1212,8 +1235,6 @@ static const char* const kManualText_part5 =
     "- **The samples' base temperament** is the temperament the organ was\n"
     "  *recorded* in. The program reads the recorded pitch of every pipe from the\n"
     "  smpl chunks, measures how each pitch class deviates, and compares the\n"
-    ;
-static const char* const kManualText_part6 =
     "  result with the tables. When two thirds or more of the ranks agree on one\n"
     "  temperament it is chosen by itself (\"Base temperament set from the\n"
     "  samples\" in the activity log) - for most sample folders you never touch it. When the\n"
@@ -1393,6 +1414,8 @@ static const char* const kManualText_part6 =
     "\n"
     "## 7.4 The cache\n"
     "\n"
+    ;
+static const char* const kManualText_part7 =
     "The copies of the filled pipes take a while to build for a large organ: a\n"
     "minute or more for a big set with many extensions, every time the organ loads.\n"
     "The cache keeps them on disk so that this happens once.\n"
@@ -1414,8 +1437,6 @@ static const char* const kManualText_part6 =
     "for a large organ with many extensions. Files of an older cache format are\n"
     "removed by themselves.\n"
     "\n"
-    ;
-static const char* const kManualText_part7 =
     "**The three buttons** (Configuration Editor, under the cache switch):\n"
     "\n"
     "- The row *Filled pipes cache: <size> in <folder>* shows how much the cache\n"
@@ -1595,6 +1616,8 @@ static const char* const kManualText_part7 =
     "   that is not; that is what the margin is for.\n"
     "4. *Maximum polyphony* is set to the most voices that stayed clean. The\n"
     "   slider is yours afterwards: lower it for more headroom (couplers, long\n"
+    ;
+static const char* const kManualText_part8 =
     "   releases, other programs running), raise it if you dare. The\n"
     "   registration and the two attack settings are restored; the sound comes\n"
     "   back over two seconds after the report's OK.\n"
@@ -1616,8 +1639,6 @@ static const char* const kManualText_part7 =
     "\n"
     "### Master volume\n"
     "\n"
-    ;
-static const char* const kManualText_part8 =
     "The level of the whole organ, -60 to +12 dB (default -20 dB). Lower it when the\n"
     "output clips with full registration; the perspective and division volumes set\n"
     "the balance below it.\n"
@@ -1797,6 +1818,8 @@ static const char* const kManualText_part8 =
     "first loop) is stretched back from the resampled length towards the source's\n"
     "(0 to 100 %, default 50). 0 % leaves it as resampled - two octaves down the\n"
     "attack is four times as slow; 100 % gives it the source's duration; 50 % is\n"
+    ;
+static const char* const kManualText_part9 =
     "half way on a logarithmic scale (two octaves down: twice as slow, which the ear\n"
     "accepts where four times is too much). Applies to shifts downwards; upwards the\n"
     "attack stays as resampled. Higher values fray the attack more (see \"The\n"
@@ -1818,8 +1841,6 @@ static const char* const kManualText_part8 =
     "### Filled pipes: release played from\n"
     "\n"
     "Every pitch-shift method. A filled pipe's release copy is played from this\n"
-    ;
-static const char* const kManualText_part9 =
     "many milliseconds in (0 to 300, default 140), skipping its start, where the\n"
     "methods leave their worst: a stop transient that no longer belongs, a level\n"
     "that does not follow the sustain. Applied when the key is released: nothing is\n"
@@ -1999,6 +2020,8 @@ static const char* const kManualText_part9 =
     "\n"
     "Shows or hides the Load Configuration button.\n"
     "\n"
+    ;
+static const char* const kManualText_part10 =
     "### Top bar: Save Configuration\n"
     "\n"
     "Shows or hides the Save Configuration button.\n"
@@ -2020,8 +2043,6 @@ static const char* const kManualText_part9 =
     "the next one. Off (default): the coupled note always follows the highest\n"
     "(lowest) key currently held.\n"
     "\n"
-    ;
-static const char* const kManualText_part10 =
     "### Melody couplers: legato grace time\n"
     "\n"
     "On: when the highest key changes in legato playing, the melody coupler waits a\n"
@@ -2201,6 +2222,8 @@ static const char* const kManualText_part10 =
     "\n"
     "The speed of the division's tremulant (2 to 11 Hz, default 4.4).\n"
     "\n"
+    ;
+static const char* const kManualText_part11 =
     "### Tremulant depth\n"
     "\n"
     "The pitch modulation of the tremulant (0 to 50 cents, default 6); the level\n"
@@ -2222,8 +2245,6 @@ static const char* const kManualText_part10 =
     "### Wind: oscillation frequency\n"
     "\n"
     "The frequency the wind pressure oscillates at after a key stroke (4 to 10 Hz,\n"
-    ;
-static const char* const kManualText_part11 =
     "default 7.5), the \"bounce\" of the bellows.\n"
     "\n"
     "### Wind: number of oscillations\n"
