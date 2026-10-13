@@ -12,6 +12,17 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.52] - 2026-10-13
+
+### Fixed
+- A portable configuration dropped the auxiliary routes (and their rear
+  reverbs) - wrong: every route that has a device, the auxiliary ones
+  included, now plays through the default sound device of the computer that
+  loads it, with its reverb; only a route that was none stays none. The
+  route states say `deviceType="default"`, which stands for the computer's
+  own driver type (Windows Audio, CoreAudio, ALSA), so the same file works
+  on every platform. The Rural Organ package is rebuilt with it.
+
 ## [0.8.51] - 2026-10-13
 
 ### Added

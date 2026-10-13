@@ -440,12 +440,13 @@ share with others)** in the *Save Configuration* box (its "?" opens this
 chapter). Such a configuration holds the
 organ only - the folder trees, the Stop List, the voicing, the IR reverbs of
 the routes, couplers, combinations, crescendo, temperaments - and nothing of
-the computer it came from: no MIDI devices, no audio devices, every route
-on the output channels 1-2, the auxiliary routes none (with their reverbs,
-which belong to those devices), no render-thread, interface-size, window or
-cache settings, no measured polyphony. Loaded on another computer it plays
-through that computer's default sound device at once, keeps that computer's
-own interface size and thread settings, and a message says what to set up:
+the computer it came from: no MIDI devices, no audio devices (a route that
+was none stays none), every route on the output channels 1-2, no
+render-thread, interface-size, window or cache settings, no measured
+polyphony. Loaded on another computer, every route that had a device - the
+auxiliary routes with their reverbs included - plays through that
+computer's default sound device at once; the computer keeps its own
+interface size and thread settings, and a message says what to set up:
 the MIDI keyboard of every division (*Settings* in the division header,
 right-click the keyboard icon for *MIDI Learn*), the sound card, buffer and
 output channels of every route in the audio tabs, then *Measure the maximum

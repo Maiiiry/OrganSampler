@@ -448,12 +448,13 @@ static const char* const kManualText_part2 =
     "chapter). Such a configuration holds the\n"
     "organ only - the folder trees, the Stop List, the voicing, the IR reverbs of\n"
     "the routes, couplers, combinations, crescendo, temperaments - and nothing of\n"
-    "the computer it came from: no MIDI devices, no audio devices, every route\n"
-    "on the output channels 1-2, the auxiliary routes none (with their reverbs,\n"
-    "which belong to those devices), no render-thread, interface-size, window or\n"
-    "cache settings, no measured polyphony. Loaded on another computer it plays\n"
-    "through that computer's default sound device at once, keeps that computer's\n"
-    "own interface size and thread settings, and a message says what to set up:\n"
+    "the computer it came from: no MIDI devices, no audio devices (a route that\n"
+    "was none stays none), every route on the output channels 1-2, no\n"
+    "render-thread, interface-size, window or cache settings, no measured\n"
+    "polyphony. Loaded on another computer, every route that had a device - the\n"
+    "auxiliary routes with their reverbs included - plays through that\n"
+    "computer's default sound device at once; the computer keeps its own\n"
+    "interface size and thread settings, and a message says what to set up:\n"
     "the MIDI keyboard of every division (*Settings* in the division header,\n"
     "right-click the keyboard icon for *MIDI Learn*), the sound card, buffer and\n"
     "output channels of every route in the audio tabs, then *Measure the maximum\n"
@@ -605,9 +606,9 @@ static const char* const kManualText_part2 =
     "same amount of console, then saved and never changed by the program. Dialogs,\n"
     "menus, tooltips and message boxes follow it; text stays sharp at every size.\n"
     "\n"
-    "## 2.8 Dialogs on small screens\n"
     ;
 static const char* const kManualText_part3 =
+    "## 2.8 Dialogs on small screens\n"
     "\n"
     "Every dialog sits in a scrolling viewport: when its window is smaller than the\n"
     "dialog, scrollbars appear and every control stays reachable.\n"
@@ -807,9 +808,9 @@ static const char* const kManualText_part3 =
     "sends every key as 127: always the top layer.\n"
     "\n"
     "## 3.6 Stop-Merging\n"
-    "\n"
     ;
 static const char* const kManualText_part4 =
+    "\n"
     "*Stop-Merging* (top bar, hidden by default) renders the engaged stops and\n"
     "transmissions, with their whole voicing (volume, treble, attack, per-key\n"
     "settings, transposition), into one new stop per perspective: a folder named\n"
@@ -1009,9 +1010,9 @@ static const char* const kManualText_part4 =
     "- A **stereo sample** goes to a pair of channels, its left channel to one and\n"
     "  its right channel to the next. With an **even** number of ticked channels\n"
     "  the pairs are fixed (the first and second, the third and fourth ...) and\n"
-    "  neighbouring keys alternate between the pairs. With an **odd** number of\n"
     ;
 static const char* const kManualText_part5 =
+    "  neighbouring keys alternate between the pairs. With an **odd** number of\n"
     "  ticked channels the pairs shift by one channel from key to key, so the\n"
     "  stereo samples circulate through all the channels.\n"
     "- With a single output channel everything plays on it (a stereo sample mixed\n"
@@ -1211,9 +1212,9 @@ static const char* const kManualText_part5 =
     "\n"
     "- **Unison Off** silences the division's own pitch: key 60 held on that\n"
     "  division does not sound 60 there; its couplers still work.\n"
-    "- **Melody coupler**: only the highest key held on the division is coupled;\n"
     ;
 static const char* const kManualText_part6 =
+    "- **Melody coupler**: only the highest key held on the division is coupled;\n"
     "  **bass coupler**: only the lowest. *Melody/bass couplers: new extreme key\n"
     "  only* and *Melody couplers: legato grace time* (Configuration Editor >\n"
     "  Console) refine their behaviour.\n"
@@ -1413,9 +1414,9 @@ static const char* const kManualText_part6 =
     "  filled pipe counts as the pipe it stands for.\n"
     "\n"
     "## 7.4 The cache\n"
-    "\n"
     ;
 static const char* const kManualText_part7 =
+    "\n"
     "The copies of the filled pipes take a while to build for a large organ: a\n"
     "minute or more for a big set with many extensions, every time the organ loads.\n"
     "The cache keeps them on disk so that this happens once.\n"
@@ -1615,9 +1616,9 @@ static const char* const kManualText_part7 =
     "   measured value the sound is often still fine - until the first callback\n"
     "   that is not; that is what the margin is for.\n"
     "4. *Maximum polyphony* is set to the most voices that stayed clean. The\n"
-    "   slider is yours afterwards: lower it for more headroom (couplers, long\n"
     ;
 static const char* const kManualText_part8 =
+    "   slider is yours afterwards: lower it for more headroom (couplers, long\n"
     "   releases, other programs running), raise it if you dare. The\n"
     "   registration and the two attack settings are restored; the sound comes\n"
     "   back over two seconds after the report's OK.\n"
@@ -1817,9 +1818,9 @@ static const char* const kManualText_part8 =
     "Pitch shift + time stretch only. How far the attack (everything before the\n"
     "first loop) is stretched back from the resampled length towards the source's\n"
     "(0 to 100 %, default 50). 0 % leaves it as resampled - two octaves down the\n"
-    "attack is four times as slow; 100 % gives it the source's duration; 50 % is\n"
     ;
 static const char* const kManualText_part9 =
+    "attack is four times as slow; 100 % gives it the source's duration; 50 % is\n"
     "half way on a logarithmic scale (two octaves down: twice as slow, which the ear\n"
     "accepts where four times is too much). Applies to shifts downwards; upwards the\n"
     "attack stays as resampled. Higher values fray the attack more (see \"The\n"
@@ -2019,9 +2020,9 @@ static const char* const kManualText_part9 =
     "### Top bar: Load Configuration\n"
     "\n"
     "Shows or hides the Load Configuration button.\n"
-    "\n"
     ;
 static const char* const kManualText_part10 =
+    "\n"
     "### Top bar: Save Configuration\n"
     "\n"
     "Shows or hides the Save Configuration button.\n"
@@ -2221,9 +2222,9 @@ static const char* const kManualText_part10 =
     "### Tremulant rate\n"
     "\n"
     "The speed of the division's tremulant (2 to 11 Hz, default 4.4).\n"
-    "\n"
     ;
 static const char* const kManualText_part11 =
+    "\n"
     "### Tremulant depth\n"
     "\n"
     "The pitch modulation of the tremulant (0 to 50 cents, default 6); the level\n"

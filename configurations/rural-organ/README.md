@@ -39,16 +39,17 @@ Rural Organ/
    message then says what to set for your computer: the MIDI keyboard of
    each division (Settings in the division header, right-click the keyboard
    icon for MIDI Learn), the sound card, buffer and output channels of every
-   route in the audio tabs - give the auxiliary routes a device and the rear
-   impulse response for a second pair of speakers - then *Measure the maximum
-   polyphony* and *Save Configuration*.
+   route in the audio tabs - the auxiliary routes with the rear impulse
+   response play on the default device too until you move them to a second
+   pair of speakers - then *Measure the maximum polyphony* and *Save
+   Configuration*.
 
 ## The configuration
 
 `Rural Organ.json` in this folder is the same portable configuration as in
 the package: saved with "Portable configuration (to share with others)", so
 it carries the organ only - no MIDI devices, no audio devices, nothing of
-the computer it was made on. Saved with OrganSampler 0.8.51.
+the computer it was made on. Saved with OrganSampler 0.8.52.
 
 - Organ: a Czech village organ, three divisions, recorded dry.
 - Samples: Sonus Paradisi, provided free of charge with OrganSampler to try
@@ -56,4 +57,5 @@ the computer it was made on. Saved with OrganSampler 0.8.51.
 - Expects: library root `Rural Organ`, tree `Samply`; the IRs in `Samply\IR`.
 - Audio layout: Pedal, I, II, each with a default route (IR "Rural Church
   Front", dry/wet 72 %) and an auxiliary route (IR "Rural Church Rear",
-  dry/wet 92 %, off until you give it a device).
+  dry/wet 92 %); every route on the default device until you spread them
+  over your outputs.

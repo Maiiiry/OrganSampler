@@ -171,7 +171,21 @@ private:
     std::array<juce::AudioDeviceManager*, SamplerEngine::maxManuals> manualAsioHost{};   // default perspective of each division: its host, or nullptr
     static bool isSharedHostType(const juce::String& typeName)
     {
-        return typeName.equalsIgnoreCase("ASIO") || typeName.equalsIgnoreCase("Windows Audio");
+        return typeName.equalsIgnoreCase("ASIO") || typeName.equalsIgnoreCase("Windows Audio")
+            || typeName.equalsIgnoreCase("CoreAudio") || typeName.equalsIgnoreCase("ALSA") || typeName.equalsIgnoreCase("JACK");
+    }
+    // The system's own driver type: the default output of this type is where a
+    // route without a saved device plays - and every route of a portable
+    // configuration (its states say deviceType="default", whatever the platform).
+    static juce::String defaultSharedTypeName()
+    {
+       #if JUCE_MAC
+        return "CoreAudio";
+       #elif JUCE_LINUX
+        return "ALSA";
+       #else
+        return "Windows Audio";
+       #endif
     }
     juce::AudioDeviceManager* findSharedHost(const juce::String& typeName, const juce::String& deviceName) const;
     juce::AudioDeviceManager* sharedHostFor(const juce::String& typeName, const juce::String& deviceName, const juce::XmlElement* state = nullptr);

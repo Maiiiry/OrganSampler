@@ -2773,9 +2773,9 @@ void MainComponent::buildPerspectiveAudioRoute(int manual, const juce::String& p
             // division's default perspective plays through an ASIO host, so does it.
             auto* divisionHost = manualAsioHost[(size_t)manual];
             juce::String requestedAsioName;
-            juce::String requestedType = divisionHost != nullptr ? divisionHost->getCurrentAudioDeviceType() : juce::String("Windows Audio");
+            juce::String requestedType = divisionHost != nullptr ? divisionHost->getCurrentAudioDeviceType() : defaultSharedTypeName();
             // A perspective without a saved device follows its division's host; without
-            // one it plays through the system's default Windows Audio output - shared.
+            // one it plays through the system's default output - shared.
             bool requestsAsio = !isAuxiliary && config.audioDeviceStateXml.isEmpty();
             // A remembered "no device" (the user chose none): the route stays without
             // a device - it must not follow the division's host nor open a default.
@@ -2783,6 +2783,9 @@ void MainComponent::buildPerspectiveAudioRoute(int manual, const juce::String& p
             if (auto xml = juce::parseXML(config.audioDeviceStateXml))
             {
                 requestedType = xml->getStringAttribute("deviceType");
+                // A portable configuration: "default" = the default output of this
+                // computer's own driver type, for every route that had a device.
+                if (requestedType.equalsIgnoreCase("default")) requestedType = defaultSharedTypeName();
                 requestsAsio = isSharedHostType(requestedType);
                 requestedAsioName = xml->getStringAttribute("audioOutputDeviceName");
                 savedNone = xml->hasAttribute("audioOutputDeviceName") && requestedAsioName.isEmpty();
@@ -9114,32 +9117,40 @@ void MainComponent::savePortableConfiguration(const juce::File& file, bool inclu
 
     if (portable)
     {
-        // The organ only: every route on the default sound device of the
-        // computer that loads it (channels 1-2), the auxiliary routes none (their
-        // reverbs belong to those devices), nothing of this computer's settings,
-        // and no folder tree that no division's table uses.
+        // The organ only: every route that has a device here - the auxiliary
+        // routes with their reverbs included - plays on the default sound device
+        // of the computer that loads it (channels 1-2); a route that is none
+        // stays none; nothing of this computer's settings; no folder tree that
+        // no division's table uses.
         root->setProperty("portable", true);
         for (const auto& key : machineSpecificKeys()) root->removeProperty(key);
+        const juce::String defaultState = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<DEVICESETUP deviceType=\"default\"/>";
+        auto isNoneState = [](const juce::String& xmlText)
+        {
+            const auto xml = juce::parseXML(xmlText);
+            return xml != nullptr && xml->hasAttribute("audioOutputDeviceName") && xml->getStringAttribute("audioOutputDeviceName").isEmpty();
+        };
         std::set<int> usedTrees;
         if (auto* array = manuals.getArray())
             for (auto& itemVar : *array)
                 if (auto* item = itemVar.getDynamicObject())
                 {
-                    item->setProperty("audioDeviceStateXml", "");
+                    if (!isNoneState(item->getProperty("audioDeviceStateXml").toString())) item->setProperty("audioDeviceStateXml", defaultState);
                     item->setProperty("outputChannels", juce::Array<juce::var>{ 0, 1 });
                     if (auto* routes = item->getProperty("perspectiveAudio").getArray())
                         for (auto& routeVar : *routes)
                             if (auto* routeObject = routeVar.getDynamicObject())
                             {
                                 const auto name = routeObject->getProperty("name").toString();
-                                if (isAuxiliaryPerspective(name))
+                                const auto state = routeObject->getProperty("audioDeviceStateXml").toString();
+                                if (name.equalsIgnoreCase("default")) {}   // the division's own route: its state is the item's
+                                else if (isAuxiliaryPerspective(name) ? (state.isEmpty() || isNoneState(state)) : isNoneState(state))
                                 {
+                                    // No device here (an auxiliary route without one has no settings to keep).
                                     routeObject->setProperty("audioDeviceStateXml",
                                         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<DEVICESETUP audioOutputDeviceName=\"\" audioInputDeviceName=\"\"/>");
-                                    routeObject->removeProperty("reverbIr");
-                                    routeObject->removeProperty("reverbIrRelative");
                                 }
-                                else routeObject->setProperty("audioDeviceStateXml", "");
+                                else routeObject->setProperty("audioDeviceStateXml", defaultState);
                                 routeObject->setProperty("outputChannels", juce::Array<juce::var>{ 0, 1 });
                             }
                     if (auto* entries = item->getProperty("stopBuild").getProperty("entries", juce::var()).getArray())
@@ -13412,10 +13423,11 @@ void MainComponent::loadSettings()
                 // stays without a device; no saved state at all means the system's
                 // default Windows Audio output, shared with every other such route.
                 auto xml = juce::parseXML(manualConfigs[(size_t)i].audioDeviceStateXml);
-                juce::String typeName = "Windows Audio", deviceName;
+                juce::String typeName = defaultSharedTypeName(), deviceName;
                 if (xml != nullptr)
                 {
                     typeName = xml->getStringAttribute("deviceType");
+                    if (typeName.equalsIgnoreCase("default")) typeName = defaultSharedTypeName();   // a portable configuration
                     deviceName = xml->getStringAttribute("audioOutputDeviceName");
                     if (xml->hasAttribute("audioOutputDeviceName") && deviceName.isEmpty()) typeName = "none";
                 }
@@ -13980,8 +13992,8 @@ void MainComponent::showPortableNoticeIfDue()
     portableNoticePending = false;
     juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, "Configuration from another computer",
         "This configuration was saved to be shared: it brings the organ - folders, stops, voicing, reverbs, couplers, combinations - "
-        "but nothing of the computer it came from. Right now it plays through this computer's default sound device, every route on "
-        "the output channels 1-2, with no MIDI keyboard assigned and the auxiliary routes off.\n\n"
+        "but nothing of the computer it came from. Right now every route of it - the auxiliary routes included - plays through this "
+        "computer's default sound device on the output channels 1-2, with no MIDI keyboard assigned.\n\n"
         "To set it up for this computer:\n"
         "1. Settings in each division's header: the MIDI keyboard (right-click the keyboard icon for MIDI Learn and press a key).\n"
         "2. The audio tabs of the same dialog: the sound card, buffer size and output channels of every route.\n"
