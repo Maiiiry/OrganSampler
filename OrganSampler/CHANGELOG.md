@@ -12,6 +12,14 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.89] - 2026-10-15
+
+### Fixed
+- Icons: the original icon artwork is back in every size (the 1024 and 256
+  icons made from the website picture in 0.8.65 gave Windows and macOS a
+  different, and on macOS a broken, icon). Windows: run Projucer's resave
+  after pulling, it regenerates the project's icon.ico from it.
+
 ## [0.8.88] - 2026-10-14
 
 ### Fixed
