@@ -1002,7 +1002,8 @@ many sound cards at once" below. Each tab, top to bottom:
   and under it *Driver Control Panel* (the driver's own settings, e.g. the RME
   buffer size), *Reopen device* and *Set for all ...*.
 
-*Set for all* copies the device, sample rate and buffer size of this tab to
+*Set for all* copies the device, sample rate and buffer size of this tab (the
+rate and buffer size the device really runs at, as its boxes show them) to
 every perspective of every division ("none" is copied too); on the auxiliary
 tab it acts on the auxiliary routes of all divisions. *Set effects for all*
 does the same for the IR, dry/wet, IR settings, perspective volume and channel
@@ -1123,17 +1124,26 @@ programs a stereo "default" device. ALSA's own list adds, for every card, the
 templates of its configuration (surround 4.0 ... 7.1, front, rear, dmix) that
 have nothing to do with the card's real outputs and cannot be opened while
 PipeWire holds the card - that is where "no channels" came from. OrganSampler
-hides those templates; what remains are the real devices (the card's hardware
-device, the default and the digital outputs).
+hides those templates. While a sound server runs (PipeWire, PulseAudio) the
+cards' own devices ("Direct hardware device without any conversions", "IEC958
+(S/PDIF) Digital Audio Output", HDMI) are held by the server as well and are
+left out of the list too; what remains are the server's entries ("PipeWire
+Sound Server", "Default ALSA Output"): stereo, the system output. The
+settings editor's *Audio devices: list also the ALSA devices of the cards the
+sound server holds* lists them anyway, for a card the server does not use
+(the list is rebuilt when a division's audio tab is next opened).
 
 For every channel of a multichannel interface choose the device type
 **JACK**: OrganSampler loads PipeWire's own JACK library at start (the
 activity log says "JACK: PipeWire's libjack loaded from ..."), so JACK needs
 no separate server - PipeWire is the server, and every output of every card
 appears as a channel (a Komplete Audio 6 shows its four analogue outputs and
-the S/PDIF pair). The buffer size and sample rate are PipeWire's; set them
-with `pw-metadata -n settings 0 clock.force-quantum 256` and
-`clock.force-rate 48000` when the defaults do not suit. If the JACK type
+the S/PDIF pair). The buffer size and sample rate are PipeWire's, the same
+for every JACK route and every other program: the audio tab of a JACK route
+shows them in the row **PipeWire buffer / rate** under the device box, and a
+choice there sets them for PipeWire (the command `pw-metadata -n settings 0
+clock.force-quantum 256` or `clock.force-rate 48000`, which a console takes
+as well) and reopens the JACK devices of all routes. If the JACK type
 lists no device, PipeWire's JACK library was not found (the package is
 `pipewire-jack`); start the program with `pw-jack ./OrganSampler` then.
 
@@ -1160,9 +1170,17 @@ route as on Windows: where you send a route, there it plays. No patchbay
 (qpwgraph, Patchance, Carla) is needed: OrganSampler connects its outputs to
 the chosen device's channels itself.
 
-The ALSA default device stays for a quick stereo start; the hardware device
-of a card ("Direct hardware device without any conversions") opens only when
-PipeWire lets go of the card.
+**One rate for every device.** Every audio route renders at the rate of its
+device, and the devices of one organ may run at different rates and buffer
+sizes - the program does not stop you. The samples are loaded at 48 kHz (see
+"Sample rate on loading"): a device at 44.1 or 96 kHz gets its route's pipes
+read at the matching speed, through the same interpolation as a transposed
+pipe, which costs a little more per voice and is a step below the quality of
+the resampling on load. So give every device 48 kHz and the same buffer size.
+A device chosen for a route keeps the rate the route ran at when it offers it
+(a fresh device would otherwise open at the lowest rate from 44.1 kHz up);
+*Set for all* copies the rate the device of that tab really runs at - look at
+the rate box before you copy it.
 
 ## 5.7 Audio devices not ready when OrganSampler starts
 

@@ -15,6 +15,33 @@ namespace
     juce::String slashes(juce::String path) { return path.replaceCharacter('\\', '/'); }
     // The last component of a path written on any platform ("F:\\a\\Samply" -> "Samply").
     juce::String leafName(const juce::String& path) { return slashes(path).trimCharactersAtEnd("/").fromLastOccurrenceOf("/", false, false); }
+    // A folder below 'base' by a relative path written on Windows, where the
+    // case of a name does not matter: on Linux and macOS it does, so when the
+    // exact path is not there each component is matched regardless of case.
+    juce::File childCaseInsensitive(const juce::File& base, const juce::String& relative)
+    {
+        const juce::File exact = base.getChildFile(relative);
+        if (exact.exists() || juce::File::getSeparatorChar() == '\\') return exact;
+        juce::File current = base;
+        juce::StringArray parts;
+        parts.addTokens(slashes(relative), "/", "");
+        parts.removeEmptyStrings();
+        for (const auto& part : parts)
+        {
+            if (part == ".") continue;
+            if (part == "..") { current = current.getParentDirectory(); continue; }
+            juce::File next = current.getChildFile(part);
+            if (!next.exists())
+            {
+                bool found = false;
+                for (const auto& entry : juce::RangedDirectoryIterator(current, false, "*", juce::File::findFilesAndDirectories))
+                    if (entry.getFile().getFileName().equalsIgnoreCase(part)) { next = entry.getFile(); found = true; break; }
+                if (!found) return exact;
+            }
+            current = next;
+        }
+        return current;
+    }
 }
 #include "CrashHandler.h"
 #include "TemperamentsData.h"   // temperaments.csv embedded by the pre-build step
@@ -1102,6 +1129,9 @@ MainComponent::MainComponent()
             if (type != nullptr)
                 types << (types.isEmpty() ? "" : " | ") << type->getTypeName() << ": " << type->getDeviceNames(false).joinIntoString(", ");
         CrashHandler::note("Audio device types: " + types);
+#if JUCE_LINUX
+        if (hiddenAlsaDevicesNote().isNotEmpty()) CrashHandler::note(hiddenAlsaDevicesNote());
+#endif
     }
     primaryAudioCallback = std::make_unique<DivisionAudioCallback>(*this, 0);
     deviceManager.addAudioCallback(primaryAudioCallback.get());
@@ -1416,6 +1446,15 @@ MainComponent::MainComponent()
         {
             juce::Component::SafePointer<MainComponent> safeThis(this);
             juce::MessageManager::callAsync([safeThis] { if (safeThis != nullptr) safeThis->showConfigurationEditor(); });
+        }
+    // ORGAN_OPEN_STOP_LIST=<seconds>: the Stop List is opened that long after the
+    // start (the activity log says how long its preparation took).
+    if (const char* env = std::getenv("ORGAN_OPEN_STOP_LIST"))
+        if (juce::String(env).getIntValue() > 0)
+        {
+            juce::Component::SafePointer<MainComponent> safeThis(this);
+            juce::Timer::callAfterDelay(juce::String(env).getIntValue() * 1000,
+                [safeThis] { if (safeThis != nullptr) safeThis->showStopBuildingDialog(0); });
         }
     // ORGAN_STRESS=<seconds>: once the instrument is loaded, every stop is engaged
     // and the keys 36..96 of every division are held for that long, the polyphony
@@ -4276,6 +4315,51 @@ void MainComponent::showProblemReportDialog()
     options.launchAsync();
 }
 
+void MainComponent::setPipeWireClock(int quantum, int rate)
+{
+#if JUCE_LINUX
+    auto run = [](const juce::String& key, int value) -> juce::String
+    {
+        juce::StringArray args;
+        args.add("pw-metadata"); args.add("-n"); args.add("settings"); args.add("0"); args.add(key); args.add(juce::String(value));
+        juce::ChildProcess process;
+        if (!process.start(args, juce::ChildProcess::wantStdOut | juce::ChildProcess::wantStdErr))
+            return juce::String("could not start pw-metadata (package pipewire-bin)");
+        process.waitForProcessToFinish(5000);
+        const auto output = process.readAllProcessOutput().trim();
+        return process.getExitCode() == 0 ? juce::String() : (output.isNotEmpty() ? output : juce::String("pw-metadata failed"));
+    };
+    juce::String error;
+    if (quantum > 0) error = run("clock.force-quantum", quantum);
+    if (error.isEmpty() && rate > 0) error = run("clock.force-rate", rate);
+    CrashHandler::note("PipeWire: clock.force-quantum " + juce::String(quantum) + ", clock.force-rate " + juce::String(rate)
+        + (error.isEmpty() ? juce::String(" set") : ": " + error));
+    if (error.isNotEmpty())
+    {
+        juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "PipeWire",
+            "PipeWire's settings could not be changed: " + error + "\n\nThe command is\n  pw-metadata -n settings 0 clock.force-quantum "
+            + juce::String(quantum) + "\n  pw-metadata -n settings 0 clock.force-rate " + juce::String(rate));
+        return;
+    }
+    // JUCE's JACK device learns a new buffer size only as a fresh client: every
+    // JACK route is reopened (a shared host once).
+    std::set<juce::AudioDeviceManager*> managers;
+    for (int manual = 0; manual <= manualCount && manual < SamplerEngine::maxManuals; ++manual)
+    {
+        juce::StringArray names;
+        for (const auto& name : engine.getPerspectivesForManual(manual)) names.addIfNotAlreadyThere(name);
+        names.addIfNotAlreadyThere(SamplerEngine::auxiliaryPerspectiveName());
+        for (const auto& name : names)
+            if (auto* manager = managerForRoute(manual, name))
+                if (manager->getCurrentAudioDevice() != nullptr && manager->getCurrentAudioDeviceType().equalsIgnoreCase("JACK"))
+                    managers.insert(manager);
+    }
+    for (auto* manager : managers) reopenAudioDeviceFresh(*manager, "PipeWire buffer/rate change");
+#else
+    juce::ignoreUnused(quantum, rate);
+#endif
+}
+
 juce::AudioDeviceManager* MainComponent::managerForRoute(int manualIndex, const juce::String& perspective)
 {
     if (manualIndex < 0 || manualIndex >= SamplerEngine::maxManuals) return nullptr;
@@ -5196,6 +5280,32 @@ void MainComponent::showKeyboardsDialog(int onlyManual)
                     juce::MessageManager::callAsync([target, manager] { target->reopenAudioDeviceFresh(*manager, "Reopen button"); });
                 };
                 addAndMakeVisible(reopenButton);
+#if JUCE_LINUX
+                // JACK through PipeWire: the buffer size (quantum) and the sample rate
+                // belong to PipeWire, the same for every JACK route and every other
+                // program. JUCE's JACK device cannot change them; pw-metadata can.
+                pipeWireLabel.setText("PipeWire buffer / rate", juce::dontSendNotification);
+                pipeWireLabel.setJustificationType(juce::Justification::centredRight);
+                const juce::String pipeWireTip = "JACK through PipeWire: the buffer size (quantum) and the sample rate are "
+                    "PipeWire's, shared by every JACK route and every other program. A choice here runs  pw-metadata -n "
+                    "settings 0 clock.force-quantum / clock.force-rate  and reopens the JACK devices of all routes.";
+                pipeWireLabel.setTooltip(pipeWireTip);
+                for (int size : { 64, 128, 256, 512, 1024, 2048 }) pipeWireBuffer.addItem(juce::String(size) + " samples", size);
+                for (int rate : { 44100, 48000, 88200, 96000, 176400, 192000 }) pipeWireRate.addItem(juce::String(rate) + " Hz", rate);
+                pipeWireBuffer.setTooltip(pipeWireTip);
+                pipeWireRate.setTooltip(pipeWireTip);
+                auto applyPipeWire = [this]
+                {
+                    MainComponent* target = &this->owner;
+                    const int quantum = pipeWireBuffer.getSelectedId(), rate = pipeWireRate.getSelectedId();
+                    juce::MessageManager::callAsync([target, quantum, rate] { target->setPipeWireClock(quantum, rate); });
+                };
+                pipeWireBuffer.onChange = applyPipeWire;
+                pipeWireRate.onChange = applyPipeWire;
+                addChildComponent(pipeWireLabel);
+                addChildComponent(pipeWireBuffer);
+                addChildComponent(pipeWireRate);
+#endif
                 // IR reverb of this perspective: impulse response file and dry/wet.
                 irLoadButton.setButtonText("Load IR...");
                 irLoadButton.setTooltip("Impulse response WAV for this perspective's reverb: mono, stereo, or true stereo "
@@ -5385,7 +5495,16 @@ void MainComponent::showKeyboardsDialog(int onlyManual)
                 auto buttons = juce::Rectangle<int>(area.getX() + labelColumnWidth, area.getY() + 2, controlsWidth, 22);
                 panelButton.setBounds(buttons.removeFromLeft(buttons.getWidth() / 2).reduced(2, 0));
                 reopenButton.setBounds(buttons.reduced(2, 0));
-                applyAll.setBounds(area.getX() + labelColumnWidth + 2, area.getY() + 28, controlsWidth - 4, 22);
+                int nextY = area.getY() + 28;
+                if (pipeWireLabel.isVisible())   // Linux, JACK: one more row
+                {
+                    pipeWireLabel.setBounds(area.getX(), nextY, labelColumnWidth, 22);
+                    auto row = juce::Rectangle<int>(area.getX() + labelColumnWidth, nextY, controlsWidth, 22);
+                    pipeWireBuffer.setBounds(row.removeFromLeft(row.getWidth() / 2).reduced(2, 0));
+                    pipeWireRate.setBounds(row.reduced(2, 0));
+                    nextY += 26;
+                }
+                applyAll.setBounds(area.getX() + labelColumnWidth + 2, nextY, controlsWidth - 4, 22);
                 for (int index = 0; index < channelButtons.size(); ++index)
                 {
                     auto* button = channelButtons[index];
@@ -5485,6 +5604,9 @@ void MainComponent::showKeyboardsDialog(int onlyManual)
             juce::OwnedArray<juce::ToggleButton> channelButtons;
             juce::ToggleButton applyAll;
             juce::TextButton panelButton, reopenButton;
+            juce::Label pipeWireLabel;                      // Linux, JACK: PipeWire's buffer size and rate
+            juce::ComboBox pipeWireBuffer, pipeWireRate;
+            double knownRate = 0.0;                         // the rate this route ran at (kept across a device change)
             juce::TextButton irLoadButton, irClearButton;
             juce::Label irLabel, wetLabel, irSectionLabel;
             LearnableSlider wetSlider;
@@ -5623,9 +5745,35 @@ void MainComponent::showKeyboardsDialog(int onlyManual)
                 });
             }
 
+            // The PipeWire row shows the JACK device's current values and exists only
+            // for the JACK type.
+            void syncPipeWireBoxes()
+            {
+                auto* device = selector != nullptr ? selector->deviceManager.getCurrentAudioDevice() : nullptr;
+                const bool jack = device != nullptr && selector->deviceManager.getCurrentAudioDeviceType().equalsIgnoreCase("JACK");
+                if (jack)
+                {
+                    const int buffer = device->getCurrentBufferSizeSamples(), rate = juce::roundToInt(device->getCurrentSampleRate());
+                    if (buffer > 0 && pipeWireBuffer.indexOfItemId(buffer) < 0) pipeWireBuffer.addItem(juce::String(buffer) + " samples", buffer);
+                    if (rate > 0 && pipeWireRate.indexOfItemId(rate) < 0) pipeWireRate.addItem(juce::String(rate) + " Hz", rate);
+                    if (buffer > 0 && pipeWireBuffer.getSelectedId() != buffer) pipeWireBuffer.setSelectedId(buffer, juce::dontSendNotification);
+                    if (rate > 0 && pipeWireRate.getSelectedId() != rate) pipeWireRate.setSelectedId(rate, juce::dontSendNotification);
+                }
+                if (jack != pipeWireLabel.isVisible())
+                {
+                    pipeWireLabel.setVisible(jack);
+                    pipeWireBuffer.setVisible(jack);
+                    pipeWireRate.setVisible(jack);
+                    resized();
+                }
+            }
+
             void refreshChannels()
             {
                 if (selector == nullptr) return;
+#if JUCE_LINUX
+                syncPipeWireBoxes();
+#endif
                 hidePhysicalChannelList(*selector);
                 owner.installAsioDeviceInterceptor(*selector, manual, perspective);
                 auto* device = selector->deviceManager.getCurrentAudioDevice();
@@ -5642,13 +5790,39 @@ void MainComponent::showKeyboardsDialog(int onlyManual)
                     if (selector->deviceManager.getCurrentAudioDeviceType()
                             .equalsIgnoreCase("Windows Audio") && count > 2)
                         count = 2;
+                    // Linux: the PipeWire/Pulse ALSA plugins announce 64 channels, of
+                    // which only the first two reach the default output; the card's own
+                    // channels come through JACK.
+                    if (selector->deviceManager.getCurrentAudioDeviceType().equalsIgnoreCase("ALSA") && count > 2
+                        && (device->getName().containsIgnoreCase("PipeWire") || device->getName().startsWithIgnoreCase("Default ALSA")
+                            || device->getName().containsIgnoreCase("Pulseaudio")))
+                        count = 2;
                 }
                 const auto identity = selector->deviceManager.getCurrentAudioDeviceType() + "|"
                     + (device == nullptr ? juce::String() : device->getName());
                 logicalLabel.setText("Independent output channels for this perspective:",
                     juce::dontSendNotification);
                 logicalLabel.setColour(juce::Label::textColourId, juce::Colours::white);
-                if (count == knownChannelCount && identity == knownDevice) return;
+                const double currentRate = device != nullptr ? device->getCurrentSampleRate() : 0.0;
+                if (count == knownChannelCount && identity == knownDevice)
+                {
+                    if (currentRate > 0.0) knownRate = currentRate;
+                    return;
+                }
+                // Another device chosen for this route: JUCE opens a fresh device at the
+                // lowest rate it offers from 44100 Hz up, whatever the route ran at (an
+                // ALSA device "jumped to 44100"). The route keeps its rate when the new
+                // device can run it.
+                if (device != nullptr && knownDevice.isNotEmpty() && knownRate > 0.0 && currentRate > 0.0
+                    && std::abs(currentRate - knownRate) > 1.0 && device->getAvailableSampleRates().contains(knownRate))
+                {
+                    auto setup = selector->deviceManager.getAudioDeviceSetup();
+                    setup.sampleRate = knownRate;
+                    CrashHandler::note("Audio: " + device->getName() + " opened at " + juce::String(currentRate, 0)
+                        + " Hz, the route ran at " + juce::String(knownRate, 0) + " Hz: reopened at the route's rate");
+                    selector->deviceManager.setAudioDeviceSetup(setup, true);
+                }
+                if (device != nullptr && device->getCurrentSampleRate() > 0.0) knownRate = device->getCurrentSampleRate();
                 knownChannelCount = count;
                 knownDevice = identity;
                 channelButtons.clear();
@@ -8997,7 +9171,7 @@ namespace
     {
         static const juce::StringArray keys{ "windowX", "windowY", "windowWidth", "windowHeight", "windowMaximised", "twoWindows",
             "divisionScreen", "dialogBounds", "uiScalePercent", "copyCacheFolder", "copyCacheEnabled", "sampleStorageFloat",
-            "renderThreads", "renderThreadPreset", "renderThreadsWasapi", "configEditorCollapsed", "configurationFile",
+            "renderThreads", "renderThreadPreset", "renderThreadsWasapi", "showUnusableAudioDevices", "configEditorCollapsed", "configurationFile",
             "loadLastConfigurationAtStartup", "maxPolyphony" };
         return keys;
     }
@@ -9041,13 +9215,17 @@ void MainComponent::savePortableConfiguration(const juce::File& file, bool inclu
     if (!folders.empty())
     {
         std::map<juce::String, int> perDrive;
-        for (const auto& folder : folders) ++perDrive[folder.getFullPathName().upToFirstOccurrenceOf("\\", false, false).toLowerCase()];
+        // The drive of a path: the letter on Windows; one file system on Linux/macOS
+        // (the Windows rule made every path its own "drive" there and the library
+        // root the parent of a single tree).
+        auto driveOf = [](const juce::File& f) { return juce::File::getSeparatorChar() == '\\' ? f.getFullPathName().upToFirstOccurrenceOf("\\", false, false).toLowerCase() : juce::String("/"); };
+        for (const auto& folder : folders) ++perDrive[driveOf(folder)];
         juce::String mainDrive;
         int best = -1;
         for (const auto& entry : perDrive) if (entry.second > best) { best = entry.second; mainDrive = entry.first; }
         for (const auto& folder : folders)
         {
-            if (folder.getFullPathName().upToFirstOccurrenceOf("\\", false, false).toLowerCase() != mainDrive) continue;
+            if (driveOf(folder) != mainDrive) continue;
             if (libraryRoot == juce::File()) { libraryRoot = folder.getParentDirectory(); continue; }
             while (folder != libraryRoot && !folder.isAChildOf(libraryRoot))
             {
@@ -10197,7 +10375,7 @@ juce::File MainComponent::resolveStopBuildFolder(int manual, const ManualConfig:
     if (ref.tree < 0 || ref.tree >= (int)sampleTrees.size()) return {};
     const juce::File tree(sampleTrees[(size_t)ref.tree]);
     if (ref.relativePath.isEmpty() || ref.relativePath == ".") return tree;
-    return tree.getChildFile(ref.relativePath);
+    return childCaseInsensitive(tree, ref.relativePath);
 }
 
 std::shared_ptr<std::vector<SamplerEngine::FolderAssignment>> MainComponent::stopBuildMap(int manual) const
@@ -11392,6 +11570,7 @@ void MainComponent::showStopBuildingDialog(int)
 
         explicit StopListDialog(MainComponent& o) : owner(o)
         {
+            const double startMs = juce::Time::getMillisecondCounterHiRes();
             pool = owner.sampleTrees;
             for (const auto& path : pool) rememberTree(path);
             for (int manual = 0; manual <= owner.manualCount && manual < kDivisions; ++manual)
@@ -11464,6 +11643,8 @@ void MainComponent::showStopBuildingDialog(int)
                     entries.push_back(item.entry);
                 }
             }
+            CrashHandler::note("Stop List: " + juce::String((int)treeInfos.size()) + " tree(s) scanned and the tables prepared in "
+                + juce::String(juce::Time::getMillisecondCounterHiRes() - startMs, 0) + " ms");
             showTransmissions = owner.stopListShowTransmissions;
             originalDrafts = drafts;
             rebuildPerspectiveUnion();
@@ -11938,7 +12119,7 @@ void MainComponent::showStopBuildingDialog(int)
             juce::ignoreUnused(manual);
             if (ref.tree < 0 || ref.tree >= (int)pool.size()) return {};
             const juce::File tree(pool[(size_t)ref.tree]);
-            return ref.relativePath.isEmpty() || ref.relativePath == "." ? tree : tree.getChildFile(ref.relativePath);
+            return ref.relativePath.isEmpty() || ref.relativePath == "." ? tree : childCaseInsensitive(tree, ref.relativePath);
         }
         // A folder as a pool reference (the same for every division).
         Build::FolderRef refFor(int manual, const juce::File& folder)
@@ -13070,6 +13251,7 @@ void MainComponent::showStopBuildingDialog(int)
         MainComponent& owner;
     };
 
+    const double openStartMs = juce::Time::getMillisecondCounterHiRes();
     auto* content = new StopListDialog(*this);
     const int neededWidth = content->neededWidth();
     const int defaultWidth = juce::jmax(1400, neededWidth);
@@ -13089,6 +13271,7 @@ void MainComponent::showStopBuildingDialog(int)
     }
     stopBuildWindow->setVisible(true);
     stopBuildWindow->toFront(true);
+    CrashHandler::note("Stop List: window shown " + juce::String(juce::Time::getMillisecondCounterHiRes() - openStartMs, 0) + " ms after the click");
 }
 
 namespace
@@ -13443,6 +13626,10 @@ void MainComponent::loadSettings()
     renderThreads = juce::jlimit(0, 63, (int)parsed.getProperty("renderThreads", 0));
     applyRenderThreadSetting();
     renderThreadsWasapi = juce::jlimit(1, 63, (int)parsed.getProperty("renderThreadsWasapi", 1));
+    showUnusableAudioDevices = (bool)parsed.getProperty("showUnusableAudioDevices", false);
+#if JUCE_LINUX
+    unusableAudioDevicesShown().store(showUnusableAudioDevices);
+#endif
     wasapiRenderLanes.store(renderThreadsWasapi);
     ignoreDeviceRestartsUntil.store(juce::Time::getMillisecondCounterHiRes() + 6000.0);
 
@@ -13902,6 +14089,7 @@ void MainComponent::saveSettings()
     obj->setProperty("renderThreads", renderThreads);
     obj->setProperty("renderThreadPreset", renderThreadPreset);
     obj->setProperty("renderThreadsWasapi", renderThreadsWasapi);
+    obj->setProperty("showUnusableAudioDevices", showUnusableAudioDevices);
     obj->setProperty("configurationName", currentConfigurationName);
     {
         // Where the main window is (and whether it is maximised): restored at the
@@ -17557,6 +17745,19 @@ void MainComponent::showConfigurationEditor()
             addInfo("This computer", juce::SystemStats::getCpuModel().trim() + "  -  " + juce::String(physical)
                 + " physical cores, " + juce::String(logical) + " logical CPUs, "
                 + juce::String(juce::SystemStats::getMemorySizeInMegabytes() / 1024) + " GB RAM");
+#if JUCE_LINUX
+            addToggle("Audio devices: list also the ALSA devices of the cards the sound server holds", o.showUnusableAudioDevices,
+                [&o](bool state)
+                {
+                    o.showUnusableAudioDevices = state;
+                    unusableAudioDevicesShown().store(state);
+                    o.saveSettings();
+                },
+                "PipeWire (or PulseAudio) opens every sound card itself, so the cards' own ALSA devices (\"Direct hardware "
+                "device\", \"IEC958\", HDMI) cannot be opened by a program: chosen on a route they give no channels or 'none'. "
+                "They are therefore not listed; the card's channels come through the JACK type. Tick to list them anyway "
+                "(a card the server does not use). The ALSA list is rebuilt when a division's audio tab is next opened.");
+#endif
             {
                 // Presets first, then every explicit thread count (1 = the audio
                 // driver thread renders alone, no worker threads).

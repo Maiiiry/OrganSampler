@@ -1016,7 +1016,8 @@ static const char* const kManualText_part5 =
     "  and under it *Driver Control Panel* (the driver's own settings, e.g. the RME\n"
     "  buffer size), *Reopen device* and *Set for all ...*.\n"
     "\n"
-    "*Set for all* copies the device, sample rate and buffer size of this tab to\n"
+    "*Set for all* copies the device, sample rate and buffer size of this tab (the\n"
+    "rate and buffer size the device really runs at, as its boxes show them) to\n"
     "every perspective of every division (\"none\" is copied too); on the auxiliary\n"
     "tab it acts on the auxiliary routes of all divisions. *Set effects for all*\n"
     "does the same for the IR, dry/wet, IR settings, perspective volume and channel\n"
@@ -1137,17 +1138,26 @@ static const char* const kManualText_part5 =
     "templates of its configuration (surround 4.0 ... 7.1, front, rear, dmix) that\n"
     "have nothing to do with the card's real outputs and cannot be opened while\n"
     "PipeWire holds the card - that is where \"no channels\" came from. OrganSampler\n"
-    "hides those templates; what remains are the real devices (the card's hardware\n"
-    "device, the default and the digital outputs).\n"
+    "hides those templates. While a sound server runs (PipeWire, PulseAudio) the\n"
+    "cards' own devices (\"Direct hardware device without any conversions\", \"IEC958\n"
+    "(S/PDIF) Digital Audio Output\", HDMI) are held by the server as well and are\n"
+    "left out of the list too; what remains are the server's entries (\"PipeWire\n"
+    "Sound Server\", \"Default ALSA Output\"): stereo, the system output. The\n"
+    "settings editor's *Audio devices: list also the ALSA devices of the cards the\n"
+    "sound server holds* lists them anyway, for a card the server does not use\n"
+    "(the list is rebuilt when a division's audio tab is next opened).\n"
     "\n"
     "For every channel of a multichannel interface choose the device type\n"
     "**JACK**: OrganSampler loads PipeWire's own JACK library at start (the\n"
     "activity log says \"JACK: PipeWire's libjack loaded from ...\"), so JACK needs\n"
     "no separate server - PipeWire is the server, and every output of every card\n"
     "appears as a channel (a Komplete Audio 6 shows its four analogue outputs and\n"
-    "the S/PDIF pair). The buffer size and sample rate are PipeWire's; set them\n"
-    "with `pw-metadata -n settings 0 clock.force-quantum 256` and\n"
-    "`clock.force-rate 48000` when the defaults do not suit. If the JACK type\n"
+    "the S/PDIF pair). The buffer size and sample rate are PipeWire's, the same\n"
+    "for every JACK route and every other program: the audio tab of a JACK route\n"
+    "shows them in the row **PipeWire buffer / rate** under the device box, and a\n"
+    "choice there sets them for PipeWire (the command `pw-metadata -n settings 0\n"
+    "clock.force-quantum 256` or `clock.force-rate 48000`, which a console takes\n"
+    "as well) and reopens the JACK devices of all routes. If the JACK type\n"
     "lists no device, PipeWire's JACK library was not found (the package is\n"
     "`pipewire-jack`); start the program with `pw-jack ./OrganSampler` then.\n"
     "\n"
@@ -1174,9 +1184,17 @@ static const char* const kManualText_part5 =
     "(qpwgraph, Patchance, Carla) is needed: OrganSampler connects its outputs to\n"
     "the chosen device's channels itself.\n"
     "\n"
-    "The ALSA default device stays for a quick stereo start; the hardware device\n"
-    "of a card (\"Direct hardware device without any conversions\") opens only when\n"
-    "PipeWire lets go of the card.\n"
+    "**One rate for every device.** Every audio route renders at the rate of its\n"
+    "device, and the devices of one organ may run at different rates and buffer\n"
+    "sizes - the program does not stop you. The samples are loaded at 48 kHz (see\n"
+    "\"Sample rate on loading\"): a device at 44.1 or 96 kHz gets its route's pipes\n"
+    "read at the matching speed, through the same interpolation as a transposed\n"
+    "pipe, which costs a little more per voice and is a step below the quality of\n"
+    "the resampling on load. So give every device 48 kHz and the same buffer size.\n"
+    "A device chosen for a route keeps the rate the route ran at when it offers it\n"
+    "(a fresh device would otherwise open at the lowest rate from 44.1 kHz up);\n"
+    "*Set for all* copies the rate the device of that tab really runs at - look at\n"
+    "the rate box before you copy it.\n"
     "\n"
     "## 5.7 Audio devices not ready when OrganSampler starts\n"
     "\n"
@@ -1194,6 +1212,8 @@ static const char* const kManualText_part5 =
     "three times, one voice per route. The auxiliary route adds one more voice per\n"
     "pipe while it has a device. The *DSP* field of the main window shows how much\n"
     "of the available time the busiest audio thread needs; at 100 % the sound\n"
+    ;
+static const char* const kManualText_part6 =
     "breaks up.\n"
     "\n"
     "So the polyphony a computer reaches is not a property of the computer alone:\n"
@@ -1212,8 +1232,6 @@ static const char* const kManualText_part5 =
     "  halves the polyphony. Set it to *none* unless you need it (see \"The\n"
     "  auxiliary route\").\n"
     "- **IR reverb.** The convolution of an impulse response is heavy and its\n"
-    ;
-static const char* const kManualText_part6 =
     "  cost does not depend on how many pipes sound: it is paid on every route\n"
     "  that has an IR, at every audio period. The convolutions run on the render\n"
     "  workers, in parallel, one buffer behind the dry signal (that buffer is\n"
@@ -1396,6 +1414,8 @@ static const char* const kManualText_part6 =
     "This compensation belongs to plain resampling only: the three other methods\n"
     "settle the loudness and the timbre of their copies when they build them, and\n"
     "a pipe that still plays resampled while its copy is being built gets it until\n"
+    ;
+static const char* const kManualText_part7 =
     "the copy is ready.\n"
     "\n"
     "The three other methods build a copy of every filled pipe in the background\n"
@@ -1414,8 +1434,6 @@ static const char* const kManualText_part6 =
     "(*Filled pipes: release length*). Nothing in the copy varies with time, so\n"
     "nothing modulates or hisses. Weakness: the attack still speaks at the\n"
     "resampled speed - slow downwards, fast upwards.\n"
-    ;
-static const char* const kManualText_part7 =
     "\n"
     "**Pitch shift + time stretch (attack and release).** The same copy, and the\n"
     "attack (downwards) and the release are time-stretched back towards the\n"
@@ -1598,6 +1616,8 @@ static const char* const kManualText_part7 =
     "### Sample rate on loading\n"
     "\n"
     "*Resample everything to 48 kHz* (default): files recorded at 96, 88.2 or 44.1\n"
+    ;
+static const char* const kManualText_part8 =
     "kHz are converted once while loading with a high-quality filter, so every set\n"
     "plays exactly like a 48 kHz one and a 96 kHz set needs half the RAM it would\n"
     "otherwise. Loading takes longer. *Keep each file's own rate* loads faster and\n"
@@ -1616,8 +1636,6 @@ static const char* const kManualText_part7 =
     "avoid cracks and dropouts. The polyphony display of the main window shows\n"
     "*NOW* (the voices sounding), *PEAK* (the most that sounded since the last\n"
     "reset), *DSP* (the load) and *LIMIT* (this setting).\n"
-    ;
-static const char* const kManualText_part8 =
     "\n"
     "The value belongs to the organ, not to the computer alone: the number of\n"
     "audio routes, the auxiliary routes, the IR reverbs, the drivers and the buffer\n"
@@ -1800,6 +1818,8 @@ static const char* const kManualText_part8 =
     "50 %).\n"
     "\n"
     "### Wind: two pipes' share of the full sag\n"
+    ;
+static const char* const kManualText_part9 =
     "\n"
     "The sag with two keys held (default 50 %); from three keys on the rest of the\n"
     "sag closes gradually. One and two pipes together shape how a single note, an\n"
@@ -1818,8 +1838,6 @@ static const char* const kManualText_part8 =
     "of its dip (default 4 dB), so the tone breathes as well as the level.\n"
     "\n"
     "### Tremulant: harmonic filter phase\n"
-    ;
-static const char* const kManualText_part9 =
     "\n"
     "How far the tone oscillation lags the volume oscillation (0 to 360 degrees,\n"
     "default 90): 0 = the tone dips exactly when the level does, 90 = a quarter cycle\n"
@@ -2002,6 +2020,8 @@ static const char* const kManualText_part9 =
     "band runs from here to about twice this frequency. A pipe whose recorded\n"
     "fundamental lies higher starts its shelf at that fundamental instead. The\n"
     "velocity treble cut uses the same frequency.\n"
+    ;
+static const char* const kManualText_part10 =
     "\n"
     "### Celeste beats: top of compass vs bottom\n"
     "\n"
@@ -2020,8 +2040,6 @@ static const char* const kManualText_part9 =
     "estimate. Applied when the slider is released: every open window keeps its\n"
     "place and size on the screen, only its content changes size.\n"
     "\n"
-    ;
-static const char* const kManualText_part10 =
     "### Divisions\n"
     "\n"
     "How many manuals the console has (1 to 7; the pedal is always there). Reducing\n"
@@ -2204,6 +2222,8 @@ static const char* const kManualText_part10 =
     "together).\n"
     "\n"
     "### MIDI channel\n"
+    ;
+static const char* const kManualText_part11 =
     "\n"
     "The MIDI channel (1 to 16) of the division on that device.\n"
     "\n"
@@ -2222,8 +2242,6 @@ static const char* const kManualText_part10 =
     "*C D E ...* (no C# and no D#). The compass of the division is set on the same\n"
     "line of the Divisions dialog.\n"
     "\n"
-    ;
-static const char* const kManualText_part11 =
     "### MIDI transposition\n"
     "\n"
     "The keys of this division's MIDI keyboard play this many semitones away from\n"

@@ -8,6 +8,14 @@
 // list without the template PCMs.
 
 #if JUCE_LINUX
+#include <unistd.h>
+// Linux: whether the ALSA hardware devices a sound server (PipeWire, PulseAudio)
+// holds are listed too. Off by default: chosen on a route they give no channels
+// or 'none', the server has the card. The settings editor switches it.
+inline std::atomic<bool>& unusableAudioDevicesShown() { static std::atomic<bool> flag{ false }; return flag; }
+// What the last ALSA scan left out, for the activity log.
+inline juce::String& hiddenAlsaDevicesNote() { static juce::String note; return note; }
+
 // ALSA advertises, for every card, the PCM templates of its configuration
 // (surround40 ... surround71, front, rear, center_lfe, side, dmix, dsnoop)
 // whether or not the card has those channels; most cannot be opened and the
@@ -27,13 +35,44 @@ public:
             || name.containsIgnoreCase("Side output") || name.containsIgnoreCase("Direct sample mixing")
             || name.containsIgnoreCase("Direct sample snooping");
     }
+    // The sound server's own entries: the PipeWire/PulseAudio plugins and the
+    // "default" device, which lead to the server. Everything else is a card.
+    static bool isSoundServerDevice(const juce::String& name)
+    {
+        return name.containsIgnoreCase("PipeWire") || name.containsIgnoreCase("Pulseaudio")
+            || name.startsWithIgnoreCase("Default ALSA");
+    }
+    // A sound server runs when ALSA lists its plugin or its socket exists.
+    static bool soundServerRunning(const juce::StringArray& names)
+    {
+        for (const auto& name : names)
+            if (name.containsIgnoreCase("PipeWire") || name.containsIgnoreCase("Pulseaudio")) return true;
+        const auto runtime = juce::SystemStats::getEnvironmentVariable("XDG_RUNTIME_DIR", "/run/user/" + juce::String((int)getuid()));
+        if (runtime.isEmpty()) return false;
+        const juce::File dir(runtime);
+        return dir.getChildFile("pipewire-0").exists() || dir.getChildFile("pulse").getChildFile("native").exists();
+    }
     void scanForDevices() override
     {
         if (inner == nullptr) return;
         inner->scanForDevices();
         outputs.clear(); inputs.clear();
-        for (const auto& name : inner->getDeviceNames(false)) if (!isTemplate(name)) outputs.add(name);
-        for (const auto& name : inner->getDeviceNames(true)) if (!isTemplate(name)) inputs.add(name);
+        const auto allOutputs = inner->getDeviceNames(false), allInputs = inner->getDeviceNames(true);
+        // The cards' own devices ("Direct hardware device", "IEC958", HDMI) are
+        // held by the sound server and cannot be opened: left out unless asked for.
+        const bool hideCards = soundServerRunning(allOutputs) && !unusableAudioDevicesShown().load();
+        juce::StringArray hidden;
+        for (const auto& name : allOutputs)
+        {
+            if (isTemplate(name)) continue;
+            if (hideCards && !isSoundServerDevice(name)) { hidden.add(name); continue; }
+            outputs.add(name);
+        }
+        for (const auto& name : allInputs)
+            if (!isTemplate(name) && !(hideCards && !isSoundServerDevice(name))) inputs.add(name);
+        hiddenAlsaDevicesNote() = hidden.isEmpty() ? juce::String()
+            : "ALSA: " + juce::String(hidden.size()) + " device(s) of the cards the sound server holds not listed (the settings editor can list them): "
+              + hidden.joinIntoString("; ");
     }
     juce::StringArray getDeviceNames(bool wantInputNames = false) const override { return wantInputNames ? inputs : outputs; }
     int getDefaultDeviceIndex(bool forInput) const override

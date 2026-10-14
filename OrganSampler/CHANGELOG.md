@@ -12,6 +12,35 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.59] - 2026-10-14
+
+### Added
+- Linux, JACK through PipeWire: the audio tab of a JACK route has the row
+  "PipeWire buffer / rate": PipeWire's buffer size (quantum) and sample rate,
+  the same for every JACK route and every other program; a choice sets them
+  with pw-metadata and reopens the JACK devices of all routes.
+- Linux: the settings editor's "Audio devices: list also the ALSA devices of
+  the cards the sound server holds" (off by default, see Fixed).
+- The activity log notes how long the Stop List took to prepare and to show;
+  ORGAN_OPEN_STOP_LIST=<seconds> opens it that long after the start.
+
+### Fixed
+- Linux, ALSA: the cards' own devices ("Direct hardware device", "IEC958",
+  HDMI), which PipeWire holds and which therefore gave no channels or 'none',
+  are no longer listed (the settings editor can list them). "PipeWire Sound
+  Server" and "Default ALSA Output" offer their two real channels, not 64.
+- A device chosen for a route no longer jumps to 44.1 kHz: the route keeps
+  the rate it ran at when the new device offers it. "Set for all" copies the
+  rate the device really runs at (the manual says so now).
+- Configurations saved on Linux or macOS: the library root was computed per
+  "drive" with the Windows rule, so every tree was a drive of its own and the
+  root became the parent of one tree; the other trees were written relative
+  to that wrong root and their stops were gone after a reload (pedal stops of
+  the Stop List not on the grid, Apply dropping more). One root for all trees.
+- Folder names from a configuration written on Windows are found on Linux
+  and macOS regardless of case ("Ped_octave4" against "Ped_Octave4").
+- Website: the ring on each pipe foot sits near the tip.
+
 ## [0.8.58] - 2026-10-13
 
 ### Fixed

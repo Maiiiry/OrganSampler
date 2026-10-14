@@ -614,6 +614,7 @@ private:
     // driver thread alone, which measured best); ASIO uses the full pool.
     std::atomic<int> wasapiRenderLanes{ 1 };
     int renderThreadsWasapi = 1;
+    bool showUnusableAudioDevices = false;   // Linux: list also the ALSA devices of the cards the sound server holds
     // Swell shutter curve: fast gain rise near closed, flattening when open.
     static float swellCurve(float position) noexcept;
     float expressionGainFor(const ManualConfig& config) const noexcept;
@@ -629,6 +630,9 @@ private:
     // instance at the driver's preferred buffer size and sample rate.
     void openAsioControlPanel(juce::AudioDeviceManager& manager);
     void reopenAudioDeviceFresh(juce::AudioDeviceManager& manager, const juce::String& reason);
+    // Linux, JACK through PipeWire: sets PipeWire's buffer size (quantum) and
+    // sample rate (pw-metadata) and reopens every JACK route. 0 = unchanged.
+    void setPipeWireClock(int quantum, int rate);
     struct AsioPanelWatch
     {
         bool active = false;
