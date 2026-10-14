@@ -4,7 +4,7 @@
 list, perform.
 
 OrganSampler plays sampled pipe organs from plain folders of WAV files - one
-folder per stop, one file per pipe - and turns any number of such folders into
+folder per stop, its pipes as WAV files - and turns any number of such folders into
 an organ with up to seven manuals and a pedal: massive polyphony, per-key
 voicing, divisions and microphone perspectives with independent audio routes on
 any number of sound cards, IR reverb per route, wind and tremulant models,
@@ -108,7 +108,8 @@ No samples are part of this repository or of any release: they are bought or
 downloaded elsewhere - from [Sonus Paradisi](https://www.sonusparadisi.cz/)
 above all - and remain the property of their authors. OrganSampler plays
 plain folders of WAV files: one folder per stop, named after the stop, with
-one WAV per key (`060-C4.wav`; velocity layers `060-C4_070.wav`; releases in
+the WAVs of its pipes named after their keys (`060-C4.wav`; several files for
+one key play in turn; velocity layers `060-C4_070.wav`; releases in
 `rel`, `rel500` ... subfolders); loop points and pitch belong ideally in the
 WAV's `smpl` chunk, but the program copes without them. See "How the sample
 folders must be organised" in the user

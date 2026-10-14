@@ -12,6 +12,13 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.75] - 2026-10-14
+
+### Changed
+- Website, README and manual: "one folder per stop, its pipes as WAV files"
+  - a pipe may have several files, played in turn (round robin); the old
+  "one recording per pipe" denied that.
+
 ## [0.8.74] - 2026-10-14
 
 ### Changed

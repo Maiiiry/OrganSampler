@@ -284,7 +284,7 @@ static const char* const kManualText_part1 =
     "```\n"
     "POS Organ Samples                <- the top folder: \"Load folder...\" in the Stop List\n"
     "\xE2\x94\x9C""\xE2\x94\x80""\xE2\x94\x80"" Principal8                   <- one folder per stop (here without perspectives)\n"
-    "\xE2\x94\x82""   \xE2\x94\x9C""\xE2\x94\x80""\xE2\x94\x80"" 036-C.wav                <- one WAV per pipe, named after its MIDI key\n"
+    "\xE2\x94\x82""   \xE2\x94\x9C""\xE2\x94\x80""\xE2\x94\x80"" 036-C.wav                <- a WAV per pipe, named after its MIDI key (several for one key play in turn)\n"
     "\xE2\x94\x82""   \xE2\x94\x9C""\xE2\x94\x80""\xE2\x94\x80"" 037-C#.wav\n"
     "\xE2\x94\x82""   \xE2\x94\x9C""\xE2\x94\x80""\xE2\x94\x80"" ...\n"
     "\xE2\x94\x82""   \xE2\x94\x94""\xE2\x94\x80""\xE2\x94\x80"" rel                      <- the release samples, named like the attacks\n"

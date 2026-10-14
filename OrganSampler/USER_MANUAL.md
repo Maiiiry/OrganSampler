@@ -278,7 +278,7 @@ with the prefix of its perspective. The whole tree of a small set:
 ```
 POS Organ Samples                <- the top folder: "Load folder..." in the Stop List
 ├── Principal8                   <- one folder per stop (here without perspectives)
-│   ├── 036-C.wav                <- one WAV per pipe, named after its MIDI key
+│   ├── 036-C.wav                <- a WAV per pipe, named after its MIDI key (several for one key play in turn)
 │   ├── 037-C#.wav
 │   ├── ...
 │   └── rel                      <- the release samples, named like the attacks

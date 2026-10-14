@@ -22,10 +22,10 @@
       <div class="hero-copy">
         <p class="eyebrow">Pipe organ sampler for creative minds</p>
         <h1>Design your console. Build your stop list. Perform.</h1>
-        <p class="intro">OrganSampler plays sampled pipe organs from plain folders of WAV files - one folder per stop, one recording per pipe - and turns any number of such folders into an organ of your own design.</p>
+        <p class="intro">OrganSampler plays sampled pipe organs from plain folders of WAV files - one folder per stop, its pipes as WAV files - and turns any number of such folders into an organ of your own design.</p>
         <p>No organ definition file, no installer, no account. Load the folders, let the program propose the organ, shape it - divisions, stops, perspectives, audio routes, voicing - and save it as a configuration. Free software under the GNU GPL v3 for Windows, macOS and Linux.</p>
         <div class="actions"><a class="button primary" href="#download">Download <span aria-hidden="true">&darr;</span></a><a class="button secondary" href="#explore">What is inside</a></div>
-        <p class="availability"><span class="status-dot" aria-hidden="true"></span> Version <span data-version>0.8.74</span> &middot; Windows x64 &middot; macOS &middot; Linux x64 &middot; one portable executable</p>
+        <p class="availability"><span class="status-dot" aria-hidden="true"></span> Version <span data-version>0.8.75</span> &middot; Windows x64 &middot; macOS &middot; Linux x64 &middot; one portable executable</p>
       </div>
       <div class="hero-art">
         <img id="hero-pipes" src="assets/pipes.png" width="1250" height="1250" alt="Three metal organ pipes on a dark background" loading="eager">
@@ -87,16 +87,16 @@
           <a class="button primary" href="https://github.com/zurek-jiri/OrganSampler/releases" data-repo-suffix="/releases">Releases &amp; changelog &rarr;</a>
           <a class="text-link" href="https://github.com/zurek-jiri/OrganSampler/blob/main/OrganSampler/USER_MANUAL.md" data-repo-path="OrganSampler/USER_MANUAL.md">Read the user manual &#8599;</a>
           <a class="text-link" href="https://github.com/zurek-jiri/OrganSampler#building" data-repo-suffix="#building">Build from source &#8599;</a>
-          <p class="small">Version <span data-version>0.8.74</span>. Source, issues and configurations on <a href="https://github.com/zurek-jiri/OrganSampler" data-repo-suffix="">GitHub</a>.</p>
+          <p class="small">Version <span data-version>0.8.75</span>. Source, issues and configurations on <a href="https://github.com/zurek-jiri/OrganSampler" data-repo-suffix="">GitHub</a>.</p>
         </div>
       </div>
     </section>
 
     <section id="samples" class="section wrap">
-      <div class="section-heading"><p class="eyebrow">Samples</p><h2>Folders of WAV files - that is all.</h2><p>OrganSampler has no format of its own and needs no organ definition file. What it plays is a tree of folders: a top folder holding one folder per stop, each stop folder holding one WAV per pipe named after its MIDI key (<code>036-C.wav</code>, <code>037-C#.wav</code> ...), with the releases in a <code>rel</code> subfolder and the microphone perspectives as prefixes (<code>dir-</code>, <code>dif-</code>, <code>rear-</code>). Loop points and the recorded pitch come from the WAV's <code>smpl</code> chunk; from the pitch the program learns the footage, the tuning and the temperament of every rank. In OrganSampler the words "sample set" keep their original, plain meaning: a bunch of WAV samples organised in folders - not a packaged virtual organ with a definition file.</p></div>
+      <div class="section-heading"><p class="eyebrow">Samples</p><h2>Folders of WAV files - that is all.</h2><p>OrganSampler has no format of its own and needs no organ definition file. What it plays is a tree of folders: a top folder holding one folder per stop, each stop folder holding the WAVs of its pipes, named after their MIDI keys (<code>036-C.wav</code>, <code>037-C#.wav</code> ...; several files for one key play in turn), with the releases in a <code>rel</code> subfolder and the microphone perspectives as prefixes (<code>dir-</code>, <code>dif-</code>, <code>rear-</code>). Loop points and the recorded pitch come from the WAV's <code>smpl</code> chunk; from the pitch the program learns the footage, the tuning and the temperament of every rank. In OrganSampler the words "sample set" keep their original, plain meaning: a bunch of WAV samples organised in folders - not a packaged virtual organ with a definition file.</p></div>
       <pre><code>Organ Samples                 &lt;- the top folder you load
 ├── Principal 8
-│   ├── 036-C.wav             &lt;- one WAV per pipe, named after its key
+│   ├── 036-C.wav             &lt;- a WAV per pipe, named after its key (several for one key play in turn)
 │   ├── 037-C#.wav
 │   └── rel                   &lt;- the releases, named like the attacks
 ├── dir-Trompete 8            &lt;- the "Direct" perspective of Trompete 8
