@@ -12,6 +12,14 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.70] - 2026-10-14
+
+### Changed
+- Pictures: the inside of the mouth cut-out gets no light - the highlight on
+  its left inner wall is gone (the wall mirrors the dark right one); the lower
+  lip is a flat sheet with only a thin soldered seam on its rounded edge, no
+  inward bevel. The flame-shaped lips are built from this base too.
+
 ## [0.8.69] - 2026-10-14
 
 ### Changed
