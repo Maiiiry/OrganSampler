@@ -1077,19 +1077,51 @@ them all off at once.
 
 OrganSampler can play through **several sound cards at the same time** - every
 division, every perspective, every auxiliary route on the device you choose -
-and it can even **mix different kinds of driver** in one organ: ASIO devices,
-Windows Audio (WASAPI) devices and the Aggregated WASAPI device, all open at
-once. No other organ sampler on Windows does this. It means an organ can
+and it can even **mix different kinds of driver** in one organ. An organ can
 spread over every output of every interface in the room: the Hauptwerk
 division on an RME, the Rückpositiv on a second card, the pedal on a third,
-headphones on the on-board sound chip.
+headphones on the on-board sound chip. Which drivers there are and how to
+set them up differs by operating system: see "Audio on Windows", "Audio on
+Linux" and "Audio on macOS" below. Two things hold everywhere:
+
+**The buffer size decides more than anything else.** Every block of audio has
+exactly its buffer's duration to be rendered: at 64 samples (1.3 ms at
+48 kHz) the sound breaks at a few hundred voices, however the routes and
+IRs are set; at 512 samples (10.7 ms, unnoticeable on an organ) the same
+computer renders tens of thousands. 512 is the default for a device opened
+for the first time (ASIO keeps its control panel's size, JACK the server's
+shared clock), and the value to measure the polyphony with. A measurement
+that finds a buffer below 256 samples on any route says so first and asks
+for 512, or 256 at the least, before anything else.
+
+**One rate for every device.** Every audio route renders at the rate of its
+device, and the devices of one organ may run at different rates and buffer
+sizes - the program does not stop you. The samples are loaded at 48 kHz (see
+"Sample rate on loading"): a device at 44.1 or 96 kHz gets its route's pipes
+read at the matching speed, through the same interpolation as a transposed
+pipe, which costs a little more per voice and is a step below the quality of
+the resampling on load. So give every device 48 kHz and the same buffer size.
+A device opened for the first time, or chosen for a route that had none, runs
+at the loading rate, 48 kHz, when it offers it (a fresh device would
+otherwise open at the lowest rate from 44.1 kHz up); a device chosen for a
+route keeps the rate the route ran at when it offers it; a portable
+configuration carries the rate and buffer of every route with it. *Set for
+all* copies the rate the device of that tab really runs at - look at the
+rate box before you copy it.
+
+### Audio on Windows: many sound cards at once
+
+ASIO devices, Windows Audio (WASAPI) devices and the Aggregated WASAPI
+device can all be open at once. No other organ sampler on Windows does this.
 
 The kinds of driver:
 
-- **ASIO** (Windows): the professional driver of an audio interface. The
-  lowest latency, the most polyphony. One ASIO driver is opened once and
-  shared by every route that uses it; a second interface with its own ASIO
-  driver is opened beside it. Use ASIO for every route when you can.
+- **ASIO**: the professional driver of an audio interface. The lowest
+  latency, the most polyphony. One ASIO driver is opened once and shared by
+  every route that uses it; a second interface with its own ASIO driver is
+  opened beside it. Use ASIO for every route when you can. Its buffer size
+  is set in the driver's control panel (*Driver Control Panel* in the audio
+  tab opens it).
 - **Windows Audio (WASAPI)**: the driver of any Windows sound device, the
   on-board chip included. Larger buffers, more latency, less polyphony per
   route than ASIO, but it works with every device.
@@ -1110,8 +1142,6 @@ The kinds of driver:
   packets of 480 samples at 48 kHz, so a smaller buffer only splits each
   packet into shorter deadlines - an IR's tail FFT alone can exceed a block
   of 256 - without lowering the latency at all.
-- macOS: CoreAudio.
-- Linux: **JACK** through PipeWire, or ALSA. See "Audio on Linux" below.
 
 The price of mixing drivers (ASIO beside WASAPI in one organ) - read this
 before you do it:
@@ -1128,88 +1158,101 @@ before you do it:
 The best layout for the highest polyphony is therefore: one ASIO driver, all
 routes on it, the output channels spread over its outputs.
 
-**The buffer size decides more than anything else.** Every block of audio has
-exactly its buffer's duration to be rendered: at 64 samples (1.3 ms at
-48 kHz) the sound breaks at a few hundred voices, however the routes and
-IRs are set; at 512 samples (10.7 ms, unnoticeable on an organ) the same
-computer renders tens of thousands. 512 is the default for a device opened
-for the first time (ASIO keeps its control panel's size, JACK the server's
-shared clock), and the value to measure the polyphony with. A measurement
-that finds a buffer below 256 samples on any route says so first and asks
-for 512, or 256 at the least, before anything else.
-
 ### Audio on Linux
 
-Modern Linux runs PipeWire, which holds every sound card and hands the
-programs a stereo "default" device. ALSA's own list adds, for every card, the
-templates of its configuration (surround 4.0 ... 7.1, front, rear, dmix) that
-have nothing to do with the card's real outputs and cannot be opened while
-PipeWire holds the card - that is where "no channels" came from. OrganSampler
-hides those templates. Every other ALSA device is tried when the list is
-made: one that cannot be opened at that moment - the sound server (PipeWire,
-PulseAudio) or another program holds it - is left out, with the reason in
-the activity log. A card's second PCM (its S/PDIF or HDMI entry) often opens
-while the first is held, with every channel of the card: it stays. A card
-PipeWire holds for one of this program's own JACK routes is always listed
-(you may want to move that route to ALSA). The server's own entries
-("PipeWire Sound Server", "Default ALSA Output") are stereo, the system
-output. *List unusable devices too* in the audio tab (where Windows has the
-driver control panel button) lists everything at once; the same switch is
-in the settings editor as *Audio devices: list also the ALSA devices that
-cannot be opened*.
+**What Linux does with your sound cards.** Every current distribution runs
+the sound server PipeWire. It takes every sound card for itself and offers
+the programs a stereo "default" output - the desktop's mixer, in which every
+card is reduced to a single stereo pair (the profile "Analog Stereo Output",
+"Stereo Output 5/6" and the like). An eight-output interface is a stereo
+card to the desktop. An organ needs every output of every interface, so the
+first thing to do is to take the interface out of the desktop's mixer:
 
-For every channel of a multichannel interface choose the device type
-**JACK**: OrganSampler loads PipeWire's own JACK library at start (the
-activity log says "JACK: PipeWire's libjack loaded from ..."), so JACK needs
-no separate server - PipeWire is the server, and every output of every card
-appears as a channel (a Komplete Audio 6 shows its four analogue outputs and
-the S/PDIF pair). The buffer size and sample rate are PipeWire's, the same
-for every JACK route and every other program; choose them in the usual
-*Audio buffer size* and *Sample rate* boxes of any JACK route. The choice is
-handed to PipeWire (the command `pw-metadata -n settings 0
-clock.force-quantum 256` or `clock.force-rate 48000`, which a console takes
-as well), the program waits until the server runs the new clock, then opens
-the route, and the other JACK routes reopen at the new size by themselves.
-If the JACK type
-lists no device, PipeWire's JACK library was not found (the package is
-`pipewire-jack`); start the program with `pw-jack ./OrganSampler` then.
+**Step 1 - set the interface to the "Pro Audio" profile.** With this profile
+PipeWire hands the card over as it is: every output and every input becomes
+a port of its own, nothing is mixed, remapped or volume-controlled on the
+way, and the card runs at PipeWire's clock. Where to set it:
 
-**Set the interface to the "Pro Audio" profile.** In the system settings
-(Settings > Sound, or `pavucontrol` > Configuration) every sound card has a
-profile. The usual profiles ("Analog Stereo Output 1/2", "Stereo Output 5/6
-(S/PDIF)" ...) make the card a desktop output: a stereo pair with the
-desktop's mixing, volume and channel mapping in front of it, and the other
-channels often hidden. **Pro Audio** hands the card over as it is: every
-output and every input becomes a port of its own, nothing is mixed or
-remapped, and the card runs at PipeWire's clock. In the JACK list the card
-then appears under its own name ("Komplete Audio 6") with all its channels
-(the Komplete: playback_AUX0 ... AUX5 = outputs 1-6, the S/PDIF pair
-included) - with the stereo profile the same card appeared as "Analog Stereo
-1/2". Choose Pro Audio for the interface the organ plays through; the
-desktop's own sounds then no longer go to it unless you pick it as the
-system output. After switching the profile, choose the device again in the
-audio tabs (its name changed).
+- KDE Plasma (Ubuntu Studio, Kubuntu, Fedora KDE): *System Settings >
+  Sound*. Every card is listed with its *Profile* box; choose **Pro Audio**
+  for the interface the organ plays through.
+- GNOME (Ubuntu, Fedora): *Settings > Sound > Output*: pick the interface
+  under *Output Device* and set *Configuration* to **Pro Audio**.
+- Any desktop: the program `pavucontrol`, tab *Configuration*, the card's
+  profile box.
 
-The names in the JACK list are PipeWire's names of the cards, not of the
-drivers; only clients with audio ports are listed (PipeWire also exposes MIDI
-bridges to JACK, which are no audio devices). Tick the channels of every
-route as on Windows: where you send a route, there it plays. No patchbay
-(qpwgraph, Patchance, Carla) is needed: OrganSampler connects its outputs to
-the chosen device's channels itself.
+The desktop's own sounds then no longer go to that interface unless you
+choose it as the system output; use the on-board chip for the desktop and
+the interface for the organ. After switching the profile the card appears
+under a new name (its own, "Komplete Audio 6" instead of "Analog Stereo
+1/2"), so choose it again in the audio tabs.
 
-**One rate for every device.** Every audio route renders at the rate of its
-device, and the devices of one organ may run at different rates and buffer
-sizes - the program does not stop you. The samples are loaded at 48 kHz (see
-"Sample rate on loading"): a device at 44.1 or 96 kHz gets its route's pipes
-read at the matching speed, through the same interpolation as a transposed
-pipe, which costs a little more per voice and is a step below the quality of
-the resampling on load. So give every device 48 kHz and the same buffer size.
-A device opened for the first time, or chosen for a route that had none, runs
-at the loading rate, 48 kHz, when it offers it (a fresh device would
-otherwise open at the lowest rate from 44.1 kHz up); a device chosen for a
-route keeps the rate the route ran at when it offers it;
-*Set for all* copies the rate the device of that tab really runs at - look at
-the rate box before you copy it.
+**Step 2 - the packages.** OrganSampler needs PipeWire's JACK library and
+its command-line tools; most audio-oriented distributions have them, others
+do not. Open a terminal (*Konsole* or *Terminal* in the application menu;
+Ctrl+Alt+T on most desktops) and type the line for your distribution, then
+Enter and your password:
+
+- Ubuntu, Debian, Mint, Pop!_OS: `sudo apt install pipewire-jack pipewire-bin pavucontrol`
+- Fedora: `sudo dnf install pipewire-jack-audio-connection-kit pipewire-utils pavucontrol`
+- Arch, Manjaro: `sudo pacman -S pipewire-jack pavucontrol`
+- openSUSE: `sudo zypper install pipewire-libjack-0_3 pipewire-tools pavucontrol`
+
+To check that PipeWire is the server, type `pactl info | grep "Server Name"`:
+the answer should read "PulseAudio (on PipeWire ...)". Log out and in again
+after installing. (Optional, for the lowest latency: your user in the
+`audio` group with realtime limits - `sudo usermod -aG audio $USER`; Ubuntu
+Studio and the other audio distributions have this done.)
+
+**The two kinds of driver in OrganSampler:**
+
+- **JACK** - use this one. It is PipeWire itself: OrganSampler loads
+  PipeWire's own JACK library at start (the activity log says "JACK:
+  PipeWire's libjack loaded from ..."), no separate JACK server is needed
+  or wanted. Every card in the Pro Audio profile appears under its own name
+  with all its channels (a Komplete Audio 6: playback_AUX0 ... AUX5 =
+  outputs 1-6, the S/PDIF pair included); tick the channels of every route
+  as on Windows - where you send a route, there it plays. No patchbay
+  (qpwgraph, Patchance, Carla) is needed: OrganSampler connects its outputs
+  to the chosen channels itself. The list shows only clients with audio
+  ports (PipeWire also exposes MIDI bridges to JACK, which are no audio
+  devices). The buffer size and the sample rate are PipeWire's, the same
+  for every JACK route and every other program: choose them in the usual
+  *Audio buffer size* and *Sample rate* boxes of any JACK route; the choice
+  is handed to PipeWire, the program waits until the server runs the new
+  clock, then opens the route, and the other JACK routes follow by
+  themselves. (From a terminal the same is `pw-metadata -n settings 0
+  clock.force-quantum 512` and `pw-metadata -n settings 0 clock.force-rate
+  48000`.) If the JACK type lists no device at all, the JACK library was not
+  found: install `pipewire-jack` as above, or start the program with
+  `pw-jack ./OrganSampler`.
+- **ALSA** - the plain Linux driver, for a quick start or a card that
+  PipeWire does not use. "PipeWire Sound Server" and "Default ALSA Output"
+  are the desktop's stereo output: two channels, the system mix. A card's
+  own entries ("Direct hardware device without any conversions", its S/PDIF
+  or HDMI entry) open only while nothing else holds the card; ALSA's
+  template entries (surround 4.0 ... 7.1, front, rear, dmix) are never
+  shown. When the list is made every device is tried, and one that cannot be
+  opened at that moment (held by PipeWire or another program) is left out,
+  with the reason in the activity log; a card PipeWire holds for one of this
+  program's own JACK routes stays listed. *List unusable devices too* in
+  the audio tab (where Windows has the driver control panel button) lists
+  everything regardless; the same switch is in the settings editor as *Audio
+  devices: list also the ALSA devices that cannot be opened*.
+
+A menu entry with the icon, so that the program starts from the
+application menu like any other: *Install menu entry and icon* in the
+Configuration Editor (see chapter 1).
+
+### Audio on macOS
+
+To be continued. macOS has one driver, CoreAudio, and joins several cards
+into an aggregate device itself (*Audio MIDI Setup* in the Utilities
+folder); OrganSampler lists the CoreAudio devices and should play through
+them like through Windows Audio. The project has no Mac to test this on;
+reports are welcome. Every release carries, beside the current macOS build,
+an untested build for old Intel Macs from macOS 10.12 on
+(`OrganSampler-macos-10.12-intel.zip`).
 
 ## 5.7 Audio devices not ready when OrganSampler starts
 

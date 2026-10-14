@@ -11,6 +11,7 @@ jobs:
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.optional == true }}
     strategy:
       fail-fast: false
       matrix:
@@ -23,6 +24,17 @@ jobs:
             os: macos-latest
             artifact: OrganSampler-macos
             path: build/OrganSampler_artefacts/Release/OrganSampler.app
+            zip: OrganSampler-macos.zip
+          # A test build for old Intel Macs (macOS 10.12 Sierra and later): JUCE
+          # runs from 10.11 on when the deployment target says so. Untested by the
+          # project itself; it must not block the release when the toolchain balks.
+          - name: macOS 10.12 Intel (test build)
+            os: macos-latest
+            artifact: OrganSampler-macos-10.12-intel
+            path: build/OrganSampler_artefacts/Release/OrganSampler.app
+            zip: OrganSampler-macos-10.12-intel.zip
+            cmake: -DCMAKE_OSX_DEPLOYMENT_TARGET=10.12 -DCMAKE_OSX_ARCHITECTURES=x86_64
+            optional: true
           - name: Linux
             os: ubuntu-latest
             artifact: OrganSampler-linux
@@ -41,7 +53,7 @@ jobs:
             libxinerama-dev libxrandr-dev libxrender-dev libxi-dev libegl-dev libglu1-mesa-dev mesa-common-dev xvfb
 
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release ${{ matrix.cmake }}
 
       - name: Build
         run: cmake --build build --config Release --parallel
@@ -68,12 +80,12 @@ jobs:
 
       - name: Package (macOS)
         if: runner.os == 'macOS'
-        run: ditto -c -k --keepParent "${{ matrix.path }}" OrganSampler-macos.zip
+        run: ditto -c -k --keepParent "${{ matrix.path }}" "${{ matrix.zip }}"
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: ${{ runner.os == 'macOS' && 'OrganSampler-macos.zip' || matrix.path }}
+          path: ${{ runner.os == 'macOS' && matrix.zip || matrix.path }}
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -92,7 +104,7 @@ jobs:
           files: artifacts/**/*
           prerelease: true
           body: |
-            Pre-release build for testers - not an official release yet. Windows: `OrganSampler.exe`; macOS: `OrganSampler-macos.zip` (unsigned: right-click > Open the first time); Linux: `OrganSampler` (`chmod +x` first). Changes: see `OrganSampler/CHANGELOG.md`.
+            Pre-release build for testers - not an official release yet. Windows: `OrganSampler.exe`; macOS: `OrganSampler-macos.zip` (unsigned: right-click > Open the first time; `OrganSampler-macos-10.12-intel.zip` is an untested build for old Intel Macs from macOS 10.12 on); Linux: `OrganSampler` (`chmod +x` first). Changes: see `OrganSampler/CHANGELOG.md`.
 
             **An organ to play:** the Rural Organ demo (dry recordings with IR reverb, sample folders and configuration included) - https://github.com/zurek-jiri/OrganSampler/releases/tag/rural-organ-0.8. **More organs:** sample folders in wave format from Sonus Paradisi, https://www.sonusparadisi.cz/en/organs.html (free material: https://www.sonusparadisi.cz/en/free-stuff.html); ready-made configurations in `configurations/`.
       # Only the newest build stays on the releases page: every older v* release

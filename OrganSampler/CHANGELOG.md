@@ -12,6 +12,20 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.78] - 2026-10-14
+
+### Changed
+- Manual 5.6 rewritten per operating system: "Audio on Windows" (ASIO,
+  Windows Audio, Aggregated WASAPI), "Audio on Linux" from the user's side
+  (what PipeWire does with the cards, the Pro Audio profile step by step in
+  KDE, GNOME and pavucontrol, the packages to install with the exact
+  commands per distribution, the JACK and ALSA kinds and when to use which),
+  "Audio on macOS" (to be continued). The buffer and the sample rate rules
+  stay in the common part.
+- CI: an untested build for old Intel Macs from macOS 10.12 on
+  (`OrganSampler-macos-10.12-intel.zip`) beside the current macOS build; it
+  does not block the release when the toolchain refuses it.
+
 ## [0.8.77] - 2026-10-14
 
 ### Fixed
