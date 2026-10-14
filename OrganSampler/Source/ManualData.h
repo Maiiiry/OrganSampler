@@ -1150,7 +1150,7 @@ static const char* const kManualText_part5 =
     "for the first time (ASIO keeps its control panel's size, JACK the server's\n"
     "shared clock), and the value to measure the polyphony with. A measurement\n"
     "that finds a buffer below 256 samples on any route says so first and asks\n"
-    "for 512 before anything else.\n"
+    "for 512, or 256 at the least, before anything else.\n"
     "\n"
     "### Audio on Linux\n"
     "\n"
@@ -1220,8 +1220,10 @@ static const char* const kManualText_part6 =
     "read at the matching speed, through the same interpolation as a transposed\n"
     "pipe, which costs a little more per voice and is a step below the quality of\n"
     "the resampling on load. So give every device 48 kHz and the same buffer size.\n"
-    "A device chosen for a route keeps the rate the route ran at when it offers it\n"
-    "(a fresh device would otherwise open at the lowest rate from 44.1 kHz up);\n"
+    "A device opened for the first time, or chosen for a route that had none, runs\n"
+    "at the loading rate, 48 kHz, when it offers it (a fresh device would\n"
+    "otherwise open at the lowest rate from 44.1 kHz up); a device chosen for a\n"
+    "route keeps the rate the route ran at when it offers it;\n"
     "*Set for all* copies the rate the device of that tab really runs at - look at\n"
     "the rate box before you copy it.\n"
     "\n"
@@ -1412,10 +1414,10 @@ static const char* const kManualText_part6 =
     "slider, random detune, wind and tremulant behaviour, release samples (from the\n"
     "same neighbour, treated the same way); it costs nothing while silent.\n"
     "\n"
-    "Which real pipe serves a missing one is decided by *Missing pipes: neighbours\n"
-    "borrowed as a group*: with the default 12, every missing pipe is the\n"
     ;
 static const char* const kManualText_part7 =
+    "Which real pipe serves a missing one is decided by *Missing pipes: neighbours\n"
+    "borrowed as a group*: with the default 12, every missing pipe is the\n"
     "octave transposition of a real one, so the chromatic variety of the rank is\n"
     "kept. A rank's fill map is sticky: when the compass grows (a new transmission)\n"
     "the pipes already filled keep their source, so their copies are never built\n"
@@ -1614,10 +1616,10 @@ static const char* const kManualText_part7 =
     "\n"
     "### Currently active\n"
     "\n"
-    "The threads really rendering now and the interpolation kernel the processor\n"
-    "supports (AVX2 on current processors). Information only.\n"
     ;
 static const char* const kManualText_part8 =
+    "The threads really rendering now and the interpolation kernel the processor\n"
+    "supports (AVX2 on current processors). Information only.\n"
     "\n"
     "### Render threads for Aggregated WASAPI\n"
     "\n"
@@ -1816,10 +1818,10 @@ static const char* const kManualText_part8 =
     "\n"
     "Closing the swell box does not only make the pipes quieter: it also takes away\n"
     "their brilliance. This is a high shelf above about 3 kHz that follows the\n"
-    "shutters: this much loss with the box closed (0 to 12 dB, default 8). 0 dB =\n"
-    "off. The\n"
     ;
 static const char* const kManualText_part9 =
+    "shutters: this much loss with the box closed (0 to 12 dB, default 8). 0 dB =\n"
+    "off. The\n"
     "three harmonic filters (swell, wind, tremulant) add up, capped at 12 dB; when\n"
     "all three are 0 dB the filter costs nothing.\n"
     "\n"
@@ -2018,10 +2020,10 @@ static const char* const kManualText_part9 =
     "\n"
     "*Remove them* deletes only the cache files of ranks that are not loaded at\n"
     "this moment: the stops of other configurations, of folders you unloaded or\n"
-    "deleted from the disk. The files of the loaded organ stay, so its next load\n"
-    "is still fast. A message says how many files went. This is the button for\n"
     ;
 static const char* const kManualText_part10 =
+    "deleted from the disk. The files of the loaded organ stay, so its next load\n"
+    "is still fast. A message says how many files went. This is the button for\n"
     "routine housekeeping.\n"
     "\n"
     "### Filled pipes cache folder\n"
@@ -2220,10 +2222,10 @@ static const char* const kManualText_part10 =
     "perspective. Every prefix that belongs to the same perspective must stand on\n"
     "that one line, separated by semicolons; the perspective takes its name from\n"
     "the first entry of the line (\"Direct;01-dirMk2H-;dir\" makes folders with any\n"
-    "of the three prefixes the perspective \"Direct\"). Defaults: Direct, Diffuse and\n"
-    "Rear. Prefixes found in a newly loaded set are added here by themselves (a\n"
     ;
 static const char* const kManualText_part11 =
+    "of the three prefixes the perspective \"Direct\"). Defaults: Direct, Diffuse and\n"
+    "Rear. Prefixes found in a newly loaded set are added here by themselves (a\n"
     "prefix that shares its stem with a known perspective joins its line; an\n"
     "unknown one gets a line of its own - move it onto the right line if it is the\n"
     "same perspective). Applies to the next folder load.\n"
@@ -2422,10 +2424,10 @@ static const char* const kManualText_part11 =
     "the licences of the software it contains: JUCE (AGPLv3), the Steinberg ASIO SDK (under its\n"
     "GPLv3 option; ASIO is a trademark and software of Steinberg Media Technologies\n"
     "GmbH), Signalsmith Stretch and Signalsmith Linear (MIT). The same program is\n"
-    "built for Windows, macOS and Linux; the macOS and Linux builds have had less\n"
-    "playing time than the Windows build.\n"
     ;
 static const char* const kManualText_part12 =
+    "built for Windows, macOS and Linux; the macOS and Linux builds have had less\n"
+    "playing time than the Windows build.\n"
     "\n"
     ;
 static const char* const kManualTextParts[] = { kManualText_part0, kManualText_part1, kManualText_part2, kManualText_part3, kManualText_part4, kManualText_part5, kManualText_part6, kManualText_part7, kManualText_part8, kManualText_part9, kManualText_part10, kManualText_part11, kManualText_part12 };

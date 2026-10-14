@@ -12,6 +12,16 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.76] - 2026-10-14
+
+### Changed
+- A device opened for the first time, or chosen for a route that had none,
+  runs at the loading rate of 48 kHz when it offers it (ALSA opened at
+  44.1 kHz); a device that cannot takes its own default. The polyphony
+  report asks for a buffer of 512 samples, or 256 at the least.
+- Website: the version it shows comes from site/config.js, which had stayed
+  at 0.8.49; bumped with every release from now on.
+
 ## [0.8.75] - 2026-10-14
 
 ### Changed

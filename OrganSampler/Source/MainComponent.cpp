@@ -3876,16 +3876,23 @@ juce::AudioDeviceManager* MainComponent::setRouteAudioType(int manualIndex, cons
     {
         if (deviceState != nullptr) { manager.initialise(0, 2, deviceState, true); return; }
         manager.setCurrentAudioDeviceType(typeName, true);
-        // No saved state: 512 samples is the default buffer (ASIO keeps its control
-        // panel's size, JACK the server's shared clock, the aggregate its own rule).
-        if (typeName.equalsIgnoreCase("ASIO") || typeName.equalsIgnoreCase("JACK") || typeName.equalsIgnoreCase("Aggregated WASAPI")) return;
+        // No saved state: the sample rate the samples are loaded at (48 kHz) when
+        // the device offers it, else the device's own; 512 samples as the buffer
+        // (ASIO keeps its control panel's size, JACK the server's shared clock,
+        // the aggregate has its own rule).
+        if (typeName.equalsIgnoreCase("JACK")) return;
         if (auto* device = manager.getCurrentAudioDevice())
-            if (device->getCurrentBufferSizeSamples() < 512 && device->getAvailableBufferSizes().contains(512))
-            {
-                auto setup = manager.getAudioDeviceSetup();
-                setup.bufferSize = 512;
-                manager.setAudioDeviceSetup(setup, true);
-            }
+        {
+            auto setup = manager.getAudioDeviceSetup();
+            bool change = false;
+            const double loadingRate = 48000.0;
+            if (std::abs(device->getCurrentSampleRate() - loadingRate) > 1.0 && device->getAvailableSampleRates().contains(loadingRate))
+            { setup.sampleRate = loadingRate; change = true; }
+            if (!typeName.equalsIgnoreCase("ASIO") && !typeName.equalsIgnoreCase("Aggregated WASAPI")
+                && device->getCurrentBufferSizeSamples() < 512 && device->getAvailableBufferSizes().contains(512))
+            { setup.bufferSize = 512; change = true; }
+            if (change) manager.setAudioDeviceSetup(setup, true);
+        }
     };
     const bool wantsAggregate = typeName.equalsIgnoreCase("Aggregated WASAPI");
     auto selectAggregateDevice = [wantsAggregate, deviceState](juce::AudioDeviceManager& manager)
@@ -5823,14 +5830,17 @@ void MainComponent::showKeyboardsDialog(int onlyManual)
                 // lowest rate it offers from 44100 Hz up, whatever the route ran at (an
                 // ALSA device "jumped to 44100"). The route keeps its rate when the new
                 // device can run it.
-                if (device != nullptr && knownDevice.isNotEmpty() && knownRate > 0.0 && currentRate > 0.0
+                // (A route that had no rate yet asks for the loading rate, 48 kHz.)
+                const double preferredRate = knownRate > 0.0 ? knownRate : 48000.0;
+                if (device != nullptr && knownDevice.isNotEmpty() && currentRate > 0.0
                     && !selector->deviceManager.getCurrentAudioDeviceType().equalsIgnoreCase("JACK")   // JACK's rate is PipeWire's (shared), never changed unasked
-                    && std::abs(currentRate - knownRate) > 1.0 && device->getAvailableSampleRates().contains(knownRate))
+                    && std::abs(currentRate - preferredRate) > 1.0 && device->getAvailableSampleRates().contains(preferredRate))
                 {
                     auto setup = selector->deviceManager.getAudioDeviceSetup();
-                    setup.sampleRate = knownRate;
+                    setup.sampleRate = preferredRate;
                     CrashHandler::note("Audio: " + device->getName() + " opened at " + juce::String(currentRate, 0)
-                        + " Hz, the route ran at " + juce::String(knownRate, 0) + " Hz: reopened at the route's rate");
+                        + " Hz, " + (knownRate > 0.0 ? "the route ran at " + juce::String(knownRate, 0) + " Hz: reopened at the route's rate"
+                                                       : juce::String("reopened at the loading rate of 48000 Hz")));
                     selector->deviceManager.setAudioDeviceSetup(setup, true);
                 }
                 if (device != nullptr && device->getCurrentSampleRate() > 0.0) knownRate = device->getCurrentSampleRate();
@@ -16899,7 +16909,7 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
             advice = juce::String("\n\nThe audio buffer of \"") + smallDevice + "\" is " + juce::String(smallBlock) + " samples ("
                 + juce::String(ms, 1) + " ms): far too small for this work - every block has only that long to render, so the sound "
                 "breaks at a few hundred voices whatever the routes and IRs are. Set the buffer to 512 samples ("
-                + juce::String(1000.0 * 512 / juce::jmax(1.0, smallRate), 1) + " ms of latency, fine for an organ) in the "
+                + juce::String(1000.0 * 512 / juce::jmax(1.0, smallRate), 1) + " ms of latency, fine for an organ), or 256 at the least, in the "
                 + (smallType.equalsIgnoreCase("ASIO") ? juce::String("driver's control panel") : juce::String("audio tab"))
                 + (smallType.equalsIgnoreCase("JACK") ? juce::String(" (the value goes to PipeWire and holds for every JACK route)") : juce::String())
                 + ", save the configuration and measure again. Nothing else matters until then.";

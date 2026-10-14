@@ -1136,7 +1136,7 @@ computer renders tens of thousands. 512 is the default for a device opened
 for the first time (ASIO keeps its control panel's size, JACK the server's
 shared clock), and the value to measure the polyphony with. A measurement
 that finds a buffer below 256 samples on any route says so first and asks
-for 512 before anything else.
+for 512, or 256 at the least, before anything else.
 
 ### Audio on Linux
 
@@ -1204,8 +1204,10 @@ sizes - the program does not stop you. The samples are loaded at 48 kHz (see
 read at the matching speed, through the same interpolation as a transposed
 pipe, which costs a little more per voice and is a step below the quality of
 the resampling on load. So give every device 48 kHz and the same buffer size.
-A device chosen for a route keeps the rate the route ran at when it offers it
-(a fresh device would otherwise open at the lowest rate from 44.1 kHz up);
+A device opened for the first time, or chosen for a route that had none, runs
+at the loading rate, 48 kHz, when it offers it (a fresh device would
+otherwise open at the lowest rate from 44.1 kHz up); a device chosen for a
+route keeps the rate the route ran at when it offers it;
 *Set for all* copies the rate the device of that tab really runs at - look at
 the rate box before you copy it.
 
