@@ -12,6 +12,19 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.77] - 2026-10-14
+
+### Fixed
+- A portable configuration opened its "default" devices at 44.1 kHz: the
+  portable file dropped the sample rate and buffer size with the device.
+  They travel with the configuration now (they are the organ's, not the
+  computer's), and a state without them opens at 48 kHz and 512 samples
+  (ASIO keeps its panel's size, JACK the server's clock) - also for the
+  Rural Organ package saved earlier.
+
+### Changed
+- The Rural Organ is described by what its grid shows: 24 stops.
+
 ## [0.8.76] - 2026-10-14
 
 ### Changed

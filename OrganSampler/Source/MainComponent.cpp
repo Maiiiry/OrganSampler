@@ -3513,6 +3513,13 @@ juce::AudioDeviceManager* MainComponent::sharedHostFor(const juce::String& typeN
             setup->setAttribute("deviceType", typeName);
             setup->setAttribute("audioOutputDeviceName", name);
             setup->setAttribute("audioInputDeviceName", "");
+            // A portable configuration's "default" state carries the organ's rate
+            // and buffer; without them: the loading rate, 48 kHz, and 512 samples
+            // (ASIO keeps its control panel's size, JACK the server's clock).
+            if (state != nullptr && state->hasAttribute("audioDeviceRate")) setup->setAttribute("audioDeviceRate", state->getStringAttribute("audioDeviceRate"));
+            else if (!typeName.equalsIgnoreCase("JACK")) setup->setAttribute("audioDeviceRate", 48000.0);
+            if (state != nullptr && state->hasAttribute("audioDeviceBufferSize")) setup->setAttribute("audioDeviceBufferSize", state->getStringAttribute("audioDeviceBufferSize"));
+            else if (!typeName.equalsIgnoreCase("JACK") && !typeName.equalsIgnoreCase("ASIO")) setup->setAttribute("audioDeviceBufferSize", 512);
         }
         // A state written by the short-lived zero-output implementation contains
         // an explicit empty channel mask that prevents reliable ASIO startup.
@@ -3874,8 +3881,11 @@ juce::AudioDeviceManager* MainComponent::setRouteAudioType(int manualIndex, cons
     // instead of first opening the type's default device.
     auto openType = [&](juce::AudioDeviceManager& manager)
     {
-        if (deviceState != nullptr) { manager.initialise(0, 2, deviceState, true); return; }
-        manager.setCurrentAudioDeviceType(typeName, true);
+        const bool hasRate = deviceState != nullptr && deviceState->hasAttribute("audioDeviceRate");
+        const bool hasBuffer = deviceState != nullptr && deviceState->hasAttribute("audioDeviceBufferSize");
+        if (deviceState != nullptr) manager.initialise(0, 2, deviceState, true);
+        else manager.setCurrentAudioDeviceType(typeName, true);
+        if (hasRate && hasBuffer) return;
         // No saved state: the sample rate the samples are loaded at (48 kHz) when
         // the device offers it, else the device's own; 512 samples as the buffer
         // (ASIO keeps its control panel's size, JACK the server's shared clock,
@@ -3886,9 +3896,9 @@ juce::AudioDeviceManager* MainComponent::setRouteAudioType(int manualIndex, cons
             auto setup = manager.getAudioDeviceSetup();
             bool change = false;
             const double loadingRate = 48000.0;
-            if (std::abs(device->getCurrentSampleRate() - loadingRate) > 1.0 && device->getAvailableSampleRates().contains(loadingRate))
+            if (!hasRate && std::abs(device->getCurrentSampleRate() - loadingRate) > 1.0 && device->getAvailableSampleRates().contains(loadingRate))
             { setup.sampleRate = loadingRate; change = true; }
-            if (!typeName.equalsIgnoreCase("ASIO") && !typeName.equalsIgnoreCase("Aggregated WASAPI")
+            if (!hasBuffer && !typeName.equalsIgnoreCase("ASIO") && !typeName.equalsIgnoreCase("Aggregated WASAPI")
                 && device->getCurrentBufferSizeSamples() < 512 && device->getAvailableBufferSizes().contains(512))
             { setup.bufferSize = 512; change = true; }
             if (change) manager.setAudioDeviceSetup(setup, true);
@@ -9343,7 +9353,20 @@ void MainComponent::savePortableConfiguration(const juce::File& file, bool inclu
         // no division's table uses.
         root->setProperty("portable", true);
         for (const auto& key : machineSpecificKeys()) root->removeProperty(key);
-        const juce::String defaultState = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<DEVICESETUP deviceType=\"default\"/>";
+        // "default" = the default output of the loading computer's own driver type;
+        // the sample rate and buffer size travel with it (they are the organ's, not
+        // the computer's), so the device opens at the configuration's rate.
+        auto portableDefault = [](const juce::String& originalXml)
+        {
+            juce::XmlElement out("DEVICESETUP");
+            out.setAttribute("deviceType", "default");
+            if (auto xml = juce::parseXML(originalXml))
+            {
+                if (xml->hasAttribute("audioDeviceRate")) out.setAttribute("audioDeviceRate", xml->getStringAttribute("audioDeviceRate"));
+                if (xml->hasAttribute("audioDeviceBufferSize")) out.setAttribute("audioDeviceBufferSize", xml->getStringAttribute("audioDeviceBufferSize"));
+            }
+            return out.toString();
+        };
         auto isNoneState = [](const juce::String& xmlText)
         {
             const auto xml = juce::parseXML(xmlText);
@@ -9354,7 +9377,8 @@ void MainComponent::savePortableConfiguration(const juce::File& file, bool inclu
             for (auto& itemVar : *array)
                 if (auto* item = itemVar.getDynamicObject())
                 {
-                    if (!isNoneState(item->getProperty("audioDeviceStateXml").toString())) item->setProperty("audioDeviceStateXml", defaultState);
+                    if (!isNoneState(item->getProperty("audioDeviceStateXml").toString()))
+                        item->setProperty("audioDeviceStateXml", portableDefault(item->getProperty("audioDeviceStateXml").toString()));
                     item->setProperty("outputChannels", juce::Array<juce::var>{ 0, 1 });
                     if (auto* routes = item->getProperty("perspectiveAudio").getArray())
                         for (auto& routeVar : *routes)
@@ -9369,7 +9393,7 @@ void MainComponent::savePortableConfiguration(const juce::File& file, bool inclu
                                     routeObject->setProperty("audioDeviceStateXml",
                                         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<DEVICESETUP audioOutputDeviceName=\"\" audioInputDeviceName=\"\"/>");
                                 }
-                                else routeObject->setProperty("audioDeviceStateXml", defaultState);
+                                else routeObject->setProperty("audioDeviceStateXml", portableDefault(state));
                                 routeObject->setProperty("outputChannels", juce::Array<juce::var>{ 0, 1 });
                             }
                     if (auto* entries = item->getProperty("stopBuild").getProperty("entries", juce::var()).getArray())

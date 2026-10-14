@@ -90,7 +90,7 @@ adds them. Published configurations are under the repository's licence
 ## The demo organ: Rural Organ
 
 The one exception to "no samples here": **Rural Organ**, a small village
-organ - three divisions, fifteen stops, dry recordings with IR reverb -
+organ - three divisions, 24 stops, dry recordings with IR reverb -
 packaged with its sample folders and its portable configuration so that
 OrganSampler can be tried at once. See [`rural-organ/README.md`](rural-organ/README.md);
 the package `RuralOrgan.zip` (about 1 GB) is attached to the release

@@ -1,7 +1,7 @@
 # Rural Organ - the demo organ
 
 A small village organ to try OrganSampler at once: three divisions (Pedal,
-I, II), fifteen stops, **dry recordings with IR reverb** - the pipes were
+I, II), 24 stops, **dry recordings with IR reverb** - the pipes were
 recorded close and dry, and the room comes from the impulse responses
 `Rural Church Front.wav` and `Rural Church Rear.wav` that the configuration
 puts on its routes. That is the point of the demo: hear what OrganSampler's
@@ -49,7 +49,7 @@ Rural Organ/
 `Rural Organ.json` in this folder is the same portable configuration as in
 the package: saved with "Portable configuration (to share with others)", so
 it carries the organ only - no MIDI devices, no audio devices, nothing of
-the computer it was made on. Saved with OrganSampler 0.8.76.
+the computer it was made on. Saved with OrganSampler 0.8.77.
 
 - Organ: a Czech village organ, three divisions, recorded dry.
 - Samples: Sonus Paradisi, provided free of charge with OrganSampler to try

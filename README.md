@@ -22,7 +22,7 @@ configuration. Free software under the GNU GPL v3. Windows, macOS and Linux.
 2. **An organ to play:** download
    [**RuralOrgan.zip**](https://github.com/zurek-jiri/OrganSampler/releases/download/rural-organ-0.8/RuralOrgan.zip)
    (about 950 MB) - the **Rural Organ** demo: a small village organ, three
-   divisions, fifteen stops, **dry recordings with IR reverb**, with its
+   divisions, 24 stops, **dry recordings with IR reverb**, with its
    sample folders and a portable configuration. Unpack it, start
    OrganSampler, *Load Configuration*, choose `Rural Organ.json`. It plays
    through your default sound device at once; a message says what to set
