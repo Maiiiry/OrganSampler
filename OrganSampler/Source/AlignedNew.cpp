@@ -29,17 +29,17 @@ void operator delete[](void* p, std::size_t, std::align_val_t) noexcept { std::f
 // std::hash of strings calls std::__1::__hash_memory, a function Apple added to
 // the system's libc++ in macOS 15 - on older systems the loader finds no such
 // symbol and refuses to start the program ("DYLD, Symbol missing"). The
-// program brings its own (FNV-1a; any consistent hash will do), which the
-// linker binds in preference to the library's.
+// program brings its own under that very symbol name (an assembler label, so
+// that the library's own declaration is not redefined); FNV-1a - any
+// consistent hash will do. The linker binds it in preference to the library's.
 #include <cstddef>
 #include <cstdint>
-namespace std { inline namespace __1 {
-size_t __hash_memory(const void* ptr, size_t size) noexcept
+std::size_t organSamplerHashMemory(const void* ptr, std::size_t size) noexcept __asm__("__ZNSt3__113__hash_memoryEPKvm");
+std::size_t organSamplerHashMemory(const void* ptr, std::size_t size) noexcept
 {
     const unsigned char* p = static_cast<const unsigned char*>(ptr);
     uint64_t h = 1469598103934665603ULL;
-    for (size_t i = 0; i < size; ++i) { h ^= p[i]; h *= 1099511628211ULL; }
-    return static_cast<size_t>(h);
+    for (std::size_t i = 0; i < size; ++i) { h ^= p[i]; h *= 1099511628211ULL; }
+    return static_cast<std::size_t>(h);
 }
-} }
 #endif
