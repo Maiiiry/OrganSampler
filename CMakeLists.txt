@@ -9,7 +9,7 @@
 # what the GitHub Actions workflow and the macOS/Linux builds use. Both compile
 # the same sources with the same defines.
 cmake_minimum_required(VERSION 3.22)
-project(OrganSampler VERSION 0.8.89 LANGUAGES C CXX)
+project(OrganSampler VERSION 0.8.90 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -44,6 +44,16 @@ target_sources(OrganSampler PRIVATE
 # names; as a native (non-LTO) object the linker treats them like the library's.
 if(APPLE)
     set_source_files_properties("${ORGAN_SRC}/AlignedNew.cpp" PROPERTIES COMPILE_OPTIONS "-fno-lto")
+endif()
+
+# The icons as drawn per size (16-128 hand-tuned outlines, 256-1024 the picture),
+# not JUCE's rescaling of the two icons above: JUCE writes icon.ico / AppIcon.icns
+# into its generated-sources folder at configure time, and ours replace them here.
+get_target_property(organ_generated OrganSampler JUCE_GENERATED_SOURCES_DIRECTORY)
+if(WIN32)
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/OrganSampler/OrganSampler_icon.ico" "${organ_generated}/icon.ico" COPYONLY)
+elseif(APPLE)
+    configure_file("${ORGAN_SRC}/Icons/OrganSampler.icns" "${organ_generated}/AppIcon.icns" COPYONLY)
 endif()
 
 # Images used by the UI (BinaryData::ProspektSP_png etc.), like the Projucer resources.
