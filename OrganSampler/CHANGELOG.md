@@ -12,6 +12,14 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.79] - 2026-10-14
+
+### Fixed
+- The folder scan of 0.8.60 used std::filesystem, which Apple's library
+  offers only from macOS 10.15: on Linux and macOS it now reads directories
+  with the POSIX calls (same speed, no stat per file), so the build for old
+  Intel Macs compiles. Its target is macOS 10.11, the lowest JUCE allows.
+
 ## [0.8.78] - 2026-10-14
 
 ### Changed

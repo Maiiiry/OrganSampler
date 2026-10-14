@@ -25,15 +25,26 @@ jobs:
             artifact: OrganSampler-macos
             path: build/OrganSampler_artefacts/Release/OrganSampler.app
             zip: OrganSampler-macos.zip
-          # A test build for old Intel Macs (macOS 10.12 Sierra and later): JUCE
-          # runs from 10.11 on when the deployment target says so. Untested by the
-          # project itself; it must not block the release when the toolchain balks.
-          - name: macOS 10.12 Intel (test build)
+          # A test build for old Intel Macs (macOS 10.11 El Capitan and later - the
+          # lowest JUCE allows). Untested by the project itself; it must not block
+          # the release when the toolchain balks.
+          - name: macOS 10.11 Intel (test build)
             os: macos-latest
-            artifact: OrganSampler-macos-10.12-intel
+            artifact: OrganSampler-macos-10.11-intel
             path: build/OrganSampler_artefacts/Release/OrganSampler.app
-            zip: OrganSampler-macos-10.12-intel.zip
-            cmake: -DCMAKE_OSX_DEPLOYMENT_TARGET=10.12 -DCMAKE_OSX_ARCHITECTURES=x86_64
+            zip: OrganSampler-macos-10.11-intel.zip
+            cmake: -DCMAKE_OSX_DEPLOYMENT_TARGET=10.11 -DCMAKE_OSX_ARCHITECTURES=x86_64
+            optional: true
+          # An experiment for macOS 10.10 Yosemite (a 2010 MacBook Pro): JUCE refuses
+          # anything below 10.11 at compile time, so its check is told 10.11 while
+          # the binary targets 10.10. It may compile and still crash on 10.10 where
+          # JUCE touches a newer API. Never blocks the release.
+          - name: macOS 10.10 Intel (experiment)
+            os: macos-latest
+            artifact: OrganSampler-macos-10.10-intel-experiment
+            path: build/OrganSampler_artefacts/Release/OrganSampler.app
+            zip: OrganSampler-macos-10.10-intel-experiment.zip
+            cmake: -DCMAKE_OSX_DEPLOYMENT_TARGET=10.10 -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_CXX_FLAGS="-DMAC_OS_X_VERSION_MIN_REQUIRED=101100 -Wno-unguarded-availability -Wno-unguarded-availability-new" -DCMAKE_OBJCXX_FLAGS="-DMAC_OS_X_VERSION_MIN_REQUIRED=101100 -Wno-unguarded-availability -Wno-unguarded-availability-new"
             optional: true
           - name: Linux
             os: ubuntu-latest
@@ -104,7 +115,7 @@ jobs:
           files: artifacts/**/*
           prerelease: true
           body: |
-            Pre-release build for testers - not an official release yet. Windows: `OrganSampler.exe`; macOS: `OrganSampler-macos.zip` (unsigned: right-click > Open the first time; `OrganSampler-macos-10.12-intel.zip` is an untested build for old Intel Macs from macOS 10.12 on); Linux: `OrganSampler` (`chmod +x` first). Changes: see `OrganSampler/CHANGELOG.md`.
+            Pre-release build for testers - not an official release yet. Windows: `OrganSampler.exe`; macOS: `OrganSampler-macos.zip` (unsigned: right-click > Open the first time; `OrganSampler-macos-10.11-intel.zip` is an untested build for old Intel Macs from macOS 10.11 on, `OrganSampler-macos-10.10-intel-experiment.zip` an experiment for 10.10 Yosemite that may not run at all); Linux: `OrganSampler` (`chmod +x` first). Changes: see `OrganSampler/CHANGELOG.md`.
 
             **An organ to play:** the Rural Organ demo (dry recordings with IR reverb, sample folders and configuration included) - https://github.com/zurek-jiri/OrganSampler/releases/tag/rural-organ-0.8. **More organs:** sample folders in wave format from Sonus Paradisi, https://www.sonusparadisi.cz/en/organs.html (free material: https://www.sonusparadisi.cz/en/free-stuff.html); ready-made configurations in `configurations/`.
       # Only the newest build stays on the releases page: every older v* release

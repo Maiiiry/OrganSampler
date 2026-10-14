@@ -18,8 +18,13 @@
 #include <thread>
 #include <condition_variable>
 #include <type_traits>
+#if JUCE_WINDOWS
 #include <filesystem>
 #include <system_error>
+#else
+#include <dirent.h>
+#include <sys/stat.h>
+#endif
 
 namespace
 {
@@ -27,6 +32,7 @@ namespace
     // size and times of every entry, which an NTFS mount under Linux (FUSE)
     // answers at a millisecond each: 30 000 samples made the Stop List wait 15 s.
     // The entry type comes with the listing (d_type, the find data on Windows).
+#if JUCE_WINDOWS
     std::filesystem::path fsPath(const juce::File& file) { return std::filesystem::path(std::wstring(file.getFullPathName().toWideCharPointer())); }
     juce::File fileOf(const std::filesystem::path& path) { return juce::File(juce::String(path.wstring().c_str())); }
     void collectSubdirectories(const std::filesystem::path& dir, std::vector<juce::File>& out)
@@ -41,13 +47,73 @@ namespace
             collectSubdirectories(it->path(), out);
         }
     }
-    // Every folder below 'top', depth first (the order of JUCE's recursive iterator).
     std::vector<juce::File> subdirectoriesRecursive(const juce::File& top)
     {
         std::vector<juce::File> result;
         collectSubdirectories(fsPath(top), result);
         return result;
     }
+    // The names of the plain files of a folder (no stat).
+    std::vector<juce::String> fileNamesOf(const juce::File& folder)
+    {
+        std::vector<juce::String> names;
+        std::error_code error;
+        for (std::filesystem::directory_iterator it(fsPath(folder), std::filesystem::directory_options::skip_permission_denied, error), end;
+             !error && it != end; it.increment(error))
+        {
+            std::error_code typeError;
+            if (it->is_directory(typeError)) continue;
+            names.push_back(juce::String(it->path().filename().wstring().c_str()));
+        }
+        return names;
+    }
+#else
+    // POSIX (Linux, macOS back to 10.11 - std::filesystem exists there only from 10.15).
+    bool entryIsDirectory(const std::string& fullPath, const dirent* entry)
+    {
+        if (entry->d_type == DT_DIR) return true;
+        if (entry->d_type != DT_UNKNOWN && entry->d_type != DT_LNK) return false;
+        struct stat st;
+        return stat(fullPath.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+    }
+    void collectSubdirectories(const std::string& dir, std::vector<juce::File>& out)
+    {
+        DIR* d = opendir(dir.c_str());
+        if (d == nullptr) return;
+        while (dirent* entry = readdir(d))
+        {
+            const std::string name = entry->d_name;
+            if (name == "." || name == "..") continue;
+            const std::string full = dir + "/" + name;
+            if (!entryIsDirectory(full, entry)) continue;
+            out.push_back(juce::File(juce::String(juce::CharPointer_UTF8(full.c_str()))));
+            collectSubdirectories(full, out);
+        }
+        closedir(d);
+    }
+    std::vector<juce::File> subdirectoriesRecursive(const juce::File& top)
+    {
+        std::vector<juce::File> result;
+        collectSubdirectories(top.getFullPathName().toStdString(), result);
+        return result;
+    }
+    std::vector<juce::String> fileNamesOf(const juce::File& folder)
+    {
+        std::vector<juce::String> names;
+        const std::string dir = folder.getFullPathName().toStdString();
+        DIR* d = opendir(dir.c_str());
+        if (d == nullptr) return names;
+        while (dirent* entry = readdir(d))
+        {
+            const std::string name = entry->d_name;
+            if (name == "." || name == "..") continue;
+            if (entryIsDirectory(dir + "/" + name, entry)) continue;
+            names.push_back(juce::String(juce::CharPointer_UTF8(name.c_str())));
+        }
+        closedir(d);
+        return names;
+    }
+#endif
 }
 
 #if JUCE_WINDOWS
@@ -8230,13 +8296,8 @@ bool SamplerEngine::folderHasNumberedSamples(const juce::File& folder)
 {
     // A stop folder: WAV files whose names start with the three-digit MIDI note.
     bool foundWav = false;
-    std::error_code error;
-    for (std::filesystem::directory_iterator it(fsPath(folder), std::filesystem::directory_options::skip_permission_denied, error), end;
-         !error && it != end; it.increment(error))
+    for (const auto& name : fileNamesOf(folder))
     {
-        std::error_code typeError;
-        if (it->is_directory(typeError)) continue;
-        const juce::String name(it->path().filename().wstring().c_str());
         if (!name.endsWithIgnoreCase(".wav")) continue;
         foundWav = true;
         const auto fileName = name.dropLastCharacters(4);

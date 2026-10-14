@@ -1251,8 +1251,10 @@ into an aggregate device itself (*Audio MIDI Setup* in the Utilities
 folder); OrganSampler lists the CoreAudio devices and should play through
 them like through Windows Audio. The project has no Mac to test this on;
 reports are welcome. Every release carries, beside the current macOS build,
-an untested build for old Intel Macs from macOS 10.12 on
-(`OrganSampler-macos-10.12-intel.zip`).
+an untested build for old Intel Macs from macOS 10.11 on
+(`OrganSampler-macos-10.11-intel.zip`; 10.11 is the oldest system the
+framework allows - a Mac on 10.10 Yosemite needs the free upgrade to the
+newest system Apple offers for it, 10.13 High Sierra for the 2010 models).
 
 ## 5.7 Audio devices not ready when OrganSampler starts
 

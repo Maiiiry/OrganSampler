@@ -1267,8 +1267,10 @@ static const char* const kManualText_part6 =
     "folder); OrganSampler lists the CoreAudio devices and should play through\n"
     "them like through Windows Audio. The project has no Mac to test this on;\n"
     "reports are welcome. Every release carries, beside the current macOS build,\n"
-    "an untested build for old Intel Macs from macOS 10.12 on\n"
-    "(`OrganSampler-macos-10.12-intel.zip`).\n"
+    "an untested build for old Intel Macs from macOS 10.11 on\n"
+    "(`OrganSampler-macos-10.11-intel.zip`; 10.11 is the oldest system the\n"
+    "framework allows - a Mac on 10.10 Yosemite needs the free upgrade to the\n"
+    "newest system Apple offers for it, 10.13 High Sierra for the 2010 models).\n"
     "\n"
     "## 5.7 Audio devices not ready when OrganSampler starts\n"
     "\n"
@@ -1412,10 +1414,10 @@ static const char* const kManualText_part6 =
     "  **single click** on a temperament selects it (or *Target temperament* in\n"
     "  the Configuration Editor). Every pipe is then retuned by the difference\n"
     "  between the target and the base: the recorded pitches are taken out and\n"
-    "  the chosen ones put in. Choosing the recorded temperament itself as the\n"
-    "  target plays the samples exactly as recorded. Every temperament can be\n"
     ;
 static const char* const kManualText_part7 =
+    "  the chosen ones put in. Choosing the recorded temperament itself as the\n"
+    "  target plays the samples exactly as recorded. Every temperament can be\n"
     "  switched from a MIDI control (right-click it).\n"
     "\n"
     "**a1 = 440 Hz** (the button in the dialog) retunes every pipe from its recorded\n"
@@ -1614,10 +1616,10 @@ static const char* const kManualText_part7 =
     "  The files of the loaded organ stay, so its next load is still fast. This is\n"
     "  the button for routine housekeeping.\n"
     "- *Filled pipes cache folder* - **Choose...** picks another folder for the\n"
-    "  cache (the default is `FilledPipesCache` in the application-data folder,\n"
-    "  usually on the system drive). Choose a big drive, for example beside the\n"
     ;
 static const char* const kManualText_part8 =
+    "  cache (the default is `FilledPipesCache` in the application-data folder,\n"
+    "  usually on the system drive). Choose a big drive, for example beside the\n"
     "  samples; the files built so far are moved there, so nothing has to be\n"
     "  rebuilt.\n"
     "\n"
@@ -1816,10 +1818,10 @@ static const char* const kManualText_part8 =
     "\n"
     "How long the sounding pipe fades out when its key is released and the release\n"
     "sample takes over (default 70 ms). Too short and the join clicks or the pipe\n"
-    "stops unnaturally; too long and the release sounds smeared. The value is for\n"
-    "the sounding c1 (MIDI 60 of an 8' rank, the rank's footage counted in): pipes\n"
     ;
 static const char* const kManualText_part9 =
+    "stops unnaturally; too long and the release sounds smeared. The value is for\n"
+    "the sounding c1 (MIDI 60 of an 8' rank, the rank's footage counted in): pipes\n"
     "below it get 1.5 times as much per octave (a 32' C 3.4 times), because a big\n"
     "pipe's sound cannot stop as fast; higher pipes the value as set. A filled pipe\n"
     "counts as the pipe it stands for.\n"
@@ -2018,10 +2020,10 @@ static const char* const kManualText_part9 =
     "copy was built), so the step at the key release is the real pipe's. Off\n"
     "(default): the copy plays at its own level. Applied at playback, nothing is\n"
     "rebuilt; switch it on when the releases of an extension are clearly louder or\n"
-    "softer than those of the real pipes beside them.\n"
-    "\n"
     ;
 static const char* const kManualText_part10 =
+    "softer than those of the real pipes beside them.\n"
+    "\n"
     "### Filled pipes: loop crossfade\n"
     "\n"
     "The splice of the loops of the filled pipes' copies, as a share of each loop's\n"
@@ -2220,10 +2222,10 @@ static const char* const kManualText_part10 =
     "nothing is loaded until you ask.\n"
     "\n"
     "### Samples' base temperament\n"
-    "\n"
-    "The temperament the loaded samples were *recorded* in. It is found from the\n"
     ;
 static const char* const kManualText_part11 =
+    "\n"
+    "The temperament the loaded samples were *recorded* in. It is found from the\n"
     "samples by itself when two thirds or more of the ranks agree (the activity\n"
     "log says so); set it by hand only when the ranks disagree or the set has no\n"
     "smpl pitches - the voicing row of every stop reports what its ranks were found\n"
@@ -2422,10 +2424,10 @@ static const char* const kManualText_part11 =
     "\n"
     "### Wind: sag settling lag\n"
     "\n"
-    "How long the wind pressure takes to settle after stops or keys change (100 to\n"
-    "400 ms, default 255). The same lag governs the volume glide when a pipe held\n"
     ;
 static const char* const kManualText_part12 =
+    "How long the wind pressure takes to settle after stops or keys change (100 to\n"
+    "400 ms, default 255). The same lag governs the volume glide when a pipe held\n"
     "through several routes passes from one route to another.\n"
     "\n"
     "### Wind: also affects divisions\n"
