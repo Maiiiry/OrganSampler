@@ -12,6 +12,15 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.84] - 2026-10-14
+
+### Changed
+- Linux, ALSA: the audio thread is raised to realtime (SCHED_FIFO) at its
+  first callback, as PipeWire's thread under JACK already is; JUCE's ALSA
+  thread ran at an ordinary priority, which cost polyphony against JACK on
+  the same card. The activity log says whether the system allowed it (the
+  audio group's rtprio limit).
+
 ## [0.8.83] - 2026-10-14
 
 ### Added

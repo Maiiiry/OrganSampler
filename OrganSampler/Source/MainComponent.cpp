@@ -1,6 +1,10 @@
 #include "MainComponent.h"
 #include <set>
 #include <map>
+#if JUCE_LINUX
+#include <pthread.h>
+#include <sched.h>
+#endif
 #include <unordered_map>
 #include <algorithm>
 #include <juce_audio_formats/juce_audio_formats.h>
@@ -326,6 +330,22 @@ public:
         // the headroom prepared for the announced size (the server changed its
         // quantum under a running client) is silence until the route reopens.
         if (numSamples <= 0) return;
+#if JUCE_LINUX
+        // JUCE's ALSA thread runs at an ordinary priority; PipeWire's (JACK) at
+        // realtime. The first callback of a device raises its own thread to
+        // SCHED_FIFO, which the audio group's rtprio limit allows: the rendering
+        // then keeps its deadlines beside the desktop as it does under JACK.
+        if (!realtimeRequested.exchange(true, std::memory_order_relaxed))
+        {
+            sched_param param{}; int policy = 0;
+            if (pthread_getschedparam(pthread_self(), &policy, &param) == 0 && policy != SCHED_FIFO && policy != SCHED_RR)
+            {
+                param.sched_priority = 70;
+                realtimeResult.store(pthread_setschedparam(pthread_self(), SCHED_FIFO, &param) == 0 ? 1 : -1, std::memory_order_relaxed);
+            }
+            else realtimeResult.store(2, std::memory_order_relaxed);   // already realtime (JACK / PipeWire)
+        }
+#endif
         if (numSamples > juce::jmax(64, expectedBlock.load(std::memory_order_relaxed) * 4))
         {
             for (int channel = 0; channel < numOutputs; ++channel)
@@ -526,6 +546,9 @@ public:
             statMinFrames.store(1 << 30, std::memory_order_relaxed);
             statMaxFrames.store(0, std::memory_order_relaxed);
             statMaxGapMs.store(0.0, std::memory_order_relaxed);
+            realtimeRequested.store(false, std::memory_order_relaxed);
+            realtimeResult.store(0, std::memory_order_relaxed);
+            realtimeReported = false;
             healthTicks = juce::Time::getHighResolutionTicks();
             healthGrace = 2;
             lastDevice = device;
@@ -554,6 +577,16 @@ public:
     // while the callbacks match the device's announced buffer size and rate.
     juce::String healthReport()
     {
+#if JUCE_LINUX
+        if (!realtimeReported && realtimeResult.load(std::memory_order_relaxed) != 0)
+        {
+            realtimeReported = true;
+            const int r = realtimeResult.load(std::memory_order_relaxed);
+            CrashHandler::note("Audio thread of " + deviceLabel + (r == 1 ? ": raised to realtime (SCHED_FIFO 70)"
+                : r == 2 ? ": realtime already (the server's thread)"
+                : ": realtime refused - the user is not in the audio group or has no rtprio limit (/etc/security/limits.d), the rendering competes with the desktop"));
+        }
+#endif
         rateMismatch = false;
         const int64_t now = juce::Time::getHighResolutionTicks();
         const int64_t since = healthTicks;
@@ -615,6 +648,9 @@ private:
     std::atomic<double> statMaxGapMs{ 0.0 }, statMaxInsideMs{ 0.0 }, statMaxGapCpuMs{ 0.0 }, statGhz{ 0.0 };
     std::atomic<uint64_t> statLastCycles{ 0 };
     std::atomic<int> statOversize{ 0 };   // blocks beyond the prepared headroom, dropped as silence
+    std::atomic<bool> realtimeRequested{ false };   // Linux: the callback thread asked for SCHED_FIFO once per start
+    bool realtimeReported = false;
+    std::atomic<int> realtimeResult{ 0 };           // 1 = set, -1 = refused, 2 = was realtime already
     std::atomic<int> expectedBlock{ 0 };
     std::atomic<double> expectedRate{ 0.0 };
     int64_t healthTicks = 0;
