@@ -12,6 +12,15 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.72] - 2026-10-14
+
+### Changed
+- Pictures: the upper lips exactly as rendered (their reflections back, the
+  darkening of 0.8.70/0.8.71 withdrawn); the mouth slit - the hole into the
+  pipe between the lips - is dark across its whole width, its ends included;
+  the lower lip is the rendered plate with its soldered seam, laid over the
+  smooth cone of the foot.
+
 ## [0.8.71] - 2026-10-14
 
 ### Changed
