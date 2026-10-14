@@ -79,6 +79,9 @@ private:
 // The ALSA devices this program holds open (their probe says "busy", which
 // must not hide them from the list). Message thread only.
 inline std::multiset<juce::String>& heldAlsaDeviceNames() { static std::multiset<juce::String> names; return names; }
+// The JACK devices this program holds open (PipeWire then holds those cards:
+// their ALSA entries probe "busy" because of us, and stay listed).
+inline std::multiset<juce::String>& heldJackDeviceNames() { static std::multiset<juce::String> names; return names; }
 class TrackedAlsaDevice final : public ForwardingAudioIODevice
 {
 public:
@@ -172,9 +175,18 @@ public:
                 if (auto it = ids.find(name); it != ids.end())
                     if (const auto why = probeOutput(it->second); why.isNotEmpty())
                     {
-                        hidden.add(name + " (" + why + ")");
-                        hiddenNames.add(name);
-                        continue;
+                        // Busy because PipeWire runs one of our own JACK routes on the
+                        // card ("Komplete Audio 6" in "Komplete Audio 6, USB Audio; ..."):
+                        // listed, the user may well want to move that route here.
+                        bool ours = false;
+                        for (const auto& jackName : heldJackDeviceNames())
+                            if (jackName.isNotEmpty() && name.containsIgnoreCase(jackName)) ours = true;
+                        if (!ours)
+                        {
+                            hidden.add(name + " (" + why + ")");
+                            hiddenNames.add(name);
+                            continue;
+                        }
                     }
             outputs.add(name);
         }
@@ -313,7 +325,13 @@ inline std::function<void(juce::AudioIODevice*)>& pipeWireClockChangedHook()
 class PipeWireJackDevice final : public ForwardingAudioIODevice
 {
 public:
-    explicit PipeWireJackDevice(std::unique_ptr<juce::AudioIODevice> device) : ForwardingAudioIODevice(std::move(device), "JACK") {}
+    explicit PipeWireJackDevice(std::unique_ptr<juce::AudioIODevice> device) : ForwardingAudioIODevice(std::move(device), "JACK")
+    { heldJackDeviceNames().insert(getName()); }
+    ~PipeWireJackDevice() override
+    {
+        auto& names = heldJackDeviceNames();
+        if (auto it = names.find(getName()); it != names.end()) names.erase(it);
+    }
 
     juce::Array<int> getAvailableBufferSizes() override
     {

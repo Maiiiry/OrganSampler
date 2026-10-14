@@ -1139,11 +1139,14 @@ hides those templates. Every other ALSA device is tried when the list is
 made: one that cannot be opened at that moment - the sound server (PipeWire,
 PulseAudio) or another program holds it - is left out, with the reason in
 the activity log. A card's second PCM (its S/PDIF or HDMI entry) often opens
-while the first is held, with every channel of the card: it stays. The
-server's own entries ("PipeWire Sound Server", "Default ALSA Output") are
-stereo, the system output. The settings editor's *Audio devices: list also
-the ALSA devices that cannot be opened* lists everything (the list is rebuilt
-when a division's audio tab is next opened).
+while the first is held, with every channel of the card: it stays. A card
+PipeWire holds for one of this program's own JACK routes is always listed
+(you may want to move that route to ALSA). The server's own entries
+("PipeWire Sound Server", "Default ALSA Output") are stereo, the system
+output. *List unusable devices too* in the audio tab (where Windows has the
+driver control panel button) lists everything at once; the same switch is
+in the settings editor as *Audio devices: list also the ALSA devices that
+cannot be opened*.
 
 For every channel of a multichannel interface choose the device type
 **JACK**: OrganSampler loads PipeWire's own JACK library at start (the

@@ -1153,11 +1153,14 @@ static const char* const kManualText_part5 =
     "made: one that cannot be opened at that moment - the sound server (PipeWire,\n"
     "PulseAudio) or another program holds it - is left out, with the reason in\n"
     "the activity log. A card's second PCM (its S/PDIF or HDMI entry) often opens\n"
-    "while the first is held, with every channel of the card: it stays. The\n"
-    "server's own entries (\"PipeWire Sound Server\", \"Default ALSA Output\") are\n"
-    "stereo, the system output. The settings editor's *Audio devices: list also\n"
-    "the ALSA devices that cannot be opened* lists everything (the list is rebuilt\n"
-    "when a division's audio tab is next opened).\n"
+    "while the first is held, with every channel of the card: it stays. A card\n"
+    "PipeWire holds for one of this program's own JACK routes is always listed\n"
+    "(you may want to move that route to ALSA). The server's own entries\n"
+    "(\"PipeWire Sound Server\", \"Default ALSA Output\") are stereo, the system\n"
+    "output. *List unusable devices too* in the audio tab (where Windows has the\n"
+    "driver control panel button) lists everything at once; the same switch is\n"
+    "in the settings editor as *Audio devices: list also the ALSA devices that\n"
+    "cannot be opened*.\n"
     "\n"
     "For every channel of a multichannel interface choose the device type\n"
     "**JACK**: OrganSampler loads PipeWire's own JACK library at start (the\n"
@@ -1209,11 +1212,11 @@ static const char* const kManualText_part5 =
     "(a fresh device would otherwise open at the lowest rate from 44.1 kHz up);\n"
     "*Set for all* copies the rate the device of that tab really runs at - look at\n"
     "the rate box before you copy it.\n"
+    ;
+static const char* const kManualText_part6 =
     "\n"
     "## 5.7 Audio devices not ready when OrganSampler starts\n"
     "\n"
-    ;
-static const char* const kManualText_part6 =
     "Devices that cannot be opened at start-up (unplugged, driver missing, or merely\n"
     "late - an RME interface registers a few seconds after it switches its sample\n"
     "rate) are waited for: a box \"Waiting for audio devices\" appears and the program\n"
@@ -1411,11 +1414,11 @@ static const char* const kManualText_part6 =
     "How the neighbour's sample gets its new pitch is *Filled pipes: transposition\n"
     "method* (Configuration Editor > Advanced global audio). The default is *Pitch\n"
     "shift + time stretch*, which gives the best results for most stops; the phase\n"
+    ;
+static const char* const kManualText_part7 =
     "vocoder is an optional alternative for those who want it. Every method has\n"
     "its weakness; which one sounds best depends on the stop, the size of the shift\n"
     "and the ear. Listening tests with reeds (Trompete, Vox humana) show the\n"
-    ;
-static const char* const kManualText_part7 =
     "differences most clearly; a 16' extension of an 8' reed is the typical case.\n"
     "\n"
     "**Resampling (pitch and length change together).** The sample is played faster\n"
@@ -1613,11 +1616,11 @@ static const char* const kManualText_part7 =
     "(the device thread alone, no workers) is right for that layout, and more\n"
     "threads per route only fight each other there. Raise it when one or two\n"
     "aggregated routes carry the whole organ (a big division on a single route is\n"
+    ;
+static const char* const kManualText_part8 =
     "otherwise bound to one core): the route then shares its pipes out over the\n"
     "set number of threads, like a route on ASIO does over all *Render threads*.\n"
     "Routes on ASIO drivers and on Windows Audio devices do not use this setting:\n"
-    ;
-static const char* const kManualText_part8 =
     "every such device is one stream with one callback, and all its routes are\n"
     "rendered by the whole pool of *Render threads* (since 0.8.47 for Windows\n"
     "Audio too - before, every Windows Audio route had a stream and a thread of\n"
@@ -1815,11 +1818,11 @@ static const char* const kManualText_part8 =
     "duller as well as flatter.\n"
     "\n"
     "### Wind: volume change per cent of sag\n"
+    ;
+static const char* const kManualText_part9 =
     "\n"
     "How much quieter a pipe gets for every cent the wind sag lowers its pitch (0\n"
     "to 0.6 dB per cent, default 0.2). Together with the division's *Wind: depth*\n"
-    ;
-static const char* const kManualText_part9 =
     "it decides how strongly a full chord sags in level.\n"
     "\n"
     "### Wind: one stop's share of the full sag\n"
@@ -2017,11 +2020,11 @@ static const char* const kManualText_part9 =
     "(beside the samples, say). The files built so far are moved there at once, so\n"
     "nothing has to be rebuilt. The folder is remembered in the settings.\n"
     "\n"
+    ;
+static const char* const kManualText_part10 =
     "### Filled pipes: resampling quality\n"
     "\n"
     "How the sample of a neighbouring pipe is played at another pitch. *Linear* is\n"
-    ;
-static const char* const kManualText_part10 =
     "the interpolation of every other voice (cheapest, audible images at large\n"
     "shifts). *Cubic interpolation* lowers the interpolation images by about 20 dB\n"
     "for these voices only. *Cubic + anti-alias filter* (default) also removes what\n"
@@ -2219,11 +2222,11 @@ static const char* const kManualText_part10 =
     "dialog (see \"Keyboard, MIDI and compass\", \"Swell, tremulant, wind\" and \"The\n"
     "audio tabs\").\n"
     "\n"
+    ;
+static const char* const kManualText_part11 =
     "### Stops and sample folders\n"
     "\n"
     "The folder trees loaded for this division, and the *Stop building...* button\n"
-    ;
-static const char* const kManualText_part11 =
     "that opens the Stop List (see \"Folder trees and the pool\") at it.\n"
     "\n"
     "### Shown in window\n"

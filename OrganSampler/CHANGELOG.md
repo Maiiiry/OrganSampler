@@ -12,6 +12,19 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.64] - 2026-10-14
+
+### Changed
+- Linux, ALSA: a card that PipeWire holds for one of this program's own JACK
+  routes (the probe says "busy" because of us) stays in the list - the
+  Komplete Audio 6 vanished from ALSA while a JACK route played through it.
+- Linux: the audio tab has the switch "List unusable devices too" where
+  Windows has the driver control panel button; it rescans at once. The
+  switch in the settings editor stays.
+- Website: the pipes picture is one of four at random on every visit - the
+  middle pipe's upper lip differs, the fourth is a flame-shaped lip in the
+  manner of Tangermuende.
+
 ## [0.8.63] - 2026-10-14
 
 ### Fixed
