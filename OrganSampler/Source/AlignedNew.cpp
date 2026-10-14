@@ -1,0 +1,28 @@
+// macOS before 10.13 has no aligned operator new/delete in its C++ library
+// (the over-aligned engine structures need them). On the Mac the program
+// brings its own, so that a build for 10.11 links and starts on old systems;
+// on 10.13 and later these replace the library's, which is allowed.
+#include <JuceHeader.h>
+#if JUCE_MAC
+#include <new>
+#include <cstdlib>
+void* operator new(std::size_t size, std::align_val_t alignment)
+{
+    void* p = nullptr;
+    const std::size_t a = std::max<std::size_t>(static_cast<std::size_t>(alignment), sizeof(void*));
+    if (posix_memalign(&p, a, size == 0 ? 1 : size) != 0) throw std::bad_alloc();
+    return p;
+}
+void* operator new[](std::size_t size, std::align_val_t alignment) { return operator new(size, alignment); }
+void* operator new(std::size_t size, std::align_val_t alignment, const std::nothrow_t&) noexcept
+{
+    void* p = nullptr;
+    const std::size_t a = std::max<std::size_t>(static_cast<std::size_t>(alignment), sizeof(void*));
+    return posix_memalign(&p, a, size == 0 ? 1 : size) == 0 ? p : nullptr;
+}
+void* operator new[](std::size_t size, std::align_val_t alignment, const std::nothrow_t& tag) noexcept { return operator new(size, alignment, tag); }
+void operator delete(void* p, std::align_val_t) noexcept { std::free(p); }
+void operator delete[](void* p, std::align_val_t) noexcept { std::free(p); }
+void operator delete(void* p, std::size_t, std::align_val_t) noexcept { std::free(p); }
+void operator delete[](void* p, std::size_t, std::align_val_t) noexcept { std::free(p); }
+#endif

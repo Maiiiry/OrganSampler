@@ -12,6 +12,14 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.80] - 2026-10-14
+
+### Changed
+- The Intel Mac builds: the program brings its own aligned new/delete on the
+  Mac (the system library has them only from 10.13) and the library's
+  availability checks are off for those builds; the 10.10 experiment tells
+  JUCE's version check 10.11. Both remain untested by the project.
+
 ## [0.8.79] - 2026-10-14
 
 ### Fixed

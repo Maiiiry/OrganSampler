@@ -9,7 +9,7 @@
 # what the GitHub Actions workflow and the macOS/Linux builds use. Both compile
 # the same sources with the same defines.
 cmake_minimum_required(VERSION 3.22)
-project(OrganSampler VERSION 0.8.79 LANGUAGES C CXX)
+project(OrganSampler VERSION 0.8.80 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -38,7 +38,8 @@ target_sources(OrganSampler PRIVATE
     "${ORGAN_SRC}/Main.cpp"
     "${ORGAN_SRC}/MainComponent.cpp"
     "${ORGAN_SRC}/SamplerEngine.cpp"
-    "${ORGAN_SRC}/voicer.cpp")
+    "${ORGAN_SRC}/voicer.cpp"
+    "${ORGAN_SRC}/AlignedNew.cpp")
 
 # Images used by the UI (BinaryData::ProspektSP_png etc.), like the Projucer resources.
 juce_add_binary_data(OrganSamplerData SOURCES
