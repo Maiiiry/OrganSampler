@@ -1124,14 +1124,15 @@ programs a stereo "default" device. ALSA's own list adds, for every card, the
 templates of its configuration (surround 4.0 ... 7.1, front, rear, dmix) that
 have nothing to do with the card's real outputs and cannot be opened while
 PipeWire holds the card - that is where "no channels" came from. OrganSampler
-hides those templates. While a sound server runs (PipeWire, PulseAudio) the
-cards' own devices ("Direct hardware device without any conversions", "IEC958
-(S/PDIF) Digital Audio Output", HDMI) are held by the server as well and are
-left out of the list too; what remains are the server's entries ("PipeWire
-Sound Server", "Default ALSA Output"): stereo, the system output. The
-settings editor's *Audio devices: list also the ALSA devices of the cards the
-sound server holds* lists them anyway, for a card the server does not use
-(the list is rebuilt when a division's audio tab is next opened).
+hides those templates. Every other ALSA device is tried when the list is
+made: one that cannot be opened at that moment - the sound server (PipeWire,
+PulseAudio) or another program holds it - is left out, with the reason in
+the activity log. A card's second PCM (its S/PDIF or HDMI entry) often opens
+while the first is held, with every channel of the card: it stays. The
+server's own entries ("PipeWire Sound Server", "Default ALSA Output") are
+stereo, the system output. The settings editor's *Audio devices: list also
+the ALSA devices that cannot be opened* lists everything (the list is rebuilt
+when a division's audio tab is next opened).
 
 For every channel of a multichannel interface choose the device type
 **JACK**: OrganSampler loads PipeWire's own JACK library at start (the
@@ -1139,11 +1140,13 @@ activity log says "JACK: PipeWire's libjack loaded from ..."), so JACK needs
 no separate server - PipeWire is the server, and every output of every card
 appears as a channel (a Komplete Audio 6 shows its four analogue outputs and
 the S/PDIF pair). The buffer size and sample rate are PipeWire's, the same
-for every JACK route and every other program: the audio tab of a JACK route
-shows them in the row **PipeWire buffer / rate** under the device box, and a
-choice there sets them for PipeWire (the command `pw-metadata -n settings 0
+for every JACK route and every other program; choose them in the usual
+*Audio buffer size* and *Sample rate* boxes of any JACK route. The choice is
+handed to PipeWire (the command `pw-metadata -n settings 0
 clock.force-quantum 256` or `clock.force-rate 48000`, which a console takes
-as well) and reopens the JACK devices of all routes. If the JACK type
+as well), the program waits until the server runs the new clock, then opens
+the route, and the other JACK routes reopen at the new size by themselves.
+If the JACK type
 lists no device, PipeWire's JACK library was not found (the package is
 `pipewire-jack`); start the program with `pw-jack ./OrganSampler` then.
 

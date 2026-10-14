@@ -9,12 +9,87 @@
 
 #if JUCE_LINUX
 #include <unistd.h>
-// Linux: whether the ALSA hardware devices a sound server (PipeWire, PulseAudio)
-// holds are listed too. Off by default: chosen on a route they give no channels
-// or 'none', the server has the card. The settings editor switches it.
+#include <alsa/asoundlib.h>
+#include <set>
+#include <map>
+#include <thread>
+#include <chrono>
+#include <functional>
+#include "CrashHandler.h"
+
+// Linux: whether the ALSA devices that cannot be opened (held by the sound
+// server or another program) are listed too. Off by default: chosen on a route
+// they give no channels or 'none'. The settings editor switches it.
 inline std::atomic<bool>& unusableAudioDevicesShown() { static std::atomic<bool> flag{ false }; return flag; }
 // What the last ALSA scan left out, for the activity log.
 inline juce::String& hiddenAlsaDevicesNote() { static juce::String note; return note; }
+
+// An audio device that hands everything to the real one. The callback is
+// interposed so that the program sees this object (not the inner one) as the
+// device that starts and stops.
+class ForwardingAudioIODevice : public juce::AudioIODevice, private juce::AudioIODeviceCallback
+{
+public:
+    ForwardingAudioIODevice(std::unique_ptr<juce::AudioIODevice> device, const juce::String& typeName)
+        : juce::AudioIODevice(device->getName(), typeName), inner(std::move(device)) {}
+    ~ForwardingAudioIODevice() override { if (inner != nullptr) { inner->stop(); inner->close(); } }
+
+    juce::StringArray getOutputChannelNames() override { return inner->getOutputChannelNames(); }
+    juce::StringArray getInputChannelNames() override { return inner->getInputChannelNames(); }
+    std::optional<juce::BigInteger> getDefaultOutputChannels() const override { return inner->getDefaultOutputChannels(); }
+    std::optional<juce::BigInteger> getDefaultInputChannels() const override { return inner->getDefaultInputChannels(); }
+    juce::Array<double> getAvailableSampleRates() override { return inner->getAvailableSampleRates(); }
+    juce::Array<int> getAvailableBufferSizes() override { return inner->getAvailableBufferSizes(); }
+    int getDefaultBufferSize() override { return inner->getDefaultBufferSize(); }
+    juce::String open(const juce::BigInteger& inputChannels, const juce::BigInteger& outputChannels, double sampleRate, int bufferSizeSamples) override
+    { return inner->open(inputChannels, outputChannels, sampleRate, bufferSizeSamples); }
+    void close() override { inner->close(); }
+    bool isOpen() override { return inner->isOpen(); }
+    void start(juce::AudioIODeviceCallback* callback) override { target.store(callback); inner->start(this); }
+    void stop() override { inner->stop(); target.store(nullptr); }
+    bool isPlaying() override { return inner->isPlaying(); }
+    juce::String getLastError() override { return inner->getLastError(); }
+    int getCurrentBufferSizeSamples() override { return inner->getCurrentBufferSizeSamples(); }
+    double getCurrentSampleRate() override { return inner->getCurrentSampleRate(); }
+    int getCurrentBitDepth() override { return inner->getCurrentBitDepth(); }
+    juce::BigInteger getActiveOutputChannels() const override { return inner->getActiveOutputChannels(); }
+    juce::BigInteger getActiveInputChannels() const override { return inner->getActiveInputChannels(); }
+    int getOutputLatencyInSamples() override { return inner->getOutputLatencyInSamples(); }
+    int getInputLatencyInSamples() override { return inner->getInputLatencyInSamples(); }
+    juce::AudioWorkgroup getWorkgroup() const override { return inner->getWorkgroup(); }
+    bool hasControlPanel() const override { return inner->hasControlPanel(); }
+    bool showControlPanel() override { return inner->showControlPanel(); }
+    bool setAudioPreprocessingEnabled(bool enabled) override { return inner->setAudioPreprocessingEnabled(enabled); }
+    int getXRunCount() const noexcept override { return inner->getXRunCount(); }
+protected:
+    std::unique_ptr<juce::AudioIODevice> inner;
+private:
+    void audioDeviceIOCallbackWithContext(const float* const* inputs, int numInputs, float* const* outputs, int numOutputs,
+        int numSamples, const juce::AudioIODeviceCallbackContext& context) override
+    {
+        if (auto* t = target.load()) t->audioDeviceIOCallbackWithContext(inputs, numInputs, outputs, numOutputs, numSamples, context);
+        else for (int i = 0; i < numOutputs; ++i) if (outputs[i] != nullptr && numSamples > 0) juce::FloatVectorOperations::clear(outputs[i], numSamples);
+    }
+    void audioDeviceAboutToStart(juce::AudioIODevice*) override { if (auto* t = target.load()) t->audioDeviceAboutToStart(this); }
+    void audioDeviceStopped() override { if (auto* t = target.load()) t->audioDeviceStopped(); }
+    void audioDeviceError(const juce::String& message) override { if (auto* t = target.load()) t->audioDeviceError(message); }
+    std::atomic<juce::AudioIODeviceCallback*> target{ nullptr };
+};
+
+// The ALSA devices this program holds open (their probe says "busy", which
+// must not hide them from the list). Message thread only.
+inline std::multiset<juce::String>& heldAlsaDeviceNames() { static std::multiset<juce::String> names; return names; }
+class TrackedAlsaDevice final : public ForwardingAudioIODevice
+{
+public:
+    explicit TrackedAlsaDevice(std::unique_ptr<juce::AudioIODevice> device) : ForwardingAudioIODevice(std::move(device), "ALSA")
+    { heldAlsaDeviceNames().insert(getName()); }
+    ~TrackedAlsaDevice() override
+    {
+        auto& names = heldAlsaDeviceNames();
+        if (auto it = names.find(getName()); it != names.end()) names.erase(it);
+    }
+};
 
 // ALSA advertises, for every card, the PCM templates of its configuration
 // (surround40 ... surround71, front, rear, center_lfe, side, dmix, dsnoop)
@@ -42,15 +117,40 @@ public:
         return name.containsIgnoreCase("PipeWire") || name.containsIgnoreCase("Pulseaudio")
             || name.startsWithIgnoreCase("Default ALSA");
     }
-    // A sound server runs when ALSA lists its plugin or its socket exists.
-    static bool soundServerRunning(const juce::StringArray& names)
+    // ALSA's playback PCMs as JUCE names them (the description with "; " for
+    // its line break), with the id to open: the same walk JUCE's ALSA type does.
+    static std::map<juce::String, juce::String> outputIdsByName()
     {
-        for (const auto& name : names)
-            if (name.containsIgnoreCase("PipeWire") || name.containsIgnoreCase("Pulseaudio")) return true;
-        const auto runtime = juce::SystemStats::getEnvironmentVariable("XDG_RUNTIME_DIR", "/run/user/" + juce::String((int)getuid()));
-        if (runtime.isEmpty()) return false;
-        const juce::File dir(runtime);
-        return dir.getChildFile("pipewire-0").exists() || dir.getChildFile("pulse").getChildFile("native").exists();
+        std::map<juce::String, juce::String> result;
+        void** hints = nullptr;
+        if (snd_device_name_hint(-1, "pcm", &hints) != 0) return result;
+        for (void** h = hints; *h != nullptr; ++h)
+        {
+            auto get = [h](const char* key)
+            {
+                char* value = snd_device_name_get_hint(*h, key);
+                const juce::String text = value != nullptr ? juce::String(juce::CharPointer_UTF8(value)) : juce::String();
+                if (value != nullptr) free(value);
+                return text;
+            };
+            const auto id = get("NAME"), description = get("DESC"), ioid = get("IOID");
+            if (id.isEmpty() || id.startsWith("default:") || id.startsWith("sysdefault:") || id.startsWith("plughw:") || id == "null") continue;
+            if (ioid == "Input" || id.startsWith("dsnoop")) continue;
+            juce::String name = description.replace("\n", "; ");
+            if (name.isEmpty()) name = id;
+            result.emplace(name, id);   // the first id of a name wins, as in JUCE's list
+        }
+        snd_device_name_free_hint(hints);
+        return result;
+    }
+    // Tries to open a playback PCM; empty when it opens, else why not.
+    static juce::String probeOutput(const juce::String& id)
+    {
+        snd_pcm_t* pcm = nullptr;
+        const int error = snd_pcm_open(&pcm, id.toRawUTF8(), SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK);
+        if (error < 0) return error == -EBUSY ? juce::String("held by another program") : juce::String(snd_strerror(error));
+        snd_pcm_close(pcm);
+        return {};
     }
     void scanForDevices() override
     {
@@ -58,20 +158,30 @@ public:
         inner->scanForDevices();
         outputs.clear(); inputs.clear();
         const auto allOutputs = inner->getDeviceNames(false), allInputs = inner->getDeviceNames(true);
-        // The cards' own devices ("Direct hardware device", "IEC958", HDMI) are
-        // held by the sound server and cannot be opened: left out unless asked for.
-        const bool hideCards = soundServerRunning(allOutputs) && !unusableAudioDevicesShown().load();
-        juce::StringArray hidden;
+        // Every card device is tried: one that cannot be opened now (the sound
+        // server or another program holds it) is left out, unless asked for. A
+        // card's second PCM (S/PDIF, HDMI) often opens while its first is held,
+        // with every channel of the card - it stays.
+        const bool showAll = unusableAudioDevicesShown().load();
+        const auto ids = showAll ? std::map<juce::String, juce::String>() : outputIdsByName();
+        juce::StringArray hidden, hiddenNames;
         for (const auto& name : allOutputs)
         {
             if (isTemplate(name)) continue;
-            if (hideCards && !isSoundServerDevice(name)) { hidden.add(name); continue; }
+            if (!showAll && !isSoundServerDevice(name) && heldAlsaDeviceNames().count(name) == 0)
+                if (auto it = ids.find(name); it != ids.end())
+                    if (const auto why = probeOutput(it->second); why.isNotEmpty())
+                    {
+                        hidden.add(name + " (" + why + ")");
+                        hiddenNames.add(name);
+                        continue;
+                    }
             outputs.add(name);
         }
         for (const auto& name : allInputs)
-            if (!isTemplate(name) && !(hideCards && !isSoundServerDevice(name))) inputs.add(name);
+            if (!isTemplate(name) && !hiddenNames.contains(name)) inputs.add(name);
         hiddenAlsaDevicesNote() = hidden.isEmpty() ? juce::String()
-            : "ALSA: " + juce::String(hidden.size()) + " device(s) of the cards the sound server holds not listed (the settings editor can list them): "
+            : "ALSA: " + juce::String(hidden.size()) + " device(s) that cannot be opened not listed (the settings editor can list them): "
               + hidden.joinIntoString("; ");
     }
     juce::StringArray getDeviceNames(bool wantInputNames = false) const override { return wantInputNames ? inputs : outputs; }
@@ -95,7 +205,8 @@ public:
     bool hasSeparateInputsAndOutputs() const override { return inner != nullptr && inner->hasSeparateInputsAndOutputs(); }
     juce::AudioIODevice* createDevice(const juce::String& outputDeviceName, const juce::String& inputDeviceName) override
     {
-        return inner != nullptr ? inner->createDevice(outputDeviceName, inputDeviceName) : nullptr;
+        auto* device = inner != nullptr ? inner->createDevice(outputDeviceName, inputDeviceName) : nullptr;
+        return device != nullptr ? new TrackedAlsaDevice(std::unique_ptr<juce::AudioIODevice>(device)) : nullptr;
     }
 private:
     std::unique_ptr<juce::AudioIODeviceType> inner;
@@ -142,6 +253,136 @@ inline juce::String preloadPipeWireJack()
     return {};
 }
 
+// PipeWire's buffer size (quantum) and sample rate are the server's, shared by
+// every JACK client. pw-metadata sets them; 0 = unchanged. Empty = done.
+inline juce::String pipeWireSetClock(int quantum, int rate)
+{
+    auto run = [](const juce::String& key, int value) -> juce::String
+    {
+        juce::StringArray args;
+        args.add("pw-metadata"); args.add("-n"); args.add("settings"); args.add("0"); args.add(key); args.add(juce::String(value));
+        juce::ChildProcess process;
+        if (!process.start(args, juce::ChildProcess::wantStdOut | juce::ChildProcess::wantStdErr))
+            return juce::String("pw-metadata could not be started (package pipewire-bin)");
+        process.waitForProcessToFinish(5000);
+        const auto output = process.readAllProcessOutput().trim();
+        return process.getExitCode() == 0 ? juce::String() : (output.isNotEmpty() ? output : juce::String("pw-metadata failed"));
+    };
+    juce::String error;
+    if (quantum > 0) error = run("clock.force-quantum", quantum);
+    if (error.isEmpty() && rate > 0) error = run("clock.force-rate", rate);
+    return error;
+}
+
+// The buffer size and rate the JACK server reports now, read through a client
+// of its own that is never activated (an activated client opened while
+// PipeWire changes its quantum got a buffer of 1 frame and a flood of empty
+// callbacks that stalled the whole computer). False when no server answers.
+inline bool jackServerClock(int& bufferSize, int& sampleRate)
+{
+    void* lib = jackLibraryHandle();
+    if (lib == nullptr) return false;
+    using ClientOpen = void* (*)(const char*, int, int*, ...);
+    using GetSize = unsigned int (*)(void*);
+    using ClientClose = int (*)(void*);
+    auto open = (ClientOpen)dlsym(lib, "jack_client_open");
+    auto getBuffer = (GetSize)dlsym(lib, "jack_get_buffer_size");
+    auto getRate = (GetSize)dlsym(lib, "jack_get_sample_rate");
+    auto close = (ClientClose)dlsym(lib, "jack_client_close");
+    if (open == nullptr || getBuffer == nullptr || getRate == nullptr || close == nullptr) return false;
+    int status = 0;
+    void* client = open("OrganSamplerClock", 0x01 /* JackNoStartServer */, &status);
+    if (client == nullptr) return false;
+    bufferSize = (int)getBuffer(client);
+    sampleRate = (int)getRate(client);
+    close(client);
+    return true;
+}
+
+// Told after PipeWire's clock was changed by one route's device (the other
+// JACK routes then reopen at the new size). Set by the main component.
+inline std::function<void(juce::AudioIODevice*)>& pipeWireClockChangedHook()
+{
+    static std::function<void(juce::AudioIODevice*)> hook; return hook;
+}
+
+// A JACK device whose buffer size and sample rate can be chosen in the usual
+// boxes: JUCE's own offers only the current values. A choice sets PipeWire's
+// clock (pw-metadata), waits until the server reports it, and opens the
+// client then - never during the change.
+class PipeWireJackDevice final : public ForwardingAudioIODevice
+{
+public:
+    explicit PipeWireJackDevice(std::unique_ptr<juce::AudioIODevice> device) : ForwardingAudioIODevice(std::move(device), "JACK") {}
+
+    juce::Array<int> getAvailableBufferSizes() override
+    {
+        juce::Array<int> sizes{ 64, 128, 256, 512, 1024, 2048 };
+        const int current = inner->getCurrentBufferSizeSamples();
+        if (current > 0 && !sizes.contains(current)) { sizes.add(current); sizes.sort(); }
+        return sizes;
+    }
+    juce::Array<double> getAvailableSampleRates() override
+    {
+        juce::Array<double> rates{ 44100.0, 48000.0, 88200.0, 96000.0, 176400.0, 192000.0 };
+        const double current = inner->getCurrentSampleRate();
+        if (current > 0.0 && !rates.contains(current)) { rates.add(current); rates.sort(); }
+        return rates;
+    }
+    juce::String open(const juce::BigInteger& inputChannels, const juce::BigInteger& outputChannels, double sampleRate, int bufferSizeSamples) override
+    {
+        const int wantBuffer = bufferSizeSamples > 0 ? bufferSizeSamples : 0;
+        const int wantRate = sampleRate > 0.0 ? juce::roundToInt(sampleRate) : 0;
+        int serverBuffer = 0, serverRate = 0;
+        const bool known = jackServerClock(serverBuffer, serverRate);
+        const bool changeBuffer = known && wantBuffer > 0 && wantBuffer != serverBuffer;
+        const bool changeRate = known && wantRate > 0 && wantRate != serverRate;
+        bool changed = false;
+        if (changeBuffer || changeRate)
+        {
+            const auto error = pipeWireSetClock(changeBuffer ? wantBuffer : 0, changeRate ? wantRate : 0);
+            if (error.isNotEmpty())
+            {
+                CrashHandler::note("JACK: PipeWire's clock could not be changed: " + error);
+                return "PipeWire's buffer size / sample rate could not be changed: " + error;
+            }
+            // Wait until the server really runs the new clock (up to 4 s).
+            const double start = juce::Time::getMillisecondCounterHiRes();
+            bool settled = false;
+            while (juce::Time::getMillisecondCounterHiRes() - start < 4000.0)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                int b = 0, r = 0;
+                if (jackServerClock(b, r) && (!changeBuffer || b == wantBuffer) && (!changeRate || r == wantRate)) { settled = true; break; }
+            }
+            CrashHandler::note("JACK: PipeWire clock " + juce::String(serverBuffer) + " frames / " + juce::String(serverRate) + " Hz -> "
+                + juce::String(changeBuffer ? wantBuffer : serverBuffer) + " / " + juce::String(changeRate ? wantRate : serverRate)
+                + " for " + getName() + (settled ? ", settled after " : ", NOT settled after ")
+                + juce::String(juce::roundToInt(juce::Time::getMillisecondCounterHiRes() - start)) + " ms");
+            changed = true;
+        }
+        juce::String error;
+        for (int attempt = 0; attempt < 3; ++attempt)
+        {
+            error = inner->open(inputChannels, outputChannels, sampleRate, bufferSizeSamples);
+            if (error.isNotEmpty()) return error;
+            const int got = inner->getCurrentBufferSizeSamples();
+            if (got >= 16) break;
+            // A client caught in the server's reconfiguration: thrown away, tried again.
+            inner->close();
+            CrashHandler::note("JACK: " + getName() + " reported a buffer of " + juce::String(got) + " frames, reopened");
+            std::this_thread::sleep_for(std::chrono::milliseconds(400));
+            error = "JACK reported a buffer of " + juce::String(got) + " frames";
+        }
+        if (changed && error.isEmpty() && pipeWireClockChangedHook())
+        {
+            juce::AudioIODevice* self = this;
+            juce::MessageManager::callAsync([self] { if (auto& hook = pipeWireClockChangedHook()) hook(self); });
+        }
+        return error;
+    }
+};
+
 // JUCE's JACK type lists every client that owns a port, MIDI bridges and MIDI
 // devices included ("Midi-Bridge", "BLE MIDI 1" - routes "opened" on them run
 // with a buffer of 1 frame). This wrapper keeps the clients that own AUDIO
@@ -171,7 +412,8 @@ public:
     bool hasSeparateInputsAndOutputs() const override { return true; }
     juce::AudioIODevice* createDevice(const juce::String& outputDeviceName, const juce::String& inputDeviceName) override
     {
-        return inner != nullptr ? inner->createDevice(outputDeviceName, inputDeviceName) : nullptr;
+        auto* device = inner != nullptr ? inner->createDevice(outputDeviceName, inputDeviceName) : nullptr;
+        return device != nullptr ? new PipeWireJackDevice(std::unique_ptr<juce::AudioIODevice>(device)) : nullptr;
     }
 private:
     // The clients owning audio ports of one direction, by the JACK API itself

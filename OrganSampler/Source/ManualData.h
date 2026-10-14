@@ -1138,14 +1138,15 @@ static const char* const kManualText_part5 =
     "templates of its configuration (surround 4.0 ... 7.1, front, rear, dmix) that\n"
     "have nothing to do with the card's real outputs and cannot be opened while\n"
     "PipeWire holds the card - that is where \"no channels\" came from. OrganSampler\n"
-    "hides those templates. While a sound server runs (PipeWire, PulseAudio) the\n"
-    "cards' own devices (\"Direct hardware device without any conversions\", \"IEC958\n"
-    "(S/PDIF) Digital Audio Output\", HDMI) are held by the server as well and are\n"
-    "left out of the list too; what remains are the server's entries (\"PipeWire\n"
-    "Sound Server\", \"Default ALSA Output\"): stereo, the system output. The\n"
-    "settings editor's *Audio devices: list also the ALSA devices of the cards the\n"
-    "sound server holds* lists them anyway, for a card the server does not use\n"
-    "(the list is rebuilt when a division's audio tab is next opened).\n"
+    "hides those templates. Every other ALSA device is tried when the list is\n"
+    "made: one that cannot be opened at that moment - the sound server (PipeWire,\n"
+    "PulseAudio) or another program holds it - is left out, with the reason in\n"
+    "the activity log. A card's second PCM (its S/PDIF or HDMI entry) often opens\n"
+    "while the first is held, with every channel of the card: it stays. The\n"
+    "server's own entries (\"PipeWire Sound Server\", \"Default ALSA Output\") are\n"
+    "stereo, the system output. The settings editor's *Audio devices: list also\n"
+    "the ALSA devices that cannot be opened* lists everything (the list is rebuilt\n"
+    "when a division's audio tab is next opened).\n"
     "\n"
     "For every channel of a multichannel interface choose the device type\n"
     "**JACK**: OrganSampler loads PipeWire's own JACK library at start (the\n"
@@ -1153,11 +1154,13 @@ static const char* const kManualText_part5 =
     "no separate server - PipeWire is the server, and every output of every card\n"
     "appears as a channel (a Komplete Audio 6 shows its four analogue outputs and\n"
     "the S/PDIF pair). The buffer size and sample rate are PipeWire's, the same\n"
-    "for every JACK route and every other program: the audio tab of a JACK route\n"
-    "shows them in the row **PipeWire buffer / rate** under the device box, and a\n"
-    "choice there sets them for PipeWire (the command `pw-metadata -n settings 0\n"
+    "for every JACK route and every other program; choose them in the usual\n"
+    "*Audio buffer size* and *Sample rate* boxes of any JACK route. The choice is\n"
+    "handed to PipeWire (the command `pw-metadata -n settings 0\n"
     "clock.force-quantum 256` or `clock.force-rate 48000`, which a console takes\n"
-    "as well) and reopens the JACK devices of all routes. If the JACK type\n"
+    "as well), the program waits until the server runs the new clock, then opens\n"
+    "the route, and the other JACK routes reopen at the new size by themselves.\n"
+    "If the JACK type\n"
     "lists no device, PipeWire's JACK library was not found (the package is\n"
     "`pipewire-jack`); start the program with `pw-jack ./OrganSampler` then.\n"
     "\n"
@@ -1209,11 +1212,11 @@ static const char* const kManualText_part5 =
     "\n"
     "Every sounding pipe is one **voice** per audio route of its division. A\n"
     "division with three perspectives (Direct, Diffuse, Rear) renders every pipe\n"
+    ;
+static const char* const kManualText_part6 =
     "three times, one voice per route. The auxiliary route adds one more voice per\n"
     "pipe while it has a device. The *DSP* field of the main window shows how much\n"
     "of the available time the busiest audio thread needs; at 100 % the sound\n"
-    ;
-static const char* const kManualText_part6 =
     "breaks up.\n"
     "\n"
     "So the polyphony a computer reaches is not a property of the computer alone:\n"
@@ -1411,11 +1414,11 @@ static const char* const kManualText_part6 =
     "soften that, a pipe resampled upwards automatically loses 0.1 dB of level and\n"
     "0.1 dB of treble per semitone (an octave up: -1.2 dB each), because a pipe\n"
     "played faster comes out brighter and louder than a real pipe of that pitch.\n"
+    ;
+static const char* const kManualText_part7 =
     "This compensation belongs to plain resampling only: the three other methods\n"
     "settle the loudness and the timbre of their copies when they build them, and\n"
     "a pipe that still plays resampled while its copy is being built gets it until\n"
-    ;
-static const char* const kManualText_part7 =
     "the copy is ready.\n"
     "\n"
     "The three other methods build a copy of every filled pipe in the background\n"
@@ -1613,11 +1616,11 @@ static const char* const kManualText_part7 =
     "integer* halves the RAM and allows more polyphony at the cost of a little\n"
     "hiss. Takes effect the next time a division's folders are loaded.\n"
     "\n"
+    ;
+static const char* const kManualText_part8 =
     "### Sample rate on loading\n"
     "\n"
     "*Resample everything to 48 kHz* (default): files recorded at 96, 88.2 or 44.1\n"
-    ;
-static const char* const kManualText_part8 =
     "kHz are converted once while loading with a high-quality filter, so every set\n"
     "plays exactly like a 48 kHz one and a 96 kHz set needs half the RAM it would\n"
     "otherwise. Loading takes longer. *Keep each file's own rate* loads faster and\n"
@@ -1815,11 +1818,11 @@ static const char* const kManualText_part8 =
     "### Wind: one pipe's share of the full sag\n"
     "\n"
     "The sag with one key held, relative to the sag with many keys held (default\n"
+    ;
+static const char* const kManualText_part9 =
     "50 %).\n"
     "\n"
     "### Wind: two pipes' share of the full sag\n"
-    ;
-static const char* const kManualText_part9 =
     "\n"
     "The sag with two keys held (default 50 %); from three keys on the rest of the\n"
     "sag closes gradually. One and two pipes together shape how a single note, an\n"
@@ -2017,11 +2020,11 @@ static const char* const kManualText_part9 =
     "\n"
     "The *Treble per key* sliders of the voicing raise or lower everything above\n"
     "this frequency (120 to 5000 Hz, default 1800): a high shelf whose transition\n"
+    ;
+static const char* const kManualText_part10 =
     "band runs from here to about twice this frequency. A pipe whose recorded\n"
     "fundamental lies higher starts its shelf at that fundamental instead. The\n"
     "velocity treble cut uses the same frequency.\n"
-    ;
-static const char* const kManualText_part10 =
     "\n"
     "### Celeste beats: top of compass vs bottom\n"
     "\n"
@@ -2219,11 +2222,11 @@ static const char* const kManualText_part10 =
     "\n"
     "The MIDI input that plays this division. Several divisions may listen to the\n"
     "same device (on different channels, or on the same channel to play them\n"
+    ;
+static const char* const kManualText_part11 =
     "together).\n"
     "\n"
     "### MIDI channel\n"
-    ;
-static const char* const kManualText_part11 =
     "\n"
     "The MIDI channel (1 to 16) of the division on that device.\n"
     "\n"

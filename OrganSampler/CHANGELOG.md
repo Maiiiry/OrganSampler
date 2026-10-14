@@ -12,6 +12,23 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.61] - 2026-10-14
+
+### Fixed
+- Linux, JACK through PipeWire: the buffer size and sample rate are chosen in
+  the usual boxes of the audio tab (the extra "PipeWire buffer / rate" row of
+  0.8.59 is gone). The choice is handed to PipeWire, the program waits until
+  the server runs the new clock and opens the route only then; the other JACK
+  routes reopen at the new size by themselves. In 0.8.59 the route was
+  reopened while PipeWire was still changing its quantum: the client got a
+  buffer of 1 frame and millions of empty callbacks a second, which stalled
+  the whole computer. A client that reports such a buffer is now thrown away
+  and tried again, and an empty callback returns at once.
+- Linux, ALSA: instead of hiding every card device while a sound server
+  runs, each device is tried when the list is made and only those that
+  cannot be opened (held by PipeWire or another program) are left out. A
+  card's S/PDIF or HDMI entry that opens with all its channels stays listed.
+
 ## [0.8.60] - 2026-10-14
 
 ### Fixed

@@ -630,9 +630,9 @@ private:
     // instance at the driver's preferred buffer size and sample rate.
     void openAsioControlPanel(juce::AudioDeviceManager& manager);
     void reopenAudioDeviceFresh(juce::AudioDeviceManager& manager, const juce::String& reason);
-    // Linux, JACK through PipeWire: sets PipeWire's buffer size (quantum) and
-    // sample rate (pw-metadata) and reopens every JACK route. 0 = unchanged.
-    void setPipeWireClock(int quantum, int rate);
+    // Linux, JACK through PipeWire: one route's device changed PipeWire's buffer
+    // size or rate (shared by every JACK client); the other JACK routes reopen.
+    void reopenJackRoutesAfterClockChange(juce::AudioIODevice* changedBy);
     struct AsioPanelWatch
     {
         bool active = false;

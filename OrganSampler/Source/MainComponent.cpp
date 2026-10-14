@@ -321,6 +321,18 @@ public:
     void audioDeviceIOCallbackWithContext(const float* const*, int, float* const* outputs,
         int numOutputs, int numSamples, const juce::AudioIODeviceCallbackContext&) override
     {
+        // Nothing to fill (a JACK client caught in PipeWire's reconfiguration
+        // delivers empty callbacks by the million): back at once. A block beyond
+        // the headroom prepared for the announced size (the server changed its
+        // quantum under a running client) is silence until the route reopens.
+        if (numSamples <= 0) return;
+        if (numSamples > juce::jmax(64, expectedBlock.load(std::memory_order_relaxed) * 4))
+        {
+            for (int channel = 0; channel < numOutputs; ++channel)
+                if (outputs[channel] != nullptr) juce::FloatVectorOperations::clear(outputs[channel], numSamples);
+            statOversize.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
         // Health statistics (a few relaxed atomics; read once a second by the GUI timer).
         const int64_t entryTicks = juce::Time::getHighResolutionTicks();
         // The device clock: is this the first route of a new driver callback?
@@ -602,6 +614,7 @@ private:
     std::atomic<int64_t> statLastTicks{ 0 };
     std::atomic<double> statMaxGapMs{ 0.0 }, statMaxInsideMs{ 0.0 }, statMaxGapCpuMs{ 0.0 }, statGhz{ 0.0 };
     std::atomic<uint64_t> statLastCycles{ 0 };
+    std::atomic<int> statOversize{ 0 };   // blocks beyond the prepared headroom, dropped as silence
     std::atomic<int> expectedBlock{ 0 };
     std::atomic<double> expectedRate{ 0.0 };
     int64_t healthTicks = 0;
@@ -1131,6 +1144,11 @@ MainComponent::MainComponent()
         CrashHandler::note("Audio device types: " + types);
 #if JUCE_LINUX
         if (hiddenAlsaDevicesNote().isNotEmpty()) CrashHandler::note(hiddenAlsaDevicesNote());
+        {
+            juce::Component::SafePointer<MainComponent> safeThis(this);
+            pipeWireClockChangedHook() = [safeThis](juce::AudioIODevice* changedBy)
+            { if (safeThis != nullptr) safeThis->reopenJackRoutesAfterClockChange(changedBy); };
+        }
 #endif
     }
     primaryAudioCallback = std::make_unique<DivisionAudioCallback>(*this, 0);
@@ -4315,34 +4333,12 @@ void MainComponent::showProblemReportDialog()
     options.launchAsync();
 }
 
-void MainComponent::setPipeWireClock(int quantum, int rate)
+void MainComponent::reopenJackRoutesAfterClockChange(juce::AudioIODevice* changedBy)
 {
 #if JUCE_LINUX
-    auto run = [](const juce::String& key, int value) -> juce::String
-    {
-        juce::StringArray args;
-        args.add("pw-metadata"); args.add("-n"); args.add("settings"); args.add("0"); args.add(key); args.add(juce::String(value));
-        juce::ChildProcess process;
-        if (!process.start(args, juce::ChildProcess::wantStdOut | juce::ChildProcess::wantStdErr))
-            return juce::String("could not start pw-metadata (package pipewire-bin)");
-        process.waitForProcessToFinish(5000);
-        const auto output = process.readAllProcessOutput().trim();
-        return process.getExitCode() == 0 ? juce::String() : (output.isNotEmpty() ? output : juce::String("pw-metadata failed"));
-    };
-    juce::String error;
-    if (quantum > 0) error = run("clock.force-quantum", quantum);
-    if (error.isEmpty() && rate > 0) error = run("clock.force-rate", rate);
-    CrashHandler::note("PipeWire: clock.force-quantum " + juce::String(quantum) + ", clock.force-rate " + juce::String(rate)
-        + (error.isEmpty() ? juce::String(" set") : ": " + error));
-    if (error.isNotEmpty())
-    {
-        juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "PipeWire",
-            "PipeWire's settings could not be changed: " + error + "\n\nThe command is\n  pw-metadata -n settings 0 clock.force-quantum "
-            + juce::String(quantum) + "\n  pw-metadata -n settings 0 clock.force-rate " + juce::String(rate));
-        return;
-    }
-    // JUCE's JACK device learns a new buffer size only as a fresh client: every
-    // JACK route is reopened (a shared host once).
+    // PipeWire runs every JACK client at the new quantum at once; the routes
+    // whose devices were prepared for the old one are reopened fresh (the
+    // server has settled by now, the device that changed it checked that).
     std::set<juce::AudioDeviceManager*> managers;
     for (int manual = 0; manual <= manualCount && manual < SamplerEngine::maxManuals; ++manual)
     {
@@ -4351,12 +4347,13 @@ void MainComponent::setPipeWireClock(int quantum, int rate)
         names.addIfNotAlreadyThere(SamplerEngine::auxiliaryPerspectiveName());
         for (const auto& name : names)
             if (auto* manager = managerForRoute(manual, name))
-                if (manager->getCurrentAudioDevice() != nullptr && manager->getCurrentAudioDeviceType().equalsIgnoreCase("JACK"))
+                if (auto* device = manager->getCurrentAudioDevice(); device != nullptr && device != changedBy
+                    && manager->getCurrentAudioDeviceType().equalsIgnoreCase("JACK"))
                     managers.insert(manager);
     }
-    for (auto* manager : managers) reopenAudioDeviceFresh(*manager, "PipeWire buffer/rate change");
+    for (auto* manager : managers) reopenAudioDeviceFresh(*manager, "PipeWire clock changed by another route");
 #else
-    juce::ignoreUnused(quantum, rate);
+    juce::ignoreUnused(changedBy);
 #endif
 }
 
@@ -5280,32 +5277,6 @@ void MainComponent::showKeyboardsDialog(int onlyManual)
                     juce::MessageManager::callAsync([target, manager] { target->reopenAudioDeviceFresh(*manager, "Reopen button"); });
                 };
                 addAndMakeVisible(reopenButton);
-#if JUCE_LINUX
-                // JACK through PipeWire: the buffer size (quantum) and the sample rate
-                // belong to PipeWire, the same for every JACK route and every other
-                // program. JUCE's JACK device cannot change them; pw-metadata can.
-                pipeWireLabel.setText("PipeWire buffer / rate", juce::dontSendNotification);
-                pipeWireLabel.setJustificationType(juce::Justification::centredRight);
-                const juce::String pipeWireTip = "JACK through PipeWire: the buffer size (quantum) and the sample rate are "
-                    "PipeWire's, shared by every JACK route and every other program. A choice here runs  pw-metadata -n "
-                    "settings 0 clock.force-quantum / clock.force-rate  and reopens the JACK devices of all routes.";
-                pipeWireLabel.setTooltip(pipeWireTip);
-                for (int size : { 64, 128, 256, 512, 1024, 2048 }) pipeWireBuffer.addItem(juce::String(size) + " samples", size);
-                for (int rate : { 44100, 48000, 88200, 96000, 176400, 192000 }) pipeWireRate.addItem(juce::String(rate) + " Hz", rate);
-                pipeWireBuffer.setTooltip(pipeWireTip);
-                pipeWireRate.setTooltip(pipeWireTip);
-                auto applyPipeWire = [this]
-                {
-                    MainComponent* target = &this->owner;
-                    const int quantum = pipeWireBuffer.getSelectedId(), rate = pipeWireRate.getSelectedId();
-                    juce::MessageManager::callAsync([target, quantum, rate] { target->setPipeWireClock(quantum, rate); });
-                };
-                pipeWireBuffer.onChange = applyPipeWire;
-                pipeWireRate.onChange = applyPipeWire;
-                addChildComponent(pipeWireLabel);
-                addChildComponent(pipeWireBuffer);
-                addChildComponent(pipeWireRate);
-#endif
                 // IR reverb of this perspective: impulse response file and dry/wet.
                 irLoadButton.setButtonText("Load IR...");
                 irLoadButton.setTooltip("Impulse response WAV for this perspective's reverb: mono, stereo, or true stereo "
@@ -5495,16 +5466,7 @@ void MainComponent::showKeyboardsDialog(int onlyManual)
                 auto buttons = juce::Rectangle<int>(area.getX() + labelColumnWidth, area.getY() + 2, controlsWidth, 22);
                 panelButton.setBounds(buttons.removeFromLeft(buttons.getWidth() / 2).reduced(2, 0));
                 reopenButton.setBounds(buttons.reduced(2, 0));
-                int nextY = area.getY() + 28;
-                if (pipeWireLabel.isVisible())   // Linux, JACK: one more row
-                {
-                    pipeWireLabel.setBounds(area.getX(), nextY, labelColumnWidth, 22);
-                    auto row = juce::Rectangle<int>(area.getX() + labelColumnWidth, nextY, controlsWidth, 22);
-                    pipeWireBuffer.setBounds(row.removeFromLeft(row.getWidth() / 2).reduced(2, 0));
-                    pipeWireRate.setBounds(row.reduced(2, 0));
-                    nextY += 26;
-                }
-                applyAll.setBounds(area.getX() + labelColumnWidth + 2, nextY, controlsWidth - 4, 22);
+                applyAll.setBounds(area.getX() + labelColumnWidth + 2, area.getY() + 28, controlsWidth - 4, 22);
                 for (int index = 0; index < channelButtons.size(); ++index)
                 {
                     auto* button = channelButtons[index];
@@ -5604,8 +5566,6 @@ void MainComponent::showKeyboardsDialog(int onlyManual)
             juce::OwnedArray<juce::ToggleButton> channelButtons;
             juce::ToggleButton applyAll;
             juce::TextButton panelButton, reopenButton;
-            juce::Label pipeWireLabel;                      // Linux, JACK: PipeWire's buffer size and rate
-            juce::ComboBox pipeWireBuffer, pipeWireRate;
             double knownRate = 0.0;                         // the rate this route ran at (kept across a device change)
             juce::TextButton irLoadButton, irClearButton;
             juce::Label irLabel, wetLabel, irSectionLabel;
@@ -5745,35 +5705,9 @@ void MainComponent::showKeyboardsDialog(int onlyManual)
                 });
             }
 
-            // The PipeWire row shows the JACK device's current values and exists only
-            // for the JACK type.
-            void syncPipeWireBoxes()
-            {
-                auto* device = selector != nullptr ? selector->deviceManager.getCurrentAudioDevice() : nullptr;
-                const bool jack = device != nullptr && selector->deviceManager.getCurrentAudioDeviceType().equalsIgnoreCase("JACK");
-                if (jack)
-                {
-                    const int buffer = device->getCurrentBufferSizeSamples(), rate = juce::roundToInt(device->getCurrentSampleRate());
-                    if (buffer > 0 && pipeWireBuffer.indexOfItemId(buffer) < 0) pipeWireBuffer.addItem(juce::String(buffer) + " samples", buffer);
-                    if (rate > 0 && pipeWireRate.indexOfItemId(rate) < 0) pipeWireRate.addItem(juce::String(rate) + " Hz", rate);
-                    if (buffer > 0 && pipeWireBuffer.getSelectedId() != buffer) pipeWireBuffer.setSelectedId(buffer, juce::dontSendNotification);
-                    if (rate > 0 && pipeWireRate.getSelectedId() != rate) pipeWireRate.setSelectedId(rate, juce::dontSendNotification);
-                }
-                if (jack != pipeWireLabel.isVisible())
-                {
-                    pipeWireLabel.setVisible(jack);
-                    pipeWireBuffer.setVisible(jack);
-                    pipeWireRate.setVisible(jack);
-                    resized();
-                }
-            }
-
             void refreshChannels()
             {
                 if (selector == nullptr) return;
-#if JUCE_LINUX
-                syncPipeWireBoxes();
-#endif
                 hidePhysicalChannelList(*selector);
                 owner.installAsioDeviceInterceptor(*selector, manual, perspective);
                 auto* device = selector->deviceManager.getCurrentAudioDevice();
@@ -5814,6 +5748,7 @@ void MainComponent::showKeyboardsDialog(int onlyManual)
                 // ALSA device "jumped to 44100"). The route keeps its rate when the new
                 // device can run it.
                 if (device != nullptr && knownDevice.isNotEmpty() && knownRate > 0.0 && currentRate > 0.0
+                    && !selector->deviceManager.getCurrentAudioDeviceType().equalsIgnoreCase("JACK")   // JACK's rate is PipeWire's (shared), never changed unasked
                     && std::abs(currentRate - knownRate) > 1.0 && device->getAvailableSampleRates().contains(knownRate))
                 {
                     auto setup = selector->deviceManager.getAudioDeviceSetup();
@@ -17746,17 +17681,16 @@ void MainComponent::showConfigurationEditor()
                 + " physical cores, " + juce::String(logical) + " logical CPUs, "
                 + juce::String(juce::SystemStats::getMemorySizeInMegabytes() / 1024) + " GB RAM");
 #if JUCE_LINUX
-            addToggle("Audio devices: list also the ALSA devices of the cards the sound server holds", o.showUnusableAudioDevices,
+            addToggle("Audio devices: list also the ALSA devices that cannot be opened", o.showUnusableAudioDevices,
                 [&o](bool state)
                 {
                     o.showUnusableAudioDevices = state;
                     unusableAudioDevicesShown().store(state);
                     o.saveSettings();
                 },
-                "PipeWire (or PulseAudio) opens every sound card itself, so the cards' own ALSA devices (\"Direct hardware "
-                "device\", \"IEC958\", HDMI) cannot be opened by a program: chosen on a route they give no channels or 'none'. "
-                "They are therefore not listed; the card's channels come through the JACK type. Tick to list them anyway "
-                "(a card the server does not use). The ALSA list is rebuilt when a division's audio tab is next opened.");
+                "Every ALSA device is tried when the list is made: one that cannot be opened at that moment (PipeWire, "
+                "PulseAudio or another program holds it) is left out, since chosen on a route it gives no channels or 'none'. "
+                "Tick to list everything. The ALSA list is rebuilt when a division's audio tab is next opened.");
 #endif
             {
                 // Presets first, then every explicit thread count (1 = the audio
