@@ -3874,8 +3874,18 @@ juce::AudioDeviceManager* MainComponent::setRouteAudioType(int manualIndex, cons
     // instead of first opening the type's default device.
     auto openType = [&](juce::AudioDeviceManager& manager)
     {
-        if (deviceState != nullptr) manager.initialise(0, 2, deviceState, true);
-        else manager.setCurrentAudioDeviceType(typeName, true);
+        if (deviceState != nullptr) { manager.initialise(0, 2, deviceState, true); return; }
+        manager.setCurrentAudioDeviceType(typeName, true);
+        // No saved state: 512 samples is the default buffer (ASIO keeps its control
+        // panel's size, JACK the server's shared clock, the aggregate its own rule).
+        if (typeName.equalsIgnoreCase("ASIO") || typeName.equalsIgnoreCase("JACK") || typeName.equalsIgnoreCase("Aggregated WASAPI")) return;
+        if (auto* device = manager.getCurrentAudioDevice())
+            if (device->getCurrentBufferSizeSamples() < 512 && device->getAvailableBufferSizes().contains(512))
+            {
+                auto setup = manager.getAudioDeviceSetup();
+                setup.bufferSize = 512;
+                manager.setAudioDeviceSetup(setup, true);
+            }
     };
     const bool wantsAggregate = typeName.equalsIgnoreCase("Aggregated WASAPI");
     auto selectAggregateDevice = [wantsAggregate, deviceState](juce::AudioDeviceManager& manager)
@@ -16859,6 +16869,41 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
                       "the packet into shorter deadlines - an IR's tail FFT alone can exceed a block of " << smallAggregateBlock
                    << " - and does not lower the latency. Set the buffer to " << juce::roundToInt(aggregateRate / 100.0)
                    << " or more on those routes, save the configuration and measure again.";
+    }
+    // A buffer below 256 samples decides everything: at 64 samples (1.3 ms) the
+    // sound breaks at a few hundred voices whatever the routes and IRs do. Then
+    // the only advice is the buffer, and 512 is the value to measure with.
+    {
+        int smallBlock = 0; double smallRate = 48000.0; juce::String smallDevice, smallType;
+        for (int manual = 0; manual <= manualCount; ++manual)
+        {
+            juce::StringArray names;
+            for (const auto& name : engine.getPerspectivesForManual(manual)) names.addIfNotAlreadyThere(name);
+            names.addIfNotAlreadyThere(SamplerEngine::auxiliaryPerspectiveName());
+            for (const auto& name : names)
+            {
+                auto* manager = managerForRoute(manual, name);
+                auto* device = manager != nullptr ? manager->getCurrentAudioDevice() : nullptr;
+                if (device == nullptr) continue;
+                const int block = device->getCurrentBufferSizeSamples();
+                if (block > 0 && block < 256 && (smallBlock == 0 || block < smallBlock))
+                {
+                    smallBlock = block; smallRate = device->getCurrentSampleRate(); smallDevice = device->getName();
+                    smallType = manager->getCurrentAudioDeviceType();
+                }
+            }
+        }
+        if (smallBlock > 0 && firstFailingKeys > 0)
+        {
+            const double ms = 1000.0 * smallBlock / juce::jmax(1.0, smallRate);
+            advice = juce::String("\n\nThe audio buffer of \"") + smallDevice + "\" is " + juce::String(smallBlock) + " samples ("
+                + juce::String(ms, 1) + " ms): far too small for this work - every block has only that long to render, so the sound "
+                "breaks at a few hundred voices whatever the routes and IRs are. Set the buffer to 512 samples ("
+                + juce::String(1000.0 * 512 / juce::jmax(1.0, smallRate), 1) + " ms of latency, fine for an organ) in the "
+                + (smallType.equalsIgnoreCase("ASIO") ? juce::String("driver's control panel") : juce::String("audio tab"))
+                + (smallType.equalsIgnoreCase("JACK") ? juce::String(" (the value goes to PipeWire and holds for every JACK route)") : juce::String())
+                + ", save the configuration and measure again. Nothing else matters until then.";
+        }
     }
     CrashHandler::note("Polyphony measurement done: limit set to " + juce::String(newLimit) + " (highest clean level "
         + juce::String(highestCleanKeys) + " keys, " + juce::String(state->highestCleanPeak) + " voices; first failing level "

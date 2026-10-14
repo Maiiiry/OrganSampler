@@ -12,6 +12,15 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.74] - 2026-10-14
+
+### Changed
+- Polyphony measurement: a buffer below 256 samples on any route is now the
+  one and only advice - set it to 512 and measure again (at 64 samples the
+  sound broke at 200 voices and the report blamed the IRs). 512 samples is
+  the default buffer of a device opened for the first time (ASIO keeps its
+  control panel's size, JACK the server's shared clock). The manual says why.
+
 ## [0.8.73] - 2026-10-14
 
 ### Changed

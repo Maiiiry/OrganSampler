@@ -1142,6 +1142,16 @@ static const char* const kManualText_part5 =
     "The best layout for the highest polyphony is therefore: one ASIO driver, all\n"
     "routes on it, the output channels spread over its outputs.\n"
     "\n"
+    "**The buffer size decides more than anything else.** Every block of audio has\n"
+    "exactly its buffer's duration to be rendered: at 64 samples (1.3 ms at\n"
+    "48 kHz) the sound breaks at a few hundred voices, however the routes and\n"
+    "IRs are set; at 512 samples (10.7 ms, unnoticeable on an organ) the same\n"
+    "computer renders tens of thousands. 512 is the default for a device opened\n"
+    "for the first time (ASIO keeps its control panel's size, JACK the server's\n"
+    "shared clock), and the value to measure the polyphony with. A measurement\n"
+    "that finds a buffer below 256 samples on any route says so first and asks\n"
+    "for 512 before anything else.\n"
+    "\n"
     "### Audio on Linux\n"
     "\n"
     "Modern Linux runs PipeWire, which holds every sound card and hands the\n"
@@ -1202,6 +1212,8 @@ static const char* const kManualText_part5 =
     "the chosen device's channels itself.\n"
     "\n"
     "**One rate for every device.** Every audio route renders at the rate of its\n"
+    ;
+static const char* const kManualText_part6 =
     "device, and the devices of one organ may run at different rates and buffer\n"
     "sizes - the program does not stop you. The samples are loaded at 48 kHz (see\n"
     "\"Sample rate on loading\"): a device at 44.1 or 96 kHz gets its route's pipes\n"
@@ -1212,8 +1224,6 @@ static const char* const kManualText_part5 =
     "(a fresh device would otherwise open at the lowest rate from 44.1 kHz up);\n"
     "*Set for all* copies the rate the device of that tab really runs at - look at\n"
     "the rate box before you copy it.\n"
-    ;
-static const char* const kManualText_part6 =
     "\n"
     "## 5.7 Audio devices not ready when OrganSampler starts\n"
     "\n"
@@ -1404,6 +1414,8 @@ static const char* const kManualText_part6 =
     "\n"
     "Which real pipe serves a missing one is decided by *Missing pipes: neighbours\n"
     "borrowed as a group*: with the default 12, every missing pipe is the\n"
+    ;
+static const char* const kManualText_part7 =
     "octave transposition of a real one, so the chromatic variety of the rank is\n"
     "kept. A rank's fill map is sticky: when the compass grows (a new transmission)\n"
     "the pipes already filled keep their source, so their copies are never built\n"
@@ -1414,8 +1426,6 @@ static const char* const kManualText_part6 =
     "How the neighbour's sample gets its new pitch is *Filled pipes: transposition\n"
     "method* (Configuration Editor > Advanced global audio). The default is *Pitch\n"
     "shift + time stretch*, which gives the best results for most stops; the phase\n"
-    ;
-static const char* const kManualText_part7 =
     "vocoder is an optional alternative for those who want it. Every method has\n"
     "its weakness; which one sounds best depends on the stop, the size of the shift\n"
     "and the ear. Listening tests with reeds (Trompete, Vox humana) show the\n"
@@ -1606,6 +1616,8 @@ static const char* const kManualText_part7 =
     "\n"
     "The threads really rendering now and the interpolation kernel the processor\n"
     "supports (AVX2 on current processors). Information only.\n"
+    ;
+static const char* const kManualText_part8 =
     "\n"
     "### Render threads for Aggregated WASAPI\n"
     "\n"
@@ -1616,8 +1628,6 @@ static const char* const kManualText_part7 =
     "(the device thread alone, no workers) is right for that layout, and more\n"
     "threads per route only fight each other there. Raise it when one or two\n"
     "aggregated routes carry the whole organ (a big division on a single route is\n"
-    ;
-static const char* const kManualText_part8 =
     "otherwise bound to one core): the route then shares its pipes out over the\n"
     "set number of threads, like a route on ASIO does over all *Render threads*.\n"
     "Routes on ASIO drivers and on Windows Audio devices do not use this setting:\n"
@@ -1808,6 +1818,8 @@ static const char* const kManualText_part8 =
     "their brilliance. This is a high shelf above about 3 kHz that follows the\n"
     "shutters: this much loss with the box closed (0 to 12 dB, default 8). 0 dB =\n"
     "off. The\n"
+    ;
+static const char* const kManualText_part9 =
     "three harmonic filters (swell, wind, tremulant) add up, capped at 12 dB; when\n"
     "all three are 0 dB the filter costs nothing.\n"
     "\n"
@@ -1818,8 +1830,6 @@ static const char* const kManualText_part8 =
     "duller as well as flatter.\n"
     "\n"
     "### Wind: volume change per cent of sag\n"
-    ;
-static const char* const kManualText_part9 =
     "\n"
     "How much quieter a pipe gets for every cent the wind sag lowers its pitch (0\n"
     "to 0.6 dB per cent, default 0.2). Together with the division's *Wind: depth*\n"
@@ -2010,6 +2020,8 @@ static const char* const kManualText_part9 =
     "this moment: the stops of other configurations, of folders you unloaded or\n"
     "deleted from the disk. The files of the loaded organ stay, so its next load\n"
     "is still fast. A message says how many files went. This is the button for\n"
+    ;
+static const char* const kManualText_part10 =
     "routine housekeeping.\n"
     "\n"
     "### Filled pipes cache folder\n"
@@ -2020,8 +2032,6 @@ static const char* const kManualText_part9 =
     "(beside the samples, say). The files built so far are moved there at once, so\n"
     "nothing has to be rebuilt. The folder is remembered in the settings.\n"
     "\n"
-    ;
-static const char* const kManualText_part10 =
     "### Filled pipes: resampling quality\n"
     "\n"
     "How the sample of a neighbouring pipe is played at another pitch. *Linear* is\n"
@@ -2212,6 +2222,8 @@ static const char* const kManualText_part10 =
     "the first entry of the line (\"Direct;01-dirMk2H-;dir\" makes folders with any\n"
     "of the three prefixes the perspective \"Direct\"). Defaults: Direct, Diffuse and\n"
     "Rear. Prefixes found in a newly loaded set are added here by themselves (a\n"
+    ;
+static const char* const kManualText_part11 =
     "prefix that shares its stem with a known perspective joins its line; an\n"
     "unknown one gets a line of its own - move it onto the right line if it is the\n"
     "same perspective). Applies to the next folder load.\n"
@@ -2222,8 +2234,6 @@ static const char* const kManualText_part10 =
     "dialog (see \"Keyboard, MIDI and compass\", \"Swell, tremulant, wind\" and \"The\n"
     "audio tabs\").\n"
     "\n"
-    ;
-static const char* const kManualText_part11 =
     "### Stops and sample folders\n"
     "\n"
     "The folder trees loaded for this division, and the *Stop building...* button\n"
@@ -2414,7 +2424,9 @@ static const char* const kManualText_part11 =
     "GmbH), Signalsmith Stretch and Signalsmith Linear (MIT). The same program is\n"
     "built for Windows, macOS and Linux; the macOS and Linux builds have had less\n"
     "playing time than the Windows build.\n"
+    ;
+static const char* const kManualText_part12 =
     "\n"
     ;
-static const char* const kManualTextParts[] = { kManualText_part0, kManualText_part1, kManualText_part2, kManualText_part3, kManualText_part4, kManualText_part5, kManualText_part6, kManualText_part7, kManualText_part8, kManualText_part9, kManualText_part10, kManualText_part11 };
-static const int kManualTextPartCount = 12;
+static const char* const kManualTextParts[] = { kManualText_part0, kManualText_part1, kManualText_part2, kManualText_part3, kManualText_part4, kManualText_part5, kManualText_part6, kManualText_part7, kManualText_part8, kManualText_part9, kManualText_part10, kManualText_part11, kManualText_part12 };
+static const int kManualTextPartCount = 13;

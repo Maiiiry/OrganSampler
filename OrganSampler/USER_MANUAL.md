@@ -1128,6 +1128,16 @@ before you do it:
 The best layout for the highest polyphony is therefore: one ASIO driver, all
 routes on it, the output channels spread over its outputs.
 
+**The buffer size decides more than anything else.** Every block of audio has
+exactly its buffer's duration to be rendered: at 64 samples (1.3 ms at
+48 kHz) the sound breaks at a few hundred voices, however the routes and
+IRs are set; at 512 samples (10.7 ms, unnoticeable on an organ) the same
+computer renders tens of thousands. 512 is the default for a device opened
+for the first time (ASIO keeps its control panel's size, JACK the server's
+shared clock), and the value to measure the polyphony with. A measurement
+that finds a buffer below 256 samples on any route says so first and asks
+for 512 before anything else.
+
 ### Audio on Linux
 
 Modern Linux runs PipeWire, which holds every sound card and hands the
