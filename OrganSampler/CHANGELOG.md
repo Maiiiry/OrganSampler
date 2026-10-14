@@ -12,6 +12,16 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.63] - 2026-10-14
+
+### Fixed
+- Linux, JACK: a buffer size or rate chosen in the audio tab took five
+  seconds (a probe that never saw the new clock) and the client was opened
+  twice too early. The client is now opened and its buffer size awaited (a
+  fresh client learns it a moment after activation); one that got the old
+  size is opened again. Measured: 512 frames on two JACK routes, the other
+  route reopened by itself, no stall.
+
 ## [0.8.62] - 2026-10-14
 
 ### Added

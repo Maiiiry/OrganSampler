@@ -346,33 +346,43 @@ public:
                 CrashHandler::note("JACK: PipeWire's clock could not be changed: " + error);
                 return "PipeWire's buffer size / sample rate could not be changed: " + error;
             }
-            // Wait until the server really runs the new clock (up to 4 s).
-            const double start = juce::Time::getMillisecondCounterHiRes();
-            bool settled = false;
-            while (juce::Time::getMillisecondCounterHiRes() - start < 4000.0)
-            {
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                int b = 0, r = 0;
-                if (jackServerClock(b, r) && (!changeBuffer || b == wantBuffer) && (!changeRate || r == wantRate)) { settled = true; break; }
-            }
             CrashHandler::note("JACK: PipeWire clock " + juce::String(serverBuffer) + " frames / " + juce::String(serverRate) + " Hz -> "
                 + juce::String(changeBuffer ? wantBuffer : serverBuffer) + " / " + juce::String(changeRate ? wantRate : serverRate)
-                + " for " + getName() + (settled ? ", settled after " : ", NOT settled after ")
-                + juce::String(juce::roundToInt(juce::Time::getMillisecondCounterHiRes() - start)) + " ms");
+                + " asked for " + getName());
             changed = true;
         }
+        // Open, then wait for the client's buffer size: a fresh client learns it a
+        // moment after activation (0 until then), later still while the server is
+        // changing its quantum. The device is never handed over before the size
+        // is sane; a client that got the old size (the change not through yet) is
+        // thrown away and opened again. The last attempt takes any sane size.
+        const double start = juce::Time::getMillisecondCounterHiRes();
         juce::String error;
-        for (int attempt = 0; attempt < 3; ++attempt)
+        for (int attempt = 0; attempt < 5; ++attempt)
         {
             error = inner->open(inputChannels, outputChannels, sampleRate, bufferSizeSamples);
             if (error.isNotEmpty()) return error;
-            const int got = inner->getCurrentBufferSizeSamples();
-            if (got >= 16) break;
-            // A client caught in the server's reconfiguration: thrown away, tried again.
+            int got = 0;
+            for (int wait = 0; wait < 40 && (got = inner->getCurrentBufferSizeSamples()) < 16; ++wait)
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            const int gotRate = juce::roundToInt(inner->getCurrentSampleRate());
+            const bool sane = got >= 16;
+            const bool asked = (!changeBuffer || got == wantBuffer) && (!changeRate || gotRate == wantRate);
+            if (sane && (asked || attempt == 4))
+            {
+                if (changed)
+                    CrashHandler::note("JACK: " + getName() + " open with " + juce::String(got) + " frames / " + juce::String(gotRate) + " Hz"
+                        + (asked ? juce::String() : juce::String(" (not what was asked for)")) + " after "
+                        + juce::String(juce::roundToInt(juce::Time::getMillisecondCounterHiRes() - start)) + " ms");
+                error.clear();
+                break;
+            }
             inner->close();
-            CrashHandler::note("JACK: " + getName() + " reported a buffer of " + juce::String(got) + " frames, reopened");
-            std::this_thread::sleep_for(std::chrono::milliseconds(400));
+            CrashHandler::note("JACK: " + getName() + " reported " + juce::String(got) + " frames / " + juce::String(gotRate) + " Hz"
+                + (changed ? " (asked: " + juce::String(changeBuffer ? wantBuffer : got) + " / " + juce::String(changeRate ? wantRate : gotRate) + ")" : juce::String())
+                + ", opened again");
             error = "JACK reported a buffer of " + juce::String(got) + " frames";
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
         }
         if (changed && error.isEmpty() && pipeWireClockChangedHook())
         {
