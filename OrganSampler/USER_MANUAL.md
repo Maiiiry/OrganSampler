@@ -1213,6 +1213,12 @@ distributions (Ubuntu Studio, AV Linux, Fedora Jam) set up for the group
 
 - `ulimit -r` - the answer must be 95 or more (0 means no realtime).
 - `groups` - the list must contain `audio`.
+- `cat /etc/security/limits.d/*audio*` - shows the rules themselves
+  (`@audio - rtprio 95`, `@audio - memlock unlimited`).
+- With the program running and a device open:
+  `ps -eLo tid,cls,rtprio,comm | grep -i organ` - one of its threads must
+  show `FF` (SCHED_FIFO) and a priority (70 under ALSA); under JACK the
+  realtime thread is PipeWire's own and does not appear here.
 
 If not, type these lines (each followed by Enter and, the first time, your
 password), then log out and in again:

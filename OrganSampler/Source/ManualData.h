@@ -1229,6 +1229,12 @@ static const char* const kManualText_part6 =
     "\n"
     "- `ulimit -r` - the answer must be 95 or more (0 means no realtime).\n"
     "- `groups` - the list must contain `audio`.\n"
+    "- `cat /etc/security/limits.d/*audio*` - shows the rules themselves\n"
+    "  (`@audio - rtprio 95`, `@audio - memlock unlimited`).\n"
+    "- With the program running and a device open:\n"
+    "  `ps -eLo tid,cls,rtprio,comm | grep -i organ` - one of its threads must\n"
+    "  show `FF` (SCHED_FIFO) and a priority (70 under ALSA); under JACK the\n"
+    "  realtime thread is PipeWire's own and does not appear here.\n"
     "\n"
     "If not, type these lines (each followed by Enter and, the first time, your\n"
     "password), then log out and in again:\n"
@@ -1408,14 +1414,14 @@ static const char* const kManualText_part6 =
     "keyboard played). A coupler is registration: part of combinations and the\n"
     "crescendo, MIDI-learnable. The rail's buttons can be rearranged by dragging.\n"
     "\n"
+    ;
+static const char* const kManualText_part7 =
     "- **Unison Off** silences the division's own pitch: key 60 held on that\n"
     "  division does not sound 60 there; its couplers still work.\n"
     "- **Melody coupler**: only the highest key held on the division is coupled;\n"
     "  **bass coupler**: only the lowest. *Melody/bass couplers: new extreme key\n"
     "  only* and *Melody couplers: legato grace time* (Configuration Editor >\n"
     "  Console) refine their behaviour.\n"
-    ;
-static const char* const kManualText_part7 =
     "\n"
     "## 6.2 Combinations and the crescendo\n"
     "\n"
@@ -1610,14 +1616,14 @@ static const char* const kManualText_part7 =
     "  fade-in** (Global sound) are set for the sounding c1 and grow 1.5 times per\n"
     "  octave below it, so a 32' extension gets the slow fades a big pipe needs; a\n"
     "  filled pipe counts as the pipe it stands for.\n"
+    ;
+static const char* const kManualText_part8 =
     "\n"
     "## 7.4 The cache\n"
     "\n"
     "The copies of the filled pipes take a while to build for a large organ: a\n"
     "minute or more for a big set with many extensions, every time the organ loads.\n"
     "The cache keeps them on disk so that this happens once.\n"
-    ;
-static const char* const kManualText_part8 =
     "\n"
     "**Switching it on.** *Configuration Editor > Advanced global audio > Filled\n"
     "pipes: keep the generated copies on disk (cache)*, off by default. From then\n"
@@ -1812,14 +1818,14 @@ static const char* const kManualText_part8 =
     "   ends: it shows a peak that fades within a fraction of a second, while the\n"
     "   judge takes the single longest callback and every late one. Above the\n"
     "   measured value the sound is often still fine - until the first callback\n"
+    ;
+static const char* const kManualText_part9 =
     "   that is not; that is what the margin is for.\n"
     "4. *Maximum polyphony* is set to the most voices that stayed clean. The\n"
     "   slider is yours afterwards: lower it for more headroom (couplers, long\n"
     "   releases, other programs running), raise it if you dare. The\n"
     "   registration and the two attack settings are restored; the sound comes\n"
     "   back over two seconds after the report's OK.\n"
-    ;
-static const char* const kManualText_part9 =
     "5. The report names the result and gives advice: every route on a Windows\n"
     "   Audio device (rendered by its own thread alone) and every auxiliary route\n"
     "   with a device (every pipe once more), with the share of its period it\n"
@@ -2014,14 +2020,14 @@ static const char* const kManualText_part9 =
     "### Filled pipes: time stretch of the attack\n"
     "\n"
     "Pitch shift + time stretch only. How far the attack (everything before the\n"
+    ;
+static const char* const kManualText_part10 =
     "first loop) is stretched back from the resampled length towards the source's\n"
     "(0 to 100 %, default 50). 0 % leaves it as resampled - two octaves down the\n"
     "attack is four times as slow; 100 % gives it the source's duration; 50 % is\n"
     "half way on a logarithmic scale (two octaves down: twice as slow, which the ear\n"
     "accepts where four times is too much). Applies to shifts downwards; upwards the\n"
     "attack stays as resampled. Higher values fray the attack more (see \"The\n"
-    ;
-static const char* const kManualText_part10 =
     "transposition methods\"); lower\n"
     "the slider for a stop whose speaking turns rough. Changing it rebuilds the\n"
     "copies.\n"
@@ -2216,14 +2222,14 @@ static const char* const kManualText_part10 =
     "Shows or hides the Save Voicing button. Hidden by default.\n"
     "\n"
     "### Top bar: Load Configuration\n"
+    ;
+static const char* const kManualText_part11 =
     "\n"
     "Shows or hides the Load Configuration button.\n"
     "\n"
     "### Top bar: Save Configuration\n"
     "\n"
     "Shows or hides the Save Configuration button.\n"
-    ;
-static const char* const kManualText_part11 =
     "\n"
     "### Top bar: Shut down PC\n"
     "\n"
@@ -2418,14 +2424,14 @@ static const char* const kManualText_part11 =
     "detune.\n"
     "\n"
     "### Tremulant rate\n"
+    ;
+static const char* const kManualText_part12 =
     "\n"
     "The speed of the division's tremulant (2 to 11 Hz, default 4.4).\n"
     "\n"
     "### Tremulant depth\n"
     "\n"
     "The pitch modulation of the tremulant (0 to 50 cents, default 6); the level\n"
-    ;
-static const char* const kManualText_part12 =
     "modulation follows it by *Tremulant: volume change per cent of pitch*. The\n"
     "strength wanders between 60 and 100 % of this from cycle to cycle.\n"
     "\n"

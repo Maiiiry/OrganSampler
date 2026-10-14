@@ -12,6 +12,18 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.86] - 2026-10-14
+
+### Fixed
+- The macOS builds did not start on macOS 10.12 ("DYLD, Symbol missing"):
+  the program imported std::__hash_memory, which Apple's C++ library has
+  only from macOS 15. The program brings its own now; this should make the
+  Intel build start on 10.11 to 10.14 and the main build on every macOS 11.
+
+### Changed
+- Manual, Linux realtime: two more checks (the limits file, and `ps` showing
+  the program's realtime thread).
+
 ## [0.8.85] - 2026-10-14
 
 ### Changed
