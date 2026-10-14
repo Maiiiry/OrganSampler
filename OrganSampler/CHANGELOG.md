@@ -12,6 +12,13 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.82] - 2026-10-14
+
+### Changed
+- The macOS 10.10 experiment: the SDK's maximum version is defined beside
+  the minimum, which the previous define had silenced. The 10.11 Intel build
+  of 0.8.81 compiled and is part of every release.
+
 ## [0.8.81] - 2026-10-14
 
 ### Changed

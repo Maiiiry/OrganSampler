@@ -45,7 +45,7 @@ jobs:
             path: build/OrganSampler_artefacts/Release/OrganSampler.app
             zip: OrganSampler-macos-10.10-intel-experiment.zip
             # (the deployment target stays 10.11 so that JUCE's helper tool builds; the program itself is compiled and linked for 10.10 by the flags)
-            cmake: -DCMAKE_OSX_DEPLOYMENT_TARGET=10.11 -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_CXX_FLAGS="-mmacosx-version-min=10.10 -D__MAC_OS_X_VERSION_MIN_REQUIRED=101100 -faligned-allocation -D_LIBCPP_DISABLE_AVAILABILITY -Wno-unguarded-availability -Wno-unguarded-availability-new" -DCMAKE_OBJCXX_FLAGS="-mmacosx-version-min=10.10 -D__MAC_OS_X_VERSION_MIN_REQUIRED=101100 -faligned-allocation -D_LIBCPP_DISABLE_AVAILABILITY -Wno-unguarded-availability -Wno-unguarded-availability-new" -DCMAKE_C_FLAGS="-mmacosx-version-min=10.10 -D__MAC_OS_X_VERSION_MIN_REQUIRED=101100" -DCMAKE_EXE_LINKER_FLAGS="-mmacosx-version-min=10.10"
+            cmake: -DCMAKE_OSX_DEPLOYMENT_TARGET=10.11 -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_CXX_FLAGS="-mmacosx-version-min=10.10 -D__MAC_OS_X_VERSION_MIN_REQUIRED=101100 -D__MAC_OS_X_VERSION_MAX_ALLOWED=140000 -faligned-allocation -D_LIBCPP_DISABLE_AVAILABILITY -Wno-unguarded-availability -Wno-unguarded-availability-new" -DCMAKE_OBJCXX_FLAGS="-mmacosx-version-min=10.10 -D__MAC_OS_X_VERSION_MIN_REQUIRED=101100 -D__MAC_OS_X_VERSION_MAX_ALLOWED=140000 -faligned-allocation -D_LIBCPP_DISABLE_AVAILABILITY -Wno-unguarded-availability -Wno-unguarded-availability-new" -DCMAKE_C_FLAGS="-mmacosx-version-min=10.10 -D__MAC_OS_X_VERSION_MIN_REQUIRED=101100 -D__MAC_OS_X_VERSION_MAX_ALLOWED=140000" -DCMAKE_EXE_LINKER_FLAGS="-mmacosx-version-min=10.10"
             optional: true
           - name: Linux
             os: ubuntu-latest
