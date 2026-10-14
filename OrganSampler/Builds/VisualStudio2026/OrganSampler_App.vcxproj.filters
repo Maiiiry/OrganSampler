@@ -4996,6 +4996,9 @@
     <ClCompile Include="..\..\JuceLibraryCode\BinaryData.cpp">
       <Filter>JUCE Library Code</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\JuceLibraryCode\BinaryData2.cpp">
+      <Filter>JUCE Library Code</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\JuceLibraryCode\include_juce_audio_basics.cpp">
       <Filter>JUCE Library Code</Filter>
     </ClCompile>
@@ -10599,6 +10602,30 @@
       <Filter>OrganSampler\Source</Filter>
     </None>
     <None Include="..\..\Source\_Prospekt3.ico">
+      <Filter>OrganSampler\Source</Filter>
+    </None>
+    <None Include="..\..\Source\AppIcon.png">
+      <Filter>OrganSampler\Source</Filter>
+    </None>
+    <None Include="..\..\Source\Icons\icon-16.png">
+      <Filter>OrganSampler\Source</Filter>
+    </None>
+    <None Include="..\..\Source\Icons\icon-24.png">
+      <Filter>OrganSampler\Source</Filter>
+    </None>
+    <None Include="..\..\Source\Icons\icon-32.png">
+      <Filter>OrganSampler\Source</Filter>
+    </None>
+    <None Include="..\..\Source\Icons\icon-48.png">
+      <Filter>OrganSampler\Source</Filter>
+    </None>
+    <None Include="..\..\Source\Icons\icon-64.png">
+      <Filter>OrganSampler\Source</Filter>
+    </None>
+    <None Include="..\..\Source\Icons\icon-128.png">
+      <Filter>OrganSampler\Source</Filter>
+    </None>
+    <None Include="..\..\Source\Icons\icon-256.png">
       <Filter>OrganSampler\Source</Filter>
     </None>
     <None Include="..\..\..\JUCE\modules\juce_audio_devices\native\asio\LICENSE.txt">

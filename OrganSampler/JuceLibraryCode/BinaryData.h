@@ -17,8 +17,32 @@ namespace BinaryData
     extern const char*   _Prospekt3_ico;
     const int            _Prospekt3_icoSize = 551466;
 
+    extern const char*   AppIcon_png;
+    const int            AppIcon_pngSize = 1025560;
+
+    extern const char*   icon16_png;
+    const int            icon16_pngSize = 836;
+
+    extern const char*   icon24_png;
+    const int            icon24_pngSize = 1546;
+
+    extern const char*   icon32_png;
+    const int            icon32_pngSize = 1914;
+
+    extern const char*   icon48_png;
+    const int            icon48_pngSize = 3246;
+
+    extern const char*   icon64_png;
+    const int            icon64_pngSize = 4571;
+
+    extern const char*   icon128_png;
+    const int            icon128_pngSize = 11860;
+
+    extern const char*   icon256_png;
+    const int            icon256_pngSize = 64243;
+
     // Number of elements in the namedResourceList and originalFileNames arrays.
-    const int namedResourceListSize = 3;
+    const int namedResourceListSize = 11;
 
     // Points to the start of a list of resource names.
     extern const char* namedResourceList[];
