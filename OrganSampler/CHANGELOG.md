@@ -12,6 +12,16 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.66] - 2026-10-14
+
+### Changed
+- Pictures and the two largest icons, made anew: the foot of every pipe is one
+  smooth cone from the bottom edge of the mouth slit down to the soldered tip,
+  without any edge on it (0.8.65 had narrowed the foot but left the old rim
+  and its shadow on the cone, on the middle pipe only). The flame-shaped lips
+  no longer show the old pointed lip through them; the pipe body behind every
+  lip is straight.
+
 ## [0.8.65] - 2026-10-14
 
 ### Changed
