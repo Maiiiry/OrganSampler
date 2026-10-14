@@ -428,8 +428,9 @@ public:
         const auto audioOutputs = audioClients(true);    // clients with audio INPUT ports: where we can play
         const auto audioInputs = audioClients(false);
         outputs.clear(); inputs.clear();
-        for (const auto& name : inner->getDeviceNames(false)) if (audioOutputs.contains(name)) outputs.add(name);
-        for (const auto& name : inner->getDeviceNames(true)) if (audioInputs.contains(name)) inputs.add(name);
+        const bool all = unusableAudioDevicesShown().load();   // the "list unusable devices" switch: every client
+        for (const auto& name : inner->getDeviceNames(false)) if (all || audioOutputs.contains(name)) outputs.add(name);
+        for (const auto& name : inner->getDeviceNames(true)) if (all || audioInputs.contains(name)) inputs.add(name);
     }
     juce::StringArray getDeviceNames(bool wantInputNames = false) const override { return wantInputNames ? inputs : outputs; }
     int getDefaultDeviceIndex(bool forInput) const override { return (forInput ? inputs : outputs).isEmpty() ? -1 : 0; }

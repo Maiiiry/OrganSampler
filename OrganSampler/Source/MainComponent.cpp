@@ -5282,28 +5282,6 @@ void MainComponent::showKeyboardsDialog(int onlyManual)
                     else (auxiliary ? this->owner.applyAudioToAllAux : this->owner.applyAudioToAll).store(false);
                 };
                 addAndMakeVisible(applyAll);
-#if JUCE_LINUX
-                // No driver panels on Linux: the place goes to the switch that lists
-                // the ALSA devices the probe left out (busy or broken), rescanning at once.
-                panelButton.setVisible(false);
-                unusableToggle.setButtonText("List unusable devices too");
-                unusableToggle.setTooltip("Every ALSA device is tried when the list is made; one that cannot be opened now (held by "
-                    "PipeWire or another program) is left out, with the reason in the activity log. Tick to list them all. A card "
-                    "PipeWire holds for one of this program's own JACK routes is always listed.");
-                unusableToggle.setToggleState(owner.showUnusableAudioDevices, juce::dontSendNotification);
-                unusableToggle.onClick = [this]
-                {
-                    this->owner.showUnusableAudioDevices = unusableToggle.getToggleState();
-                    unusableAudioDevicesShown().store(this->owner.showUnusableAudioDevices);
-                    this->owner.saveSettings();
-                    if (this->selector == nullptr) return;
-                    if (auto* type = this->selector->deviceManager.getCurrentDeviceTypeObject()) type->scanForDevices();
-                    this->selector->deviceManager.sendChangeMessage();   // the device list is rebuilt
-                    CrashHandler::note(juce::String("ALSA list: unusable devices ") + (this->owner.showUnusableAudioDevices ? "listed" : "left out")
-                        + (hiddenAlsaDevicesNote().isNotEmpty() ? " - " + hiddenAlsaDevicesNote() : juce::String()));
-                };
-                addAndMakeVisible(unusableToggle);
-#endif
                 panelButton.setButtonText("Driver Control Panel");
                 panelButton.setTooltip("Opens the driver's own settings (e.g. RME buffer size). Afterwards the device is "
                     "reopened as a fresh instance with the driver's new preferred buffer size.");
@@ -5315,6 +5293,29 @@ void MainComponent::showKeyboardsDialog(int onlyManual)
                     juce::MessageManager::callAsync([target, manager] { target->openAsioControlPanel(*manager); });
                 };
                 addAndMakeVisible(panelButton);
+#if JUCE_LINUX
+                // No driver panels on Linux: the button latches instead - pressed, the
+                // devices the probe left out (busy or broken) are listed too, for every
+                // route (one setting). Its caption says which state it is in.
+                panelButton.setClickingTogglesState(true);
+                panelButton.setTooltip("Every ALSA device is tried when the list is made; one that cannot be opened now (held by "
+                    "PipeWire or another program) is left out, with the reason in the activity log, and JACK lists only clients "
+                    "with audio ports. Pressed: everything is listed. A card PipeWire holds for one of this program's own JACK "
+                    "routes is always listed.");
+                panelButton.onClick = [this]
+                {
+                    this->owner.showUnusableAudioDevices = panelButton.getToggleState();
+                    unusableAudioDevicesShown().store(this->owner.showUnusableAudioDevices);
+                    this->owner.saveSettings();
+                    syncUnusableButton();
+                    if (this->selector == nullptr) return;
+                    if (auto* type = this->selector->deviceManager.getCurrentDeviceTypeObject()) type->scanForDevices();
+                    this->selector->deviceManager.sendChangeMessage();   // the device list is rebuilt
+                    CrashHandler::note(juce::String("Audio lists: unusable devices ") + (this->owner.showUnusableAudioDevices ? "listed" : "left out")
+                        + (hiddenAlsaDevicesNote().isNotEmpty() ? " - " + hiddenAlsaDevicesNote() : juce::String()));
+                };
+                syncUnusableButton();
+#endif
                 reopenButton.setButtonText("Reopen device");
                 reopenButton.setTooltip("Closes and reopens this device as a fresh driver instance at the driver's "
                     "preferred buffer size and sample rate.");
@@ -5513,9 +5514,7 @@ void MainComponent::showKeyboardsDialog(int onlyManual)
                 selectorViewport.setBounds(selectorArea.reduced(4));
                 lastSelectorHeight = selectorHeight();
                 auto buttons = juce::Rectangle<int>(area.getX() + labelColumnWidth, area.getY() + 2, controlsWidth, 22);
-                const auto panelArea = buttons.removeFromLeft(buttons.getWidth() / 2).reduced(2, 0);
-                panelButton.setBounds(panelArea);
-                unusableToggle.setBounds(panelArea);
+                panelButton.setBounds(buttons.removeFromLeft(buttons.getWidth() / 2).reduced(2, 0));
                 reopenButton.setBounds(buttons.reduced(2, 0));
                 applyAll.setBounds(area.getX() + labelColumnWidth + 2, area.getY() + 28, controlsWidth - 4, 22);
                 for (int index = 0; index < channelButtons.size(); ++index)
@@ -5617,7 +5616,6 @@ void MainComponent::showKeyboardsDialog(int onlyManual)
             juce::OwnedArray<juce::ToggleButton> channelButtons;
             juce::ToggleButton applyAll;
             juce::TextButton panelButton, reopenButton;
-            juce::ToggleButton unusableToggle;              // Linux: list also the ALSA devices that cannot be opened
             double knownRate = 0.0;                         // the rate this route ran at (kept across a device change)
             juce::TextButton irLoadButton, irClearButton;
             juce::Label irLabel, wetLabel, irSectionLabel;
@@ -5710,7 +5708,9 @@ void MainComponent::showKeyboardsDialog(int onlyManual)
                     : owner.applyAudioToAll).load(), juce::dontSendNotification);
                 {
                     auto* device = selector != nullptr ? selector->deviceManager.getCurrentAudioDevice() : nullptr;
+#if !JUCE_LINUX
                     panelButton.setEnabled(device != nullptr && device->hasControlPanel());
+#endif
                     reopenButton.setEnabled(device != nullptr);
                 }
                 refreshChannels();
@@ -5757,9 +5757,23 @@ void MainComponent::showKeyboardsDialog(int onlyManual)
                 });
             }
 
+            // Linux: the latching button shows the one global state, whichever tab
+            // or device type is in front.
+            void syncUnusableButton()
+            {
+                const bool listed = owner.showUnusableAudioDevices;
+                if (panelButton.getToggleState() != listed) panelButton.setToggleState(listed, juce::dontSendNotification);
+                const juce::String text = listed ? "Unusable devices listed - hide them" : "List unusable devices too";
+                if (panelButton.getButtonText() != text) panelButton.setButtonText(text);
+                if (!panelButton.isEnabled()) panelButton.setEnabled(true);
+            }
+
             void refreshChannels()
             {
                 if (selector == nullptr) return;
+#if JUCE_LINUX
+                syncUnusableButton();
+#endif
                 hidePhysicalChannelList(*selector);
                 owner.installAsioDeviceInterceptor(*selector, manual, perspective);
                 auto* device = selector->deviceManager.getCurrentAudioDevice();

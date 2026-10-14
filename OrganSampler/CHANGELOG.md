@@ -12,6 +12,24 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.65] - 2026-10-14
+
+### Changed
+- Pictures: the middle pipe's foot now starts at the bottom edge of the mouth
+  cut-out (the top edge of the lower lip), as a pipe is built; the cylinder
+  no longer runs on below the mouth. Done in every website picture and in the
+  two largest icons (1024 and 256), which are now the website picture on its
+  dark background with rounded corners; the small icons are untouched.
+- Website: six pictures at random - three upper lips as before and three
+  flame-shaped ones (leaning left, tall and slender, leaning right), the pipe
+  body straight in all of them.
+- Linux audio tab: the button in the place of "Driver Control Panel" is one
+  latching button, "List unusable devices too" / "Unusable devices listed -
+  hide them", pressed while the devices that cannot be opened are listed. It
+  shows the one shared state on every tab and device type, and rescans at
+  once; the checkbox drawn over it in 0.8.64 is gone. Pressed, JACK lists
+  every client too.
+
 ## [0.8.64] - 2026-10-14
 
 ### Changed
