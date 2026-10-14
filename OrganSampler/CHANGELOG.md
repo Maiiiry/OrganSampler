@@ -12,6 +12,13 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.85] - 2026-10-14
+
+### Changed
+- Manual, "Audio on Linux": step 3, the realtime permission - why the audio
+  thread needs it, how to check (`ulimit -r`, `groups`), and the two
+  commands that grant it (the audio group and its rtprio/memlock limits).
+
 ## [0.8.84] - 2026-10-14
 
 ### Changed

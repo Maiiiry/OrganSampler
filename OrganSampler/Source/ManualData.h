@@ -1216,9 +1216,34 @@ static const char* const kManualText_part5 =
 static const char* const kManualText_part6 =
     "To check that PipeWire is the server, type `pactl info | grep \"Server Name\"`:\n"
     "the answer should read \"PulseAudio (on PipeWire ...)\". Log out and in again\n"
-    "after installing. (Optional, for the lowest latency: your user in the\n"
-    "`audio` group with realtime limits - `sudo usermod -aG audio $USER`; Ubuntu\n"
-    "Studio and the other audio distributions have this done.)\n"
+    "after installing.\n"
+    "\n"
+    "**Step 3 - realtime permission for your user.** The thread that renders the\n"
+    "audio must run with realtime scheduling, or the desktop, the browser and\n"
+    "every other program can push it aside and the sound breaks up long before\n"
+    "the processor is busy (measured: far less polyphony through ALSA than\n"
+    "through JACK on the same card, for this reason alone). Linux grants\n"
+    "realtime scheduling only to users with a realtime limit, which the audio\n"
+    "distributions (Ubuntu Studio, AV Linux, Fedora Jam) set up for the group\n"
+    "`audio`; a plain desktop installation does not. Check in a terminal:\n"
+    "\n"
+    "- `ulimit -r` - the answer must be 95 or more (0 means no realtime).\n"
+    "- `groups` - the list must contain `audio`.\n"
+    "\n"
+    "If not, type these lines (each followed by Enter and, the first time, your\n"
+    "password), then log out and in again:\n"
+    "\n"
+    "```\n"
+    "sudo usermod -aG audio $USER\n"
+    "sudo sh -c 'printf \"@audio - rtprio 95\\n@audio - memlock unlimited\\n\" > /etc/security/limits.d/audio.conf'\n"
+    "```\n"
+    "\n"
+    "OrganSampler raises its audio thread to realtime by itself at the first\n"
+    "callback of a device and writes the outcome into the activity log (\"Audio\n"
+    "thread of ... raised to realtime\", \"realtime already\" under JACK, or\n"
+    "\"realtime refused\" with the reason). Through JACK the thread is PipeWire's\n"
+    "own, which the system has already made realtime; through ALSA it is the\n"
+    "program's, and needs the permission above.\n"
     "\n"
     "**The two kinds of driver in OrganSampler:**\n"
     "\n"
@@ -1389,6 +1414,8 @@ static const char* const kManualText_part6 =
     "  **bass coupler**: only the lowest. *Melody/bass couplers: new extreme key\n"
     "  only* and *Melody couplers: legato grace time* (Configuration Editor >\n"
     "  Console) refine their behaviour.\n"
+    ;
+static const char* const kManualText_part7 =
     "\n"
     "## 6.2 Combinations and the crescendo\n"
     "\n"
@@ -1414,8 +1441,6 @@ static const char* const kManualText_part6 =
     "  **double-click** the temperament in the dialog (or pick it in\n"
     "  *Configuration Editor > Console > Samples' base temperament*). The voicing\n"
     "  row of every stop reports what its own ranks were found to be in\n"
-    ;
-static const char* const kManualText_part7 =
     "  (\"temperament = ...\"), which helps the choice. \"Equal\" is reported whenever\n"
     "  the recording matches equal temperament.\n"
     "- **The target temperament** is the temperament the organ *plays* in. A\n"
@@ -1591,6 +1616,8 @@ static const char* const kManualText_part7 =
     "The copies of the filled pipes take a while to build for a large organ: a\n"
     "minute or more for a big set with many extensions, every time the organ loads.\n"
     "The cache keeps them on disk so that this happens once.\n"
+    ;
+static const char* const kManualText_part8 =
     "\n"
     "**Switching it on.** *Configuration Editor > Advanced global audio > Filled\n"
     "pipes: keep the generated copies on disk (cache)*, off by default. From then\n"
@@ -1616,8 +1643,6 @@ static const char* const kManualText_part7 =
     "  to get the disk space back, or after replacing the samples wholesale; the\n"
     "  copies are built again (and cached again) the next time they are needed.\n"
     "  Nothing else is lost.\n"
-    ;
-static const char* const kManualText_part8 =
     "- *Filled pipes cache: files of stops not loaded now* - **Remove them**\n"
     "  deletes only the files of ranks that are not loaded at the moment: the\n"
     "  stops of other configurations, of folders you have unloaded or deleted.\n"
@@ -1793,6 +1818,8 @@ static const char* const kManualText_part8 =
     "   releases, other programs running), raise it if you dare. The\n"
     "   registration and the two attack settings are restored; the sound comes\n"
     "   back over two seconds after the report's OK.\n"
+    ;
+static const char* const kManualText_part9 =
     "5. The report names the result and gives advice: every route on a Windows\n"
     "   Audio device (rendered by its own thread alone) and every auxiliary route\n"
     "   with a device (every pipe once more), with the share of its period it\n"
@@ -1818,8 +1845,6 @@ static const char* const kManualText_part8 =
     "### Global pitch\n"
     "\n"
     "Shifts the whole organ by -200 to +200 cents (default 0) on top of the\n"
-    ;
-static const char* const kManualText_part9 =
     "temperament, for playing with instruments tuned elsewhere than a1 = 440 Hz.\n"
     "\n"
     "### Sustain fade-out on key release\n"
@@ -1995,6 +2020,8 @@ static const char* const kManualText_part9 =
     "half way on a logarithmic scale (two octaves down: twice as slow, which the ear\n"
     "accepts where four times is too much). Applies to shifts downwards; upwards the\n"
     "attack stays as resampled. Higher values fray the attack more (see \"The\n"
+    ;
+static const char* const kManualText_part10 =
     "transposition methods\"); lower\n"
     "the slider for a stop whose speaking turns rough. Changing it rebuilds the\n"
     "copies.\n"
@@ -2020,8 +2047,6 @@ static const char* const kManualText_part9 =
     "start too late or too softly, raise it if they begin with a bump.\n"
     "\n"
     "### Filled pipes: release level matched to the source\n"
-    ;
-static const char* const kManualText_part10 =
     "\n"
     "Every pitch-shift method. On: a filled pipe's release copy is played at the\n"
     "level relation the source pipe's release has to its sustain (measured when the\n"
@@ -2197,6 +2222,8 @@ static const char* const kManualText_part10 =
     "### Top bar: Save Configuration\n"
     "\n"
     "Shows or hides the Save Configuration button.\n"
+    ;
+static const char* const kManualText_part11 =
     "\n"
     "### Top bar: Shut down PC\n"
     "\n"
@@ -2222,8 +2249,6 @@ static const char* const kManualText_part10 =
     "make the solo stop jump. Off: it follows at once.\n"
     "\n"
     "### Load the last configuration at startup\n"
-    ;
-static const char* const kManualText_part11 =
     "\n"
     "Off by default. On: the configuration file used last time is opened when the\n"
     "program starts. Otherwise the program starts with an empty instrument and\n"
@@ -2399,6 +2424,8 @@ static const char* const kManualText_part11 =
     "### Tremulant depth\n"
     "\n"
     "The pitch modulation of the tremulant (0 to 50 cents, default 6); the level\n"
+    ;
+static const char* const kManualText_part12 =
     "modulation follows it by *Tremulant: volume change per cent of pitch*. The\n"
     "strength wanders between 60 and 100 % of this from cycle to cycle.\n"
     "\n"
@@ -2424,8 +2451,6 @@ static const char* const kManualText_part11 =
     "How many oscillations die away after a stroke (0 to 20, default 7).\n"
     "\n"
     "### Wind: oscillation strength\n"
-    ;
-static const char* const kManualText_part12 =
     "\n"
     "The impulse a key stroke gives the wind (0 to 100 %, default 40); 100 % is\n"
     "twice the impulse of 50 %, and the sag ceiling grows with it.\n"

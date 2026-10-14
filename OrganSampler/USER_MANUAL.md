@@ -1200,9 +1200,34 @@ Enter and your password:
 
 To check that PipeWire is the server, type `pactl info | grep "Server Name"`:
 the answer should read "PulseAudio (on PipeWire ...)". Log out and in again
-after installing. (Optional, for the lowest latency: your user in the
-`audio` group with realtime limits - `sudo usermod -aG audio $USER`; Ubuntu
-Studio and the other audio distributions have this done.)
+after installing.
+
+**Step 3 - realtime permission for your user.** The thread that renders the
+audio must run with realtime scheduling, or the desktop, the browser and
+every other program can push it aside and the sound breaks up long before
+the processor is busy (measured: far less polyphony through ALSA than
+through JACK on the same card, for this reason alone). Linux grants
+realtime scheduling only to users with a realtime limit, which the audio
+distributions (Ubuntu Studio, AV Linux, Fedora Jam) set up for the group
+`audio`; a plain desktop installation does not. Check in a terminal:
+
+- `ulimit -r` - the answer must be 95 or more (0 means no realtime).
+- `groups` - the list must contain `audio`.
+
+If not, type these lines (each followed by Enter and, the first time, your
+password), then log out and in again:
+
+```
+sudo usermod -aG audio $USER
+sudo sh -c 'printf "@audio - rtprio 95\n@audio - memlock unlimited\n" > /etc/security/limits.d/audio.conf'
+```
+
+OrganSampler raises its audio thread to realtime by itself at the first
+callback of a device and writes the outcome into the activity log ("Audio
+thread of ... raised to realtime", "realtime already" under JACK, or
+"realtime refused" with the reason). Through JACK the thread is PipeWire's
+own, which the system has already made realtime; through ALSA it is the
+program's, and needs the permission above.
 
 **The two kinds of driver in OrganSampler:**
 
