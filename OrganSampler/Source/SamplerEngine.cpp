@@ -18,6 +18,37 @@
 #include <thread>
 #include <condition_variable>
 #include <type_traits>
+#include <filesystem>
+#include <system_error>
+
+namespace
+{
+    // Directory listings without a stat per file. JUCE's iterator asks for the
+    // size and times of every entry, which an NTFS mount under Linux (FUSE)
+    // answers at a millisecond each: 30 000 samples made the Stop List wait 15 s.
+    // The entry type comes with the listing (d_type, the find data on Windows).
+    std::filesystem::path fsPath(const juce::File& file) { return std::filesystem::path(std::wstring(file.getFullPathName().toWideCharPointer())); }
+    juce::File fileOf(const std::filesystem::path& path) { return juce::File(juce::String(path.wstring().c_str())); }
+    void collectSubdirectories(const std::filesystem::path& dir, std::vector<juce::File>& out)
+    {
+        std::error_code error;
+        for (std::filesystem::directory_iterator it(dir, std::filesystem::directory_options::skip_permission_denied, error), end;
+             !error && it != end; it.increment(error))
+        {
+            std::error_code typeError;
+            if (!it->is_directory(typeError) || typeError) continue;
+            out.push_back(fileOf(it->path()));
+            collectSubdirectories(it->path(), out);
+        }
+    }
+    // Every folder below 'top', depth first (the order of JUCE's recursive iterator).
+    std::vector<juce::File> subdirectoriesRecursive(const juce::File& top)
+    {
+        std::vector<juce::File> result;
+        collectSubdirectories(fsPath(top), result);
+        return result;
+    }
+}
 
 #if JUCE_WINDOWS
  #ifndef NOMINMAX
@@ -8199,17 +8230,19 @@ bool SamplerEngine::folderHasNumberedSamples(const juce::File& folder)
 {
     // A stop folder: WAV files whose names start with the three-digit MIDI note.
     bool foundWav = false;
-    for (const auto& entry : juce::RangedDirectoryIterator(folder, false, "*", juce::File::findFiles))
+    std::error_code error;
+    for (std::filesystem::directory_iterator it(fsPath(folder), std::filesystem::directory_options::skip_permission_denied, error), end;
+         !error && it != end; it.increment(error))
     {
-        const auto file = entry.getFile();
-        if (file.hasFileExtension(".wav"))
-        {
-            foundWav = true;
-            const auto fileName = file.getFileNameWithoutExtension();
-            if (fileName.length() < 3) return false;
-            for (int i = 0; i < 3; ++i)
-                if (!juce::CharacterFunctions::isDigit(fileName[i])) return false;
-        }
+        std::error_code typeError;
+        if (it->is_directory(typeError)) continue;
+        const juce::String name(it->path().filename().wstring().c_str());
+        if (!name.endsWithIgnoreCase(".wav")) continue;
+        foundWav = true;
+        const auto fileName = name.dropLastCharacters(4);
+        if (fileName.length() < 3) return false;
+        for (int i = 0; i < 3; ++i)
+            if (!juce::CharacterFunctions::isDigit(fileName[i])) return false;
     }
     return foundWav;
 }
@@ -8217,9 +8250,8 @@ bool SamplerEngine::folderHasNumberedSamples(const juce::File& folder)
 std::vector<juce::File> SamplerEngine::listSampleFolders(const juce::File& tree) const
 {
     std::vector<juce::File> result;
-    for (const auto& entry : juce::RangedDirectoryIterator(tree, true, "*", juce::File::findDirectories))
+    for (const juce::File& folder : subdirectoriesRecursive(tree))
     {
-        const juce::File folder = entry.getFile();
         if (folder.getFileName().startsWithIgnoreCase("rel")) continue;
         if (isIgnoredFolderName(folder.getFileName())) continue;
         if (!folderHasNumberedSamples(folder)) continue;
@@ -8258,9 +8290,8 @@ std::vector<SamplerEngine::FolderAssignment> SamplerEngine::scanTreeAssignments(
         // "01-dirMk2H-OW_" with the rest of the name as the stop.
         struct PrefixCandidate { std::set<juce::String> stops; juce::String spelling; };
         std::map<juce::String, PrefixCandidate> byPrefix;   // lower-case prefix (separators included)
-        for (const auto& entry : juce::RangedDirectoryIterator(topFolder, true, "*", juce::File::findDirectories))
+        for (const juce::File& stopFolder : subdirectoriesRecursive(topFolder))
         {
-            const juce::File stopFolder = entry.getFile();
             const auto name = stopFolder.getFileName();
             if (name.startsWithIgnoreCase("rel") || isIgnoredFolderName(name) || !folderHasValidWavFiles(stopFolder)) continue;
             if (patternMatches(name)) continue;   // already a known perspective
@@ -8351,9 +8382,8 @@ std::vector<SamplerEngine::FolderAssignment> SamplerEngine::scanTreeAssignments(
     };
 
     std::vector<FolderAssignment> assignments;
-    for (const auto& entry : juce::RangedDirectoryIterator(topFolder, true, "*", juce::File::findDirectories))
+    for (const juce::File& stopFolder : subdirectoriesRecursive(topFolder))
     {
-        const juce::File stopFolder = entry.getFile();
         if (stopFolder.getFileName().startsWithIgnoreCase("rel")) continue;
         if (isIgnoredFolderName(stopFolder.getFileName())) continue;
         if (!folderHasValidWavFiles(stopFolder)) continue;

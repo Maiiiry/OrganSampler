@@ -12,6 +12,15 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.60] - 2026-10-14
+
+### Fixed
+- The Stop List took many seconds to open with the samples on an NTFS disk
+  under Linux: the folder scan asked the size and times of every sample file
+  (30 000 files, a millisecond each on the FUSE mount), three times over. The
+  scan now lists directories and names only; the same scan runs when an organ
+  loads.
+
 ## [0.8.59] - 2026-10-14
 
 ### Added
