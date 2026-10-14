@@ -9,7 +9,7 @@
 # what the GitHub Actions workflow and the macOS/Linux builds use. Both compile
 # the same sources with the same defines.
 cmake_minimum_required(VERSION 3.22)
-project(OrganSampler VERSION 0.8.87 LANGUAGES C CXX)
+project(OrganSampler VERSION 0.8.88 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -40,6 +40,11 @@ target_sources(OrganSampler PRIVATE
     "${ORGAN_SRC}/SamplerEngine.cpp"
     "${ORGAN_SRC}/voicer.cpp"
     "${ORGAN_SRC}/AlignedNew.cpp")
+# The Mac compatibility file defines symbols of the C++ library under their own
+# names; as a native (non-LTO) object the linker treats them like the library's.
+if(APPLE)
+    set_source_files_properties("${ORGAN_SRC}/AlignedNew.cpp" PROPERTIES COMPILE_OPTIONS "-fno-lto")
+endif()
 
 # Images used by the UI (BinaryData::ProspektSP_png etc.), like the Projucer resources.
 juce_add_binary_data(OrganSamplerData SOURCES
