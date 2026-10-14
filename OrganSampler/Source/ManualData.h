@@ -1242,6 +1242,12 @@ static const char* const kManualText_part6 =
     "  48000`.) If the JACK type lists no device at all, the JACK library was not\n"
     "  found: install `pipewire-jack` as above, or start the program with\n"
     "  `pw-jack ./OrganSampler`.\n"
+    "- Moving a route from JACK to ALSA on the same card: PipeWire keeps the\n"
+    "  card for a few seconds after the last JACK client left it, so the ALSA\n"
+    "  entry stays listed for that while and the program waits up to seven\n"
+    "  seconds for the card to be released when you choose it. A card the\n"
+    "  desktop uses as its system output is never released: pick another card\n"
+    "  as the system output first.\n"
     "- **ALSA** - the plain Linux driver, for a quick start or a card that\n"
     "  PipeWire does not use. \"PipeWire Sound Server\" and \"Default ALSA Output\"\n"
     "  are the desktop's stereo output: two channels, the system mix. A card's\n"
@@ -1266,10 +1272,10 @@ static const char* const kManualText_part6 =
     "into an aggregate device itself (*Audio MIDI Setup* in the Utilities\n"
     "folder); OrganSampler lists the CoreAudio devices and should play through\n"
     "them like through Windows Audio. The project has no Mac to test this on;\n"
-    "reports are welcome. Every release carries, beside the current macOS build,\n"
-    "an untested build for old Intel Macs from macOS 10.11 on\n"
-    "(`OrganSampler-macos-10.11-intel.zip`; 10.11 is the oldest system the\n"
-    "framework allows - a Mac on 10.10 Yosemite needs the free upgrade to the\n"
+    "reports are welcome. Two builds: `OrganSampler-macos.zip` for Apple silicon\n"
+    "Macs on **macOS 11 Big Sur or newer**, and `OrganSampler-macos-10.11-intel.zip`\n"
+    "for Intel Macs on **macOS 10.11 El Capitan or newer** (10.11 is the oldest\n"
+    "system the framework allows; a Mac on 10.10 needs the free upgrade to the\n"
     "newest system Apple offers for it, 10.13 High Sierra for the 2010 models).\n"
     "\n"
     "## 5.7 Audio devices not ready when OrganSampler starts\n"
@@ -1408,14 +1414,14 @@ static const char* const kManualText_part6 =
     "  **double-click** the temperament in the dialog (or pick it in\n"
     "  *Configuration Editor > Console > Samples' base temperament*). The voicing\n"
     "  row of every stop reports what its own ranks were found to be in\n"
+    ;
+static const char* const kManualText_part7 =
     "  (\"temperament = ...\"), which helps the choice. \"Equal\" is reported whenever\n"
     "  the recording matches equal temperament.\n"
     "- **The target temperament** is the temperament the organ *plays* in. A\n"
     "  **single click** on a temperament selects it (or *Target temperament* in\n"
     "  the Configuration Editor). Every pipe is then retuned by the difference\n"
     "  between the target and the base: the recorded pitches are taken out and\n"
-    ;
-static const char* const kManualText_part7 =
     "  the chosen ones put in. Choosing the recorded temperament itself as the\n"
     "  target plays the samples exactly as recorded. Every temperament can be\n"
     "  switched from a MIDI control (right-click it).\n"
@@ -1610,14 +1616,14 @@ static const char* const kManualText_part7 =
     "  to get the disk space back, or after replacing the samples wholesale; the\n"
     "  copies are built again (and cached again) the next time they are needed.\n"
     "  Nothing else is lost.\n"
+    ;
+static const char* const kManualText_part8 =
     "- *Filled pipes cache: files of stops not loaded now* - **Remove them**\n"
     "  deletes only the files of ranks that are not loaded at the moment: the\n"
     "  stops of other configurations, of folders you have unloaded or deleted.\n"
     "  The files of the loaded organ stay, so its next load is still fast. This is\n"
     "  the button for routine housekeeping.\n"
     "- *Filled pipes cache folder* - **Choose...** picks another folder for the\n"
-    ;
-static const char* const kManualText_part8 =
     "  cache (the default is `FilledPipesCache` in the application-data folder,\n"
     "  usually on the system drive). Choose a big drive, for example beside the\n"
     "  samples; the files built so far are moved there, so nothing has to be\n"
@@ -1812,14 +1818,14 @@ static const char* const kManualText_part8 =
     "### Global pitch\n"
     "\n"
     "Shifts the whole organ by -200 to +200 cents (default 0) on top of the\n"
+    ;
+static const char* const kManualText_part9 =
     "temperament, for playing with instruments tuned elsewhere than a1 = 440 Hz.\n"
     "\n"
     "### Sustain fade-out on key release\n"
     "\n"
     "How long the sounding pipe fades out when its key is released and the release\n"
     "sample takes over (default 70 ms). Too short and the join clicks or the pipe\n"
-    ;
-static const char* const kManualText_part9 =
     "stops unnaturally; too long and the release sounds smeared. The value is for\n"
     "the sounding c1 (MIDI 60 of an 8' rank, the rank's footage counted in): pipes\n"
     "below it get 1.5 times as much per octave (a 32' C 3.4 times), because a big\n"
@@ -2014,14 +2020,14 @@ static const char* const kManualText_part9 =
     "start too late or too softly, raise it if they begin with a bump.\n"
     "\n"
     "### Filled pipes: release level matched to the source\n"
+    ;
+static const char* const kManualText_part10 =
     "\n"
     "Every pitch-shift method. On: a filled pipe's release copy is played at the\n"
     "level relation the source pipe's release has to its sustain (measured when the\n"
     "copy was built), so the step at the key release is the real pipe's. Off\n"
     "(default): the copy plays at its own level. Applied at playback, nothing is\n"
     "rebuilt; switch it on when the releases of an extension are clearly louder or\n"
-    ;
-static const char* const kManualText_part10 =
     "softer than those of the real pipes beside them.\n"
     "\n"
     "### Filled pipes: loop crossfade\n"
@@ -2216,14 +2222,14 @@ static const char* const kManualText_part10 =
     "make the solo stop jump. Off: it follows at once.\n"
     "\n"
     "### Load the last configuration at startup\n"
+    ;
+static const char* const kManualText_part11 =
     "\n"
     "Off by default. On: the configuration file used last time is opened when the\n"
     "program starts. Otherwise the program starts with an empty instrument and\n"
     "nothing is loaded until you ask.\n"
     "\n"
     "### Samples' base temperament\n"
-    ;
-static const char* const kManualText_part11 =
     "\n"
     "The temperament the loaded samples were *recorded* in. It is found from the\n"
     "samples by itself when two thirds or more of the ranks agree (the activity\n"
@@ -2418,14 +2424,14 @@ static const char* const kManualText_part11 =
     "How many oscillations die away after a stroke (0 to 20, default 7).\n"
     "\n"
     "### Wind: oscillation strength\n"
+    ;
+static const char* const kManualText_part12 =
     "\n"
     "The impulse a key stroke gives the wind (0 to 100 %, default 40); 100 % is\n"
     "twice the impulse of 50 %, and the sag ceiling grows with it.\n"
     "\n"
     "### Wind: sag settling lag\n"
     "\n"
-    ;
-static const char* const kManualText_part12 =
     "How long the wind pressure takes to settle after stops or keys change (100 to\n"
     "400 ms, default 255). The same lag governs the volume glide when a pipe held\n"
     "through several routes passes from one route to another.\n"

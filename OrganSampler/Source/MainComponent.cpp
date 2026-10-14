@@ -16791,6 +16791,35 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
         text << ": every target up to " << state->highestCleanPeak << " voices stayed clean.";
     text << " The slider is yours: lower it for more headroom (couplers, long releases, other programs running), raise it if you dare."
             "\n\nSave the configuration: the value belongs to this organ (its routes, IRs, drivers and buffers), not to the computer alone.";
+    // Every route with its device, buffer size and sample rate: where the time
+    // went, and the odd one out (a route at another buffer or rate) in plain view.
+    {
+        juce::String routes;
+        std::set<int> buffers; std::set<int> rates;
+        for (int manual = 0; manual <= manualCount; ++manual)
+        {
+            juce::StringArray names;
+            for (const auto& name : engine.getPerspectivesForManual(manual)) names.addIfNotAlreadyThere(name);
+            names.addIfNotAlreadyThere(SamplerEngine::auxiliaryPerspectiveName());
+            for (const auto& name : names)
+            {
+                auto* manager = managerForRoute(manual, name);
+                auto* device = manager != nullptr ? manager->getCurrentAudioDevice() : nullptr;
+                if (device == nullptr) continue;
+                const int block = device->getCurrentBufferSizeSamples(); const int rate = juce::roundToInt(device->getCurrentSampleRate());
+                buffers.insert(block); rates.insert(rate);
+                routes << "\n  " << names[juce::jlimit(0, 7, manual)] << " / " << name << ": " << manager->getCurrentAudioDeviceType()
+                       << " \"" << device->getName() << "\", " << block << " samples, " << rate << " Hz";
+            }
+        }
+        if (routes.isNotEmpty())
+        {
+            text << "\n\nThe audio routes as they ran:" << routes;
+            if (buffers.size() > 1 || rates.size() > 1)
+                text << "\n  The routes differ in " << (buffers.size() > 1 ? "buffer size" : "") << (buffers.size() > 1 && rates.size() > 1 ? " and " : "")
+                     << (rates.size() > 1 ? "sample rate" : "") << ": give every device the same buffer and 48 kHz (see the manual, \"Audio drivers\").";
+        }
+    }
     // Advice: where the time goes. Routes on Windows Audio (one thread each),
     // auxiliary routes (every pipe once more), and the ASIO buffer size.
     juce::String advice;

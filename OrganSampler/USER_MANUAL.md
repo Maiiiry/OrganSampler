@@ -1226,6 +1226,12 @@ Studio and the other audio distributions have this done.)
   48000`.) If the JACK type lists no device at all, the JACK library was not
   found: install `pipewire-jack` as above, or start the program with
   `pw-jack ./OrganSampler`.
+- Moving a route from JACK to ALSA on the same card: PipeWire keeps the
+  card for a few seconds after the last JACK client left it, so the ALSA
+  entry stays listed for that while and the program waits up to seven
+  seconds for the card to be released when you choose it. A card the
+  desktop uses as its system output is never released: pick another card
+  as the system output first.
 - **ALSA** - the plain Linux driver, for a quick start or a card that
   PipeWire does not use. "PipeWire Sound Server" and "Default ALSA Output"
   are the desktop's stereo output: two channels, the system mix. A card's
@@ -1250,10 +1256,10 @@ To be continued. macOS has one driver, CoreAudio, and joins several cards
 into an aggregate device itself (*Audio MIDI Setup* in the Utilities
 folder); OrganSampler lists the CoreAudio devices and should play through
 them like through Windows Audio. The project has no Mac to test this on;
-reports are welcome. Every release carries, beside the current macOS build,
-an untested build for old Intel Macs from macOS 10.11 on
-(`OrganSampler-macos-10.11-intel.zip`; 10.11 is the oldest system the
-framework allows - a Mac on 10.10 Yosemite needs the free upgrade to the
+reports are welcome. Two builds: `OrganSampler-macos.zip` for Apple silicon
+Macs on **macOS 11 Big Sur or newer**, and `OrganSampler-macos-10.11-intel.zip`
+for Intel Macs on **macOS 10.11 El Capitan or newer** (10.11 is the oldest
+system the framework allows; a Mac on 10.10 needs the free upgrade to the
 newest system Apple offers for it, 10.13 High Sierra for the 2010 models).
 
 ## 5.7 Audio devices not ready when OrganSampler starts

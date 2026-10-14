@@ -82,11 +82,38 @@ inline std::multiset<juce::String>& heldAlsaDeviceNames() { static std::multiset
 // The JACK devices this program holds open (PipeWire then holds those cards:
 // their ALSA entries probe "busy" because of us, and stay listed).
 inline std::multiset<juce::String>& heldJackDeviceNames() { static std::multiset<juce::String> names; return names; }
+// ... and the ones closed lately (PipeWire keeps the card for a few seconds after
+// the last client left): their ALSA entries stay listed for that long, so that a
+// route can move from JACK to ALSA on the same card.
+inline std::map<juce::String, double>& recentlyHeldJackNames() { static std::map<juce::String, double> names; return names; }
 class TrackedAlsaDevice final : public ForwardingAudioIODevice
 {
 public:
     explicit TrackedAlsaDevice(std::unique_ptr<juce::AudioIODevice> device) : ForwardingAudioIODevice(std::move(device), "ALSA")
     { heldAlsaDeviceNames().insert(getName()); }
+    // A card PipeWire still holds (a route just left it through JACK, or the
+    // desktop used it a moment ago) is released a few seconds later: a failed
+    // open of a card device is tried again for up to seven seconds.
+    juce::String open(const juce::BigInteger& inputChannels, const juce::BigInteger& outputChannels, double sampleRate, int bufferSizeSamples) override
+    {
+        juce::String error = inner->open(inputChannels, outputChannels, sampleRate, bufferSizeSamples);
+        const bool card = !(getName().containsIgnoreCase("PipeWire") || getName().containsIgnoreCase("Pulseaudio") || getName().startsWithIgnoreCase("Default ALSA"));
+        if (error.isEmpty() || !card) return error;
+        const double start = juce::Time::getMillisecondCounterHiRes();
+        CrashHandler::note("ALSA: " + getName() + " could not be opened (" + error + "): waiting for the card to be released");
+        while (juce::Time::getMillisecondCounterHiRes() - start < 7000.0)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            error = inner->open(inputChannels, outputChannels, sampleRate, bufferSizeSamples);
+            if (error.isEmpty())
+            {
+                CrashHandler::note("ALSA: " + getName() + " opened after " + juce::String(juce::roundToInt(juce::Time::getMillisecondCounterHiRes() - start)) + " ms");
+                return error;
+            }
+        }
+        CrashHandler::note("ALSA: " + getName() + " still not available after 7 s: " + error);
+        return error;
+    }
     ~TrackedAlsaDevice() override
     {
         auto& names = heldAlsaDeviceNames();
@@ -181,6 +208,8 @@ public:
                         bool ours = false;
                         for (const auto& jackName : heldJackDeviceNames())
                             if (jackName.isNotEmpty() && name.containsIgnoreCase(jackName)) ours = true;
+                        for (const auto& [jackName, when] : recentlyHeldJackNames())
+                            if (jackName.isNotEmpty() && name.containsIgnoreCase(jackName) && juce::Time::getMillisecondCounterHiRes() - when < 20000.0) ours = true;
                         if (!ours)
                         {
                             hidden.add(name + " (" + why + ")");
@@ -331,6 +360,7 @@ public:
     {
         auto& names = heldJackDeviceNames();
         if (auto it = names.find(getName()); it != names.end()) names.erase(it);
+        recentlyHeldJackNames()[getName()] = juce::Time::getMillisecondCounterHiRes();
     }
 
     juce::Array<int> getAvailableBufferSizes() override

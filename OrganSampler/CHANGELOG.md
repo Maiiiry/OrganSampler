@@ -12,6 +12,22 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.83] - 2026-10-14
+
+### Added
+- The polyphony report lists every audio route with its driver, device,
+  buffer size and sample rate, and says when the routes differ.
+
+### Changed
+- Linux: a route can move from JACK to ALSA on the same card - PipeWire
+  holds the card for a few seconds after the last JACK client left; the
+  ALSA entry stays listed meanwhile and the program waits up to seven
+  seconds for the card when it is chosen (so far the choice ended as none).
+- macOS: the main build is for Apple silicon on macOS 11 Big Sur or newer,
+  the Intel build for macOS 10.11 El Capitan or newer; said so on the
+  website, in the README, the release and the manual. The 10.10 experiment
+  did not run on a Yosemite Mac and is withdrawn.
+
 ## [0.8.82] - 2026-10-14
 
 ### Changed
