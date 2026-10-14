@@ -12,6 +12,15 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.69] - 2026-10-14
+
+### Changed
+- Pictures: the upper lip's bevelled rim ends at the top edge of the mouth
+  slit; beside the slit the cut cylinder continues bare, with a sharp edge and
+  no soldered rim (nothing is soldered around the mouth). The flame-shaped
+  lips have their rim drawn in one piece down to the slit, without the seam
+  at the shoulders of 0.8.68.
+
 ## [0.8.68] - 2026-10-14
 
 ### Changed
