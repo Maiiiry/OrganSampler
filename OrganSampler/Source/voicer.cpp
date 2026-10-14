@@ -1907,6 +1907,8 @@ void Voicer::layoutScreen(int screen, juce::Component& container, juce::Viewport
                 && juce::Rectangle<float>(5.0f, 7.0f, 34.0f, 24.0f).contains(event.position)
                 && keyboardLearn)
                 keyboardLearn(manual);
+            else if (event.mods.isPopupMenu() && event.eventComponent == this && headerMenu)
+                headerMenu(manual);   // the header's own background: the division's feature settings
             else if (event.mods.isPopupMenu() && midiLearn && event.eventComponent != this)
             {
                 if (event.eventComponent == &tremulant)
@@ -2152,6 +2154,7 @@ void Voicer::layoutScreen(int screen, juce::Component& container, juce::Viewport
         std::function<void(int, const std::vector<juce::String>&)> couplerReorder;
         std::function<void(int, bool)> arrangeStateChanged;
         std::function<void()> missingAction;   // the notice under the header was clicked   // (manual, arranging) - remembered by the owner
+        std::function<void(int)> headerMenu;   // right-click on the header's background
         void setCouplerArranging(bool on) { couplerArrange = on; }
     };
 
@@ -2285,6 +2288,7 @@ void Voicer::layoutScreen(int screen, juce::Component& container, juce::Viewport
         if (missingTreesGetter)
             header->setMissingNotice(missingTreesGetter(manual), missingTreesDetail ? missingTreesDetail(manual) : juce::String());
         header->missingAction = [this, manual] { if (missingTreesAction) missingTreesAction(manual); };
+        header->headerMenu = divisionMenu;
         const int headerHeight = header->getPreferredHeight(columnWidth);
         header->setBounds(x, y, columnWidth, headerHeight);
         container.addAndMakeVisible(header.get());

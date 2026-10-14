@@ -1008,6 +1008,12 @@ private:
     void mouseDown(const juce::MouseEvent& event) override;
     void showMidiLearnMenu(const juce::String& target);
     void showSwellLearnMenu(int manualIndex);
+    // Right-click on a division header's background: the division's swell,
+    // tremulant and wind settings, the Divisions dialog, the Configuration Editor.
+    void showDivisionMenu(int manualIndex);
+    // The settings of one feature of a division ("swell", "tremulant", "wind")
+    // in a small dialog: the same rows as the Configuration Editor's.
+    void showFeatureSettings(int manualIndex, const juce::String& feature);
     bool processMidiButtonMessage(const juce::String& sourceIdentifier, const juce::MidiMessage& message);
     void activateMidiTarget(const juce::String& target, bool isOn, bool toggleBehaviour,
         bool pulseMessage = false);

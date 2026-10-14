@@ -12,6 +12,18 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.62] - 2026-10-14
+
+### Added
+- The settings of a feature by right-click where the feature sits: the swell
+  bar's menu has "Swell settings..." (maximum attenuation, shutter inertia,
+  harmonic filter), the Tremulant button's menu "Tremulant settings..."
+  (rate, depth, drift, volume per cent, harmonic filter and phase), and a
+  right-click on a division header's background offers the swell, tremulant
+  and wind settings of the division, the Divisions dialog and the
+  Configuration Editor. Small dialogs with the same rows as the editor, in
+  effect at once; the editor is rebuilt when such a dialog closes.
+
 ## [0.8.61] - 2026-10-14
 
 ### Fixed

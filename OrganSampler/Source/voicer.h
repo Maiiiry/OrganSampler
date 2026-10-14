@@ -515,6 +515,7 @@ public:
     std::function<juce::String(int)> missingTreesGetter;
     std::function<juce::String(int)> missingTreesDetail;   // the tooltip: the paths and what to do
     std::function<void(int)> missingTreesAction;           // a click on the notice: replace a tree / open the Stop List
+    std::function<void(int)> divisionMenu;                 // right-click on a division header's background: its feature settings
 private:
     Stop* scrollTarget = nullptr;
     int activeManualCount = 2;

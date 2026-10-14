@@ -1312,6 +1312,7 @@ MainComponent::MainComponent()
     voicer->missingTreesGetter = [this](int manual) { return missingTreeNotice(manual, false); };
     voicer->missingTreesDetail = [this](int manual) { return missingTreeNotice(manual, true); };
     voicer->missingTreesAction = [this](int manual) { showMissingTreesMenu(manual); };
+    voicer->divisionMenu = [this](int manual) { showDivisionMenu(manual); };
     voicer->setCompassGetter([this](int manual)
     {
         const auto& config = manualConfigs[(size_t)juce::jlimit(0, SamplerEngine::maxManuals - 1, manual)];
@@ -1464,6 +1465,32 @@ MainComponent::MainComponent()
         {
             juce::Component::SafePointer<MainComponent> safeThis(this);
             juce::MessageManager::callAsync([safeThis] { if (safeThis != nullptr) safeThis->showConfigurationEditor(); });
+        }
+    // ORGAN_JACK_BUFFER=<frames>[,<seconds>]: that long after the start (default
+    // 40 s) the first JACK route asks for this buffer size, exactly as a choice
+    // in its audio tab does (PipeWire's clock changes, the other JACK routes
+    // reopen). The activity log shows what happened.
+    if (const char* env = std::getenv("ORGAN_JACK_BUFFER"))
+        if (juce::String(env).getIntValue() > 0)
+        {
+            const int frames = juce::String(env).upToFirstOccurrenceOf(",", false, false).getIntValue();
+            const int seconds = juce::jmax(5, juce::String(env).fromFirstOccurrenceOf(",", false, false).getIntValue());
+            juce::Component::SafePointer<MainComponent> safeThis(this);
+            juce::Timer::callAfterDelay(seconds * 1000, [safeThis, frames]
+            {
+                if (safeThis == nullptr) return;
+                for (auto* manager : safeThis->allAudioManagers())
+                    if (manager != nullptr && manager->getCurrentAudioDevice() != nullptr
+                        && manager->getCurrentAudioDeviceType().equalsIgnoreCase("JACK"))
+                    {
+                        auto setup = manager->getAudioDeviceSetup();
+                        setup.bufferSize = frames;
+                        CrashHandler::note("ORGAN_JACK_BUFFER: asking " + setup.outputDeviceName + " for " + juce::String(frames) + " frames");
+                        const auto error = manager->setAudioDeviceSetup(setup, true);
+                        CrashHandler::note("ORGAN_JACK_BUFFER: " + (error.isEmpty() ? juce::String("ok") : "ERROR " + error));
+                        break;
+                    }
+            });
         }
     // ORGAN_OPEN_STOP_LIST=<seconds>: the Stop List is opened that long after the
     // start (the activity log says how long its preparation took).
@@ -14994,10 +15021,30 @@ void MainComponent::showMidiLearnMenu(const juce::String& target)
     }
     menu.addSeparator();
     menu.addItem(3, "Clear MIDI assignment", hasBinding);
-    menu.showMenuAsync(menuOptionsAtMouse(this),[this, target, continuousTarget](int result)
+    // The feature behind the control: its settings, right here.
+    juce::String feature;
+    int featureManual = -1;
+    if (target.startsWith("tremulant:"))
+    {
+        feature = "tremulant";
+        featureManual = target.fromFirstOccurrenceOf(":", false, false).getIntValue();
+    }
+    else if (target.startsWith("slider:division:") && target.endsWith(":maxSwell"))
+    {
+        feature = "swell";
+        featureManual = juce::StringArray::fromTokens(target, ":", "")[2].getIntValue();
+    }
+    if (feature.isNotEmpty())
+    {
+        menu.addSeparator();
+        menu.addItem(4, feature == "swell" ? "Swell settings (attenuation, shutter inertia, harmonic filter)..."
+                                           : "Tremulant settings (rate, depth, drift, harmonic filter)...");
+    }
+    menu.showMenuAsync(menuOptionsAtMouse(this),[this, target, continuousTarget, feature, featureManual](int result)
     {
         if (result == 1 || result == 2) beginMidiLearn(target, !continuousTarget && result == 2, continuousTarget);
         else if (result == 3) clearMidiBinding(target);
+        else if (result == 4) showFeatureSettings(featureManual, feature);
     });
 }
 
@@ -15040,6 +15087,203 @@ void MainComponent::clearMidiBinding(const juce::String& target)
     juce::MessageManager::callAsync([this] { saveSettings(); });
 }
 
+void MainComponent::showDivisionMenu(int manualIndex)
+{
+    if (manualIndex < 0 || manualIndex >= SamplerEngine::maxManuals) return;
+    juce::PopupMenu menu;
+    menu.addItem(1, "Swell settings (attenuation, shutter inertia, harmonic filter)...");
+    menu.addItem(2, "Tremulant settings (rate, depth, drift, harmonic filter)...");
+    menu.addItem(3, "Wind settings (sag, oscillation, strength)...");
+    menu.addSeparator();
+    menu.addItem(4, "Division settings (keyboard, audio, perspectives)...");
+    menu.addItem(5, "Configuration Editor...");
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    menu.showMenuAsync(menuOptionsAtMouse(this), [safeThis, manualIndex](int result)
+    {
+        if (safeThis == nullptr) return;
+        if (result == 1) safeThis->showFeatureSettings(manualIndex, "swell");
+        else if (result == 2) safeThis->showFeatureSettings(manualIndex, "tremulant");
+        else if (result == 3) safeThis->showFeatureSettings(manualIndex, "wind");
+        else if (result == 4) safeThis->showKeyboardsDialog(manualIndex);
+        else if (result == 5) safeThis->showConfigurationEditor();
+    });
+}
+
+void MainComponent::showFeatureSettings(int manualIndex, const juce::String& feature)
+{
+    if (manualIndex < 0 || manualIndex >= SamplerEngine::maxManuals) return;
+    static const juce::String names[8]{ "Pedal", "I.", "II.", "III.", "IV.", "V.", "VI.", "VII." };
+    // One row per setting: caption, slider, what a new value does - the same
+    // actions as the Configuration Editor's rows. A row "(all divisions)" is
+    // one setting for every division. The editor, if open, is rebuilt when
+    // this dialog closes, so it shows the new values.
+    struct Row
+    {
+        juce::String text;
+        double minimum, maximum, step;
+        juce::String suffix;
+        double value, defaultValue;
+        std::function<void(double)> apply;
+    };
+    class FeatureContent final : public juce::Component
+    {
+    public:
+        FeatureContent(MainComponent& ownerIn, const juce::String& noteText, std::vector<Row> rows) : owner(ownerIn)
+        {
+            note.setText(noteText, juce::dontSendNotification);
+            note.setJustificationType(juce::Justification::topLeft);
+            note.setFont(juce::FontOptions(13.0f));
+            note.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+            addAndMakeVisible(note);
+            for (auto& row : rows)
+            {
+                auto label = std::make_unique<juce::Label>();
+                label->setText(row.text, juce::dontSendNotification);
+                addAndMakeVisible(*label);
+                auto slider = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight);
+                slider->setTextBoxStyle(juce::Slider::TextBoxRight, false, 84, 22);
+                slider->setRange(row.minimum, row.maximum, row.step);
+                slider->setTextValueSuffix(row.suffix);
+                slider->setValue(row.value, juce::dontSendNotification);
+                slider->setDoubleClickReturnValue(true, row.defaultValue);
+                slider->setScrollWheelEnabled(true);
+                auto* raw = slider.get();
+                auto apply = row.apply;
+                slider->onValueChange = [raw, apply] { if (apply) apply(raw->getValue()); };
+                addAndMakeVisible(*slider);
+                labels.push_back(std::move(label));
+                sliders.push_back(std::move(slider));
+            }
+        }
+        ~FeatureContent() override
+        {
+            juce::Component::SafePointer<MainComponent> safeOwner(&owner);
+            juce::MessageManager::callAsync([safeOwner] { if (safeOwner != nullptr) safeOwner->refreshConfigurationEditor(); });
+        }
+        int neededHeight() const { return 24 + 70 + (int)sliders.size() * 36; }
+        void resized() override
+        {
+            auto area = getLocalBounds().reduced(12);
+            note.setBounds(area.removeFromTop(70));
+            for (size_t i = 0; i < sliders.size(); ++i)
+            {
+                auto row = area.removeFromTop(36);
+                labels[i]->setBounds(row.removeFromLeft(260));
+                sliders[i]->setBounds(row.reduced(0, 4));
+            }
+        }
+    private:
+        MainComponent& owner;
+        juce::Label note;
+        std::vector<std::unique_ptr<juce::Label>> labels;
+        std::vector<std::unique_ptr<juce::Slider>> sliders;
+    };
+
+    const int m = manualIndex;
+    auto& config = manualConfigs[(size_t)m];
+    std::vector<Row> rows;
+    juce::String noteText, title, key;
+    auto harmonic = [this] { engine.setHarmonicFilterDb(harmonicSwellDb, harmonicWindDb, harmonicTremulantDb); saveSettings(); };
+    if (feature == "swell")
+    {
+        title = "Swell settings - " + names[m];
+        key = "featureSwell";
+        noteText = "The swell pedal of " + names[m] + ": how far the closed shutters attenuate and how slowly they follow the "
+            "pedal. The harmonic filter (a high shelf above ~3 kHz that follows the swell) is one setting for every division. "
+            "The pedal's MIDI controller is learned by right-clicking the swell bar; the same rows are in the Configuration Editor.";
+        rows.push_back({ "Maximum attenuation when closed", 0.0, 60.0, 0.1, " dB", config.expressionMaxAttenuationDb, 13.0,
+            [this, m](double value)
+            {
+                auto& c = manualConfigs[(size_t)m];
+                c.expressionMaxAttenuationDb = (float)value;
+                engine.setManualExpressionMaxAttenuationDb(m, c.expressionMaxAttenuationDb);
+                engine.setManualExpressionGain(m, expressionGainFor(c));
+                saveSettings();
+            } });
+        rows.push_back({ "Shutter inertia (settling time)", 50.0, 2000.0, 10.0, " ms", config.expressionInertiaMs, 300.0,
+            [this, m](double value) { manualConfigs[(size_t)m].expressionInertiaMs = (float)value; saveSettings(); } });
+        rows.push_back({ "Harmonic filter, shutters closed (all divisions)", 0.0, 12.0, 0.5, " dB", harmonicSwellDb, 8.0,
+            [this, harmonic](double value) { harmonicSwellDb = (float)value; harmonic(); } });
+    }
+    else if (feature == "tremulant")
+    {
+        title = "Tremulant settings - " + names[m];
+        key = "featureTremulant";
+        noteText = "The tremulant of " + names[m] + ": its rate, how far the pitch swings, and how far apart the ranks "
+            "swing. The volume that follows the pitch and the harmonic filter (a high shelf that dips with the tremulant, "
+            "its phase behind the volume) are one setting for every division. On and off is registration, like a stop.";
+        auto applyTremulant = [this, m]
+        {
+            auto& c = manualConfigs[(size_t)m];
+            engine.setManualTremulant(m, c.tremulantEnabled, c.tremulantRateHz, c.tremulantDepthCents, c.tremulantRankDriftDegrees);
+            saveSettings();
+        };
+        rows.push_back({ "Rate", 2.0, 11.0, 0.1, " Hz", config.tremulantRateHz, 4.4,
+            [this, m, applyTremulant](double value) { manualConfigs[(size_t)m].tremulantRateHz = (float)value; applyTremulant(); } });
+        rows.push_back({ "Depth", 0.0, 50.0, 0.1, " cents", config.tremulantDepthCents, 6.0,
+            [this, m, applyTremulant](double value) { manualConfigs[(size_t)m].tremulantDepthCents = (float)value; applyTremulant(); } });
+        rows.push_back({ "Phase drift between ranks", 0.0, 360.0, 1.0, " deg", config.tremulantRankDriftDegrees, 260.0,
+            [this, m, applyTremulant](double value) { manualConfigs[(size_t)m].tremulantRankDriftDegrees = (float)value; applyTremulant(); } });
+        rows.push_back({ "Volume change per cent of pitch (all divisions)", 0.0, 0.6, 0.001, " dB/cent", tremulantLevelDbPerCent, 0.187,
+            [this](double value) { tremulantLevelDbPerCent = (float)value; applyAdvancedAudioSettings(); saveSettings(); } });
+        rows.push_back({ "Harmonic filter at the dip (all divisions)", 0.0, 12.0, 0.5, " dB", harmonicTremulantDb, 4.0,
+            [this, harmonic](double value) { harmonicTremulantDb = (float)value; harmonic(); } });
+        rows.push_back({ "Harmonic filter phase (all divisions)", 0.0, 360.0, 1.0, " deg", tremulantShelfPhaseDegrees, 90.0,
+            [this](double value) { tremulantShelfPhaseDegrees = (float)value; engine.setTremulantShelfPhaseDegrees(tremulantShelfPhaseDegrees); saveSettings(); } });
+    }
+    else if (feature == "wind")
+    {
+        title = "Wind settings - " + names[m];
+        key = "featureWind";
+        noteText = "The wind supply of " + names[m] + ": how far the pitch sags under load, and the oscillation every key "
+            "stroke sets off. The strength of the whole model, the volume that follows the sag and the harmonic filter are "
+            "one setting for every division; the shares of single stops and pipes are in the Configuration Editor.";
+        auto applyWind = [this, m]
+        {
+            auto& c = manualConfigs[(size_t)m];
+            engine.setWindModel(m, c.windDepthCents, c.windFrequencyHz, c.windOscillations,
+                c.windOscillationStrength / 50.0f, c.windSmoothingMs, c.windTargetMask);
+            saveSettings();
+        };
+        rows.push_back({ "Depth (maximum pitch sag)", 0.0, 50.0, 0.1, " cents", config.windDepthCents, 8.0,
+            [this, m, applyWind](double value) { manualConfigs[(size_t)m].windDepthCents = (float)value; applyWind(); } });
+        rows.push_back({ "Oscillation frequency", 4.0, 10.0, 0.1, " Hz", config.windFrequencyHz, 7.5,
+            [this, m, applyWind](double value) { manualConfigs[(size_t)m].windFrequencyHz = (float)value; applyWind(); } });
+        rows.push_back({ "Number of oscillations", 0.0, 20.0, 0.1, "x", config.windOscillations, 7.0,
+            [this, m, applyWind](double value) { manualConfigs[(size_t)m].windOscillations = (float)value; applyWind(); } });
+        rows.push_back({ "Oscillation strength", 0.0, 100.0, 0.5, " %", config.windOscillationStrength, 40.0,
+            [this, m, applyWind](double value) { manualConfigs[(size_t)m].windOscillationStrength = (float)value; applyWind(); } });
+        rows.push_back({ "Sag settling lag", 100.0, 400.0, 1.0, " ms", config.windSmoothingMs, 255.0,
+            [this, m, applyWind](double value) { manualConfigs[(size_t)m].windSmoothingMs = (float)value; applyWind(); } });
+        rows.push_back({ "Maximum wind model effect (all divisions)", 0.0, 100.0, 1.0, " %", windMaxEffect * 100.0, 100.0,
+            [this](double value) { windMaxEffect = (float)(value / 100.0); applyAdvancedAudioSettings(); saveSettings(); } });
+        rows.push_back({ "Volume change per cent of sag (all divisions)", 0.0, 0.6, 0.01, " dB/cent", windLevelDbPerCent, 0.2,
+            [this](double value) { windLevelDbPerCent = (float)value; applyAdvancedAudioSettings(); saveSettings(); } });
+        rows.push_back({ "Harmonic filter at full sag (all divisions)", 0.0, 12.0, 0.5, " dB", harmonicWindDb, 2.0,
+            [this, harmonic](double value) { harmonicWindDb = (float)value; harmonic(); } });
+    }
+    else return;
+
+    auto* content = new FeatureContent(*this, noteText, std::move(rows));
+    const int height = content->neededHeight();
+    content->setSize(700, height);
+    juce::DialogWindow::LaunchOptions options;
+    options.content.setOwned(new ScrollableContent(content));
+    options.dialogTitle = title;
+    options.dialogBackgroundColour = juce::Colours::darkgrey;
+    options.componentToCentreAround = this;
+    options.escapeKeyTriggersCloseButton = true;
+    options.useNativeTitleBar = true;
+    options.resizable = true;
+    if (auto* window = options.launchAsync())
+    {
+        window->setResizeLimits(560, height, 1400, 900);
+        placeDialog(*window, key, 700, height);
+        if (window->getHeight() < height || window->getWidth() < 560)
+            window->setSize(juce::jmax(560, window->getWidth()), juce::jmax(height, window->getHeight()));
+    }
+}
+
 void MainComponent::showSwellLearnMenu(int manualIndex)
 {
     if (manualIndex < 0 || manualIndex >= SamplerEngine::maxManuals) return;
@@ -15050,8 +15294,11 @@ void MainComponent::showSwellLearnMenu(int manualIndex)
     menu.addItem(2, "Finish MIDI Learn", learningThis);
     menu.addSeparator();
     menu.addItem(3, "Clear MIDI assignment", assigned || learningThis);
+    menu.addSeparator();
+    menu.addItem(4, "Swell settings (attenuation, shutter inertia, harmonic filter)...");
     menu.showMenuAsync(menuOptionsAtMouse(this),[this, manualIndex](int result)
     {
+        if (result == 4) { showFeatureSettings(manualIndex, "swell"); return; }
         auto& config = manualConfigs[(size_t)manualIndex];
         if (result == 1)
         {

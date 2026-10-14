@@ -600,6 +600,17 @@ forgets it), the division's name, the swell display (drag it, or right-click it
 to learn the swell pedal's MIDI controller), the *Tremulant* button
 (registration, like a stop) and *Settings*, which opens the Divisions dialog at
 that division. Drag the dividers between the columns to share out the width.
+
+Every feature has its settings where it sits, by right-click: the swell bar's
+menu offers *Swell settings...* (maximum attenuation, shutter inertia,
+harmonic filter), the *Tremulant* button's menu *Tremulant settings...*
+(rate, depth, drift between ranks, volume per cent, harmonic filter and its
+phase), and a right-click on the header's own background lists the swell,
+tremulant and wind settings of the division together with the Divisions
+dialog and the Configuration Editor. The rows are the same as the
+Configuration Editor's and take effect at once; a row marked "(all
+divisions)" is one setting for every division. The crescendo display and
+the IR caption of an audio tab have such menus too.
 The mouse wheel scrolls the workspace, except over a division whose voicing is
 open, where it moves the sliders.
 

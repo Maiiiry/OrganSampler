@@ -610,6 +610,17 @@ static const char* const kManualText_part2 =
 static const char* const kManualText_part3 =
     "(registration, like a stop) and *Settings*, which opens the Divisions dialog at\n"
     "that division. Drag the dividers between the columns to share out the width.\n"
+    "\n"
+    "Every feature has its settings where it sits, by right-click: the swell bar's\n"
+    "menu offers *Swell settings...* (maximum attenuation, shutter inertia,\n"
+    "harmonic filter), the *Tremulant* button's menu *Tremulant settings...*\n"
+    "(rate, depth, drift between ranks, volume per cent, harmonic filter and its\n"
+    "phase), and a right-click on the header's own background lists the swell,\n"
+    "tremulant and wind settings of the division together with the Divisions\n"
+    "dialog and the Configuration Editor. The rows are the same as the\n"
+    "Configuration Editor's and take effect at once; a row marked \"(all\n"
+    "divisions)\" is one setting for every division. The crescendo display and\n"
+    "the IR caption of an audio tab have such menus too.\n"
     "The mouse wheel scrolls the workspace, except over a division whose voicing is\n"
     "open, where it moves the sliders.\n"
     "\n"
@@ -797,6 +808,8 @@ static const char* const kManualText_part3 =
     "  stroke.\n"
     "- A stop **without velocity layers** softens the attack of a gentle stroke,\n"
     "  in volume and in colour, over its first few tens of milliseconds: the note\n"
+    ;
+static const char* const kManualText_part4 =
     "  starts with a short fade-in (*Key velocity: fade-in at the lowest\n"
     "  velocity*, default 40 ms at the lowest velocity) and with its treble cut\n"
     "  (*Key velocity: treble cut on the attack at the lowest velocity*, default\n"
@@ -808,8 +821,6 @@ static const char* const kManualText_part3 =
     "A sample file is a velocity layer when its name ends in \"_NNN\" (two or three\n"
     "digits, 1 to 127, after an underscore): `060-C4_070.wav` plays for key\n"
     "velocities up to 70, above that the plain `060-C4.wav` plays, or the next\n"
-    ;
-static const char* const kManualText_part4 =
     "layer up when there are several (`_025`, `_070`, `_100`). A key that has layers\n"
     "but no plain file plays its highest layer for every velocity. Release files\n"
     "carry the same suffix: the release of a \"_070\" attack is the \"_070\" release\n"
@@ -999,6 +1010,8 @@ static const char* const kManualText_part4 =
     "  0 % all channels carry the same sum.\n"
     "- **IR reverb**: *Load IR* (a WAV, AIFF or FLAC impulse response: mono,\n"
     "  stereo, or true stereo with four channels LL LR RL RR), *Clear*, the IR\n"
+    ;
+static const char* const kManualText_part5 =
     "  caption (hover it for everything known about the IR; right-click it for the\n"
     "  IR settings), *Reverb dry/wet*, and *Set effects for all ...*. The IR\n"
     "  settings: *High cut* and *Low cut* on the wet signal (they grow with the\n"
@@ -1010,8 +1023,6 @@ static const char* const kManualText_part4 =
     "  this share of its length) and *Fade-out* (the share of the used IR's end\n"
     "  that dies away along a gentle curve; proposed automatically when *Decay* is\n"
     "  moved; 0 % = the IR exactly as recorded).\n"
-    ;
-static const char* const kManualText_part5 =
     "- **The device box**: audio device type, device, sample rate, buffer size,\n"
     "  and under it *Driver Control Panel* (the driver's own settings, e.g. the RME\n"
     "  buffer size), *Reopen device* and *Set for all ...*.\n"
@@ -1201,6 +1212,8 @@ static const char* const kManualText_part5 =
     "\n"
     "## 5.7 Audio devices not ready when OrganSampler starts\n"
     "\n"
+    ;
+static const char* const kManualText_part6 =
     "Devices that cannot be opened at start-up (unplugged, driver missing, or merely\n"
     "late - an RME interface registers a few seconds after it switches its sample\n"
     "rate) are waited for: a box \"Waiting for audio devices\" appears and the program\n"
@@ -1212,8 +1225,6 @@ static const char* const kManualText_part5 =
     "\n"
     "Every sounding pipe is one **voice** per audio route of its division. A\n"
     "division with three perspectives (Direct, Diffuse, Rear) renders every pipe\n"
-    ;
-static const char* const kManualText_part6 =
     "three times, one voice per route. The auxiliary route adds one more voice per\n"
     "pipe while it has a device. The *DSP* field of the main window shows how much\n"
     "of the available time the busiest audio thread needs; at 100 % the sound\n"
@@ -1403,6 +1414,8 @@ static const char* const kManualText_part6 =
     "vocoder is an optional alternative for those who want it. Every method has\n"
     "its weakness; which one sounds best depends on the stop, the size of the shift\n"
     "and the ear. Listening tests with reeds (Trompete, Vox humana) show the\n"
+    ;
+static const char* const kManualText_part7 =
     "differences most clearly; a 16' extension of an 8' reed is the typical case.\n"
     "\n"
     "**Resampling (pitch and length change together).** The sample is played faster\n"
@@ -1414,8 +1427,6 @@ static const char* const kManualText_part6 =
     "soften that, a pipe resampled upwards automatically loses 0.1 dB of level and\n"
     "0.1 dB of treble per semitone (an octave up: -1.2 dB each), because a pipe\n"
     "played faster comes out brighter and louder than a real pipe of that pitch.\n"
-    ;
-static const char* const kManualText_part7 =
     "This compensation belongs to plain resampling only: the three other methods\n"
     "settle the loudness and the timbre of their copies when they build them, and\n"
     "a pipe that still plays resampled while its copy is being built gets it until\n"
@@ -1605,6 +1616,8 @@ static const char* const kManualText_part7 =
     "otherwise bound to one core): the route then shares its pipes out over the\n"
     "set number of threads, like a route on ASIO does over all *Render threads*.\n"
     "Routes on ASIO drivers and on Windows Audio devices do not use this setting:\n"
+    ;
+static const char* const kManualText_part8 =
     "every such device is one stream with one callback, and all its routes are\n"
     "rendered by the whole pool of *Render threads* (since 0.8.47 for Windows\n"
     "Audio too - before, every Windows Audio route had a stream and a thread of\n"
@@ -1616,8 +1629,6 @@ static const char* const kManualText_part7 =
     "integer* halves the RAM and allows more polyphony at the cost of a little\n"
     "hiss. Takes effect the next time a division's folders are loaded.\n"
     "\n"
-    ;
-static const char* const kManualText_part8 =
     "### Sample rate on loading\n"
     "\n"
     "*Resample everything to 48 kHz* (default): files recorded at 96, 88.2 or 44.1\n"
@@ -1807,6 +1818,8 @@ static const char* const kManualText_part8 =
     "\n"
     "How much quieter a pipe gets for every cent the wind sag lowers its pitch (0\n"
     "to 0.6 dB per cent, default 0.2). Together with the division's *Wind: depth*\n"
+    ;
+static const char* const kManualText_part9 =
     "it decides how strongly a full chord sags in level.\n"
     "\n"
     "### Wind: one stop's share of the full sag\n"
@@ -1818,8 +1831,6 @@ static const char* const kManualText_part8 =
     "### Wind: one pipe's share of the full sag\n"
     "\n"
     "The sag with one key held, relative to the sag with many keys held (default\n"
-    ;
-static const char* const kManualText_part9 =
     "50 %).\n"
     "\n"
     "### Wind: two pipes' share of the full sag\n"
@@ -2009,6 +2020,8 @@ static const char* const kManualText_part9 =
     "### Filled pipes: resampling quality\n"
     "\n"
     "How the sample of a neighbouring pipe is played at another pitch. *Linear* is\n"
+    ;
+static const char* const kManualText_part10 =
     "the interpolation of every other voice (cheapest, audible images at large\n"
     "shifts). *Cubic interpolation* lowers the interpolation images by about 20 dB\n"
     "for these voices only. *Cubic + anti-alias filter* (default) also removes what\n"
@@ -2020,8 +2033,6 @@ static const char* const kManualText_part9 =
     "\n"
     "The *Treble per key* sliders of the voicing raise or lower everything above\n"
     "this frequency (120 to 5000 Hz, default 1800): a high shelf whose transition\n"
-    ;
-static const char* const kManualText_part10 =
     "band runs from here to about twice this frequency. A pipe whose recorded\n"
     "fundamental lies higher starts its shelf at that fundamental instead. The\n"
     "velocity treble cut uses the same frequency.\n"
@@ -2211,6 +2222,8 @@ static const char* const kManualText_part10 =
     "### Stops and sample folders\n"
     "\n"
     "The folder trees loaded for this division, and the *Stop building...* button\n"
+    ;
+static const char* const kManualText_part11 =
     "that opens the Stop List (see \"Folder trees and the pool\") at it.\n"
     "\n"
     "### Shown in window\n"
@@ -2222,8 +2235,6 @@ static const char* const kManualText_part10 =
     "\n"
     "The MIDI input that plays this division. Several divisions may listen to the\n"
     "same device (on different channels, or on the same channel to play them\n"
-    ;
-static const char* const kManualText_part11 =
     "together).\n"
     "\n"
     "### MIDI channel\n"
