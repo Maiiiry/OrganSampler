@@ -87,37 +87,56 @@ def main():
                         title = line[2:].strip()
                         break
         rows.append((title, folder, divisions, count, ', '.join(perspectives)))
-    rows.sort(key=lambda r: r[0].lower())
-    lines = [
-        '# Published configurations',
-        '',
-        'One line per organ, in alphabetical order - the README of each (with the download of its',
-        '`.json` and where to put it), the number of divisions, the rows of its Stop List',
-        '(transmissions and extensions included, the rows nested in stop folders not) and the',
-        'routes - the perspectives as the configuration names them (`default` = a single',
-        'perspective) and `auxiliary` when a division uses that route; what each one carries,',
-        'the README of the organ says. Written by the `Configurations check` workflow from the',
-        'configuration files themselves on every change; do not edit by hand. How to use and',
-        'publish one: [README.md](README.md).',
-        '',
-        '| Organ | Divisions | Stops | Routes |',
-        '|---|---:|---:|---|',
-    ]
-    for title, folder, divisions, count, perspectives in rows:
-        lines.append('| [%s](%s/README.md) | %d | %d | %s |' % (title.replace('|', '\\|'), folder, divisions, count, perspectives))
-    lines.append('')
-    lines.append('%d configuration(s).' % len(rows))
-    lines.append('')
-    text = '\n'.join(lines)
-    out = os.path.join(ROOT, 'INDEX.md')
-    old = open(out, encoding='utf-8').read() if os.path.exists(out) else None
-    if old != text:
-        with open(out, 'w', encoding='utf-8', newline='\n') as f:
-            f.write(text)
-        print('INDEX.md written: %d configuration(s)' % len(rows))
-        return 1
-    print('INDEX.md unchanged: %d configuration(s)' % len(rows))
-    return 0
+
+    # A Markdown table cannot be sorted by a click, so the header carries the
+    # triangles as links: each opens the same table sorted by that column -
+    # INDEX.md by organ ascending, INDEX-<column>-<asc|desc>.md the others.
+    columns = [('organ', 'Organ', lambda r: r[0].lower()), ('divisions', 'Divisions', lambda r: r[2]),
+               ('stops', 'Stops', lambda r: r[3]), ('routes', 'Routes', lambda r: r[4].lower())]
+    def file_for(key, descending):
+        return 'INDEX.md' if (key == 'organ' and not descending) else 'INDEX-%s-%s.md' % (key, 'desc' if descending else 'asc')
+    def render(sort_key, descending):
+        ordered = sorted(rows, key=lambda r: r[0].lower())
+        ordered.sort(key=dict((k, f) for k, _, f in columns)[sort_key], reverse=descending)
+        header = []
+        for key, label, _ in columns:
+            up = '▲' if (key == sort_key and not descending) else '[▲](%s)' % file_for(key, False)
+            down = '▼' if (key == sort_key and descending) else '[▼](%s)' % file_for(key, True)
+            header.append('%s %s%s' % (label, up, down))
+        lines = [
+            '# Published configurations',
+            '',
+            'One line per organ - the README of each (with the download of its `.json` and where to',
+            'put it), the number of divisions, the rows of its Stop List (transmissions and extensions',
+            'included, the rows nested in stop folders not) and the routes - the perspectives as the',
+            'configuration names them (`default` = a single perspective) and `auxiliary` when a',
+            'division uses that route; what each one carries, the README of the organ says. The',
+            'triangles in the header sort the table by that column. Written by the `Configurations',
+            'check` workflow from the configuration files themselves on every change; do not edit by',
+            'hand. How to use and publish one: [README.md](README.md).',
+            '',
+            '| ' + ' | '.join(header) + ' |',
+            '|---|---:|---:|---|',
+        ]
+        for title, folder, divisions, count, perspectives in ordered:
+            lines.append('| [%s](%s/README.md) | %d | %d | %s |' % (title.replace('|', '\\|'), folder, divisions, count, perspectives))
+        lines.append('')
+        lines.append('%d configuration(s).' % len(ordered))
+        lines.append('')
+        return '\n'.join(lines)
+    changed = 0
+    for key, _, _ in columns:
+        for descending in (False, True):
+            name = file_for(key, descending)
+            text = render(key, descending)
+            out = os.path.join(ROOT, name)
+            old = open(out, encoding='utf-8').read() if os.path.exists(out) else None
+            if old != text:
+                with open(out, 'w', encoding='utf-8', newline='\n') as f:
+                    f.write(text)
+                changed += 1
+    print('%s: %d configuration(s), %d file(s) written' % ('INDEX.md' if changed == 0 else 'INDEX', len(rows), changed))
+    return 1 if changed else 0
 
 
 if __name__ == '__main__':

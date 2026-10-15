@@ -28,7 +28,7 @@ jobs:
             lower="$(echo "$name" | tr '[:upper:]' '[:lower:]')"
             size=$(stat -c %s "$f")
             case "$f" in
-              configurations/README.md|configurations/INDEX.md) continue ;;
+              configurations/README.md|configurations/INDEX*.md) continue ;;
             esac
             case "$lower" in
               readme.md) ;;
@@ -63,7 +63,8 @@ jobs:
           echo "configurations/ is clean"
 
   # The list of the published configurations, configurations/INDEX.md (one line
-  # per organ: README link, divisions, Stop List rows, perspectives), is written
+  # per organ: README link, divisions, Stop List rows, routes) with its sorted
+  # copies INDEX-<column>-<asc|desc>.md (the triangles in the header), is written
   # from the configuration files and committed back when it changed.
   index:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -84,6 +85,6 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add configurations/INDEX.md
+          git add configurations/INDEX*.md
           git commit -m "configurations/INDEX.md regenerated"
           git push

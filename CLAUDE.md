@@ -83,7 +83,8 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   is `[<Name>.zip](<Name>.zip?raw=true)`. The list of all organs is `configurations/INDEX.md` (README link,
   divisions, Stop List rows, routes: the perspectives as named - `default` stays `default`, never "-" - plus
   `auxiliary` when a division uses it; what they carry is the organ README's job, e.g. Rural Organ: default =
-  front, auxiliary = rear), written by `.github/scripts/configurations_index.py` in the
+  front, auxiliary = rear; a Markdown table cannot be sorted by a click, so the header's ▲▼ are links to the
+  pre-sorted copies `INDEX-<column>-<asc|desc>.md`, all generated), written by `.github/scripts/configurations_index.py` in the
   `Configurations check` workflow (job `index`) and committed back - never a list on the website, never a
   release for configurations, never a list in `configurations/README.md` (there will be thousands). The
   website section and the release body only link to INDEX.md. Name configuration files WITHOUT spaces;
