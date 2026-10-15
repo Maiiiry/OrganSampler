@@ -621,8 +621,11 @@ static const char* const kManualText_part3 =
     "Configuration Editor's and take effect at once; a row marked \"(all\n"
     "divisions)\" is one setting for every division. The crescendo display and\n"
     "the IR caption of an audio tab have such menus too.\n"
-    "The mouse wheel scrolls the workspace, except over a division whose voicing is\n"
-    "open, where it moves the sliders.\n"
+    "The mouse wheel scrolls the workspace everywhere - except inside the\n"
+    "rectangle of an open voicing (a stop's row with its per-key sliders), where\n"
+    "it moves the sliders; the rest of that division's column scrolls as usual.\n"
+    "The button of a stop folder switches all its children with it, their buttons\n"
+    "included; a child can still be switched alone to hear it by itself.\n"
     "\n"
     "## 2.6 Two program windows\n"
     "\n"
@@ -805,11 +808,11 @@ static const char* const kManualText_part3 =
     "\n"
     "- A stop **with velocity layers** plays the layer the velocity falls into, at\n"
     "  that layer's own level - a gentle stroke selects the recording of a gentle\n"
+    ;
+static const char* const kManualText_part4 =
     "  stroke.\n"
     "- A stop **without velocity layers** softens the attack of a gentle stroke,\n"
     "  in volume and in colour, over its first few tens of milliseconds: the note\n"
-    ;
-static const char* const kManualText_part4 =
     "  starts with a short fade-in (*Key velocity: fade-in at the lowest\n"
     "  velocity*, default 40 ms at the lowest velocity) and with its treble cut\n"
     "  (*Key velocity: treble cut on the attack at the lowest velocity*, default\n"
@@ -1007,11 +1010,11 @@ static const char* const kManualText_part4 =
     "  separation**: at 100 % every pipe sounds only on its own channel pair (mono\n"
     "  samples are spread over the pairs, stereo samples keep theirs); below 100 %\n"
     "  every channel of the route also carries that share of the other channels; at\n"
+    ;
+static const char* const kManualText_part5 =
     "  0 % all channels carry the same sum.\n"
     "- **IR reverb**: *Load IR* (a WAV, AIFF or FLAC impulse response: mono,\n"
     "  stereo, or true stereo with four channels LL LR RL RR), *Clear*, the IR\n"
-    ;
-static const char* const kManualText_part5 =
     "  caption (hover it for everything known about the IR; right-click it for the\n"
     "  IR settings), *Reverb dry/wet*, and *Set effects for all ...*. The IR\n"
     "  settings: *High cut* and *Low cut* on the wet signal (they grow with the\n"
@@ -1209,11 +1212,11 @@ static const char* const kManualText_part5 =
     "\n"
     "- Ubuntu, Debian, Mint, Pop!_OS: `sudo apt install pipewire-jack pipewire-bin pavucontrol`\n"
     "- Fedora: `sudo dnf install pipewire-jack-audio-connection-kit pipewire-utils pavucontrol`\n"
+    ;
+static const char* const kManualText_part6 =
     "- Arch, Manjaro: `sudo pacman -S pipewire-jack pavucontrol`\n"
     "- openSUSE: `sudo zypper install pipewire-libjack-0_3 pipewire-tools pavucontrol`\n"
     "\n"
-    ;
-static const char* const kManualText_part6 =
     "To check that PipeWire is the server, type `pactl info | grep \"Server Name\"`:\n"
     "the answer should read \"PulseAudio (on PipeWire ...)\". Log out and in again\n"
     "after installing.\n"
@@ -1411,11 +1414,11 @@ static const char* const kManualText_part6 =
     "couplers and **Unison Off** at the top of the column. Ticked couplers appear\n"
     "on the division's coupler rail in the main window, where they are shown like\n"
     "stops (named \"II/I\", \"II/I 16'\" and so on: the division pulled over the\n"
+    ;
+static const char* const kManualText_part7 =
     "keyboard played). A coupler is registration: part of combinations and the\n"
     "crescendo, MIDI-learnable. The rail's buttons can be rearranged by dragging.\n"
     "\n"
-    ;
-static const char* const kManualText_part7 =
     "- **Unison Off** silences the division's own pitch: key 60 held on that\n"
     "  division does not sound 60 there; its couplers still work.\n"
     "- **Melody coupler**: only the highest key held on the division is coupled;\n"
@@ -1613,11 +1616,11 @@ static const char* const kManualText_part7 =
     "- *Filled pipes: loop crossfade*, *Filled pipes: loudness kept when pitch\n"
     "  shifting*, *Filled pipes: resampling quality* - see their chapters.\n"
     "- The global **Sustain fade-out on key release** and **Release sample\n"
+    ;
+static const char* const kManualText_part8 =
     "  fade-in** (Global sound) are set for the sounding c1 and grow 1.5 times per\n"
     "  octave below it, so a 32' extension gets the slow fades a big pipe needs; a\n"
     "  filled pipe counts as the pipe it stands for.\n"
-    ;
-static const char* const kManualText_part8 =
     "\n"
     "## 7.4 The cache\n"
     "\n"
@@ -1815,11 +1818,11 @@ static const char* const kManualText_part8 =
     "   between. When even all 61 keys struck 16 times a second produce no more\n"
     "   voices and the audio stays clean, the organ itself is the limit, not the\n"
     "   computer. The *DSP* field may read lower than 85 % at the moment the run\n"
+    ;
+static const char* const kManualText_part9 =
     "   ends: it shows a peak that fades within a fraction of a second, while the\n"
     "   judge takes the single longest callback and every late one. Above the\n"
     "   measured value the sound is often still fine - until the first callback\n"
-    ;
-static const char* const kManualText_part9 =
     "   that is not; that is what the margin is for.\n"
     "4. *Maximum polyphony* is set to the most voices that stayed clean. The\n"
     "   slider is yours afterwards: lower it for more headroom (couplers, long\n"
@@ -2017,11 +2020,11 @@ static const char* const kManualText_part9 =
     "extension than to the stop; shorter dries it. Changing it rebuilds the release\n"
     "copies.\n"
     "\n"
+    ;
+static const char* const kManualText_part10 =
     "### Filled pipes: time stretch of the attack\n"
     "\n"
     "Pitch shift + time stretch only. How far the attack (everything before the\n"
-    ;
-static const char* const kManualText_part10 =
     "first loop) is stretched back from the resampled length towards the source's\n"
     "(0 to 100 %, default 50). 0 % leaves it as resampled - two octaves down the\n"
     "attack is four times as slow; 100 % gives it the source's duration; 50 % is\n"
@@ -2219,11 +2222,11 @@ static const char* const kManualText_part10 =
     "\n"
     "### Top bar: Save Voicing\n"
     "\n"
+    ;
+static const char* const kManualText_part11 =
     "Shows or hides the Save Voicing button. Hidden by default.\n"
     "\n"
     "### Top bar: Load Configuration\n"
-    ;
-static const char* const kManualText_part11 =
     "\n"
     "Shows or hides the Load Configuration button.\n"
     "\n"
@@ -2421,11 +2424,11 @@ static const char* const kManualText_part11 =
     "\n"
     "On: pipes of the same pitch sounding together pull each other into tune a\n"
     "little, as neighbouring pipes on one chest do. Off: every pipe keeps its own\n"
+    ;
+static const char* const kManualText_part12 =
     "detune.\n"
     "\n"
     "### Tremulant rate\n"
-    ;
-static const char* const kManualText_part12 =
     "\n"
     "The speed of the division's tremulant (2 to 11 Hz, default 4.4).\n"
     "\n"

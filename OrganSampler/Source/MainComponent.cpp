@@ -9519,6 +9519,8 @@ void MainComponent::savePortableConfiguration(const juce::File& file, bool inclu
                 }
     }
 
+    // The file being overwritten survives as "<name>.json.bak" (one generation).
+    if (file.existsAsFile()) file.copyFileTo(file.getSiblingFile(file.getFileName() + ".bak"));
     if (!file.replaceWithText(juce::JSON::toString(configuration, true)))
         juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,
             "Save Configuration", "The configuration file could not be written.");
@@ -14401,6 +14403,19 @@ void MainComponent::saveSettings()
     // ========== KONEC NOVÉ ČÁSTI ==========
 
     juce::String json = juce::JSON::toString(juce::var(obj.get()), true);
+    // One snapshot of the settings a day (settings-YYYY-MM-DD.json beside it,
+    // the last seven kept): a stop, a route or a table row lost by whatever
+    // path can be found again in yesterday's state.
+    {
+        const auto snapshot = settingsFile.getSiblingFile("settings-" + juce::Time::getCurrentTime().formatted("%Y-%m-%d") + ".json");
+        if (settingsFile.existsAsFile() && !snapshot.existsAsFile() && settingsFile.copyFileTo(snapshot))
+        {
+            juce::Array<juce::File> older;
+            settingsFile.getParentDirectory().findChildFiles(older, juce::File::findFiles, false, "settings-????-??-??.json");
+            older.sort();
+            while (older.size() > 7) { older.getReference(0).deleteFile(); older.remove(0); }
+        }
+    }
     settingsFile.replaceWithText(json);
     {
         // The configuration-relevant part of the settings (everything but the

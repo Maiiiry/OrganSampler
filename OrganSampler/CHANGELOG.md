@@ -12,6 +12,23 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.91] - 2026-10-15
+
+### Fixed
+- The mouse wheel scrolls the stop workspace everywhere except inside the
+  rectangle of an open voicing (it scrolled nowhere in a division column
+  with a voicing open).
+- A stop folder's button lights and darkens its children's buttons with it
+  (the children played but kept their colour); each child can still be
+  switched alone.
+
+### Added
+- One snapshot of the settings a day (`settings-YYYY-MM-DD.json` beside
+  settings.json, seven kept) and a `.bak` of every configuration file that
+  is overwritten, so a lost stop folder or table row can be found again.
+- `CLAUDE.md` at the repository root: the project's standing rules (icons,
+  versions, paths, releases) for every working session.
+
 ## [0.8.90] - 2026-10-15
 
 ### Fixed

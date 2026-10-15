@@ -44,6 +44,7 @@ public:
     void pollBuildProgress();
     bool buildingSeen = false;
     void updateFromStop();           // sync UI with stop's current per-key gains and global db
+    void refreshEnabledColour();     // the button's colour from the stop's (or transmission's) on/off state
     void setNoteActive(int note, bool active);   // highlight slider when note is held
     Stop* getStop() const noexcept { return stop; }
 

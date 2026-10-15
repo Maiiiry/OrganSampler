@@ -245,6 +245,7 @@ StopRow::StopRow(Stop* stop, SamplerEngine& engine, int noteMin, int noteMax, in
                         if (source->transmissions[(size_t)index].enabled != this->stop->enabled)
                             this->engine.setTransmissionEnabled(source, index, this->stop->enabled);
                     }
+                if (!expand) for (auto* row : stopSwipeRows) row->refreshEnabledColour();
                 if (!expand && this->stateChanged) this->stateChanged();
             }
         }
@@ -1257,6 +1258,12 @@ void StopRow::refreshUndulationLabel()
     undulationLabel.setText(text, juce::dontSendNotification);
 }
 
+void StopRow::refreshEnabledColour()
+{
+    stopButton.setColour(juce::TextButton::buttonColourId,
+        routeEnabled() ? onColour() : juce::Colours::darkgrey);
+}
+
 void StopRow::applyStopState(bool enabled)
 {
     if (routeEnabled() == enabled) return;
@@ -1268,9 +1275,13 @@ void StopRow::applyStopState(bool enabled)
         if (childrenGetter) for (auto* child : childrenGetter(stop)) engine.setStopEnabled(child, enabled);
         if (childTransmissionsGetter)
             for (const auto& [source, index] : childTransmissionsGetter(stop)) engine.setTransmissionEnabled(source, index, enabled);
+        // ... and their buttons light up or go out with it (they are on the grid
+        // under the master's open voicing); each can still be switched alone.
+        if (childrenGetter || childTransmissionsGetter)
+            for (auto* row : stopSwipeRows)
+                if (row != this) row->refreshEnabledColour();
     }
-    stopButton.setColour(juce::TextButton::buttonColourId,
-        routeEnabled() ? onColour() : juce::Colours::darkgrey);
+    refreshEnabledColour();
     if (stateChanged) stateChanged();
 }
 
@@ -3685,14 +3696,13 @@ void Voicer::loadState(const juce::File& file)
 
 bool Voicer::wheelBlockedAt(juce::Point<int> screenPosition) const
 {
-    for (int manual = 0; manual < activeManualCount && manual < SamplerEngine::maxManuals; ++manual)
-    {
-        auto* container = screenContainers[(size_t)juce::jlimit(0, 1, columnScreen[(size_t)manual])];
-        if (container == nullptr || !container->getScreenBounds().contains(screenPosition)) continue;
-        const auto local = container->getLocalPoint(nullptr, screenPosition);
-        if (local.x >= columnBounds[(size_t)manual].getX() && local.x < columnBounds[(size_t)manual].getRight())
-            return columnHasVoicing[(size_t)manual];
-    }
+    // The wheel belongs to the sliders only inside the rectangle of an open
+    // voicing (a stop's or a transmission's row with its per-key sliders);
+    // everywhere else - the rest of the division's column included - it
+    // scrolls the workspace, as it does with every voicing folded.
+    for (auto* row : stopRows)
+        if (row != nullptr && row->isShowing() && row->isExpanded() && row->getScreenBounds().contains(screenPosition))
+            return true;
     return false;
 }
 

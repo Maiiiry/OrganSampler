@@ -611,8 +611,11 @@ dialog and the Configuration Editor. The rows are the same as the
 Configuration Editor's and take effect at once; a row marked "(all
 divisions)" is one setting for every division. The crescendo display and
 the IR caption of an audio tab have such menus too.
-The mouse wheel scrolls the workspace, except over a division whose voicing is
-open, where it moves the sliders.
+The mouse wheel scrolls the workspace everywhere - except inside the
+rectangle of an open voicing (a stop's row with its per-key sliders), where
+it moves the sliders; the rest of that division's column scrolls as usual.
+The button of a stop folder switches all its children with it, their buttons
+included; a child can still be switched alone to hear it by itself.
 
 ## 2.6 Two program windows
 
