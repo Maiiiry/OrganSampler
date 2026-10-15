@@ -81,7 +81,9 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   inside; a zip downloads from GitHub, a bare `.json` opens as text - never "Download raw file" instructions).
   The portable save writes `<name>.zip` and `<name>.README.md` beside the `.json`; the README's Download line
   is `[<Name>.zip](<Name>.zip?raw=true)`. The list of all organs is `configurations/INDEX.md` (README link,
-  divisions, Stop List rows, perspectives), written by `.github/scripts/configurations_index.py` in the
+  divisions, Stop List rows, routes: the perspectives as named - `default` stays `default`, never "-" - plus
+  `auxiliary` when a division uses it; what they carry is the organ README's job, e.g. Rural Organ: default =
+  front, auxiliary = rear), written by `.github/scripts/configurations_index.py` in the
   `Configurations check` workflow (job `index`) and committed back - never a list on the website, never a
   release for configurations, never a list in `configurations/README.md` (there will be thousands). The
   website section and the release body only link to INDEX.md. Name configuration files WITHOUT spaces;

@@ -55,7 +55,8 @@ devices, nothing of the computer it was made on. Saved with OrganSampler 0.8.96.
 - Samples: Sonus Paradisi, provided free of charge with OrganSampler to try
   the program; they remain the property of their author.
 - Expects: library root `Rural Organ`, tree `Samply`; the IRs in `Samply\IR`.
-- Audio layout: Pedal, I, II, each with a default route (IR "Rural Church
-  Front", dry/wet 72 %) and an auxiliary route (IR "Rural Church Rear",
-  dry/wet 92 %); every route on the default device until you spread them
-  over your outputs.
+- Audio layout: Pedal, I, II, each with the route `default` = the front
+  (IR "Rural Church Front", dry/wet 72 %) and the route `auxiliary` = the
+  rear (IR "Rural Church Rear", dry/wet 92 %, for a second pair of
+  speakers); every route on the default device until you spread them over
+  your outputs.

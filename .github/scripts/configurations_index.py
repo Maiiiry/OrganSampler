@@ -67,8 +67,17 @@ def main():
                 if p and p not in perspectives:
                     perspectives.append(p)
         perspectives.sort(key=lambda p: next((i for i, o in enumerate(order) if o.lower() == p.lower()), len(order)))
-        if perspectives == ['default']:
-            perspectives = []
+        if not perspectives:
+            perspectives = ['default']
+        # The auxiliary route counts as well when a division uses it (a device saved on it).
+        for m in manuals:
+            for route in m.get('perspectiveAudio', []) or []:
+                if str(route.get('name', '')).lower() != 'auxiliary':
+                    continue
+                xml = str(route.get('audioDeviceStateXml', ''))
+                used = 'deviceType=' in xml or ('audioOutputDeviceName="' in xml and 'audioOutputDeviceName=""' not in xml)
+                if used and 'auxiliary' not in perspectives:
+                    perspectives.append('auxiliary')
         title = folder
         readme = os.path.join(path, 'README.md')
         if os.path.exists(readme):
@@ -77,7 +86,7 @@ def main():
                     if line.startswith('# '):
                         title = line[2:].strip()
                         break
-        rows.append((title, folder, divisions, count, ', '.join(perspectives) or '-'))
+        rows.append((title, folder, divisions, count, ', '.join(perspectives)))
     rows.sort(key=lambda r: r[0].lower())
     lines = [
         '# Published configurations',
@@ -85,11 +94,13 @@ def main():
         'One line per organ, in alphabetical order - the README of each (with the download of its',
         '`.json` and where to put it), the number of divisions, the rows of its Stop List',
         '(transmissions and extensions included, the rows nested in stop folders not) and the',
-        'perspectives. Written by the `Configurations check` workflow from the configuration',
-        'files themselves on every change; do not edit by hand. How to use and publish one:',
-        '[README.md](README.md).',
+        'routes - the perspectives as the configuration names them (`default` = a single',
+        'perspective) and `auxiliary` when a division uses that route; what each one carries,',
+        'the README of the organ says. Written by the `Configurations check` workflow from the',
+        'configuration files themselves on every change; do not edit by hand. How to use and',
+        'publish one: [README.md](README.md).',
         '',
-        '| Organ | Divisions | Stops | Perspectives |',
+        '| Organ | Divisions | Stops | Routes |',
         '|---|---:|---:|---|',
     ]
     for title, folder, divisions, count, perspectives in rows:
