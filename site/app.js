@@ -35,10 +35,14 @@ if (configurationList) {
     .then((items) => {
       if (!Array.isArray(items) || items.length === 0) { showNote("No configuration published yet."); return; }
       configurationList.textContent = "";
+      const cards = [];
       for (const item of items) {
         const article = document.createElement("article");
         const h3 = document.createElement("h3");
-        h3.textContent = item.title || item.folder;
+        const titleLink = document.createElement("a");
+        titleLink.href = item.page || item.readme;
+        titleLink.textContent = item.title || item.folder;
+        h3.appendChild(titleLink);
         const summary = document.createElement("p");
         summary.textContent = item.summary || "";
         const links = document.createElement("p");
@@ -48,14 +52,30 @@ if (configurationList) {
         download.href = item.zip;
         download.setAttribute("download", "");
         download.textContent = "Download" + (item.bytes ? " (" + Math.max(1, Math.round(item.bytes / 1024)) + " KB)" : "");
-        const readme = document.createElement("a");
-        readme.className = "text-link";
-        readme.href = item.readme;
-        readme.textContent = "README ↗";
-        links.append(download, " ", readme);
+        const page = document.createElement("a");
+        page.className = "text-link";
+        page.href = item.page || item.readme;
+        page.textContent = "README";
+        links.append(download, " ", page);
         article.append(h3, summary, links);
         configurationList.appendChild(article);
+        cards.push({ article, text: ((item.title || "") + " " + (item.summary || "") + " " + item.folder).toLowerCase() });
       }
+      // The filter box above the list: a word of the title or the opening paragraph.
+      const filter = document.querySelector("[data-configuration-filter]");
+      const count = document.querySelector("[data-configuration-count]");
+      const apply = () => {
+        const words = (filter ? filter.value : "").toLowerCase().split(/\s+/).filter(Boolean);
+        let shown = 0;
+        for (const card of cards) {
+          const visible = words.every((w) => card.text.includes(w));
+          card.article.hidden = !visible;
+          if (visible) shown += 1;
+        }
+        if (count) count.textContent = shown === cards.length ? cards.length + " configurations" : shown + " of " + cards.length + " configurations";
+      };
+      if (filter) filter.addEventListener("input", apply);
+      apply();
     })
     .catch(() => showNote("The list of configurations could not be loaded; see the configurations folder on GitHub."));
 }

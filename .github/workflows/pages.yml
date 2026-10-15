@@ -33,10 +33,40 @@ jobs:
       - name: Package the organ configurations for the website
         shell: bash
         run: |
+          python3 -m pip install --quiet markdown
           python3 - <<'EOF'
-          import json, os, re, zipfile
+          import html, json, os, re, zipfile
+          import markdown
           out = 'site/configurations'
           os.makedirs(out, exist_ok=True)
+          page_template = """<!DOCTYPE html>
+          <html lang="en">
+          <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>{title} - OrganSampler configuration</title>
+          <link rel="icon" href="../assets/icon.png">
+          <link rel="stylesheet" href="../style.css">
+          <style>
+          .readme {{ max-width: 980px; margin: 0 auto; padding: 2rem 1.2rem 4rem; }}
+          .readme table {{ border-collapse: collapse; width: 100%; margin: 1rem 0 2rem; font-size: .95rem; }}
+          .readme th, .readme td {{ border: 1px solid var(--line); padding: .35rem .6rem; text-align: left; vertical-align: top; }}
+          .readme pre {{ background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 1rem; overflow-x: auto; }}
+          .readme h1 {{ font-size: 2rem; margin: 1rem 0; }}
+          .readme h2 {{ font-size: 1.4rem; margin: 2rem 0 .8rem; }}
+          .readme .top {{ display: flex; gap: 1.2rem; align-items: center; flex-wrap: wrap; margin-bottom: 1.5rem; }}
+          </style>
+          </head>
+          <body>
+          <main class="readme">
+          <p class="top"><a class="text-link" href="../index.html#configurations">&larr; Organ configurations</a>
+          <a class="button primary" href="{zip}" download>Download ({kb} KB)</a>
+          <a class="text-link" href="{github}">On GitHub &#8599;</a></p>
+          {body}
+          </main>
+          </body>
+          </html>
+          """
           items = []
           for folder in sorted(os.listdir('configurations')):
               path = os.path.join('configurations', folder)
@@ -68,9 +98,18 @@ jobs:
                           full = os.path.join(root, f)
                           size += os.path.getsize(full)
                           z.write(full, os.path.relpath(full, 'configurations'))
+              github = 'https://github.com/' + os.environ['GITHUB_REPOSITORY'] + '/blob/main/configurations/' + folder + '/README.md'
+              # The README as a page of the website (the Markdown rendered, with
+              # the download button on top).
+              body = ''
+              if os.path.exists(readme):
+                  body = markdown.markdown(open(readme, encoding='utf-8').read(), extensions=['tables', 'fenced_code'])
+              with open(os.path.join(out, folder + '.html'), 'w', encoding='utf-8') as f:
+                  f.write(page_template.format(title=html.escape(title), zip=html.escape(zipname), kb=max(1, round(size / 1024)),
+                                               github=html.escape(github), body=body))
               items.append({'folder': folder, 'title': title, 'summary': summary,
                             'zip': 'configurations/' + zipname, 'json': jsons[0],
-                            'readme': 'https://github.com/' + os.environ['GITHUB_REPOSITORY'] + '/blob/main/configurations/' + folder + '/README.md',
+                            'page': 'configurations/' + folder + '.html', 'readme': github,
                             'bytes': size})
           with open(os.path.join(out, 'list.json'), 'w', encoding='utf-8') as f:
               json.dump(items, f, ensure_ascii=False, indent=1)

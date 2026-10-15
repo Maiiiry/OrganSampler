@@ -79,8 +79,10 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   crescendo, combinations). No "What you need", no "Using it", no prose about the divisions.
 - A `.json` in the repository opens as text in the browser, so the Website workflow (`pages.yml`) packs every
   configuration folder into `site/configurations/<json-name-with-hyphens>.zip` and writes `list.json`; the
-  website's "Organ configurations" section lists them (app.js). Never a release for configurations (there
-  will be thousands); the release body only links to that section. Name configuration files WITHOUT spaces;
+  website's "Organ configurations" section lists them (app.js: filter box, title linking to the README rendered
+  as `site/configurations/<folder>.html` at deploy, Download). Never a release for configurations and never a
+  list of them in `configurations/README.md` (there will be thousands); the release body only links to the
+  section. `configurations/README.md` keeps only the general how-to and the Rural Organ demo. Name configuration files WITHOUT spaces;
   the README's Download line is `https://zurek-jiri.github.io/OrganSampler/configurations/<name>.zip`.
 - Stop List counting: every row counts - stops, stop folders, transmissions and extensions (transmissions
   are rows of their receiving division, `transmissions[]` with `manual`) - except the rows nested in a stop

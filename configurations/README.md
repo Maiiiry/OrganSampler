@@ -59,15 +59,9 @@ pull request adding the folder, or open an issue with the "Organ
 configuration" template and attach the two files; the maintainer adds them.
 Published configurations are under the repository's licence (GPLv3).
 
-## Published configurations
-
-- [`stralsund-jakobi-wegscheider`](stralsund-jakobi-wegscheider/README.md) -
-  the Wegscheider organ of St. Jakobi, Stralsund, from the Sonus Paradisi
-  recordings (two Hauptwerk installation packages, `003135` and `003136`):
-  three perspectives on separate routes, four divisions, 71 rows in the Stop
-  List with transmissions and extensions. Download:
-  https://zurek-jiri.github.io/OrganSampler/configurations/Stralsund-Jakobi-Wegscheider.zip
-- [`rural-organ`](rural-organ/README.md) - the demo organ, see below.
+The published configurations are listed, with their README pages and
+downloads, under **Organ configurations** on the website:
+https://zurek-jiri.github.io/OrganSampler/#configurations
 
 ## The demo organ: Rural Organ
 

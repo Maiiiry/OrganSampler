@@ -68,7 +68,11 @@ pre code { background: none; padding: 0; color: var(--ink); }
 .card > .text-link { display: block; margin: .4rem 0 .8rem; }
 .small { font-size: .95rem; color: var(--muted); margin-bottom: 0; }
 .text-link { font-weight: 650; color: var(--accent); text-decoration: none; }
+.configuration-filter { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; margin: 1.4rem 0 0; }
+.configuration-filter input { margin-left: .6rem; min-width: 18rem; padding: .5rem .7rem; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--ink); font: inherit; }
 .configuration-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1.6rem; margin: 1.6rem 0 2.6rem; }
+.configuration-list article h3 a { color: var(--ink); text-decoration: none; }
+.configuration-list article h3 a:hover { color: var(--accent); }
 .configuration-list article { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 1.4rem 1.5rem; }
 .configuration-list article h3 { font-size: 1.25rem; margin-bottom: .5rem; }
 .configuration-list article p { margin-bottom: .8rem; }
