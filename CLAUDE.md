@@ -63,6 +63,9 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   (closes the issue on merge), answering in the issue on success or failure. The check accepts that flat
   pair; after the merge the `index` job moves it into `configurations/<slug>/` (README.md + zip) and
   regenerates INDEX. `.github/PULL_REQUEST_TEMPLATE.md` is the checklist for hand-made pull requests.
+  Repository setting needed (set 15 Oct 2026 via the API, `actions/permissions/workflow`): "Allow GitHub
+  Actions to create and approve pull requests" ON - without it `gh pr create` fails with "GitHub Actions is
+  not permitted to create or approve pull requests". The label `configuration` must exist (it does).
 - `configurations/<organ>/` holds exactly two files: the zipped `.json` and `README.md`. No IR files, no pictures,
   no bare `.json`, nothing else (impulse responses belong to the sample folders); the CI check refuses anything else.
 - Transmissions grouped under a stop folder are NOT table rows: they live in the source stop's voicing entry
