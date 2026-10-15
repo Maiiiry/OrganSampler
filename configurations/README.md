@@ -39,7 +39,7 @@ samples. Then *Save Configuration* to keep the paths.
 ## Publishing a configuration
 
 One folder per organ, named after the organ, holding the two files (the
-upload described below makes the folder by itself):
+robot described below makes the folder by itself):
 
 ```
 configurations/
@@ -57,21 +57,23 @@ configuration zipped for the upload, and `<name>.README.md`, the README -
 the perspectives, the folders the configuration expects and where to put the
 file, the routes, the version and the Stop List in the order of your grid.
 Fill in the three "(fill in: ...)" places - the organ, the producer and
-product of the samples, your name - and nothing else. Then upload the two
-files; no knowledge of Git is needed:
+product of the samples with the link to the page where the sample folders
+are bought or downloaded, your name - and nothing else. Then send the two
+files; no knowledge of Git is needed, a free GitHub account is:
 
-1. Open https://github.com/zurek-jiri/OrganSampler/upload/main/configurations
-   (signed in to GitHub).
-2. Drag `<name>.zip` and `<name>.README.md` onto the page.
-3. Press **Propose changes**, then **Create pull request**. GitHub makes a
-   copy of the repository for you in the background; nothing else to set.
+1. Open the form
+   https://github.com/zurek-jiri/OrganSampler/issues/new?template=organ_configuration.yml
+2. Drag `<name>.zip` and `<name>.README.md` into its *Files* field, tick the
+   publication box, press **Submit**.
 
-The *Configurations check* runs on the pull request at once and shows green
-when the two files are in order. The maintainer merges it, and the organ gets
-its own folder under `configurations/` and a line of [INDEX.md](INDEX.md) -
-automatically. (If the upload page is not possible for you, open an issue
-with the "Organ configuration" template and attach the two files.) Published
-configurations are under the repository's licence (GPLv3).
+A robot takes the two files from the issue, checks them and proposes them
+as a pull request; it answers in the issue, and when something is missing it
+says what (edit the issue and it tries again). The maintainer merges the
+pull request, and the organ gets its own folder under `configurations/` and
+a line of [INDEX.md](INDEX.md) - automatically. Those who know Git may open
+the pull request themselves: `<name>.zip` and `<name>.README.md` flat in
+`configurations/`. Published configurations are under the repository's
+licence (GPLv3).
 
 ## The published configurations
 

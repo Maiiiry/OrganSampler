@@ -12,6 +12,14 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.98] - 2026-10-15
+
+### Changed
+- Publishing a configuration goes through the "Organ configuration" form on
+  GitHub (the web upload is for collaborators only): a robot takes the
+  attached zip and README from the form, checks them and proposes them as a
+  pull request. The README's hidden note, the manual and the website say so.
+
 ## [0.8.97] - 2026-10-15
 
 ### Changed

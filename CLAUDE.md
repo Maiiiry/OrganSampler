@@ -55,10 +55,14 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   ("Remove empty stops", arrange mode).
 - Stop folders (a container stop with indented children) are table rows: the container has no folders, the
   children `child: true`. Keep them through every save/load path.
-- Uploading a configuration needs no Git: https://github.com/zurek-jiri/OrganSampler/upload/main/configurations
-  takes `<Name>.zip` + `<Name>.README.md` flat in `configurations/` and GitHub opens the pull request; the
-  check accepts that flat pair, and after the merge the `index` job moves it into `configurations/<slug>/`
-  (README.md + zip) and regenerates INDEX. `.github/PULL_REQUEST_TEMPLATE.md` is the checklist.
+- Publishing a configuration needs no Git. GitHub's web upload is for collaborators only ("Uploads are
+  disabled"), so the way is the issue form `organ_configuration.yml` (label `configuration`): the workflow
+  `configuration-issue.yml` takes the attached `<Name>.zip` + `<Name>.README.md` from the issue body
+  (`.github/scripts/configuration_from_issue.py`), runs `.github/scripts/configurations_check.sh`, pushes
+  the flat pair into `configurations/` on branch `configuration/issue-<n>` and opens the pull request
+  (closes the issue on merge), answering in the issue on success or failure. The check accepts that flat
+  pair; after the merge the `index` job moves it into `configurations/<slug>/` (README.md + zip) and
+  regenerates INDEX. `.github/PULL_REQUEST_TEMPLATE.md` is the checklist for hand-made pull requests.
 - `configurations/<organ>/` holds exactly two files: the zipped `.json` and `README.md`. No IR files, no pictures,
   no bare `.json`, nothing else (impulse responses belong to the sample folders); the CI check refuses anything else.
 - Transmissions grouped under a stop folder are NOT table rows: they live in the source stop's voicing entry

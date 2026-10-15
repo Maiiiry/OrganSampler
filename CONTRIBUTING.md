@@ -24,9 +24,9 @@ folder for analysis.
 
 Save it with *Portable configuration (to share with others)* ticked:
 OrganSampler writes the zip and the README beside it. Fill in the three
-"(fill in: ...)" places and drag the two files onto the
-[upload page](https://github.com/zurek-jiri/OrganSampler/upload/main/configurations);
-GitHub opens the pull request for you - no Git needed. The details:
+"(fill in: ...)" places and attach the two files to the
+[Organ configuration form](https://github.com/zurek-jiri/OrganSampler/issues/new?template=organ_configuration.yml);
+a robot checks them and opens the pull request for you - no Git needed. The details:
 [configurations/README.md](configurations/README.md); the published organs:
 [configurations/INDEX.md](configurations/INDEX.md). Configurations only -
 never samples, never impulse responses; the `Configurations check` workflow

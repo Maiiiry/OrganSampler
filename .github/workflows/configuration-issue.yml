@@ -1,0 +1,77 @@
+name: Configuration from issue
+
+# An "Organ configuration" issue (the issue form, label "configuration") carries
+# the two files OrganSampler wrote beside a portable configuration: the zip and
+# the README. GitHub lets nobody but collaborators upload files into the
+# repository, so this does it for them: the files are taken from the issue,
+# checked like a push would be, put into configurations/ as the upload pair
+# and proposed as a pull request that closes the issue. The maintainer merges
+# it; the index job then sorts the pair into its folder and updates INDEX.md.
+on:
+  issues:
+    types: [ opened, edited ]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  propose:
+    if: contains(github.event.issue.labels.*.name, 'configuration')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+      ISSUE_TITLE: ${{ github.event.issue.title }}
+      ISSUE_AUTHOR: ${{ github.event.issue.user.login }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Take the files from the issue
+        id: files
+        shell: bash
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          set +e
+          python3 .github/scripts/configuration_from_issue.py > result.txt 2>&1
+          status=$?
+          cat result.txt
+          if [ $status -ne 0 ]; then
+            gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$(printf 'Thank you! The files could not be taken over yet:\n\n```\n%s\n```\nPlease attach the two files OrganSampler wrote beside the portable configuration - `<name>.zip` and `<name>.README.md` with the (fill in: ...) places completed - by editing this issue; the check runs again on every edit.' "$(cat result.txt)")"
+            exit 1
+          fi
+      - name: Check them as a push would
+        id: check
+        shell: bash
+        run: |
+          set +e
+          bash .github/scripts/configurations_check.sh > check.txt 2>&1
+          status=$?
+          cat check.txt
+          if [ $status -ne 0 ]; then
+            gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$(printf 'Thank you! The files do not pass the configurations check:\n\n```\n%s\n```\nPlease fix and edit this issue; the check runs again on every edit.' "$(cat check.txt)")"
+            exit 1
+          fi
+      - name: Open the pull request
+        shell: bash
+        run: |
+          set -e
+          base="${{ steps.files.outputs.base }}"
+          branch="configuration/issue-$ISSUE_NUMBER"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          git add configurations
+          git commit -m "Configuration from issue #$ISSUE_NUMBER: $base (by @$ISSUE_AUTHOR)"
+          git push -f origin "$branch"
+          existing="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --state open --json number --jq '.[0].number')"
+          if [ -n "$existing" ]; then
+            gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "The files were taken over again into pull request #$existing."
+          else
+            url="$(gh pr create --repo "$GITHUB_REPOSITORY" --head "$branch" --base main \
+              --title "Configuration: $base" \
+              --body "$(printf 'The organ configuration from #%s, sent by @%s: `configurations/%s.zip` and `configurations/%s.README.md`. After the merge the organ gets its own folder and its line in `configurations/INDEX.md` automatically.\n\nCloses #%s' "$ISSUE_NUMBER" "$ISSUE_AUTHOR" "$base" "$base" "$ISSUE_NUMBER")")"
+            gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Thank you! The files passed the check and are proposed as $url - the maintainer merges it, then the organ appears in configurations/INDEX.md."
+          fi

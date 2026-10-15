@@ -486,11 +486,13 @@ static const char* const kManualText_part2 =
     "and the Stop List as a table in the order of your grid with the buttons'\n"
     "captions, transmissions and extensions included. Fill in the three\n"
     "\"(fill in: ...)\" places - the organ, the producer and product of the\n"
-    "samples, your name - and upload the two files: open\n"
-    "https://github.com/zurek-jiri/OrganSampler/upload/main/configurations (signed\n"
-    "in to GitHub), drag the zip and the README onto the page, press *Propose\n"
-    "changes* and *Create pull request*; nothing else is needed, no knowledge of\n"
-    "Git. After the check and the merge the organ appears as a line of\n"
+    "samples with the link to the page where the sample folders are bought or\n"
+    "downloaded, your name - and send the two files: open the form\n"
+    "https://github.com/zurek-jiri/OrganSampler/issues/new?template=organ_configuration.yml\n"
+    "(a free GitHub account is needed), drag the zip and the README into its\n"
+    "*Files* field and submit. A robot checks them, proposes them as a pull\n"
+    "request and answers in the form; nothing else is needed, no knowledge of\n"
+    "Git. After the merge the organ appears as a line of\n"
     "`configurations/INDEX.md`, the list of all published organs.\n"
     "\n"
     "Paths inside a configuration are stored relative to the common folder of the\n"
@@ -604,10 +606,10 @@ static const char* const kManualText_part2 =
     "(otherwise the steps only add), clears all steps, and saves or loads the steps\n"
     "as a file.\n"
     "\n"
-    "## 2.4 Global sound sliders and the polyphony display\n"
-    "\n"
     ;
 static const char* const kManualText_part3 =
+    "## 2.4 Global sound sliders and the polyphony display\n"
+    "\n"
     "The sliders of *Configuration Editor > Global sound* can each be shown on the\n"
     "main panel (the checkbox beside them in the editor). Master volume, pitch,\n"
     "sustain fade-out, release fade-in, release volume, release cutting, attack\n"
@@ -806,10 +808,10 @@ static const char* const kManualText_part3 =
     "sounds once, and stops only when no route holds it any more. While several\n"
     "routes hold it, the loudest of them sets its volume and the highest *Treble\n"
     "per key* setting among them sets its tone; when the loudest route lets go,\n"
-    "the volume glides to the next loudest, and the tone follows in the same way.\n"
-    "The tuning is different: a pipe can be retuned differently in different\n"
     ;
 static const char* const kManualText_part4 =
+    "the volume glides to the next loudest, and the tone follows in the same way.\n"
+    "The tuning is different: a pipe can be retuned differently in different\n"
     "transpositions (the pure intervals of the extensions, see above), and a\n"
     "sounding pipe cannot change its pitch. So the pipe keeps the tuning of the\n"
     "key that started it for as long as it sounds - even after that key has been\n"
@@ -1008,10 +1010,10 @@ static const char* const kManualText_part4 =
     "oscillations, strength, settling lag and the divisions fed from the same wind.\n"
     "All of them are described in \"Division sections (Pedal, Manual I ... Manual\n"
     "VII)\", from \"Swell: maximum attenuation when closed\" on.\n"
-    "\n"
-    "The tremulant's strength wanders between 60 and 100 % of the set depth, and\n"
     ;
 static const char* const kManualText_part5 =
+    "\n"
+    "The tremulant's strength wanders between 60 and 100 % of the set depth, and\n"
     "every key stroke shakes the wind with a random strength, so nothing repeats\n"
     "mechanically.\n"
     "\n"
@@ -1210,10 +1212,10 @@ static const char* const kManualText_part5 =
     "  Sound*. Every card is listed with its *Profile* box; choose **Pro Audio**\n"
     "  for the interface the organ plays through.\n"
     "- GNOME (Ubuntu, Fedora): *Settings > Sound > Output*: pick the interface\n"
-    "  under *Output Device* and set *Configuration* to **Pro Audio**.\n"
-    "- Any desktop: the program `pavucontrol`, tab *Configuration*, the card's\n"
     ;
 static const char* const kManualText_part6 =
+    "  under *Output Device* and set *Configuration* to **Pro Audio**.\n"
+    "- Any desktop: the program `pavucontrol`, tab *Configuration*, the card's\n"
     "  profile box.\n"
     "\n"
     "The desktop's own sounds then no longer go to that interface unless you\n"
@@ -1412,10 +1414,10 @@ static const char* const kManualText_part6 =
     "The *DSP* value is the whole callback of the busiest audio device - the\n"
     "render of all its routes, the note bookkeeping of attacks and releases, the\n"
     "copies to the device - as a share of the device's period, held at its peak\n"
-    "for a moment. That is what decides about dropouts: at 100 % the next\n"
-    "callback is late. A value of several hundred percent means the audio thread\n"
     ;
 static const char* const kManualText_part7 =
+    "for a moment. That is what decides about dropouts: at 100 % the next\n"
+    "callback is late. A value of several hundred percent means the audio thread\n"
     "was kept waiting by something else on the computer, not that the voices took\n"
     "that long; the activity log notes every such event.\n"
     "\n"
@@ -1614,10 +1616,10 @@ static const char* const kManualText_part7 =
     "  points more; beyond an octave every further octave in either direction adds\n"
     "  15 points with the resampling methods and 25 with the phase vocoder, because\n"
     "  a copy two octaves away is a pipe of another size. A pipe is one copy: inside\n"
-    "  the stop's own compass the stop's value applies; a pipe beyond it, asked for\n"
-    "  by transmissions only, takes the value of the first transmission in the\n"
     ;
 static const char* const kManualText_part8 =
+    "  the stop's own compass the stop's value applies; a pipe beyond it, asked for\n"
+    "  by transmissions only, takes the value of the first transmission in the\n"
     "  stop's list whose shifted compass holds it. Changing it rebuilds only the\n"
     "  pipes concerned. Default 30 %; the right value is a matter of listening.\n"
     "- **Filled pipes: release length** (pitch shift method) - the decay of a\n"
@@ -1816,10 +1818,10 @@ static const char* const kManualText_part8 =
     "   division, slowly at first: one key, twice a second. The voices are watched\n"
     "   every second. Whenever they stop rising below the current target, the\n"
     "   stimulus grows at once - more keys spread over the compass (up to all 61),\n"
-    "   then the octave couplers of every division onto itself (16' and 4',\n"
-    "   whether they are on the grid or not: three pipes per key), then a faster\n"
     ;
 static const char* const kManualText_part9 =
+    "   then the octave couplers of every division onto itself (16' and 4',\n"
+    "   whether they are on the grid or not: three pipes per key), then a faster\n"
     "   rate (up to 16 strikes a second). A wet set with several perspectives and\n"
     "   long releases reaches tens of thousands of voices with a handful of keys;\n"
     "   a dry set gives little more than what is being pressed, so it ends up with\n"
@@ -2018,10 +2020,10 @@ static const char* const kManualText_part9 =
     "\n"
     "How a pipe beyond the compass (or in a gap) gets its pitch from a neighbour's\n"
     "sample: *Resampling*, *Pitch shift (resampling + timbre correction)*, *Pitch\n"
-    "shift + time stretch (attack and release)* (the default) or *Phase vocoder\n"
-    "(Signalsmith Stretch)* (optional, for those who prefer it). \"The\n"
     ;
 static const char* const kManualText_part10 =
+    "shift + time stretch (attack and release)* (the default) or *Phase vocoder\n"
+    "(Signalsmith Stretch)* (optional, for those who prefer it). \"The\n"
     "transposition methods\" describes each with its strengths and weaknesses. Switching the method rebuilds the copies of every\n"
     "stop (from the cache when it is on); until a copy is ready the pipe plays\n"
     "resampled. The sliders below that do not apply to the chosen method are greyed\n"
@@ -2220,10 +2222,10 @@ static const char* const kManualText_part10 =
     "\n"
     "### Top bar: Ignored Patterns\n"
     "\n"
-    "Shows or hides the button editing the ignored folders list.\n"
-    "\n"
     ;
 static const char* const kManualText_part11 =
+    "Shows or hides the button editing the ignored folders list.\n"
+    "\n"
     "### Top bar: One-shot Patterns\n"
     "\n"
     "Shows or hides the button editing the one-shot stops list.\n"
@@ -2422,10 +2424,10 @@ static const char* const kManualText_part11 =
     "### Perspective volume\n"
     "\n"
     "The level of one perspective of this division (-31 to +6 dB, default 0); -31\n"
-    "dB switches the perspective off completely and saves its voices.\n"
-    "\n"
     ;
 static const char* const kManualText_part12 =
+    "dB switches the perspective off completely and saves its voices.\n"
+    "\n"
     "### Perspective channel separation\n"
     "\n"
     "At 100 % (default) every pipe sounds only on its own channel pair of the\n"

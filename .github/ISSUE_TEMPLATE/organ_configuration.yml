@@ -1,63 +1,32 @@
 name: Organ configuration
-description: Share a ready-made organ configuration (.json) for a set of sample folders, so others can play it at once.
+description: Publish your organ configuration - attach the zip and the README OrganSampler wrote, a robot proposes them, the maintainer merges.
 title: "[Configuration] "
 labels: ["configuration"]
 body:
   - type: markdown
     attributes:
       value: |
-        A configuration is the organ you built in OrganSampler - stop list, voicing, audio routes, couplers, combinations - saved with
-        *Save Configuration*. Published configurations live in the [configurations](https://github.com/zurek-jiri/OrganSampler/tree/main/configurations)
-        folder of the repository. Save it with *Portable configuration (to share with others)* ticked: OrganSampler writes the zip for the
-        upload (`<name>.zip`) and its README (`<name>.README.md`) beside it - fill in the organ, the samples' producer and product and your
-        name. The easiest way is the upload page: https://github.com/zurek-jiri/OrganSampler/upload/main/configurations - drag the two
-        files there, press *Propose changes* and *Create pull request*; the organ then gets its folder and its line of `configurations/INDEX.md`
-        by itself after the merge. If that is not possible for you, attach the zip and the README here (drag them into the "Files" field)
-        and the maintainer adds them.
+        Save the organ with *Portable configuration (to share with others)* ticked: OrganSampler writes `<name>.zip` (the configuration
+        inside) and `<name>.README.md` beside it. In the README fill in the "(fill in: ...)" places - the organ; the producer, the product
+        and **the link to the page where the sample folders are bought or downloaded**; your name. Then attach the two files below.
+        A robot checks them, puts them into the repository as a pull request and answers here; the maintainer merges it and the organ
+        appears in [configurations/INDEX.md](https://github.com/zurek-jiri/OrganSampler/blob/main/configurations/INDEX.md).
+        If something is missing, the robot says what - edit this issue and it tries again.
         **Never attach samples or impulse responses.** They are bought or downloaded elsewhere (Sonus Paradisi); a configuration only names the folders it needs.
   - type: input
     id: organ
     attributes:
-      label: Organ and sample folders
-      description: The instrument, and the sample folders (name, producer).
-      placeholder: "Stralsund, St. Jakobi, Wegscheider 2008 - Sonus Paradisi"
+      label: Organ
+      description: The instrument and the producer of its sample folders, as in the README.
+      placeholder: "Stralsund, St. Jakobi, Wegscheider organ - Sonus Paradisi"
     validations:
       required: true
-  - type: input
-    id: source
-    attributes:
-      label: Where the samples come from
-      description: A link to the page where the sample folders are sold or downloaded. The samples themselves are never published here.
-      placeholder: "https://www.sonusparadisi.cz/..."
-    validations:
-      required: true
-  - type: input
-    id: version
-    attributes:
-      label: Saved with OrganSampler version
-      placeholder: "0.8.50"
-    validations:
-      required: true
-  - type: textarea
-    id: trees
-    attributes:
-      label: Folder trees the configuration expects
-      description: The names of the sample folder trees as the configuration saved them (the Stop List shows them; "Sample folder not found" names them when they are missing).
-      placeholder: |
-        Library root: 003136
-        Trees: 003136\pipe
-    validations:
-      required: true
-  - type: textarea
-    id: notes
-    attributes:
-      label: Notes
-      description: Anything the player should know that the README does not say.
   - type: textarea
     id: files
     attributes:
       label: Files
-      description: Drag the zipped configuration (<name>.zip) and its README.md here. Nothing else - no samples, no impulse responses.
+      description: Drag `<name>.zip` and `<name>.README.md` here (the two files OrganSampler wrote beside the portable configuration). Nothing else.
+      placeholder: Drop the two files here.
     validations:
       required: true
   - type: checkboxes

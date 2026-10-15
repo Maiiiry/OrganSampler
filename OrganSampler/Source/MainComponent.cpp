@@ -9697,8 +9697,8 @@ juce::String MainComponent::configurationReadme(const juce::var& configuration, 
             "     2. the samples: the producer, the product's name and THE LINK TO THE PAGE where the\n"
             "        sample folders are bought or downloaded - without it nobody can use the configuration;\n"
             "     3. your name or GitHub name as the author.\n"
-            "     Then upload this README with the zip beside it:\n"
-            "     https://github.com/zurek-jiri/OrganSampler/upload/main/configurations -->\n\n";
+            "     Then attach this README and the zip beside it to the form (a free GitHub account):\n"
+            "     https://github.com/zurek-jiri/OrganSampler/issues/new?template=organ_configuration.yml -->\n\n";
     text << "A complete OrganSampler configuration of (fill in: the organ, its place), as recorded by (fill in: the producer)";
     if (!perspectives.isEmpty())
         text << " in " << (perspectives.size() == 1 ? juce::String("one perspective") : juce::String(perspectives.size()) + " perspectives")
