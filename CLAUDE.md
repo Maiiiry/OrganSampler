@@ -55,6 +55,8 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   ("Remove empty stops", arrange mode).
 - Stop folders (a container stop with indented children) are table rows: the container has no folders, the
   children `child: true`. Keep them through every save/load path.
+- `configurations/<organ>/` holds exactly two files: the `.json` and `README.md`. No IR files, no pictures,
+  nothing else (impulse responses belong to the sample folders); the CI check refuses anything else.
 - Transmissions grouped under a stop folder are NOT table rows: they live in the source stop's voicing entry
   (`voicingSettings.stops[].transmissions[]` with `groupMaster`). Search there before claiming they are gone.
 - The transmission list of a stop belongs to the Stop List / voicing state only. A combination, crescendo step
@@ -75,11 +77,11 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   known: one sentence + the tree diagram, never a made-up parent folder like `haupwerk`); last the "Stop List"
   table of the row names by division. Never mention what OrganSampler does natively (couplers, voicing,
   crescendo, combinations). No "What you need", no "Using it", no prose about the divisions.
-- A `.json` in the repository opens as text in the browser, so every configuration is also attached to the
-  permanent release `configurations` (workflow `configurations.yml`, job `publish`, on every push to main;
-  asset names get hyphens for spaces). Name configuration files WITHOUT spaces, and put the line
-  `**Download:** https://github.com/zurek-jiri/OrganSampler/releases/download/configurations/<file>.json`
-  right after the opening paragraph of its README.
+- A `.json` in the repository opens as text in the browser, so the Website workflow (`pages.yml`) packs every
+  configuration folder into `site/configurations/<json-name-with-hyphens>.zip` and writes `list.json`; the
+  website's "Organ configurations" section lists them (app.js). Never a release for configurations (there
+  will be thousands); the release body only links to that section. Name configuration files WITHOUT spaces;
+  the README's Download line is `https://zurek-jiri.github.io/OrganSampler/configurations/<name>.zip`.
 - Stop List counting: every row counts - stops, stop folders, transmissions and extensions (transmissions
   are rows of their receiving division, `transmissions[]` with `manual`) - except the rows nested in a stop
   folder (`groupMaster` set). The table is NEVER typed by hand: it comes from the program, in grid order (row by

@@ -8,9 +8,10 @@ body:
       value: |
         A configuration is the organ you built in OrganSampler - stop list, voicing, audio routes, couplers, combinations - saved with
         *Save Configuration*. Published configurations live in the [configurations](https://github.com/zurek-jiri/OrganSampler/tree/main/configurations)
-        folder of the repository; read its README for what a published configuration must contain. Attach the .json here (drag it into
-        the "Files" field), together with the impulse responses it uses, if any, and the maintainer adds it - or open a pull request yourself.
-        **Never attach samples.** The samples are bought or downloaded elsewhere (Sonus Paradisi); a configuration only names the folders it needs.
+        folder of the repository. Save it with *Portable configuration (to share with others)* ticked: OrganSampler writes its README
+        beside it (`<name>.README.md`) - fill in the organ, the samples' producer and product and your name. Attach the two files here
+        (drag them into the "Files" field) and the maintainer adds them - or open a pull request yourself.
+        **Never attach samples or impulse responses.** They are bought or downloaded elsewhere (Sonus Paradisi); a configuration only names the folders it needs.
   - type: input
     id: organ
     attributes:
@@ -48,12 +49,12 @@ body:
     id: notes
     attributes:
       label: Notes
-      description: Audio layout (how many routes, which perspectives, IRs), divisions, anything the player should know. Which folders are not used.
+      description: Anything the player should know that the README does not say.
   - type: textarea
     id: files
     attributes:
       label: Files
-      description: Drag the configuration .json here, and the IR files (.wav) it uses, if any. No samples.
+      description: Drag the configuration .json and its README.md here. Nothing else - no samples, no impulse responses.
     validations:
       required: true
   - type: checkboxes

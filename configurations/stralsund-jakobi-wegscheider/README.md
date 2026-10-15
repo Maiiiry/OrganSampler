@@ -4,7 +4,7 @@ A complete OrganSampler configuration of the Wegscheider organ in the church of 
 extensions included (only the rows nested in stop folders are not counted). Whoever owns
 the recordings loads the whole instrument in a single step.
 
-**Download:** https://github.com/zurek-jiri/OrganSampler/releases/download/configurations/Stralsund-Jakobi-Wegscheider.json
+**Download:** https://zurek-jiri.github.io/OrganSampler/configurations/Stralsund-Jakobi-Wegscheider.zip
 
 **No samples are published here.** The configuration merely names the folders it expects;
 the recordings themselves are the property of their producer and are obtained from them.

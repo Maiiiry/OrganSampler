@@ -3,7 +3,7 @@ name: Website
 on:
   push:
     branches: [ main ]
-    paths: [ 'site/**', '.github/workflows/pages.yml' ]
+    paths: [ 'site/**', 'configurations/**', '.github/workflows/pages.yml' ]
   workflow_dispatch:
 
 permissions:
@@ -24,6 +24,58 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      # The organ configurations go to the website as downloads: one zip per
+      # configuration folder (the .json, its README and its IR files) under
+      # site/configurations/, named after the .json with hyphens for spaces, and
+      # list.json for the "Organ configurations" section (title and the opening
+      # paragraph of each README). A .json served as such would open in the
+      # browser as text; a zip is saved as a file.
+      - name: Package the organ configurations for the website
+        shell: bash
+        run: |
+          python3 - <<'EOF'
+          import json, os, re, zipfile
+          out = 'site/configurations'
+          os.makedirs(out, exist_ok=True)
+          items = []
+          for folder in sorted(os.listdir('configurations')):
+              path = os.path.join('configurations', folder)
+              if not os.path.isdir(path):
+                  continue
+              jsons = sorted(f for f in os.listdir(path) if f.lower().endswith('.json'))
+              if not jsons:
+                  continue
+              title, summary = folder, ''
+              readme = os.path.join(path, 'README.md')
+              if os.path.exists(readme):
+                  lines = open(readme, encoding='utf-8').read().splitlines()
+                  for i, line in enumerate(lines):
+                      if line.startswith('# '):
+                          title = line[2:].strip()
+                          para = []
+                          for rest in lines[i + 1:]:
+                              if not rest.strip() and para:
+                                  break
+                              if rest.strip():
+                                  para.append(rest.strip())
+                          summary = ' '.join(para)
+                          break
+              zipname = re.sub(r'\s+', '-', os.path.splitext(jsons[0])[0]) + '.zip'
+              size = 0
+              with zipfile.ZipFile(os.path.join(out, zipname), 'w', zipfile.ZIP_DEFLATED) as z:
+                  for root, dirs, files in os.walk(path):
+                      for f in sorted(files):
+                          full = os.path.join(root, f)
+                          size += os.path.getsize(full)
+                          z.write(full, os.path.relpath(full, 'configurations'))
+              items.append({'folder': folder, 'title': title, 'summary': summary,
+                            'zip': 'configurations/' + zipname, 'json': jsons[0],
+                            'readme': 'https://github.com/' + os.environ['GITHUB_REPOSITORY'] + '/blob/main/configurations/' + folder + '/README.md',
+                            'bytes': size})
+          with open(os.path.join(out, 'list.json'), 'w', encoding='utf-8') as f:
+              json.dump(items, f, ensure_ascii=False, indent=1)
+          print(json.dumps(items, ensure_ascii=False, indent=1))
+          EOF
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

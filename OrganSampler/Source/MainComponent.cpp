@@ -9604,7 +9604,7 @@ juce::String MainComponent::configurationReadme(const juce::var& configuration, 
     };
     auto code = [](const juce::String& text) { return "`" + text + "`"; };
     const juce::String name = file.getFileNameWithoutExtension();
-    const juce::String assetName = name.replaceCharacter(' ', '-') + ".json";
+    const juce::String assetName = name.replaceCharacter(' ', '-') + ".zip";   // the website packs the folder into this zip
     const juce::String version(ProjectInfo::versionString);
     const int divisions = (int)configuration.getProperty("manualCount", manualCount) + 1;
 
@@ -9686,7 +9686,7 @@ juce::String MainComponent::configurationReadme(const juce::var& configuration, 
     text << ": " << divisions << " divisions and " << (rows.isNotEmpty() ? rows : juce::String("?")) << " rows in the Stop List, transmissions and\n"
             "extensions included (only the rows nested in stop folders are not counted). Whoever owns\n"
             "the recordings loads the whole instrument in a single step.\n\n";
-    text << "**Download:** https://github.com/zurek-jiri/OrganSampler/releases/download/configurations/" << assetName << "\n\n";
+    text << "**Download:** https://zurek-jiri.github.io/OrganSampler/configurations/" << assetName << "\n\n";
     text << "**No samples are published here.** The configuration merely names the folders it expects;\n"
             "the recordings themselves are the property of their producer and are obtained from them.\n\n";
     text << "## The configuration\n\n";

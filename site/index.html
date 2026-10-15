@@ -25,7 +25,7 @@
         <p class="intro">OrganSampler plays sampled pipe organs from plain folders of WAV files - one folder per stop, its pipes as WAV files - and turns any number of such folders into an organ of your own design.</p>
         <p>No organ definition file, no installer, no account. Load the folders, let the program propose the organ, shape it - divisions, stops, perspectives, audio routes, voicing - and save it as a configuration. Free software under the GNU GPL v3 for Windows, macOS and Linux.</p>
         <div class="actions"><a class="button primary" href="#download">Download <span aria-hidden="true">&darr;</span></a><a class="button secondary" href="#explore">What is inside</a></div>
-        <p class="availability"><span class="status-dot" aria-hidden="true"></span> Version <span data-version>0.8.94</span> &middot; Windows x64 &middot; macOS &middot; Linux x64 &middot; one portable executable</p>
+        <p class="availability"><span class="status-dot" aria-hidden="true"></span> Version <span data-version>0.8.95</span> &middot; Windows x64 &middot; macOS &middot; Linux x64 &middot; one portable executable</p>
       </div>
       <div class="hero-art">
         <img id="hero-pipes" src="assets/pipes.png" width="1250" height="1250" alt="Three metal organ pipes on a dark background" loading="eager">
@@ -87,7 +87,7 @@
           <a class="button primary" href="https://github.com/zurek-jiri/OrganSampler/releases" data-repo-suffix="/releases">Releases &amp; changelog &rarr;</a>
           <a class="text-link" href="https://github.com/zurek-jiri/OrganSampler/blob/main/OrganSampler/USER_MANUAL.md" data-repo-path="OrganSampler/USER_MANUAL.md">Read the user manual &#8599;</a>
           <a class="text-link" href="https://github.com/zurek-jiri/OrganSampler#building" data-repo-suffix="#building">Build from source &#8599;</a>
-          <p class="small">Version <span data-version>0.8.94</span>. Source, issues and configurations on <a href="https://github.com/zurek-jiri/OrganSampler" data-repo-suffix="">GitHub</a>.</p>
+          <p class="small">Version <span data-version>0.8.95</span>. Source, issues and configurations on <a href="https://github.com/zurek-jiri/OrganSampler" data-repo-suffix="">GitHub</a>.</p>
         </div>
       </div>
     </section>
@@ -121,13 +121,13 @@
     <section id="configurations" class="band">
       <div class="wrap">
         <div class="section-heading"><p class="eyebrow">Organ configurations</p><h2>Someone kind has done the work for you.</h2><p>A configuration is a complete organ built in OrganSampler - stop list, voicing, audio routes, couplers, combinations, crescendo - saved as one <code>.json</code> file. With a published configuration, a player who owns the same sample folders loads the whole organ in one step. <strong>The samples themselves are never published; a configuration only names the sample folders it needs</strong>, and the repository refuses anything else in its configurations folder. The samples are bought or downloaded elsewhere - from Sonus Paradisi above all.</p></div>
+        <div class="configuration-list" data-configuration-list><p class="small">Loading the list of configurations...</p></div>
         <div class="two">
           <div class="plain">
             <h3>Using one</h3>
             <ol>
               <li>Get the sample folders the configuration names (its README says which and where from).</li>
-              <li>Put the <code>.json</code> beside them - in the folder that contains the top folder of the samples. Paths inside a configuration are relative to that folder, so the samples are found without a question.</li>
-              <li>Copy the impulse responses published with it next to the <code>.json</code>.</li>
+              <li>Download it above (a zip with the <code>.json</code> and its README) and put the <code>.json</code> beside the samples - in the folder that contains the top folders of the samples. Paths inside a configuration are relative to that folder, so the samples are found without a question.</li>
               <li><em>Load Configuration</em> in the top bar. If a folder tree is not where the configuration expects it, the organ loads with the trees it finds and the division shows "Sample folder not found" with the folder's name: load that folder in the Stop List and it takes the missing tree's place.</li>
             </ol>
             <a class="text-link" href="https://github.com/zurek-jiri/OrganSampler/tree/main/configurations" data-repo-tree="configurations">The configurations folder &#8599;</a>
@@ -135,9 +135,9 @@
           <div class="plain">
             <h3>Publishing yours</h3>
             <ol>
-              <li>Save it with "Portable configuration (to share with others)" ticked: no MIDI devices, no audio devices, nothing of your computer - the organ only, with the IR files beside it.</li>
-              <li>Write the short README: organ, the sample folders and their source, the folder trees expected, the audio layout, the measured polyphony, the OrganSampler version.</li>
-              <li>Open a pull request adding a folder under <code>configurations/</code>, or open an "Organ configuration" issue and attach the files - the maintainer adds them. Only the <code>.json</code>, the README and IR files: no sample is accepted, ever.</li>
+              <li>Save it with "Portable configuration (to share with others)" ticked: no MIDI devices, no audio devices, nothing of your computer - the organ only.</li>
+              <li>The program writes the README beside it (<code>&lt;name&gt;.README.md</code>): fill in the organ, the producer and product of the samples, and your name.</li>
+              <li>Open a pull request adding a folder under <code>configurations/</code>, or open an "Organ configuration" issue and attach the files - the maintainer adds them. Only the <code>.json</code> and the README: no sample, no impulse response, nothing else is accepted, ever.</li>
             </ol>
             <a class="text-link" href="https://github.com/zurek-jiri/OrganSampler/issues/new/choose" data-repo-suffix="/issues/new/choose">Submit a configuration &#8599;</a>
           </div>

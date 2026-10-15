@@ -24,3 +24,38 @@ const repo = validRepository ? "https://github.com/" + config.repository : "http
 for (const el of document.querySelectorAll("[data-repo-path]")) el.href = repo + "/blob/main/" + el.dataset.repoPath;
 for (const el of document.querySelectorAll("[data-repo-tree]")) el.href = repo + "/tree/main/" + el.dataset.repoTree;
 for (const el of document.querySelectorAll("[data-repo-suffix]")) el.href = repo + el.dataset.repoSuffix;
+
+// The organ configurations: configurations/list.json is written when the site
+// is deployed (one zip per configuration folder beside it).
+const configurationList = document.querySelector("[data-configuration-list]");
+if (configurationList) {
+  const showNote = (text) => { configurationList.textContent = ""; const p = document.createElement("p"); p.className = "small"; p.textContent = text; configurationList.appendChild(p); };
+  fetch("configurations/list.json", { cache: "no-cache" })
+    .then((response) => (response.ok ? response.json() : []))
+    .then((items) => {
+      if (!Array.isArray(items) || items.length === 0) { showNote("No configuration published yet."); return; }
+      configurationList.textContent = "";
+      for (const item of items) {
+        const article = document.createElement("article");
+        const h3 = document.createElement("h3");
+        h3.textContent = item.title || item.folder;
+        const summary = document.createElement("p");
+        summary.textContent = item.summary || "";
+        const links = document.createElement("p");
+        links.className = "links";
+        const download = document.createElement("a");
+        download.className = "button primary";
+        download.href = item.zip;
+        download.setAttribute("download", "");
+        download.textContent = "Download" + (item.bytes ? " (" + Math.max(1, Math.round(item.bytes / 1024)) + " KB)" : "");
+        const readme = document.createElement("a");
+        readme.className = "text-link";
+        readme.href = item.readme;
+        readme.textContent = "README ↗";
+        links.append(download, " ", readme);
+        article.append(h3, summary, links);
+        configurationList.appendChild(article);
+      }
+    })
+    .catch(() => showNote("The list of configurations could not be loaded; see the configurations folder on GitHub."));
+}

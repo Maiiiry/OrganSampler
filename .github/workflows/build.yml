@@ -113,7 +113,7 @@ jobs:
           body: |
             Pre-release build for testers - not an official release yet. Windows: `OrganSampler.exe`; macOS: `OrganSampler-macos.zip` for Apple silicon Macs on macOS 11 Big Sur or newer, `OrganSampler-macos-10.11-intel.zip` for Intel Macs on macOS 10.11 El Capitan or newer (both unsigned: right-click > Open the first time; untested by the project); Linux: `OrganSampler` (`chmod +x` first). Changes: see `OrganSampler/CHANGELOG.md`.
 
-            **An organ to play:** the Rural Organ demo (dry recordings with IR reverb, sample folders and configuration included) - https://github.com/zurek-jiri/OrganSampler/releases/tag/rural-organ-0.8. **More organs:** sample folders in wave format from Sonus Paradisi, https://www.sonusparadisi.cz/en/organs.html (free material: https://www.sonusparadisi.cz/en/free-stuff.html); ready-made configurations in `configurations/`.
+            **An organ to play:** the Rural Organ demo (dry recordings with IR reverb, sample folders and configuration included) - https://github.com/zurek-jiri/OrganSampler/releases/tag/rural-organ-0.8. **More organs:** sample folders in wave format from Sonus Paradisi, https://www.sonusparadisi.cz/en/organs.html (free material: https://www.sonusparadisi.cz/en/free-stuff.html); ready-made configurations: **Organ configurations** on the website, https://zurek-jiri.github.io/OrganSampler/#configurations.
       # Only the newest build stays on the releases page: every older v* release
       # (and its tag) is deleted; the Rural Organ demo release is kept.
       - name: Delete the older program releases
