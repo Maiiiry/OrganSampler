@@ -29,6 +29,11 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   macOS (Apple silicon, macOS 11+), Intel macOS 10.11+ and Linux and publishes a pre-release; the release job deletes
   every older `v*` release and tag. The Rural Organ demo release `rural-organ-0.8` stays. Only Sonus Paradisi is ever
   named for samples; never "sample set" - say sample folders / folder tree.
+- Intel macOS build (10.11+): never add `-D_LIBCPP_DISABLE_AVAILABILITY` (it makes the binary import libc++
+  symbols of the build machine's macOS - dyld "Symbol not found" on 10.12-10.14). After each release download
+  `OrganSampler-macos-10.11-intel.zip` into a fresh temp folder and run
+  `python -I OrganSampler/Tools/check_macho_imports.py <app>/Contents/MacOS/OrganSampler`: it must end with
+  "late symbols: 0".
 - Windows commit messages: write the message to a file WITHOUT BOM (`[IO.File]::WriteAllText(path, text)`) and
   `git commit -F <file>`; `-F -` with a here-string does not work in PowerShell 5.1 (the text becomes pathspecs,
   the commit fails and a following `git tag` lands on the previous commit), and `Set-Content -Encoding utf8` adds
