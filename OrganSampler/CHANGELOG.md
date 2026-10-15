@@ -12,6 +12,26 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.93] - 2026-10-15
+
+### Fixed
+- Intel macOS build (10.11+): the start failed on macOS 10.12/10.13 with
+  "dyld: Symbol not found: std::__1::bad_function_call::~bad_function_call"
+  (earlier: `std::__1::__hash_memory`). The test build had libc++'s
+  availability checks switched off, so its headers assumed every symbol of
+  the build machine's libc++ in the old dylib. The checks are on again; the
+  aligned new/delete still come from `AlignedNew.cpp`.
+- macOS icon: the 16 and 32 px entries of the icns were PNG data in the
+  `icp4`/`icp5` types, which the Finder of macOS 10.7-10.13 renders as pixel
+  garbage. The icns now carries the classic RLE entries with masks for 16,
+  32, 48 and 128 px and PNG entries from 128 px up (`Tools/make_icns.py`,
+  pure Python).
+
+### Added
+- `configurations/stralsund-jakobi-wegscheider`: the portable configuration
+  of the Wegscheider organ of St. Jakobi, Stralsund (Sonus Paradisi
+  recordings, packages 003135 and 003136) with its README.
+
 ## [0.8.92] - 2026-10-15
 
 ### Fixed

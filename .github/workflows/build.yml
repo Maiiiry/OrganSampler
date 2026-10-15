@@ -34,7 +34,13 @@ jobs:
             artifact: OrganSampler-macos-10.11-intel
             path: build/OrganSampler_artefacts/Release/OrganSampler.app
             zip: OrganSampler-macos-10.11-intel.zip
-            cmake: -DCMAKE_OSX_DEPLOYMENT_TARGET=10.11 -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_CXX_FLAGS="-faligned-allocation -D_LIBCPP_DISABLE_AVAILABILITY -Wno-unguarded-availability -Wno-unguarded-availability-new" -DCMAKE_OBJCXX_FLAGS="-faligned-allocation -D_LIBCPP_DISABLE_AVAILABILITY -Wno-unguarded-availability -Wno-unguarded-availability-new"
+            # -faligned-allocation: C++17 aligned new/delete come from AlignedNew.cpp (the system
+            # ones exist from 10.13). libc++'s availability stays ON: with it disabled
+            # (-D_LIBCPP_DISABLE_AVAILABILITY) the headers assumed every libc++ symbol of the
+            # build machine's macOS in the dylib, and the binary imported symbols a 10.13
+            # libc++ lacks (std::__hash_memory, the bad_function_call key function) -
+            # "dyld: Symbol not found" at start.
+            cmake: -DCMAKE_OSX_DEPLOYMENT_TARGET=10.11 -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_CXX_FLAGS="-faligned-allocation -Wno-unguarded-availability -Wno-unguarded-availability-new" -DCMAKE_OBJCXX_FLAGS="-faligned-allocation -Wno-unguarded-availability -Wno-unguarded-availability-new"
             optional: true
           - name: Linux
             os: ubuntu-latest

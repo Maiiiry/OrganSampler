@@ -87,6 +87,14 @@ with the "Organ configuration" template and attach the files; the maintainer
 adds them. Published configurations are under the repository's licence
 (GPLv3).
 
+## Published configurations
+
+- [`stralsund-jakobi-wegscheider`](stralsund-jakobi-wegscheider/README.md) -
+  the Wegscheider organ of St. Jakobi, Stralsund, from the Sonus Paradisi
+  recordings (two Hauptwerk installation packages, `003135` and `003136`):
+  four divisions, 53 stops, three perspectives on separate routes.
+- [`rural-organ`](rural-organ/README.md) - the demo organ, see below.
+
 ## The demo organ: Rural Organ
 
 The one exception to "no samples here": **Rural Organ**, a small village
