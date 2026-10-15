@@ -62,6 +62,15 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
 - The voicing state keeps entries of stops the engine could not build (missing folders) and writes them back;
   never let a save drop voicing of a stop that merely failed to load.
 
+- A configuration README has exactly this and nothing more (people do not read):
+  title; one opening paragraph (what it is, number of Stop List rows WITHOUT nested transmissions, perspectives)
+  + "No samples are published here"; "Where to put the file" (one sentence + the tree diagram, never a
+  made-up parent folder like `haupwerk`); a "Stop List" table of the row names by division (no prose about the
+  divisions); "The configuration" bullets Organ, Samples (producer, product, link, packages, WAV, perspectives,
+  required OrganSampler version), Expects (trees), Audio layout (routes, unused ones marked), Saved with, Author
+  + date. No "What you need", no "Using it", no essays. `configurations/stralsund-jakobi-wegscheider/README.md`
+  is the measure. Stop counts: never count rows with folders + empty folders; say "N rows in the Stop List".
+
 ## Testing
 - Windows delivery: after every release build copy the exe to `C:\OrganSampler\OrganSampler_<version>.exe`
   (the local MSBuild Release build or the CI exe) and point the desktop shortcut

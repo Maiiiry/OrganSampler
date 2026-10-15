@@ -62,7 +62,8 @@ configurations/
         └── Rural Church Front.wav     <- the IRs the configuration uses, if any (and if their licence allows)
 ```
 
-The README of a configuration:
+The README of a configuration is short - a screenful at most, as in
+`stralsund-jakobi-wegscheider/README.md` - and says:
 
 - **Organ**: the instrument, builder, place, year.
 - **Samples**: the name of the sample folders, their producer, a link to the
@@ -92,7 +93,7 @@ adds them. Published configurations are under the repository's licence
 - [`stralsund-jakobi-wegscheider`](stralsund-jakobi-wegscheider/README.md) -
   the Wegscheider organ of St. Jakobi, Stralsund, from the Sonus Paradisi
   recordings (two Hauptwerk installation packages, `003135` and `003136`):
-  four divisions, 53 stops, three perspectives on separate routes.
+  four divisions, 53 rows in the Stop List, three perspectives on separate routes.
 - [`rural-organ`](rural-organ/README.md) - the demo organ, see below.
 
 ## The demo organ: Rural Organ
