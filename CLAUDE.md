@@ -54,6 +54,10 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   never let a save drop voicing of a stop that merely failed to load.
 
 ## Testing
+- Windows delivery: after every release build copy the exe to `C:\OrganSampler\OrganSampler_<version>.exe`
+  (the local MSBuild Release build or the CI exe) and point the desktop shortcut
+  `OrganSampler_<version>.exe – zástupce.lnk` at it (rename the previous version's shortcut; WScript.Shell
+  CreateShortcut, TargetPath + IconLocation). The user starts the program from that shortcut.
 - Never build or launch the program while the user runs it. Linux test: `~/tools/linux_test.sh <exe> <seconds>`
   with `CFG=`, `ORGAN_OPEN_STOP_LIST=`, `ORGAN_JACK_BUFFER=`, `ORGAN_SAVE_PORTABLE=` hooks; the activity log is
   `~/.config/OrganSampler/CrashLogs/activity.log` (Windows: `%APPDATA%\OrganSampler\CrashLogs\activity.log`).
