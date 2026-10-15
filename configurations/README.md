@@ -38,7 +38,8 @@ samples. Then *Save Configuration* to keep the paths.
 
 ## Publishing a configuration
 
-One folder per organ, named after the organ, holding the two files:
+One folder per organ, named after the organ, holding the two files (the
+upload described below makes the folder by itself):
 
 ```
 configurations/
@@ -56,12 +57,21 @@ configuration zipped for the upload, and `<name>.README.md`, the README -
 the perspectives, the folders the configuration expects and where to put the
 file, the routes, the version and the Stop List in the order of your grid.
 Fill in the three "(fill in: ...)" places - the organ, the producer and
-product of the samples, your name - and nothing else. Then either open a
-pull request adding the folder with the zip and the README, or open an issue
-with the "Organ configuration" template and attach the two files; after the
-check the maintainer adds them, and the organ appears as a new line of
-[INDEX.md](INDEX.md). Published configurations are under the repository's
-licence (GPLv3).
+product of the samples, your name - and nothing else. Then upload the two
+files; no knowledge of Git is needed:
+
+1. Open https://github.com/zurek-jiri/OrganSampler/upload/main/configurations
+   (signed in to GitHub).
+2. Drag `<name>.zip` and `<name>.README.md` onto the page.
+3. Press **Propose changes**, then **Create pull request**. GitHub makes a
+   copy of the repository for you in the background; nothing else to set.
+
+The *Configurations check* runs on the pull request at once and shows green
+when the two files are in order. The maintainer merges it, and the organ gets
+its own folder under `configurations/` and a line of [INDEX.md](INDEX.md) -
+automatically. (If the upload page is not possible for you, open an issue
+with the "Organ configuration" template and attach the two files.) Published
+configurations are under the repository's licence (GPLv3).
 
 ## The published configurations
 

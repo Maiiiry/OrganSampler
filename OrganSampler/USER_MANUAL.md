@@ -478,10 +478,12 @@ configuration expects and where to put the file, the routes, the version,
 and the Stop List as a table in the order of your grid with the buttons'
 captions, transmissions and extensions included. Fill in the three
 "(fill in: ...)" places - the organ, the producer and product of the
-samples, your name - and upload the zip with the README (a pull request, or
-an "Organ configuration" issue with both files attached). After the check the
-organ appears as a line of `configurations/INDEX.md`, the list of all
-published organs.
+samples, your name - and upload the two files: open
+https://github.com/zurek-jiri/OrganSampler/upload/main/configurations (signed
+in to GitHub), drag the zip and the README onto the page, press *Propose
+changes* and *Create pull request*; nothing else is needed, no knowledge of
+Git. After the check and the merge the organ appears as a line of
+`configurations/INDEX.md`, the list of all published organs.
 
 Paths inside a configuration are stored relative to the common folder of the
 sample trees where possible, so a configuration kept beside its sample folders

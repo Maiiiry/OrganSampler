@@ -9690,6 +9690,15 @@ juce::String MainComponent::configurationReadme(const juce::var& configuration, 
 
     juce::String text;
     text << "# " << name << "\n\n";
+    // What the author fills in, said once at the top (an HTML comment: GitHub does
+    // not show it, so it does no harm when it stays).
+    text << "<!-- Before publishing, fill in the places marked (fill in: ...) and delete nothing else:\n"
+            "     1. the organ: the instrument, its builder, the place (first paragraph and \"Organ\");\n"
+            "     2. the samples: the producer, the product's name and THE LINK TO THE PAGE where the\n"
+            "        sample folders are bought or downloaded - without it nobody can use the configuration;\n"
+            "     3. your name or GitHub name as the author.\n"
+            "     Then upload this README with the zip beside it:\n"
+            "     https://github.com/zurek-jiri/OrganSampler/upload/main/configurations -->\n\n";
     text << "A complete OrganSampler configuration of (fill in: the organ, its place), as recorded by (fill in: the producer)";
     if (!perspectives.isEmpty())
         text << " in " << (perspectives.size() == 1 ? juce::String("one perspective") : juce::String(perspectives.size()) + " perspectives")
@@ -9705,7 +9714,7 @@ juce::String MainComponent::configurationReadme(const juce::var& configuration, 
             "the recordings themselves are the property of their producer and are obtained from them.\n\n";
     text << "## The configuration\n\n";
     text << "- **Organ:** (fill in: the instrument, its builder, the place).\n";
-    text << "- **Samples:** (fill in: the producer, the product's name, the link to its page)";
+    text << "- **Samples:** (fill in: the producer, the product's name and the link to the page where the sample folders are bought or downloaded)";
     if (!topFolders.isEmpty()) text << "; the folders " << joinWithAnd(topCodes) << ", unpacked as plain WAV files";
     if (!perspectiveNames.isEmpty()) text << "; perspectives " << joinWithAnd(perspectiveNames);
     text << ". OrganSampler " << version << " or later.\n";
@@ -9717,7 +9726,7 @@ juce::String MainComponent::configurationReadme(const juce::var& configuration, 
         text << (m == 0 ? "" : "; ") << (m == 0 ? juce::String("Pedal") : romanNumeral((int)m)) << ": " << routeLines[m];
     text << ".\n";
     text << "- **Saved with:** OrganSampler " << version << ".\n";
-    text << "- **Author:** (fill in: your name), " << date << ".\n\n";
+    text << "- **Author:** (fill in: your name or GitHub name), " << date << ".\n\n";
     text << "## Where to put the file\n\n";
     if (topFolders.size() > 1) text << "The folders " << joinWithAnd(topCodes) << " must stand side by side in one folder. ";
     else if (topFolders.size() == 1) text << "The folder " << topCodes[0] << " lies in one folder. ";

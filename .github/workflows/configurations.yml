@@ -1,11 +1,14 @@
 name: Configurations check
 
-# The configurations folder carries organ configurations only: per folder one
-# zip holding the configuration .json (a zip is downloaded from GitHub, a bare
-# .json opens as text) and its README.md. A pull request or push that puts
-# anything else there fails here - audio files (samples, impulse responses),
-# files named like pipe samples (036-C.wav), files of other kinds, or anything
-# above 40 MB.
+# The configurations folder carries organ configurations only: per organ one
+# folder with the zip holding the configuration .json (a zip is downloaded from
+# GitHub, a bare .json opens as text) and its README.md. An upload through the
+# GitHub web page lands flat in configurations/ as "<Name>.zip" and
+# "<Name>.README.md" (the two files OrganSampler writes beside a portable
+# configuration); the index job sorts such a pair into its own folder after the
+# merge. A pull request or push that puts anything else there fails here -
+# audio files (samples, impulse responses), files named like pipe samples
+# (036-C.wav), files of other kinds, or anything above 40 MB.
 on:
   push:
     paths: [ 'configurations/**' ]
@@ -18,23 +21,13 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - name: Only configurations, READMEs and IRs
+      - name: Only zipped configurations and their READMEs
         shell: bash
         run: |
           set -e
           fail=0
-          while IFS= read -r -d '' f; do
-            name="$(basename "$f")"
-            lower="$(echo "$name" | tr '[:upper:]' '[:lower:]')"
-            size=$(stat -c %s "$f")
-            case "$f" in
-              configurations/README.md|configurations/INDEX*.md) continue ;;
-            esac
-            case "$lower" in
-              readme.md) ;;
-              *.zip)
-                # The zip holds the configuration .json and nothing else.
-                if ! python3 - "$f" <<'EOF'
+          zipcheck() {
+            python3 - "$1" <<'EOF'
           import sys, zipfile
           path = sys.argv[1]
           try:
@@ -45,9 +38,34 @@ jobs:
           if len(files) != 1 or not files[0].lower().endswith('.json'):
               print("::error file=%s::the zip must hold exactly one configuration .json and nothing else (found: %s)" % (path, ', '.join(files))); sys.exit(1)
           EOF
-                then fail=1; fi ;;
-              *.json) echo "::error file=$f::a bare .json opens as text on GitHub - zip it (OrganSampler writes the zip beside a portable configuration)"; fail=1 ;;
-              *) echo "::error file=$f::only the zipped configuration and its README.md belong in configurations/ ($name) - no samples, no impulse responses (they are part of the sample folders), nothing else"; fail=1 ;;
+          }
+          while IFS= read -r -d '' f; do
+            name="$(basename "$f")"
+            lower="$(echo "$name" | tr '[:upper:]' '[:lower:]')"
+            size=$(stat -c %s "$f")
+            case "$f" in
+              configurations/README.md|configurations/INDEX*.md) continue ;;
+              configurations/*/*)
+                # An organ's folder: README.md and the zip.
+                case "$lower" in
+                  readme.md) ;;
+                  *.zip) zipcheck "$f" || fail=1 ;;
+                  *.json) echo "::error file=$f::a bare .json opens as text on GitHub - upload the zip OrganSampler writes beside a portable configuration"; fail=1 ;;
+                  *) echo "::error file=$f::only the zipped configuration and its README.md belong in an organ's folder ($name) - no samples, no impulse responses (they are part of the sample folders), nothing else"; fail=1 ;;
+                esac ;;
+              configurations/*)
+                # A web upload: "<Name>.zip" with "<Name>.README.md" beside it.
+                case "$lower" in
+                  *.readme.md)
+                    base="${f%.README.md}"
+                    [ -f "$base.zip" ] || { echo "::error file=$f::no $(basename "$base").zip beside this README - upload both files OrganSampler wrote"; fail=1; } ;;
+                  *.zip)
+                    zipcheck "$f" || fail=1
+                    base="${f%.zip}"
+                    [ -f "$base.README.md" ] || { echo "::error file=$f::no $(basename "$base").README.md beside this zip - upload both files OrganSampler wrote"; fail=1; } ;;
+                  *.json) echo "::error file=$f::a bare .json opens as text on GitHub - upload the zip OrganSampler writes beside a portable configuration"; fail=1 ;;
+                  *) echo "::error file=$f::only <Name>.zip and <Name>.README.md belong here ($name)"; fail=1 ;;
+                esac ;;
             esac
             if echo "$name" | grep -Eq '^[0-9]{3}[-_.]'; then
               echo "::error file=$f::named like a pipe sample ($name) - samples are never published here"; fail=1
@@ -62,10 +80,12 @@ jobs:
           fi
           echo "configurations/ is clean"
 
-  # The list of the published configurations, configurations/INDEX.md (one line
+  # After a merge into main: a web-uploaded pair "<Name>.zip" + "<Name>.README.md"
+  # moves into its own folder configurations/<name>/ (README.md + the zip), then
+  # the list of the published configurations, configurations/INDEX.md (one line
   # per organ: README link, divisions, Stop List rows, routes) with its sorted
   # copies INDEX-<column>-<asc|desc>.md (the triangles in the header), is written
-  # from the configuration files and committed back when it changed.
+  # from the configuration files; both are committed back when anything changed.
   index:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: check
@@ -75,16 +95,30 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - name: Write configurations/INDEX.md
+      - name: Sort web uploads into their folders and write configurations/INDEX.md
         shell: bash
         run: |
           set -e
-          if python3 .github/scripts/configurations_index.py; then
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for zip in configurations/*.zip; do
+            [ -e "$zip" ] || continue
+            base="$(basename "$zip" .zip)"
+            readme="configurations/$base.README.md"
+            if [ ! -f "$readme" ]; then echo "::warning file=$zip::no $base.README.md beside it - left where it is"; continue; fi
+            slug="$(echo "$base" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')"
+            [ -n "$slug" ] || slug="organ-$(date +%s)"
+            if [ -e "configurations/$slug" ]; then echo "::warning file=$zip::configurations/$slug exists already - the upload replaces its files"; fi
+            mkdir -p "configurations/$slug"
+            git mv -f "$zip" "configurations/$slug/$base.zip"
+            git mv -f "$readme" "configurations/$slug/README.md"
+            echo "sorted $base into configurations/$slug/"
+          done
+          python3 .github/scripts/configurations_index.py || true
+          git add -A configurations
+          if git diff --cached --quiet; then
             echo "nothing to commit"
             exit 0
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add configurations/INDEX*.md
-          git commit -m "configurations/INDEX.md regenerated"
+          git commit -m "configurations: uploads sorted into their folders, INDEX.md regenerated"
           git push

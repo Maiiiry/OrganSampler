@@ -1,15 +1,19 @@
-## What this changes
+<!-- Publishing an organ configuration? Then the first section is all that is needed - thank you! -->
 
-(The problem and the resulting behaviour, in a few sentences. For a configuration: the organ, the sample folders and their source - never the samples themselves.)
+## Organ configuration
 
-## How it was verified
+- [ ] The two files OrganSampler wrote beside the portable configuration are in this pull request:
+      `<Name>.zip` (the configuration `.json` inside) and `<Name>.README.md`.
+- [ ] In the README the "(fill in: ...)" places are completed: the organ; the producer, the product
+      and **the link to the page where the sample folders are bought or downloaded**; my name.
+- [ ] No samples, no impulse responses, nothing else.
+- [ ] I made this configuration myself and agree to its publication under the repository's licence (GPLv3).
 
-- [ ] Builds on Windows (Visual Studio project or CMake) and the CI build passed
-- [ ] `OrganSampler --selftest "<folder>"` completed without crash
-- [ ] Tested with real sample folders on: (Windows / macOS / Linux, audio driver)
+The *Configurations check* below must be green. After the merge the organ gets its own folder under
+`configurations/` and a line in `configurations/INDEX.md` - automatically.
 
-## Checklist
+## Code or website change instead
 
-- [ ] No absolute path of my computer in any source, project or script
-- [ ] `OrganSampler/CHANGELOG.md` has an entry; `USER_MANUAL.md` updated when the user sees a change
-- [ ] No samples, no personal settings, no logs committed
+What it changes and how it was verified (builds on Windows and in CI; tested with real sample folders on
+which system and audio driver). No absolute path of your computer, no samples, no personal settings or logs;
+`OrganSampler/CHANGELOG.md` has an entry and `USER_MANUAL.md` is updated when the user sees a change.

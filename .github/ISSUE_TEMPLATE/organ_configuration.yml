@@ -10,8 +10,10 @@ body:
         *Save Configuration*. Published configurations live in the [configurations](https://github.com/zurek-jiri/OrganSampler/tree/main/configurations)
         folder of the repository. Save it with *Portable configuration (to share with others)* ticked: OrganSampler writes the zip for the
         upload (`<name>.zip`) and its README (`<name>.README.md`) beside it - fill in the organ, the samples' producer and product and your
-        name. Attach the zip and the README here (drag them into the "Files" field); after the check the maintainer adds them and the organ
-        becomes a line of `configurations/INDEX.md` - or open a pull request yourself.
+        name. The easiest way is the upload page: https://github.com/zurek-jiri/OrganSampler/upload/main/configurations - drag the two
+        files there, press *Propose changes* and *Create pull request*; the organ then gets its folder and its line of `configurations/INDEX.md`
+        by itself after the merge. If that is not possible for you, attach the zip and the README here (drag them into the "Files" field)
+        and the maintainer adds them.
         **Never attach samples or impulse responses.** They are bought or downloaded elsewhere (Sonus Paradisi); a configuration only names the folders it needs.
   - type: input
     id: organ
