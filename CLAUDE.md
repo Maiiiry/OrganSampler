@@ -77,8 +77,9 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   right after the opening paragraph of its README.
 - Stop List counting: every row counts - stops, stop folders, transmissions and extensions (transmissions
   are rows of their receiving division, `transmissions[]` with `manual`) - except the rows nested in a stop
-  folder (`groupMaster` set). Transmissions and extensions go into the table as "source, shift" or
-  "Alias (source, shift)"; a stop folder lists its nested rows in parentheses. Stralsund: 53 + 18 = 71.
+  folder (`groupMaster` set). The table holds NAMES ONLY, one per row: a transmission or extension by its alias
+  if it has one, else by its source stop's name; a stop folder by its name alone - never shifts in semitones,
+  never what a folder consists of, no legend above the table. Every README looks the same. Stralsund: 53 + 18 = 71.
 
 ## Testing
 - Windows delivery: after every release build copy the exe to `C:\OrganSampler\OrganSampler_<version>.exe`

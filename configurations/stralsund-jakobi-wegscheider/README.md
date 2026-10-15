@@ -50,11 +50,7 @@ Place `Stralsund-Jakobi-Wegscheider.json` in that folder:
 
 ## Stop List
 
-Transmissions and extensions are given as *source, shift in semitones*; an
-alias precedes its source in parentheses. The two composite stops list their
-nested rows in parentheses.
-
-| Pedal (18) | I (18) | II (20) | III (15) |
+| Pedal | I | II | III |
 |---|---|---|---|
 | Ped BassFloete 8 | UW Fugara 4 | HW Cornet | OW Flote 8 |
 | Ped ContraPos 32 | UW Gedackt 8 | HW Gamba 8 | OW Gedeckt 4 |
@@ -68,11 +64,11 @@ nested rows in parentheses.
 | Ped Principalbass 32 | UW Quinte 113 | HW Quinte 6 | OW Sesquialtera |
 | Ped Schalmey 4 | UW Tertia 135 | HW Rohrflote 8 | OW VoxHumana 8 |
 | PEd Subbass 16 | UW Traversflote 4 | HW SpitzFl 4 | OW Trompete 8 |
-| Ped Trompete 8 | UW Gedackt 8, −12 | HW Tromp 16 | Vox Humana Cornet (OW VoxHumana 8: −12, 0, +12, +16, +19) |
-| Cornet (Ped octave 4: +7, +12, +16) | UW Gedackt 8, +12 | HW Zimbel | Bombarde (OW Trompete 8, −12) |
-| Ped ContraPos 32, −12 | UW Gedackt 8, +24 | Flöte (UW Tertia 135, −4) | Clairon (OW Trompete 8, +12) |
-| Ped Posaune 16, −24 | UW Octave 4, +12 | HW Gamba 8, −12 | |
-| Ped Principalbass 32, −12 | Septime (UW Quinte 113, +3) | Montre (HW Octava 8, −24) | |
-| BauernFlöte (UW Nasard 3, +5) | Regal (OW VoxHumana 8, −12) | HW Rohrflote 8, −12 | |
-| | | HW Tromp 16, +12 | |
-| | | HW Tromp 16, +24 | |
+| Ped Trompete 8 | UW Gedackt 8 | HW Tromp 16 | Vox Humana Cornet |
+| Cornet | UW Gedackt 8 | HW Zimbel | Bombarde |
+| Ped ContraPos 32 | UW Gedackt 8 | Flöte | Clairon |
+| Ped Posaune 16 | UW Octave 4 | HW Gamba 8 | |
+| Ped Principalbass 32 | Septime | Montre | |
+| BauernFlöte | Regal | HW Rohrflote 8 | |
+| | | HW Tromp 16 | |
+| | | HW Tromp 16 | |
