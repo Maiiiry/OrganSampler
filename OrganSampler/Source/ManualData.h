@@ -477,15 +477,19 @@ static const char* const kManualText_part2 =
     "polyphony* in the Configuration Editor and *Save Configuration*. Published\n"
     "configurations (see \"Organ configurations\" on the website) are saved this way.\n"
     "\n"
-    "Beside a portable configuration the program writes its README,\n"
-    "`<name>.README.md`, in the form of the project's `configurations/` folder on\n"
-    "GitHub: the perspectives, the folders the configuration expects and where to\n"
-    "put the file, the routes, the version, and the Stop List as a table in the\n"
-    "order of your grid with the buttons' captions - transmissions and extensions\n"
-    "included. Fill in the three \"(fill in: ...)\" places - the organ, the producer\n"
-    "and product of the samples, your name - and upload the `.json` with the\n"
-    "README (a pull request, or an \"Organ configuration\" issue with both files\n"
-    "attached).\n"
+    "Beside a portable configuration the program writes two more files for\n"
+    "publishing it in the project's `configurations/` folder on GitHub:\n"
+    "`<name>.zip`, the configuration zipped (a zip is downloaded from GitHub with\n"
+    "one click, a bare `.json` would open as text), and `<name>.README.md`, the\n"
+    "README in the published form - the perspectives, the folders the\n"
+    "configuration expects and where to put the file, the routes, the version,\n"
+    "and the Stop List as a table in the order of your grid with the buttons'\n"
+    "captions, transmissions and extensions included. Fill in the three\n"
+    "\"(fill in: ...)\" places - the organ, the producer and product of the\n"
+    "samples, your name - and upload the zip with the README (a pull request, or\n"
+    "an \"Organ configuration\" issue with both files attached). After the check the\n"
+    "organ appears as a line of `configurations/INDEX.md`, the list of all\n"
+    "published organs.\n"
     "\n"
     "Paths inside a configuration are stored relative to the common folder of the\n"
     "sample trees where possible, so a configuration kept beside its sample folders\n"
@@ -602,12 +606,12 @@ static const char* const kManualText_part2 =
     "\n"
     "The sliders of *Configuration Editor > Global sound* can each be shown on the\n"
     "main panel (the checkbox beside them in the editor). Master volume, pitch,\n"
+    ;
+static const char* const kManualText_part3 =
     "sustain fade-out, release fade-in, release volume, release cutting, attack\n"
     "minimum time and delay: all are described in \"Global sound\". Every one of\n"
     "them is MIDI-learnable (right-click). The polyphony display shows the voices\n"
     "sounding now and the *DSP* load: the time the busiest audio thread needed for\n"
-    ;
-static const char* const kManualText_part3 =
     "its last block as a share of the block's duration. Above 100 % that thread\n"
     "could not deliver in time (crackle); see \"Getting the most polyphony\".\n"
     "\n"
@@ -804,12 +808,12 @@ static const char* const kManualText_part3 =
     "The tuning is different: a pipe can be retuned differently in different\n"
     "transpositions (the pure intervals of the extensions, see above), and a\n"
     "sounding pipe cannot change its pitch. So the pipe keeps the tuning of the\n"
+    ;
+static const char* const kManualText_part4 =
     "key that started it for as long as it sounds - even after that key has been\n"
     "released, while other keys still hold it; only when it has stopped and is\n"
     "started again does it take the tuning of the new key. Switching a\n"
     "transmission off releases exactly the pipes that no other route holds.\n"
-    ;
-static const char* const kManualText_part4 =
     "Keys whose pipe lies beyond the rank's compass (the bottom octave of a 16'\n"
     "extension) play **filled pipes**: see \"What a filled pipe is\".\n"
     "\n"
@@ -1006,12 +1010,12 @@ static const char* const kManualText_part4 =
     "The tremulant's strength wanders between 60 and 100 % of the set depth, and\n"
     "every key stroke shakes the wind with a random strength, so nothing repeats\n"
     "mechanically.\n"
+    ;
+static const char* const kManualText_part5 =
     "\n"
     "## 5.3 The audio tabs\n"
     "\n"
     "Every perspective of the division has an audio tab (the default perspective,\n"
-    ;
-static const char* const kManualText_part5 =
     "Direct, Diffuse, Rear ... as the sample folders have them), plus one tab\n"
     "**auxiliary** (see \"The auxiliary route\" below). Every tab is one **audio\n"
     "route**: the pipes of that perspective rendered to that device and those\n"
@@ -1208,12 +1212,12 @@ static const char* const kManualText_part5 =
     "- Any desktop: the program `pavucontrol`, tab *Configuration*, the card's\n"
     "  profile box.\n"
     "\n"
+    ;
+static const char* const kManualText_part6 =
     "The desktop's own sounds then no longer go to that interface unless you\n"
     "choose it as the system output; use the on-board chip for the desktop and\n"
     "the interface for the organ. After switching the profile the card appears\n"
     "under a new name (its own, \"Komplete Audio 6\" instead of \"Analog Stereo\n"
-    ;
-static const char* const kManualText_part6 =
     "1/2\"), so choose it again in the audio tabs.\n"
     "\n"
     "**Step 2 - the packages.** OrganSampler needs PipeWire's JACK library and\n"
@@ -1410,12 +1414,12 @@ static const char* const kManualText_part6 =
     "callback is late. A value of several hundred percent means the audio thread\n"
     "was kept waiting by something else on the computer, not that the voices took\n"
     "that long; the activity log notes every such event.\n"
+    ;
+static const char* const kManualText_part7 =
     "\n"
     "---\n"
     "\n"
     "# 6. Playing aids\n"
-    ;
-static const char* const kManualText_part7 =
     "\n"
     "## 6.1 Couplers\n"
     "\n"
@@ -1612,12 +1616,12 @@ static const char* const kManualText_part7 =
     "  by transmissions only, takes the value of the first transmission in the\n"
     "  stop's list whose shifted compass holds it. Changing it rebuilds only the\n"
     "  pipes concerned. Default 30 %; the right value is a matter of listening.\n"
+    ;
+static const char* const kManualText_part8 =
     "- **Filled pipes: release length** (pitch shift method) - the decay of a\n"
     "  release copy laid out to this share of the source's duration (the room does\n"
     "  not grow or shrink with the pipe).\n"
     "- **Filled pipes: time stretch of the attack** (time stretch method) and\n"
-    ;
-static const char* const kManualText_part8 =
     "  **time stretch of the release** (time stretch method both ways; the phase\n"
     "  vocoder upwards only, where the kept length is too long for a smaller pipe).\n"
     "- **Filled pipes: release played from** (default 140 ms) and **Filled pipes:\n"
@@ -1814,12 +1818,12 @@ static const char* const kManualText_part8 =
     "   whether they are on the grid or not: three pipes per key), then a faster\n"
     "   rate (up to 16 strikes a second). A wet set with several perspectives and\n"
     "   long releases reaches tens of thousands of voices with a handful of keys;\n"
+    ;
+static const char* const kManualText_part9 =
     "   a dry set gives little more than what is being pressed, so it ends up with\n"
     "   every key hammered and the couplers on. The IR reverbs of the routes run\n"
     "   as they are: on a dry set they are the main cost, and the report says so.\n"
     "3. The target grows in steps of 2 000 voices (a tenth above 20 000). Every\n"
-    ;
-static const char* const kManualText_part9 =
     "   target reached is held for four seconds and judged: clean means every\n"
     "   callback of the busiest device - the render of all its routes, the note\n"
     "   bookkeeping, everything on that thread - stayed within 85 % of its period,\n"
@@ -2016,12 +2020,12 @@ static const char* const kManualText_part9 =
     "(Signalsmith Stretch)* (optional, for those who prefer it). \"The\n"
     "transposition methods\" describes each with its strengths and weaknesses. Switching the method rebuilds the copies of every\n"
     "stop (from the cache when it is on); until a copy is ready the pipe plays\n"
+    ;
+static const char* const kManualText_part10 =
     "resampled. The sliders below that do not apply to the chosen method are greyed\n"
     "out.\n"
     "\n"
     "### Filled pipes: release length (pitch shift)\n"
-    ;
-static const char* const kManualText_part10 =
     "\n"
     "Pitch shift method only. How long a filled pipe's release (the room decay) is,\n"
     "as a share of its source's duration (25 to 200 %, default 100). Resampling\n"
@@ -2218,12 +2222,12 @@ static const char* const kManualText_part10 =
     "\n"
     "### Top bar: One-shot Patterns\n"
     "\n"
+    ;
+static const char* const kManualText_part11 =
     "Shows or hides the button editing the one-shot stops list.\n"
     "\n"
     "### Top bar: Stop-Merging\n"
     "\n"
-    ;
-static const char* const kManualText_part11 =
     "Shows or hides the Stop-Merging button (see \"Stop-Merging\"). Hidden by\n"
     "default.\n"
     "\n"
@@ -2420,12 +2424,12 @@ static const char* const kManualText_part11 =
     "\n"
     "### Perspective channel separation\n"
     "\n"
+    ;
+static const char* const kManualText_part12 =
     "At 100 % (default) every pipe sounds only on its own channel pair of the\n"
     "perspective; less lets the other channels carry that share of it too; 0 % = all\n"
     "channels carry the same sum.\n"
     "\n"
-    ;
-static const char* const kManualText_part12 =
     "### Random tuning error of pipes\n"
     "\n"
     "On: the pipes of this division get the small random detune set per stop\n"

@@ -1,9 +1,11 @@
 name: Configurations check
 
 # The configurations folder carries organ configurations only: per folder one
-# .json and its README.md. A pull request or push that puts anything else there
-# fails here - audio files (samples, impulse responses), files named like pipe
-# samples (036-C.wav), files of other kinds, or anything above 40 MB.
+# zip holding the configuration .json (a zip is downloaded from GitHub, a bare
+# .json opens as text) and its README.md. A pull request or push that puts
+# anything else there fails here - audio files (samples, impulse responses),
+# files named like pipe samples (036-C.wav), files of other kinds, or anything
+# above 40 MB.
 on:
   push:
     paths: [ 'configurations/**' ]
@@ -25,9 +27,27 @@ jobs:
             name="$(basename "$f")"
             lower="$(echo "$name" | tr '[:upper:]' '[:lower:]')"
             size=$(stat -c %s "$f")
+            case "$f" in
+              configurations/README.md|configurations/INDEX.md) continue ;;
+            esac
             case "$lower" in
-              *.json|readme.md) ;;
-              *) echo "::error file=$f::only a configuration .json and its README.md belong in configurations/ ($name) - no samples, no impulse responses (they are part of the sample folders), nothing else"; fail=1 ;;
+              readme.md) ;;
+              *.zip)
+                # The zip holds the configuration .json and nothing else.
+                if ! python3 - "$f" <<'EOF'
+          import sys, zipfile
+          path = sys.argv[1]
+          try:
+              names = zipfile.ZipFile(path).namelist()
+          except zipfile.BadZipFile:
+              print("::error file=%s::not a zip file" % path); sys.exit(1)
+          files = [n for n in names if not n.endswith('/')]
+          if len(files) != 1 or not files[0].lower().endswith('.json'):
+              print("::error file=%s::the zip must hold exactly one configuration .json and nothing else (found: %s)" % (path, ', '.join(files))); sys.exit(1)
+          EOF
+                then fail=1; fi ;;
+              *.json) echo "::error file=$f::a bare .json opens as text on GitHub - zip it (OrganSampler writes the zip beside a portable configuration)"; fail=1 ;;
+              *) echo "::error file=$f::only the zipped configuration and its README.md belong in configurations/ ($name) - no samples, no impulse responses (they are part of the sample folders), nothing else"; fail=1 ;;
             esac
             if echo "$name" | grep -Eq '^[0-9]{3}[-_.]'; then
               echo "::error file=$f::named like a pipe sample ($name) - samples are never published here"; fail=1
@@ -37,10 +57,33 @@ jobs:
             fi
           done < <(find configurations -type f -print0)
           if [ "$fail" -ne 0 ]; then
-            echo "The configurations folder takes an organ configuration (.json) and its README.md per folder - nothing else. Samples and impulse responses are bought or downloaded elsewhere (Sonus Paradisi)."
+            echo "The configurations folder takes, per organ, the zipped configuration (one .json inside) and its README.md - nothing else. Samples and impulse responses are bought or downloaded elsewhere (Sonus Paradisi)."
             exit 1
           fi
           echo "configurations/ is clean"
-# The downloads of the configurations are made by the Website workflow
-# (pages.yml): one zip per configuration under site/configurations/ and the
-# list the "Organ configurations" section of the website shows.
+
+  # The list of the published configurations, configurations/INDEX.md (one line
+  # per organ: README link, divisions, Stop List rows, perspectives), is written
+  # from the configuration files and committed back when it changed.
+  index:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Write configurations/INDEX.md
+        shell: bash
+        run: |
+          set -e
+          if python3 .github/scripts/configurations_index.py; then
+            echo "nothing to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add configurations/INDEX.md
+          git commit -m "configurations/INDEX.md regenerated"
+          git push

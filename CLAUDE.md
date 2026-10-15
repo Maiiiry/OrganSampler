@@ -55,8 +55,8 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   ("Remove empty stops", arrange mode).
 - Stop folders (a container stop with indented children) are table rows: the container has no folders, the
   children `child: true`. Keep them through every save/load path.
-- `configurations/<organ>/` holds exactly two files: the `.json` and `README.md`. No IR files, no pictures,
-  nothing else (impulse responses belong to the sample folders); the CI check refuses anything else.
+- `configurations/<organ>/` holds exactly two files: the zipped `.json` and `README.md`. No IR files, no pictures,
+  no bare `.json`, nothing else (impulse responses belong to the sample folders); the CI check refuses anything else.
 - Transmissions grouped under a stop folder are NOT table rows: they live in the source stop's voicing entry
   (`voicingSettings.stops[].transmissions[]` with `groupMaster`). Search there before claiming they are gone.
 - The transmission list of a stop belongs to the Stop List / voicing state only. A combination, crescendo step
@@ -77,12 +77,14 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   known: one sentence + the tree diagram, never a made-up parent folder like `haupwerk`); last the "Stop List"
   table of the row names by division. Never mention what OrganSampler does natively (couplers, voicing,
   crescendo, combinations). No "What you need", no "Using it", no prose about the divisions.
-- A `.json` in the repository opens as text in the browser, so the Website workflow (`pages.yml`) packs every
-  configuration folder into `site/configurations/<json-name-with-hyphens>.zip` and writes `list.json`; the
-  website's "Organ configurations" section lists them (app.js: filter box, title linking to the README rendered
-  as `site/configurations/<folder>.html` at deploy, Download). Never a release for configurations and never a
-  list of them in `configurations/README.md` (there will be thousands); the release body only links to the
-  section. `configurations/README.md` keeps only the general how-to and the Rural Organ demo. Name configuration files WITHOUT spaces;
+- Configurations live ONLY in `configurations/<organ>/` on GitHub as `README.md` + `<Name>.zip` (the one `.json`
+  inside; a zip downloads from GitHub, a bare `.json` opens as text - never "Download raw file" instructions).
+  The portable save writes `<name>.zip` and `<name>.README.md` beside the `.json`; the README's Download line
+  is `[<Name>.zip](<Name>.zip?raw=true)`. The list of all organs is `configurations/INDEX.md` (README link,
+  divisions, Stop List rows, perspectives), written by `.github/scripts/configurations_index.py` in the
+  `Configurations check` workflow (job `index`) and committed back - never a list on the website, never a
+  release for configurations, never a list in `configurations/README.md` (there will be thousands). The
+  website section and the release body only link to INDEX.md. Name configuration files WITHOUT spaces;
   the README's Download line is `https://zurek-jiri.github.io/OrganSampler/configurations/<name>.zip`.
 - Stop List counting: every row counts - stops, stop folders, transmissions and extensions (transmissions
   are rows of their receiving division, `transmissions[]` with `manual`) - except the rows nested in a stop

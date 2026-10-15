@@ -3,7 +3,7 @@ name: Website
 on:
   push:
     branches: [ main ]
-    paths: [ 'site/**', 'configurations/**', '.github/workflows/pages.yml' ]
+    paths: [ 'site/**', '.github/workflows/pages.yml' ]
   workflow_dispatch:
 
 permissions:
@@ -24,97 +24,6 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      # The organ configurations go to the website as downloads: one zip per
-      # configuration folder (the .json, its README and its IR files) under
-      # site/configurations/, named after the .json with hyphens for spaces, and
-      # list.json for the "Organ configurations" section (title and the opening
-      # paragraph of each README). A .json served as such would open in the
-      # browser as text; a zip is saved as a file.
-      - name: Package the organ configurations for the website
-        shell: bash
-        run: |
-          python3 -m pip install --quiet markdown
-          python3 - <<'EOF'
-          import html, json, os, re, zipfile
-          import markdown
-          out = 'site/configurations'
-          os.makedirs(out, exist_ok=True)
-          page_template = """<!DOCTYPE html>
-          <html lang="en">
-          <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1">
-          <title>{title} - OrganSampler configuration</title>
-          <link rel="icon" href="../assets/icon.png">
-          <link rel="stylesheet" href="../style.css">
-          <style>
-          .readme {{ max-width: 980px; margin: 0 auto; padding: 2rem 1.2rem 4rem; }}
-          .readme table {{ border-collapse: collapse; width: 100%; margin: 1rem 0 2rem; font-size: .95rem; }}
-          .readme th, .readme td {{ border: 1px solid var(--line); padding: .35rem .6rem; text-align: left; vertical-align: top; }}
-          .readme pre {{ background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 1rem; overflow-x: auto; }}
-          .readme h1 {{ font-size: 2rem; margin: 1rem 0; }}
-          .readme h2 {{ font-size: 1.4rem; margin: 2rem 0 .8rem; }}
-          .readme .top {{ display: flex; gap: 1.2rem; align-items: center; flex-wrap: wrap; margin-bottom: 1.5rem; }}
-          </style>
-          </head>
-          <body>
-          <main class="readme">
-          <p class="top"><a class="text-link" href="../index.html#configurations">&larr; Organ configurations</a>
-          <a class="button primary" href="{zip}" download>Download ({kb} KB)</a>
-          <a class="text-link" href="{github}">On GitHub &#8599;</a></p>
-          {body}
-          </main>
-          </body>
-          </html>
-          """
-          items = []
-          for folder in sorted(os.listdir('configurations')):
-              path = os.path.join('configurations', folder)
-              if not os.path.isdir(path):
-                  continue
-              jsons = sorted(f for f in os.listdir(path) if f.lower().endswith('.json'))
-              if not jsons:
-                  continue
-              title, summary = folder, ''
-              readme = os.path.join(path, 'README.md')
-              if os.path.exists(readme):
-                  lines = open(readme, encoding='utf-8').read().splitlines()
-                  for i, line in enumerate(lines):
-                      if line.startswith('# '):
-                          title = line[2:].strip()
-                          para = []
-                          for rest in lines[i + 1:]:
-                              if not rest.strip() and para:
-                                  break
-                              if rest.strip():
-                                  para.append(rest.strip())
-                          summary = re.sub(r'[*`_]', '', ' '.join(para))   # plain text for the list
-                          break
-              zipname = re.sub(r'\s+', '-', os.path.splitext(jsons[0])[0]) + '.zip'
-              size = 0
-              with zipfile.ZipFile(os.path.join(out, zipname), 'w', zipfile.ZIP_DEFLATED) as z:
-                  for root, dirs, files in os.walk(path):
-                      for f in sorted(files):
-                          full = os.path.join(root, f)
-                          size += os.path.getsize(full)
-                          z.write(full, os.path.relpath(full, 'configurations'))
-              github = 'https://github.com/' + os.environ['GITHUB_REPOSITORY'] + '/blob/main/configurations/' + folder + '/README.md'
-              # The README as a page of the website (the Markdown rendered, with
-              # the download button on top).
-              body = ''
-              if os.path.exists(readme):
-                  body = markdown.markdown(open(readme, encoding='utf-8').read(), extensions=['tables', 'fenced_code'])
-              with open(os.path.join(out, folder + '.html'), 'w', encoding='utf-8') as f:
-                  f.write(page_template.format(title=html.escape(title), zip=html.escape(zipname), kb=max(1, round(size / 1024)),
-                                               github=html.escape(github), body=body))
-              items.append({'folder': folder, 'title': title, 'summary': summary,
-                            'zip': 'configurations/' + zipname, 'json': jsons[0],
-                            'page': 'configurations/' + folder + '.html', 'readme': github,
-                            'bytes': size})
-          with open(os.path.join(out, 'list.json'), 'w', encoding='utf-8') as f:
-              json.dump(items, f, ensure_ascii=False, indent=1)
-          print(json.dumps(items, ensure_ascii=False, indent=1))
-          EOF
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

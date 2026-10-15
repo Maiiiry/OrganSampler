@@ -8,9 +8,10 @@ body:
       value: |
         A configuration is the organ you built in OrganSampler - stop list, voicing, audio routes, couplers, combinations - saved with
         *Save Configuration*. Published configurations live in the [configurations](https://github.com/zurek-jiri/OrganSampler/tree/main/configurations)
-        folder of the repository. Save it with *Portable configuration (to share with others)* ticked: OrganSampler writes its README
-        beside it (`<name>.README.md`) - fill in the organ, the samples' producer and product and your name. Attach the two files here
-        (drag them into the "Files" field) and the maintainer adds them - or open a pull request yourself.
+        folder of the repository. Save it with *Portable configuration (to share with others)* ticked: OrganSampler writes the zip for the
+        upload (`<name>.zip`) and its README (`<name>.README.md`) beside it - fill in the organ, the samples' producer and product and your
+        name. Attach the zip and the README here (drag them into the "Files" field); after the check the maintainer adds them and the organ
+        becomes a line of `configurations/INDEX.md` - or open a pull request yourself.
         **Never attach samples or impulse responses.** They are bought or downloaded elsewhere (Sonus Paradisi); a configuration only names the folders it needs.
   - type: input
     id: organ
@@ -54,7 +55,7 @@ body:
     id: files
     attributes:
       label: Files
-      description: Drag the configuration .json and its README.md here. Nothing else - no samples, no impulse responses.
+      description: Drag the zipped configuration (<name>.zip) and its README.md here. Nothing else - no samples, no impulse responses.
     validations:
       required: true
   - type: checkboxes

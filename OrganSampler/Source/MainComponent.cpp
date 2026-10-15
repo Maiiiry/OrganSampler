@@ -9561,11 +9561,23 @@ void MainComponent::savePortableConfiguration(const juce::File& file, bool inclu
     {
         if (portable)
         {
-            // The README for publishing the configuration, ready but for the organ,
-            // the samples and the author.
+            // For publishing in the project's configurations folder: the .json
+            // zipped (a zip is downloaded from GitHub, a .json opens as text) and
+            // the README, ready but for the organ, the samples and the author.
+            const auto zip = file.getSiblingFile(file.getFileNameWithoutExtension() + ".zip");
+            {
+                juce::ZipFile::Builder builder;
+                builder.addFile(file, 9, file.getFileName());
+                if (auto stream = std::unique_ptr<juce::FileOutputStream>(zip.createOutputStream()); stream != nullptr && stream->openedOk())
+                {
+                    stream->setPosition(0);
+                    stream->truncate();
+                    builder.writeToStream(*stream, nullptr);
+                }
+            }
             const auto readme = file.getSiblingFile(file.getFileNameWithoutExtension() + ".README.md");
             readme.replaceWithText(configurationReadme(configuration, file));
-            CrashHandler::note("Configuration README written: " + readme.getFullPathName());
+            CrashHandler::note("Configuration zip and README written: " + zip.getFullPathName() + ", " + readme.getFullPathName());
         }
         lastSettingsDirectory = file.getParentDirectory();
         saveLastDirectory();
@@ -9604,7 +9616,6 @@ juce::String MainComponent::configurationReadme(const juce::var& configuration, 
     };
     auto code = [](const juce::String& text) { return "`" + text + "`"; };
     const juce::String name = file.getFileNameWithoutExtension();
-    const juce::String assetName = name.replaceCharacter(' ', '-') + ".zip";   // the website packs the folder into this zip
     const juce::String version(ProjectInfo::versionString);
     const int divisions = (int)configuration.getProperty("manualCount", manualCount) + 1;
 
@@ -9686,7 +9697,10 @@ juce::String MainComponent::configurationReadme(const juce::var& configuration, 
     text << ": " << divisions << " divisions and " << (rows.isNotEmpty() ? rows : juce::String("?")) << " rows in the Stop List, transmissions and\n"
             "extensions included (only the rows nested in stop folders are not counted). Whoever owns\n"
             "the recordings loads the whole instrument in a single step.\n\n";
-    text << "**Download:** https://zurek-jiri.github.io/OrganSampler/configurations/" << assetName << "\n\n";
+    // The zip beside the README (written with it): a link with ?raw=true downloads it straight from GitHub.
+    const juce::String zipName = file.getFileNameWithoutExtension() + ".zip";
+    text << "**Download:** [" << zipName << "](" << zipName.replace(" ", "%20") << "?raw=true) - unpack it, the "
+         << code(file.getFileName()) << " inside goes where the next section says.\n\n";
     text << "**No samples are published here.** The configuration merely names the folders it expects;\n"
             "the recordings themselves are the property of their producer and are obtained from them.\n\n";
     text << "## The configuration\n\n";

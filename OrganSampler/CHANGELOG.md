@@ -12,6 +12,17 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.96] - 2026-10-15
+
+### Changed
+- Saving a portable configuration also writes `<name>.zip` (the `.json`
+  inside) for publishing: a zip is downloaded from GitHub with one click, a
+  bare `.json` opens as text. The README written with it links to that zip.
+  The `configurations/` folder takes the zip and the README only; the list
+  of all organs is `configurations/INDEX.md` (divisions, Stop List rows,
+  perspectives), written automatically after each change. Nothing of this
+  on the website any more.
+
 ## [0.8.95] - 2026-10-15
 
 ### Changed
