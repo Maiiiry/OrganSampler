@@ -1466,12 +1466,12 @@ MainComponent::MainComponent()
         });
     }
     // Development: ORGAN_SAVE_PORTABLE=<file> saves the loaded organ as a
-    // portable configuration into that file 25 s after start.
+    // portable configuration (and its README beside it) once the organ is loaded.
     if (const char* savePortable = std::getenv("ORGAN_SAVE_PORTABLE"))
     {
         const juce::File target = juce::File(juce::String(savePortable));   // not File target(String(x)): the vexing parse makes it a function
         juce::Component::SafePointer<MainComponent> safeThis(this);
-        juce::Timer::callAfterDelay(25000, [safeThis, target]
+        runWhenLoaded([safeThis, target]
         {
             if (safeThis == nullptr) return;
             safeThis->savePortableConfiguration(target, false, true);
@@ -1479,31 +1479,26 @@ MainComponent::MainComponent()
         });
     }
     // Development: ORGAN_DUMP_STOPLIST=<file> writes the Stop List of the loaded
-    // organ as a Markdown table (grid order, button captions) 25 s after start -
+    // organ as a Markdown table (grid order, button captions) once it is loaded -
     // the table of a configuration's README is taken from it, never typed by hand.
     if (const char* dumpStopList = std::getenv("ORGAN_DUMP_STOPLIST"))
     {
-        // Written once the loading is over (polled every 5 s, 5 s of quiet after it).
         const juce::File target = juce::File(juce::String(dumpStopList));
         juce::Component::SafePointer<MainComponent> safeThis(this);
-        auto poll = std::make_shared<std::function<void(int)>>();
-        *poll = [safeThis, target, poll](int quiet)
+        runWhenLoaded([safeThis, target]
         {
             if (safeThis == nullptr || safeThis->voicer == nullptr) return;
-            const bool loading = safeThis->activeFolderLoader != nullptr || safeThis->engine.getStops().isEmpty();
-            if (!loading && quiet >= 1)
-            {
-                target.replaceWithText(safeThis->voicer->stopListMarkdown());
-                CrashHandler::note("ORGAN_DUMP_STOPLIST: written " + target.getFullPathName());
-                return;
-            }
-            juce::Timer::callAfterDelay(5000, [poll, next = loading ? 0 : quiet + 1] { (*poll)(next); });
-        };
-        juce::Timer::callAfterDelay(5000, [poll] { (*poll)(0); });
-        // With ORGAN_LOAD_CONFIGURATION=<file> set as well, that configuration is
-        // loaded first (as "Load Configuration" would), 3 s after start.
-        if (std::getenv("ORGAN_LOAD_CONFIGURATION") != nullptr)
-            juce::Timer::callAfterDelay(3000, [safeThis] { if (safeThis != nullptr) safeThis->launchConfigurationLoadChooser(); });
+            target.replaceWithText(safeThis->voicer->stopListMarkdown());
+            CrashHandler::note("ORGAN_DUMP_STOPLIST: written " + target.getFullPathName());
+        });
+    }
+    // With ORGAN_LOAD_CONFIGURATION=<file> set together with one of the two hooks
+    // above, that configuration is loaded first (as "Load Configuration" would), 3 s after start.
+    if (std::getenv("ORGAN_LOAD_CONFIGURATION") != nullptr
+        && (std::getenv("ORGAN_SAVE_PORTABLE") != nullptr || std::getenv("ORGAN_DUMP_STOPLIST") != nullptr))
+    {
+        juce::Component::SafePointer<MainComponent> safeThis(this);
+        juce::Timer::callAfterDelay(3000, [safeThis] { if (safeThis != nullptr) safeThis->launchConfigurationLoadChooser(); });
     }
     // Development: ORGAN_LOAD_TREE="<division>|<folder>" loads the folder into
     // the division 25 s after start, as "Load folder..." of the Stop List would
@@ -9564,6 +9559,14 @@ void MainComponent::savePortableConfiguration(const juce::File& file, bool inclu
             "Save Configuration", "The configuration file could not be written.");
     else
     {
+        if (portable)
+        {
+            // The README for publishing the configuration, ready but for the organ,
+            // the samples and the author.
+            const auto readme = file.getSiblingFile(file.getFileNameWithoutExtension() + ".README.md");
+            readme.replaceWithText(configurationReadme(configuration, file));
+            CrashHandler::note("Configuration README written: " + readme.getFullPathName());
+        }
         lastSettingsDirectory = file.getParentDirectory();
         saveLastDirectory();
         setCurrentConfigurationName(file.getFileNameWithoutExtension());
@@ -9572,6 +9575,154 @@ void MainComponent::savePortableConfiguration(const juce::File& file, bool inclu
         saveSettings();
         markConfigurationClean();   // the configuration now matches the settings
     }
+}
+
+void MainComponent::runWhenLoaded(std::function<void()> action)
+{
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    auto shared = std::make_shared<std::function<void()>>(std::move(action));
+    auto poll = std::make_shared<std::function<void(int)>>();
+    *poll = [safeThis, poll, shared](int quiet)
+    {
+        if (safeThis == nullptr) return;
+        const bool loading = safeThis->activeFolderLoader != nullptr || safeThis->engine.getStops().isEmpty();
+        if (!loading && quiet >= 1) { (*shared)(); *poll = nullptr; return; }
+        juce::Timer::callAfterDelay(5000, [poll, next = loading ? 0 : quiet + 1] { if (*poll) (*poll)(next); });
+    };
+    juce::Timer::callAfterDelay(5000, [poll] { if (*poll) (*poll)(0); });
+}
+
+juce::String MainComponent::configurationReadme(const juce::var& configuration, const juce::File& file) const
+{
+    auto joinWithAnd = [](const juce::StringArray& items)
+    {
+        if (items.isEmpty()) return juce::String();
+        if (items.size() == 1) return items[0];
+        juce::StringArray head(items);
+        head.remove(head.size() - 1);
+        return head.joinIntoString(", ") + " and " + items[items.size() - 1];
+    };
+    auto code = [](const juce::String& text) { return "`" + text + "`"; };
+    const juce::String name = file.getFileNameWithoutExtension();
+    const juce::String assetName = name.replaceCharacter(' ', '-') + ".json";
+    const juce::String version(ProjectInfo::versionString);
+    const int divisions = (int)configuration.getProperty("manualCount", manualCount) + 1;
+
+    // The perspectives in use and the folder prefix each one is recognised by,
+    // in the order of the perspective patterns (the user's own order).
+    juce::StringArray perspectives, patternOrder;
+    std::map<juce::String, juce::String> prefixOf;
+    if (auto* patterns = configuration.getProperty("perspectivePatterns", juce::var()).getArray())
+        for (const auto& pattern : *patterns)
+        {
+            const auto parts = juce::StringArray::fromTokens(pattern.toString(), ";", "");
+            if (parts.isEmpty()) continue;
+            patternOrder.add(parts[0].trim());
+            if (parts.size() >= 3) prefixOf[parts[0].trim()] = parts[2].trim().trimCharactersAtEnd("-_ ");
+        }
+    auto perspectiveRank = [&patternOrder](const juce::String& nameIn)
+    {
+        for (int i = 0; i < patternOrder.size(); ++i) if (patternOrder[i].equalsIgnoreCase(nameIn)) return i;
+        return patternOrder.size() + 1;
+    };
+    // The routes per division and the trees.
+    std::vector<juce::String> routeLines;
+    auto manuals = configuration.getProperty("manualKeyboards", juce::var());
+    if (auto* array = manuals.getArray())
+        for (int manual = 0; manual < array->size() && manual < divisions; ++manual)
+        {
+            const auto item = array->getReference(manual);
+            if (auto* list = item.getProperty("stopBuild", juce::var()).getProperty("perspectives", juce::var()).getArray())
+                for (const auto& p : *list) if (p.toString().isNotEmpty()) perspectives.addIfNotAlreadyThere(p.toString());
+            juce::StringArray used, unused;
+            if (auto* routes = item.getProperty("perspectiveAudio", juce::var()).getArray())
+                for (const auto& route : *routes)
+                {
+                    const auto routeName = route.getProperty("name", "").toString();
+                    const auto xml = route.getProperty("audioDeviceStateXml", "").toString();
+                    const bool silent = xml.isEmpty() || (!xml.contains("deviceType=") && xml.contains("audioOutputDeviceName=\"\""));
+                    (silent ? unused : used).add(routeName);
+                }
+            // The routes in the perspectives' order (a route is named after its perspective), the others after.
+            std::stable_sort(used.begin(), used.end(), [&](const juce::String& a, const juce::String& b) { return perspectiveRank(a) < perspectiveRank(b); });
+            juce::String line = used.isEmpty() ? juce::String("no route") : "the routes " + joinWithAnd(used);
+            if (!unused.isEmpty()) line << (used.isEmpty() ? "" : "; ") << joinWithAnd(unused) << " (unused)";
+            routeLines.push_back(line);
+        }
+    std::stable_sort(perspectives.begin(), perspectives.end(), [&](const juce::String& a, const juce::String& b) { return perspectiveRank(a) < perspectiveRank(b); });
+    juce::StringArray perspectiveNames;
+    for (const auto& p : perspectives)
+        perspectiveNames.add(prefixOf.count(p) != 0 && prefixOf[p].isNotEmpty() ? p + " (" + code(prefixOf[p]) + ")" : p);
+    juce::StringArray trees, topFolders;
+    if (auto* pool = configuration.getProperty("sampleTrees", juce::var()).getArray())
+        for (const auto& tree : *pool)
+        {
+            const auto text = slashes(tree.toString());
+            if (text.isEmpty() || text == ".") continue;
+            trees.addIfNotAlreadyThere(text);
+            topFolders.addIfNotAlreadyThere(text.upToFirstOccurrenceOf("/", false, false));
+        }
+    trees.sortNatural();
+    topFolders.sortNatural();
+    juce::StringArray treeCodes, topCodes;
+    for (const auto& t : trees) treeCodes.add(code(t));
+    for (const auto& t : topFolders) topCodes.add(code(t));
+    bool sameRoutes = true;
+    for (const auto& line : routeLines) if (line != routeLines.front()) sameRoutes = false;
+
+    // The Stop List table from the grid, with its row count.
+    const juce::String stopList = voicer != nullptr ? voicer->stopListMarkdown() : juce::String();
+    const juce::String rows = stopList.upToFirstOccurrenceOf("\n", false, false).fromLastOccurrenceOf(": ", false, false).trim();
+    const juce::String table = stopList.fromFirstOccurrenceOf("\n\n", false, false).trim();
+    const auto now = juce::Time::getCurrentTime();
+    const juce::String date = juce::String(now.getDayOfMonth()) + " " + now.getMonthName(false) + " " + juce::String(now.getYear());
+
+    juce::String text;
+    text << "# " << name << "\n\n";
+    text << "A complete OrganSampler configuration of (fill in: the organ, its place), as recorded by (fill in: the producer)";
+    if (!perspectives.isEmpty())
+        text << " in " << (perspectives.size() == 1 ? juce::String("one perspective") : juce::String(perspectives.size()) + " perspectives")
+             << ", " << joinWithAnd(perspectives) << ", each on its own audio route";
+    text << ": " << divisions << " divisions and " << (rows.isNotEmpty() ? rows : juce::String("?")) << " rows in the Stop List, transmissions and\n"
+            "extensions included (only the rows nested in stop folders are not counted). Whoever owns\n"
+            "the recordings loads the whole instrument in a single step.\n\n";
+    text << "**Download:** https://github.com/zurek-jiri/OrganSampler/releases/download/configurations/" << assetName << "\n\n";
+    text << "**No samples are published here.** The configuration merely names the folders it expects;\n"
+            "the recordings themselves are the property of their producer and are obtained from them.\n\n";
+    text << "## The configuration\n\n";
+    text << "- **Organ:** (fill in: the instrument, its builder, the place).\n";
+    text << "- **Samples:** (fill in: the producer, the product's name, the link to its page)";
+    if (!topFolders.isEmpty()) text << "; the folders " << joinWithAnd(topCodes) << ", unpacked as plain WAV files";
+    if (!perspectiveNames.isEmpty()) text << "; perspectives " << joinWithAnd(perspectiveNames);
+    text << ". OrganSampler " << version << " or later.\n";
+    text << "- **Expects:** library root of any name, holding the trees " << joinWithAnd(treeCodes) << ".\n";
+    text << "- **Audio layout:** ";
+    if (routeLines.empty()) text << "no routes";
+    else if (sameRoutes) text << "every division has " << routeLines.front();
+    else for (size_t m = 0; m < routeLines.size(); ++m)
+        text << (m == 0 ? "" : "; ") << (m == 0 ? juce::String("Pedal") : romanNumeral((int)m)) << ": " << routeLines[m];
+    text << ".\n";
+    text << "- **Saved with:** OrganSampler " << version << ".\n";
+    text << "- **Author:** (fill in: your name), " << date << ".\n\n";
+    text << "## Where to put the file\n\n";
+    if (topFolders.size() > 1) text << "The folders " << joinWithAnd(topCodes) << " must stand side by side in one folder. ";
+    else if (topFolders.size() == 1) text << "The folder " << topCodes[0] << " lies in one folder. ";
+    text << "Place " << code(file.getFileName()) << " in that folder:\n\n```\n<any folder>\\\n";
+    text << "├── " << file.getFileName() << "\n";
+    for (int i = 0; i < topFolders.size(); ++i)
+    {
+        const bool lastTop = i == topFolders.size() - 1;
+        text << (lastTop ? "└── " : "├── ") << topFolders[i] << "\\\n";
+        juce::StringArray inside;
+        for (const auto& t : trees)
+            if (t.upToFirstOccurrenceOf("/", false, false) == topFolders[i])
+                inside.add(t.fromFirstOccurrenceOf("/", false, false).replaceCharacter('/', '\\'));
+        for (int k = 0; k < inside.size(); ++k)
+            text << (lastTop ? "    " : "│   ") << (k == inside.size() - 1 ? "└── " : "├── ") << inside[k] << "\\\n";
+    }
+    text << "```\n\n";
+    text << "## Stop List\n\n" << table << "\n";
+    return text;
 }
 
 namespace

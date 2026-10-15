@@ -66,8 +66,11 @@ configurations/
         └── Rural Church Front.wav     <- the IRs the configuration uses, if any (and if their licence allows)
 ```
 
-The README of a configuration is short - a screenful at most, as in
-`stralsund-jakobi-wegscheider/README.md` - and says:
+OrganSampler writes the README for you: saving with *Portable configuration*
+puts `<name>.README.md` beside the `.json` (since 0.8.94) - fill in the three
+"(fill in: ...)" places (the organ, the producer and product of the samples,
+your name) and upload both files. It is short, as in
+`stralsund-jakobi-wegscheider/README.md`, and says:
 
 - **Organ**: the instrument, builder, place, year.
 - **Samples**: the name of the sample folders, their producer, a link to the

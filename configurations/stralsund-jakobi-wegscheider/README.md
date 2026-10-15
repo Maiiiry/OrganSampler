@@ -1,51 +1,40 @@
 # Stralsund, St. Jakobi - the Wegscheider organ
 
-A complete OrganSampler configuration of the Wegscheider organ in the church
-of St. Jakobi, Stralsund, as recorded by Sonus Paradisi in three perspectives,
-Direct, Diffuse and Rear, each on its own audio route: four divisions and 71 rows
-in the Stop List, transmissions and extensions included (only the rows nested in
-the two composite stops are not counted). Whoever owns the recordings loads the
-whole instrument in a single step.
+A complete OrganSampler configuration of the Wegscheider organ in the church of St. Jakobi, Stralsund, as recorded by Sonus Paradisi in 3 perspectives, Direct, Diffuse and Rear, each on its own audio route: 4 divisions and 71 rows in the Stop List, transmissions and
+extensions included (only the rows nested in stop folders are not counted). Whoever owns
+the recordings loads the whole instrument in a single step.
 
 **Download:** https://github.com/zurek-jiri/OrganSampler/releases/download/configurations/Stralsund-Jakobi-Wegscheider.json
 
-**No samples are published here.** The configuration merely names the folders
-it expects; the recordings themselves are the property of Sonus Paradisi and are
-obtained from them.
+**No samples are published here.** The configuration merely names the folders it expects;
+the recordings themselves are the property of their producer and are obtained from them.
 
 ## The configuration
 
 - **Organ:** the organ of St. Jakobi, Stralsund, built by Kristian Wegscheider.
-- **Samples:** Sonus Paradisi, *Stralsund, St. Jakobi, Wegscheider organ*
-  (https://www.sonusparadisi.cz/), two Hauptwerk installation packages, `003135`
-  and `003136`, unpacked as plain WAV files; three perspectives, recorded as
-  direct (`01-dirMk2H`), diffuse (`02-difMk2H`) and rear (`03-rearMk4`), which the
-  configuration keeps apart as the perspectives Direct, Diffuse and Rear.
-  OrganSampler 0.8.92 or later.
-- **Expects:** library root of any name, holding the trees `003135/pipe/PE`,
-  `003135/pipe/UW`, `003135/pipe/HW`, `003135/pipe/OW` and the same four under
-  `003136/pipe`.
-- **Audio layout:** every division has the routes direct, diffuse and rear, one
-  per perspective, and an auxiliary route (unused).
+- **Samples:** Sonus Paradisi, *Stralsund, St. Jakobi, Wegscheider organ* (https://www.sonusparadisi.cz/), two Hauptwerk installation packages; the folders `003135` and `003136`, unpacked as plain WAV files; perspectives Direct (`01-dirMk2H`), Diffuse (`02-difMk2H`) and Rear (`03-rearMk4`). OrganSampler 0.8.92 or later.
+- **Expects:** library root of any name, holding the trees `003135/pipe/HW`, `003135/pipe/OW`, `003135/pipe/PE`, `003135/pipe/UW`, `003136/pipe/HW`, `003136/pipe/OW`, `003136/pipe/PE` and `003136/pipe/UW`.
+- **Audio layout:** every division has the routes direct, diffuse and rear; auxiliary (unused).
 - **Saved with:** OrganSampler 0.8.90.
 - **Author:** zurek-jiri, 15 October 2026.
 
 ## Where to put the file
 
-The two packages, `003135` and `003136`, must stand side by side in one folder.
-Place `Stralsund-Jakobi-Wegscheider.json` in that folder:
+The folders `003135` and `003136` must stand side by side in one folder. Place `Stralsund-Jakobi-Wegscheider.json` in that folder:
 
 ```
 <any folder>\
 ├── Stralsund-Jakobi-Wegscheider.json
 ├── 003135\
-│   └── pipe\
-│       ├── HW\  OW\  UW\  PE\
-│       └── ...
+│   ├── pipe\HW\
+│   ├── pipe\OW\
+│   ├── pipe\PE\
+│   └── pipe\UW\
 └── 003136\
-    └── pipe\
-        ├── HW\  OW\  UW\  PE\
-        └── ...
+    ├── pipe\HW\
+    ├── pipe\OW\
+    ├── pipe\PE\
+    └── pipe\UW\
 ```
 
 ## Stop List
@@ -67,8 +56,8 @@ Place `Stralsund-Jakobi-Wegscheider.json` in that folder:
 | Ped Schalmey 4' | UW Gedackt 16' (Ext.) | HW Zimbel 1' | Vox Humana Cornet [V] |
 | Ped Principalbass 64' (Ext.) | UW Gedackt 4' (Ext.) | HW Cornet 8' | Bombarde 16' (Ext.) |
 | Cornet [III] | UW Octave 2' (Ext.) | HW Rohrflote 16' (Ext.) | Clairon 4' (Ext.) |
-| Ped Posaune 64' (Ext.) | UW Gedackt 2' (Ext.) | Montre 32' (Ext.) | |
-| BauernFlöte 2' (Trsm.) | Regal 16' (Trsm.) | HW Gamba 16' (Ext.) | |
-| Ped ContraPos 64' (Ext.) | Septime 1 1/7' (Ext.) | HW Tromp 8' (Ext.) | |
-| | | Flöte 2' (Trsm.) | |
-| | | HW Tromp 4' (Ext.) | |
+| Ped Posaune 64' (Ext.) | UW Gedackt 2' (Ext.) | Montre 32' (Ext.) |  |
+| BauernFlöte 2' (Trsm.) | Regal 16' (Trsm.) | HW Gamba 16' (Ext.) |  |
+| Ped ContraPos 64' (Ext.) | Septime 1 1/7' (Ext.) | HW Tromp 8' (Ext.) |  |
+|  |  | Flöte 2' (Trsm.) |  |
+|  |  | HW Tromp 4' (Ext.) |  |

@@ -62,6 +62,11 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
 - The voicing state keeps entries of stops the engine could not build (missing folders) and writes them back;
   never let a save drop voicing of a stop that merely failed to load.
 
+- A configuration README is WRITTEN BY THE PROGRAM: saving a portable configuration puts `<name>.README.md`
+  beside the `.json` (`MainComponent::configurationReadme`; dev: `ORGAN_SAVE_PORTABLE=<file>` with
+  `ORGAN_LOAD_CONFIGURATION=<non-portable cfg>` loads and saves without the dialogs). Only the three
+  "(fill in: ...)" places - Organ, the producer/product/link in Samples, Author - are completed by hand, plus
+  the required version if a fix matters (Stralsund: 0.8.92). Never retype the rest. Its form:
 - A configuration README has exactly this, in this order, and nothing more (people do not read):
   title; one opening paragraph (what it is, the perspectives - they make the recording unique -, divisions, the
   number of Stop List rows) + "No samples are published here"; "The configuration" bullets Organ, Samples

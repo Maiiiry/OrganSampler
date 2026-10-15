@@ -469,6 +469,16 @@ output channels of every route in the audio tabs, then *Measure the maximum
 polyphony* in the Configuration Editor and *Save Configuration*. Published
 configurations (see "Organ configurations" on the website) are saved this way.
 
+Beside a portable configuration the program writes its README,
+`<name>.README.md`, in the form of the project's `configurations/` folder on
+GitHub: the perspectives, the folders the configuration expects and where to
+put the file, the routes, the version, and the Stop List as a table in the
+order of your grid with the buttons' captions - transmissions and extensions
+included. Fill in the three "(fill in: ...)" places - the organ, the producer
+and product of the samples, your name - and upload the `.json` with the
+README (a pull request, or an "Organ configuration" issue with both files
+attached).
+
 Paths inside a configuration are stored relative to the common folder of the
 sample trees where possible, so a configuration kept beside its sample folders
 travels with them (another drive letter, another computer). Trees on a

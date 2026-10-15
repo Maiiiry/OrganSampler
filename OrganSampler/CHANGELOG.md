@@ -12,6 +12,24 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.94] - 2026-10-15
+
+### Added
+- Saving a portable configuration also writes `<name>.README.md` beside it:
+  the README for publishing the configuration in the project's
+  `configurations/` folder, complete but for the organ, the samples and the
+  author - the perspectives, the folders the configuration expects, the
+  routes, the version and the Stop List table in the order of the grid with
+  the buttons' captions (transmissions and extensions included, the rows
+  nested in stop folders counted in the folder's numeral).
+- Development hooks `ORGAN_DUMP_STOPLIST=<file>` (the Stop List table alone)
+  and `ORGAN_LOAD_CONFIGURATION=<file>` together with it or with
+  `ORGAN_SAVE_PORTABLE` (loads the configuration first); both wait for the
+  loading to finish instead of a fixed 25 s.
+- `configurations/`: every configuration is attached to the permanent
+  release "configurations" on each push, so the `.json` downloads as a file
+  instead of opening as text in the browser.
+
 ## [0.8.93] - 2026-10-15
 
 ### Fixed

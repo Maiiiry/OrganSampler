@@ -983,6 +983,13 @@ private:
     // no machine settings, no unused trees (see the manual, "Portable
     // configuration (to share with others)").
     void savePortableConfiguration(const juce::File& file, bool includeMidi, bool portable = false);
+    // The README of a configuration for the configurations folder on GitHub, in
+    // the published form: written beside every portable configuration as
+    // "<name>.README.md" (the user fills in the organ, the samples and the author).
+    juce::String configurationReadme(const juce::var& configuration, const juce::File& file) const;
+    // Development hooks: runs the action once the organ is loaded (polled every
+    // 5 s, then 5 s of quiet) - the loading of a large organ takes its time.
+    void runWhenLoaded(std::function<void()> action);
     // A portable configuration was loaded: once the organ is up, a message says
     // what to set on this computer (MIDI, audio tabs, measure, save).
     bool portableNoticePending = false;
