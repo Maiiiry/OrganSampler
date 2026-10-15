@@ -20,7 +20,11 @@ other than `.json`, `.md`, `.txt` and pictures.
 
 1. Get the sample folders the configuration was made for (its README says
    which and where from).
-2. Put the `.json` file **beside the samples** - in the folder that contains
+2. Download the `.json` by the **Download** link in its README (the files are
+   attached to the release
+   https://github.com/zurek-jiri/OrganSampler/releases/tag/configurations;
+   the copy in the repository opens as text in the browser) and put it
+   **beside the samples** - in the folder that contains
    their top folder. A configuration stores its sample paths relative to the
    common folder of its sample trees (the "library root"), so when the file
    lies beside that root it finds the samples by itself:
@@ -57,7 +61,7 @@ One folder per organ, named after the organ, holding:
 configurations/
 └── stralsund-jakobi-wegscheider/
     ├── README.md                      <- required, see below
-    ├── Stralsund Jakobi Wegscheider.json
+    ├── Stralsund-Jakobi-Wegscheider.json
     └── IR/
         └── Rural Church Front.wav     <- the IRs the configuration uses, if any (and if their licence allows)
 ```
@@ -93,7 +97,9 @@ adds them. Published configurations are under the repository's licence
 - [`stralsund-jakobi-wegscheider`](stralsund-jakobi-wegscheider/README.md) -
   the Wegscheider organ of St. Jakobi, Stralsund, from the Sonus Paradisi
   recordings (two Hauptwerk installation packages, `003135` and `003136`):
-  four divisions, 53 rows in the Stop List, three perspectives on separate routes.
+  three perspectives on separate routes, four divisions, 71 rows in the Stop
+  List with transmissions and extensions. Download:
+  https://github.com/zurek-jiri/OrganSampler/releases/download/configurations/Stralsund-Jakobi-Wegscheider.json
 - [`rural-organ`](rural-organ/README.md) - the demo organ, see below.
 
 ## The demo organ: Rural Organ

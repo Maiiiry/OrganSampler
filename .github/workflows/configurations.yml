@@ -46,3 +46,33 @@ jobs:
             exit 1
           fi
           echo "configurations/ is clean"
+
+  # The .json files are attached to the permanent release "configurations" as
+  # well: a release asset is downloaded by the browser, while the file in the
+  # repository opens as text. Every push to main refreshes the assets (names
+  # with spaces get hyphens - GitHub would turn the spaces into dots).
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Attach the configurations to the "configurations" release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          mkdir -p staging
+          while IFS= read -r -d '' f; do
+            cp "$f" "staging/$(basename "$f" | tr ' ' '-')"
+          done < <(find configurations -mindepth 2 -maxdepth 2 -type f -name '*.json' -print0)
+          ls -l staging
+          if ! gh release view configurations --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create configurations --repo "$GITHUB_REPOSITORY" --title "Organ configurations" --notes \
+              "The organ configurations of the configurations/ folder as downloadable files (refreshed on every change). Each configuration's README says which sample folders it needs and where to put the file: https://github.com/${GITHUB_REPOSITORY}/tree/main/configurations"
+          fi
+          gh release upload configurations staging/* --repo "$GITHUB_REPOSITORY" --clobber

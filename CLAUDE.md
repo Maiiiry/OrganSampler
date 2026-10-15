@@ -62,14 +62,23 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
 - The voicing state keeps entries of stops the engine could not build (missing folders) and writes them back;
   never let a save drop voicing of a stop that merely failed to load.
 
-- A configuration README has exactly this and nothing more (people do not read):
-  title; one opening paragraph (what it is, number of Stop List rows WITHOUT nested transmissions, perspectives)
-  + "No samples are published here"; "Where to put the file" (one sentence + the tree diagram, never a
-  made-up parent folder like `haupwerk`); a "Stop List" table of the row names by division (no prose about the
-  divisions); "The configuration" bullets Organ, Samples (producer, product, link, packages, WAV, perspectives,
-  required OrganSampler version), Expects (trees), Audio layout (routes, unused ones marked), Saved with, Author
-  + date. No "What you need", no "Using it", no essays. `configurations/stralsund-jakobi-wegscheider/README.md`
-  is the measure. Stop counts: never count rows with folders + empty folders; say "N rows in the Stop List".
+- A configuration README has exactly this, in this order, and nothing more (people do not read):
+  title; one opening paragraph (what it is, the perspectives - they make the recording unique -, divisions, the
+  number of Stop List rows) + "No samples are published here"; "The configuration" bullets Organ, Samples
+  (producer, product, link, packages, WAV, perspectives, required OrganSampler version), Expects (trees), Audio
+  layout (routes, unused ones marked), Saved with, Author + date; "Where to put the file" (the packages are now
+  known: one sentence + the tree diagram, never a made-up parent folder like `haupwerk`); last the "Stop List"
+  table of the row names by division. Never mention what OrganSampler does natively (couplers, voicing,
+  crescendo, combinations). No "What you need", no "Using it", no prose about the divisions.
+- A `.json` in the repository opens as text in the browser, so every configuration is also attached to the
+  permanent release `configurations` (workflow `configurations.yml`, job `publish`, on every push to main;
+  asset names get hyphens for spaces). Name configuration files WITHOUT spaces, and put the line
+  `**Download:** https://github.com/zurek-jiri/OrganSampler/releases/download/configurations/<file>.json`
+  right after the opening paragraph of its README.
+- Stop List counting: every row counts - stops, stop folders, transmissions and extensions (transmissions
+  are rows of their receiving division, `transmissions[]` with `manual`) - except the rows nested in a stop
+  folder (`groupMaster` set). Transmissions and extensions go into the table as "source, shift" or
+  "Alias (source, shift)"; a stop folder lists its nested rows in parentheses. Stralsund: 53 + 18 = 71.
 
 ## Testing
 - Windows delivery: after every release build copy the exe to `C:\OrganSampler\OrganSampler_<version>.exe`
