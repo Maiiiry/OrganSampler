@@ -77,9 +77,12 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   right after the opening paragraph of its README.
 - Stop List counting: every row counts - stops, stop folders, transmissions and extensions (transmissions
   are rows of their receiving division, `transmissions[]` with `manual`) - except the rows nested in a stop
-  folder (`groupMaster` set). The table holds NAMES ONLY, one per row: a transmission or extension by its alias
-  if it has one, else by its source stop's name; a stop folder by its name alone - never shifts in semitones,
-  never what a folder consists of, no legend above the table. Every README looks the same. Stralsund: 53 + 18 = 71.
+  folder (`groupMaster` set). The table is NEVER typed by hand: it comes from the program, in grid order (row by
+  row, left to right - the organ builder's order the user arranged) with the exact button captions (footages,
+  "(Ext.)"/"(Trsm.)", a stop folder's "[III]"):
+  `ORGAN_DUMP_STOPLIST=<out.md> ORGAN_LOAD_CONFIGURATION=<cfg.json> OrganSampler.exe` writes it once the load is
+  over (use a non-portable configuration of this machine, a portable one would ask for the root); quit the program
+  afterwards. No legend above the table. Every README looks the same. Stralsund: 53 + 18 = 71.
 
 ## Testing
 - Windows delivery: after every release build copy the exe to `C:\OrganSampler\OrganSampler_<version>.exe`

@@ -1478,6 +1478,33 @@ MainComponent::MainComponent()
             CrashHandler::note("ORGAN_SAVE_PORTABLE: written " + target.getFullPathName());
         });
     }
+    // Development: ORGAN_DUMP_STOPLIST=<file> writes the Stop List of the loaded
+    // organ as a Markdown table (grid order, button captions) 25 s after start -
+    // the table of a configuration's README is taken from it, never typed by hand.
+    if (const char* dumpStopList = std::getenv("ORGAN_DUMP_STOPLIST"))
+    {
+        // Written once the loading is over (polled every 5 s, 5 s of quiet after it).
+        const juce::File target = juce::File(juce::String(dumpStopList));
+        juce::Component::SafePointer<MainComponent> safeThis(this);
+        auto poll = std::make_shared<std::function<void(int)>>();
+        *poll = [safeThis, target, poll](int quiet)
+        {
+            if (safeThis == nullptr || safeThis->voicer == nullptr) return;
+            const bool loading = safeThis->activeFolderLoader != nullptr || safeThis->engine.getStops().isEmpty();
+            if (!loading && quiet >= 1)
+            {
+                target.replaceWithText(safeThis->voicer->stopListMarkdown());
+                CrashHandler::note("ORGAN_DUMP_STOPLIST: written " + target.getFullPathName());
+                return;
+            }
+            juce::Timer::callAfterDelay(5000, [poll, next = loading ? 0 : quiet + 1] { (*poll)(next); });
+        };
+        juce::Timer::callAfterDelay(5000, [poll] { (*poll)(0); });
+        // With ORGAN_LOAD_CONFIGURATION=<file> set as well, that configuration is
+        // loaded first (as "Load Configuration" would), 3 s after start.
+        if (std::getenv("ORGAN_LOAD_CONFIGURATION") != nullptr)
+            juce::Timer::callAfterDelay(3000, [safeThis] { if (safeThis != nullptr) safeThis->launchConfigurationLoadChooser(); });
+    }
     // Development: ORGAN_LOAD_TREE="<division>|<folder>" loads the folder into
     // the division 25 s after start, as "Load folder..." of the Stop List would
     // (a tree of the same name as a missing pool tree takes its place).

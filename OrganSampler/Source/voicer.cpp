@@ -3743,6 +3743,50 @@ void Voicer::loadState(const juce::File& file)
         row->updateFromStop();
 }
 
+juce::String Voicer::stopListMarkdown() const
+{
+    struct Item { int y, x; juce::String caption; };
+    std::map<int, std::vector<Item>> divisions;
+    for (auto* row : stopRows)
+    {
+        if (row == nullptr || !row->isVisible()) continue;
+        const Stop* stop = row->getStop();
+        if (stop == nullptr) continue;
+        if (auto* t = row->transmission()) { if (t->groupMaster.isNotEmpty()) continue; }   // nested in a stop folder
+        else if (stop->groupMaster.isNotEmpty()) continue;
+        divisions[row->divisionIndex()].push_back({ row->getY(), row->getX(), row->caption() });
+    }
+    size_t longest = 0;
+    for (auto& [manual, items] : divisions)
+    {
+        std::sort(items.begin(), items.end(), [](const Item& a, const Item& b) { return a.y != b.y ? a.y < b.y : a.x < b.x; });
+        longest = std::max(longest, items.size());
+    }
+    auto cell = [](juce::String text)
+    {
+        text = text.replace("|", "\\|").trim();
+        while (text.contains("  ")) text = text.replace("  ", " ");   // "Cornet  [III]" on the button
+        return text;
+    };
+    juce::String header = "|", rule = "|";
+    for (const auto& [manual, items] : divisions)
+    {
+        header << " " << (manual == 0 ? juce::String("Pedal") : romanNumeral(manual)) << " |";
+        rule << "---|";
+    }
+    juce::String table = header + "\n" + rule + "\n";
+    for (size_t i = 0; i < longest; ++i)
+    {
+        table << "|";
+        for (const auto& [manual, items] : divisions)
+            table << " " << (i < items.size() ? cell(items[i].caption) : juce::String()) << " |";
+        table << "\n";
+    }
+    int total = 0;
+    for (const auto& [manual, items] : divisions) total += (int)items.size();
+    return "Stop List rows: " + juce::String(total) + "\n\n" + table;
+}
+
 bool Voicer::wheelBlockedAt(juce::Point<int> screenPosition) const
 {
     // The wheel belongs to the sliders only inside the rectangle of an open

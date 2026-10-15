@@ -286,6 +286,11 @@ public:
     void loadState(const juce::File& file);
     // Stops of the loaded state the engine does not hold (their voicing is kept, see retainedStopStates).
     int retainedStopCount() const noexcept { return (int)retainedStopStates.size(); }
+    // The Stop List as a Markdown table for a configuration's README: one column
+    // per division, the rows in the order of the grid (row by row, left to
+    // right) with the captions of the buttons; the rows nested in a stop folder
+    // are not listed (the folder's caption carries their number).
+    juce::String stopListMarkdown() const;
     void resetAll(bool resetGrid = true);   // reset voicing; optionally also stop grids and the stop pool
     // Forgets the grid cells of a division's own stops (transmissions keep theirs):
     // the next layout places them in load order (the Stop building table's order).
