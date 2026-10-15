@@ -22,14 +22,19 @@ folder for analysis.
 
 ## Sharing an organ configuration
 
-See `configurations/README.md`: what a published configuration must contain
-and how to submit it (pull request or the "Organ configuration" issue form).
-Configurations only - never samples; the `Configurations check` workflow
+Save it with *Portable configuration (to share with others)* ticked:
+OrganSampler writes the zip and the README beside it. Fill in the three
+"(fill in: ...)" places and drag the two files onto the
+[upload page](https://github.com/zurek-jiri/OrganSampler/upload/main/configurations);
+GitHub opens the pull request for you - no Git needed. The details:
+[configurations/README.md](configurations/README.md); the published organs:
+[configurations/INDEX.md](configurations/INDEX.md). Configurations only -
+never samples, never impulse responses; the `Configurations check` workflow
 refuses them.
 
 ## Changing the code
 
-- Build with CMake (`README.md`) or the Projucer project under
+- Build with CMake ([README.md](README.md)) or the Projucer project under
   `OrganSampler/`; both compile the same sources.
 - C++17, JUCE 9. Windows-only code (ASIO, WASAPI aggregate, the crash
   handler's dbghelp, window enumeration, message pumps) stays under
@@ -42,8 +47,8 @@ refuses them.
   embedded at build time).
 - The audio is never altered silently: no hidden normalisation, trimming or
   fading of samples or impulse responses.
-- Every user-visible change gets a line in `OrganSampler/CHANGELOG.md` and,
-  where the user sees it, a paragraph in `OrganSampler/USER_MANUAL.md` (the
+- Every user-visible change gets a line in [`OrganSampler/CHANGELOG.md`](OrganSampler/CHANGELOG.md) and,
+  where the user sees it, a paragraph in [`OrganSampler/USER_MANUAL.md`](OrganSampler/USER_MANUAL.md) (the
   manual is embedded in the program; `Tools/number_manual.ps1` renumbers its
   chapters after an edit).
 - Before a pull request: the CI build on all three platforms passes and
@@ -53,4 +58,4 @@ refuses them.
 
 OrganSampler is free software under the GNU GPL v3; contributions are
 accepted under the same licence. Third-party components and their licences are
-listed in `THIRD-PARTY-NOTICES.md`.
+listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

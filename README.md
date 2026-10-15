@@ -33,7 +33,8 @@ configuration. Free software under the GNU GPL v3. Windows, macOS and Linux.
    work with OrganSampler as they are - and their
    [Free stuff](https://www.sonusparadisi.cz/en/free-stuff.html) page has
    free instruments and impulse responses. Ready-made configurations for
-   them: [`configurations/`](configurations/README.md).
+   them: [`configurations/INDEX.md`](configurations/INDEX.md) (how to use and
+   publish one: [`configurations/`](configurations/README.md)).
 
 ## Links
 
@@ -42,7 +43,8 @@ configuration. Free software under the GNU GPL v3. Windows, macOS and Linux.
 - User manual: [`OrganSampler/USER_MANUAL.md`](OrganSampler/USER_MANUAL.md)
   (also inside the program: Configuration Editor > About & licences)
 - Changes: [`OrganSampler/CHANGELOG.md`](OrganSampler/CHANGELOG.md)
-- Organ configurations to share and download: [`configurations/`](configurations/README.md)
+- Organ configurations to share and download: [`configurations/`](configurations/README.md),
+  the list of the published organs: [`configurations/INDEX.md`](configurations/INDEX.md)
 - Problems and ideas: *Configuration Editor > Report a problem...* in the
   program bundles the logs and opens the
   [bug report](https://github.com/zurek-jiri/OrganSampler/issues/new/choose);
