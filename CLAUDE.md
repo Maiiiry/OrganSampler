@@ -95,6 +95,14 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   over (use a non-portable configuration of this machine, a portable one would ask for the root); quit the program
   afterwards. No legend above the table. Every README looks the same. Stralsund: 53 + 18 = 71.
 
+## Pending for the next Linux session (delete when done)
+- The dual boot clock: Windows keeps the hardware clock in LOCAL time (the default, `RealTimeIsUniversal` not
+  set) and it was set correctly on 15 October 2026 (Windows had been 2 h behind because Linux had written UTC
+  into it). Make Linux agree: `sudo timedatectl set-local-rtc 1 --adjust-system-clock`, then check
+  `timedatectl` ("RTC in local TZ: yes") and the time. Never set `RealTimeIsUniversal` on Windows again: its
+  Windows Time service cannot resync (NTP blocked for the service), so a UTC RTC would leave Windows 2 h off.
+- `git pull` in `~/OrganSamplerC-linux`; copy the Linux binary of the newest release to `~/Downloads/OrganSampler`.
+
 ## Testing
 - Windows delivery: after every release build copy the exe to `C:\OrganSampler\OrganSampler_<version>.exe`
   (the local MSBuild Release build or the CI exe) and point the desktop shortcut
