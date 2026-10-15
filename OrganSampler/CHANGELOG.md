@@ -12,6 +12,27 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.92] - 2026-10-15
+
+### Fixed
+- Recalling a combination, a crescendo step or a configuration's registration
+  no longer replaces a stop's transmission list with the snapshot stored in
+  it: a combination saved before transmissions were grouped under a stop
+  folder wiped them on recall (the Stralsund "Vox Humana Cornet" and "Pedal
+  Cornet" folders lost their rows this way). A registration now sets the
+  on/off states only; the list belongs to the Stop List and the voicing
+  state. The snapshot is adopted only for a stop without any transmissions
+  (older files). Differences are noted in the activity log.
+- The voicing state keeps the entries of stops the engine could not build
+  (folders not found on this machine, a tree not loaded): they are written
+  back unchanged on the next save instead of being dropped with their
+  transmissions. The Linux load that missed three pedal stops erased the
+  "Pedal Cornet" transmissions this way.
+- A voicing entry is matched to its stop by name and division; the saved
+  primary perspective decides only among several stops of that name, so a
+  changed primary perspective no longer leaves a stop unvoiced (and its
+  transmissions dropped on the next save).
+
 ## [0.8.91] - 2026-10-15
 
 ### Fixed

@@ -284,6 +284,8 @@ public:
     void saveState(const juce::File& file);
     juce::var createState() const;
     void loadState(const juce::File& file);
+    // Stops of the loaded state the engine does not hold (their voicing is kept, see retainedStopStates).
+    int retainedStopCount() const noexcept { return (int)retainedStopStates.size(); }
     void resetAll(bool resetGrid = true);   // reset voicing; optionally also stop grids and the stop pool
     // Forgets the grid cells of a division's own stops (transmissions keep theirs):
     // the next layout places them in load order (the Stop building table's order).
@@ -477,6 +479,12 @@ private:
     bool resolveItem(int manual, const juce::String& key, Stop*& stop, int& transmissionIndex) const;
     struct StateRetarget { juce::String name; int from, to; };
     std::vector<StateRetarget> stateRetargets;
+    // The voicing of stops the state names but the engine does not hold right
+    // now (folders not found on this machine, a tree not loaded yet): kept
+    // verbatim and written back by createState, so that a load that could not
+    // build every stop never loses what the user voiced - including the
+    // transmissions grouped under a stop folder, which live in these entries.
+    std::vector<juce::var> retainedStopStates;
     std::map<int, std::vector<juce::String>> arrangeOrders;   // per division: the order the next layout places every item in
 
 public:

@@ -42,6 +42,12 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   ("Remove empty stops", arrange mode).
 - Stop folders (a container stop with indented children) are table rows: the container has no folders, the
   children `child: true`. Keep them through every save/load path.
+- Transmissions grouped under a stop folder are NOT table rows: they live in the source stop's voicing entry
+  (`voicingSettings.stops[].transmissions[]` with `groupMaster`). Search there before claiming they are gone.
+- The transmission list of a stop belongs to the Stop List / voicing state only. A combination, crescendo step
+  or registration sets on/off states and must never replace, add to or remove from the list (0.8.92).
+- The voicing state keeps entries of stops the engine could not build (missing folders) and writes them back;
+  never let a save drop voicing of a stop that merely failed to load.
 
 ## Testing
 - Never build or launch the program while the user runs it. Linux test: `~/tools/linux_test.sh <exe> <seconds>`

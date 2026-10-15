@@ -3451,6 +3451,17 @@ juce::var Voicer::createState() const
         }
         stopsArray.add(juce::var(stopObj.get()));
     }
+    // The stops of the loaded state the engine does not hold: their entries go
+    // back unchanged (a stop that exists now wins over its kept entry).
+    for (const auto& kept : retainedStopStates)
+    {
+        const auto name = kept.getProperty("name", "").toString();
+        const int manual = (int)kept.getProperty("primaryManual", 0);
+        bool present = false;
+        for (auto* stop : engine.getStops())
+            if (stop->name == name && stop->primaryManual == manual) { present = true; break; }
+        if (!present) stopsArray.add(kept);
+    }
     root->setProperty(juce::Identifier("stops"), stopsArray);
     // Grid cells of the stops per division (arranged by dragging): "column,row".
     juce::DynamicObject::Ptr gridObj = new juce::DynamicObject();
@@ -3541,6 +3552,8 @@ void Voicer::loadState(const juce::File& file)
     // entries are read as belonging to the new division (once).
     const std::vector<StateRetarget> retargets = std::move(stateRetargets);
     stateRetargets.clear();
+    retainedStopStates.clear();
+    juce::StringArray retainedNames;
 
     for (const auto& stopVar : *stopsArray.getArray())
     {
@@ -3591,12 +3604,28 @@ void Voicer::loadState(const juce::File& file)
                 perNoteObj = perNoteVar.getDynamicObject();
         }
 
+        // The stop the entry belongs to: by name and division; among several of
+        // that name the one of the saved primary perspective, else any - the
+        // primary perspective may have changed since the save, the voicing and
+        // the transmissions are still this stop's.
+        Stop* matchedStop = nullptr;
+        {
+            const int wantedManual = juce::jlimit(0, SamplerEngine::maxManuals - 1, primaryManual);
+            Stop* byName = nullptr;
+            for (auto* stop : engine.getStops())
+                if (stop->name == name && stop->primaryManual == wantedManual)
+                {
+                    if (savedPerspective.isEmpty() || stop->perspective.equalsIgnoreCase(savedPerspective)) { matchedStop = stop; break; }
+                    if (byName == nullptr) byName = stop;
+                }
+            if (matchedStop == nullptr) matchedStop = byName;
+        }
+        bool matched = false;
         for (auto* stop : engine.getStops())
         {
-            if (stop->name == name && stop->primaryManual == juce::jlimit(0, SamplerEngine::maxManuals - 1, primaryManual)
-                && (savedPerspective.isEmpty()
-                    || stop->perspective.equalsIgnoreCase(savedPerspective)))
+            if (stop == matchedStop)
             {
+                matched = true;
                 stop->setDb((float)globalDb);
                 stop->gainDb = (float)gainDb;
                 stop->attackMs = (float)attackMs;
@@ -3688,7 +3717,27 @@ void Voicer::loadState(const juce::File& file)
                 break;
             }
         }
+        if (!matched && name.isNotEmpty())
+        {
+            // No such stop right now (its folders were not found, its tree is not
+            // loaded): the entry is kept as it is - under the division it was moved
+            // to, if it was - and written back by createState. Dropping it here used
+            // to lose the stop's voicing and the transmissions it carried (a stop
+            // folder's grouped transmissions among them) on the next save.
+            juce::var kept = stopVar;
+            if (primaryManual != (int)stopVar.getProperty("primaryManual", -1))
+            {
+                juce::DynamicObject::Ptr copy = new juce::DynamicObject(*stopObj);
+                copy->setProperty("primaryManual", primaryManual);
+                kept = juce::var(copy.get());
+            }
+            retainedStopStates.push_back(kept);
+            retainedNames.add(name + " (division " + juce::String(primaryManual) + ")");
+        }
     }
+    if (!retainedNames.isEmpty())
+        CrashHandler::note("Voicing state: " + juce::String(retainedNames.size()) + " stop(s) not loaded, their voicing and transmissions kept: "
+            + retainedNames.joinIntoString(", "));
 
     for (auto* row : stopRows)
         row->updateFromStop();

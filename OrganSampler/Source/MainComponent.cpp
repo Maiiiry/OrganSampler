@@ -8893,11 +8893,22 @@ void MainComponent::loadStopSettings()
                         perNoteObj = perNoteVar.getDynamicObject();
                 }
 
+                // By name and division; the saved primary perspective decides only among several stops of that name.
+                Stop* matchedStop = nullptr;
+                {
+                    const int wantedManual = juce::jlimit(0, SamplerEngine::maxManuals - 1, primaryManual);
+                    Stop* byName = nullptr;
+                    for (auto* stop : engine.getStops())
+                        if (stop->name == name && stop->primaryManual == wantedManual)
+                        {
+                            if (savedPerspective.isEmpty() || stop->perspective.equalsIgnoreCase(savedPerspective)) { matchedStop = stop; break; }
+                            if (byName == nullptr) byName = stop;
+                        }
+                    if (matchedStop == nullptr) matchedStop = byName;
+                }
                 for (auto* stop : engine.getStops())
                 {
-                    if (stop->name == name && stop->primaryManual == juce::jlimit(0, SamplerEngine::maxManuals - 1, primaryManual)
-                        && (savedPerspective.isEmpty()
-                            || stop->perspective.equalsIgnoreCase(savedPerspective)))
+                    if (stop == matchedStop)
                     {
                         stop->setDb((float)globalDb);
                         stop->gainDb = (float)gainDb;
@@ -14676,21 +14687,26 @@ void MainComponent::applyRegistrationState(const MemorySlot& memory, bool includ
             target->attackFadeoutMs = static_cast<float>(stopObj.getProperty("attackFadeoutMs", 0.0));
             engine.setStopRandomPitchError(target, (float)(double)stopObj.getProperty(
                 "randomPitchErrorCents", 4.0), true);
-            // A combination or configuration carries the stop's transmissions
-            // (division, shift): the list is restored, then the stored on/off states.
+            // A combination, a crescendo step or a configuration's registration
+            // carries a snapshot of the stop's transmissions, but the list itself
+            // belongs to the organ (Stop List, voicing state): a registration sets
+            // their on/off states only. It never replaces the list - a combination
+            // saved before the user grouped transmissions under a stop folder used
+            // to wipe them on recall. The snapshot is adopted only when the stop has
+            // no transmissions at all (older files without a voicing state).
             if (stopObj.hasProperty("transmissions") || stopObj.hasProperty("transmissionMask")
                 || stopObj.hasProperty("manualMask"))
             {
                 auto wanted = Voicer::transmissionsFromVar(stopObj, target->primaryManual);
-                bool sameList = wanted.size() == target->transmissions.size();
-                for (size_t i = 0; sameList && i < wanted.size(); ++i)
-                    sameList = wanted[i].manual == target->transmissions[i].manual
-                        && wanted[i].shift == target->transmissions[i].shift;
-                if (!sameList)
+                if (target->transmissions.empty() && !wanted.empty())
                 {
-                    // Grid cells and pool entries of the previous list would be stale.
                     engine.replaceTransmissions(target, wanted);
+                    CrashHandler::note("Registration: \"" + target->name + "\" had no transmissions, " + juce::String((int)wanted.size())
+                        + " adopted from the stored registration");
                 }
+                else if (wanted.size() != target->transmissions.size())
+                    CrashHandler::note("Registration: the stored list of \"" + target->name + "\" has " + juce::String((int)wanted.size())
+                        + " transmission(s), the organ " + juce::String((int)target->transmissions.size()) + " - the organ's list stays, on/off states applied by division and ordinal");
             }
             engine.setStopEnabled(target, shouldBeEnabled);
             std::vector<bool> on(target->transmissions.size(), false);
