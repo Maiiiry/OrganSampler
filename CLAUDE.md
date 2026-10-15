@@ -25,6 +25,10 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   macOS (Apple silicon, macOS 11+), Intel macOS 10.11+ and Linux and publishes a pre-release; the release job deletes
   every older `v*` release and tag. The Rural Organ demo release `rural-organ-0.8` stays. Only Sonus Paradisi is ever
   named for samples; never "sample set" - say sample folders / folder tree.
+- Windows commit messages: write the message to a file WITHOUT BOM (`[IO.File]::WriteAllText(path, text)`) and
+  `git commit -F <file>`; `-F -` with a here-string does not work in PowerShell 5.1 (the text becomes pathspecs,
+  the commit fails and a following `git tag` lands on the previous commit), and `Set-Content -Encoding utf8` adds
+  a BOM to the subject line. Tag only after `git log -1` shows the new commit.
 - Windows: `git` is not on PATH - use Visual Studio's
   (`C:\Program Files\Microsoft Visual Studio\18\Community\...\Team Explorer\Git\cmd\git.exe`); after pulling,
   run `C:\JUCE9\Projucer.exe --resave OrganSampler\OrganSampler.jucer` and copy the .ico (above), commit the regenerated
