@@ -42,7 +42,9 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   (`C:\Program Files\Microsoft Visual Studio\18\Community\...\Team Explorer\Git\cmd\git.exe`); after pulling,
   run `C:\JUCE9\Projucer.exe --resave OrganSampler\OrganSampler.jucer` and copy the .ico (above), commit the regenerated
   `Builds/VisualStudio2026` and `JuceLibraryCode`. Linux clone: `~/OrganSamplerC-linux` (git cannot run on the NTFS
-  checkout from Linux); Linux builds come from CI only, the binary goes to `~/Downloads/OrganSampler` by rename.
+  checkout from Linux); Linux builds come from CI only, the binary goes to `~/Downloads/OrganSampler` by rename. On Linux `gh` is NOT on
+  PATH: use `~/tools/gh/bin/gh` (export PATH="$HOME/tools/gh/bin:$PATH"); never run `~/Downloads/OrganSampler` with
+  made-up flags such as `--version` - it starts the program.
 
 ## Configurations and paths
 - A configuration never stores an absolute path except a tree outside the sample library root (another disk);
