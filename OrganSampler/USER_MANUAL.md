@@ -2509,4 +2509,31 @@ the licences of the software it contains: JUCE (AGPLv3), the Steinberg ASIO SDK 
 GPLv3 option; ASIO is a trademark and software of Steinberg Media Technologies
 GmbH), Signalsmith Stretch and Signalsmith Linear (MIT). The same program is
 built for Windows, macOS and Linux; the macOS and Linux builds have had less
-playing time than the Windows build.
+playing time than the Windows build. What each build needs:
+
+- **Windows:** Windows 10 or 11, 64-bit. ASIO, Windows Audio (WASAPI) and
+  the aggregated WASAPI device.
+- **macOS:** `OrganSampler-macos.zip` runs on Apple silicon Macs with macOS
+  11 Big Sur or newer; `OrganSampler-macos-10.11-intel.zip` on Intel Macs
+  with macOS 10.11 El Capitan or newer. CoreAudio.
+- **Linux:** x86-64 with glibc 2.38 or newer - a distribution of 2024 or
+  later: Ubuntu 24.04, Linux Mint 22, Debian 13, Fedora 39 and their
+  successors. ALSA or JACK (PipeWire).
+
+Where the program keeps its files (settings, the activity log, crash
+reports) - the "application-data folder" of this manual:
+
+- Windows: `%APPDATA%\OrganSampler` (`C:\Users\<you>\AppData\Roaming\OrganSampler`)
+- macOS: `~/Library/OrganSampler` (in Finder: *Go > Go to Folder...*, type
+  `~/Library/OrganSampler`)
+- Linux: `~/.config/OrganSampler`
+
+`CrashLogs/activity.log` is the activity log, `CrashLogs/crash-<date>.txt`
+a crash report with the stack of the crash; macOS writes its own report as
+well, in `~/Library/Logs/DiagnosticReports` (named `OrganSampler_...`).
+`settings.json` is the state of the program, `settings-<date>.json` the
+snapshot of each of the last seven days. If the program crashes at every
+start, move `settings.json` away (keep it for the report) and it starts
+clean; a crash while an audio device was being opened is caught by the
+program itself: the next start opens that device with the default buffer
+and rate and says so.

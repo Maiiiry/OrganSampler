@@ -16,7 +16,11 @@ then lands elsewhere, press *Open the GitHub form* in the message that stays
 open in the program (or open `Report on GitHub.html` in the report folder).
 
 The activity log is what makes a report fixable: it records every device,
-every load and the last minutes before a crash.
+every load and the last minutes before a crash. It lives in the program's
+application-data folder, `CrashLogs/activity.log`, beside the crash reports
+`CrashLogs/crash-<date>.txt`: Windows `%APPDATA%\OrganSampler`, macOS
+`~/Library/OrganSampler` (plus the system's own report in
+`~/Library/Logs/DiagnosticReports`), Linux `~/.config/OrganSampler`.
 
 The maintainer reads the reports with `OrganSampler/Tools/fetch_issues.ps1`,
 which downloads every issue with its comments and attachments into a local

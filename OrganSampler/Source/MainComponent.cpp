@@ -1217,6 +1217,21 @@ MainComponent::MainComponent()
     memoriesJsonFile = appDataDir.getChildFile("memories.json");
     lastDirFile = appDataDir.getChildFile("lastdir.json");
     settingsFile = appDataDir.getChildFile("settings.json");
+    // Safe start: a crash while a device was being opened leaves the marker
+    // behind (see beginDeviceOpen). That device is opened with the default
+    // buffer and rate this once, so a buffer the driver cannot take does not
+    // lock the program out; the marker is deleted so the next start is normal.
+    {
+        const auto marker = deviceOpenMarker();
+        if (marker.existsAsFile())
+        {
+            crashedWhileOpening = marker.loadFileAsString().trim();
+            marker.deleteFile();
+            if (crashedWhileOpening.isNotEmpty())
+                CrashHandler::note("Safe start: the last start crashed while opening " + crashedWhileOpening
+                    + " - that device is opened with the default buffer and rate this once");
+        }
+    }
 
     DBG("App data dir: " << appDataDir.getFullPathName());
     DBG("Voicer state file: " << voicerStateFile.getFullPathName());
@@ -2993,7 +3008,10 @@ void MainComponent::buildPerspectiveAudioRoute(int manual, const juce::String& p
                     // This is the required channel count, not the maximum the
                     // selector may expose. Requesting 256 makes ordinary ASIO
                     // devices fail to open even though their channels are valid.
+                    applySafeStart(*xml);
+                    beginDeviceOpen(*xml);
                     route->managerInUse->initialise(0, 2, xml.get(), true);
+                    endDeviceOpen();
                     noteIfDeviceMissing(*route->managerInUse, xml.get());
                 }
             route->callback = std::make_unique<DivisionAudioCallback>(
@@ -3390,6 +3408,53 @@ bool MainComponent::isAudioDeviceAvailableNow(const juce::String& typeName, cons
     return opened;
 }
 
+juce::File MainComponent::deviceOpenMarker() const
+{
+    return CrashHandler::detail::logDirectory().getChildFile("opening-device.txt");
+}
+
+void MainComponent::beginDeviceOpen(const juce::XmlElement& setup)
+{
+    // "type|device|buffer|rate" while the driver opens; gone again right after.
+    deviceOpenMarker().replaceWithText(setup.getStringAttribute("deviceType") + "|" + setup.getStringAttribute("audioOutputDeviceName")
+        + "|" + setup.getStringAttribute("audioDeviceBufferSize") + "|" + setup.getStringAttribute("audioDeviceRate"));
+}
+
+void MainComponent::endDeviceOpen()
+{
+    deviceOpenMarker().deleteFile();
+}
+
+void MainComponent::applySafeStart(juce::XmlElement& setup)
+{
+    if (crashedWhileOpening.isEmpty()) return;
+    const auto parts = juce::StringArray::fromTokens(crashedWhileOpening, "|", "");
+    if (parts.size() < 2) return;
+    if (!parts[0].equalsIgnoreCase(setup.getStringAttribute("deviceType"))
+        || parts[1] != setup.getStringAttribute("audioOutputDeviceName")) return;
+    const auto hadBuffer = setup.getStringAttribute("audioDeviceBufferSize"), hadRate = setup.getStringAttribute("audioDeviceRate");
+    setup.removeAttribute("audioDeviceBufferSize");
+    setup.removeAttribute("audioDeviceRate");
+    const bool asioOrJack = parts[0].equalsIgnoreCase("ASIO") || parts[0].equalsIgnoreCase("JACK");
+    if (!asioOrJack) { setup.setAttribute("audioDeviceBufferSize", 512); setup.setAttribute("audioDeviceRate", 48000.0); }
+    safeStartNotice = parts[0] + " \"" + parts[1] + "\" with buffer " + (hadBuffer.isEmpty() ? juce::String("?") : hadBuffer)
+        + " at " + (hadRate.isEmpty() ? juce::String("?") : hadRate) + " Hz";
+    CrashHandler::note("Safe start: " + safeStartNotice + " opened with the default buffer and rate instead");
+}
+
+void MainComponent::showSafeStartNoticeIfDue()
+{
+    if (safeStartNotice.isEmpty() || activeFolderLoader != nullptr) return;
+    const auto notice = safeStartNotice;
+    safeStartNotice.clear();
+    juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Audio device opened with the default buffer",
+        "The last start of OrganSampler crashed while opening " + notice + ".\n\n"
+        "This time the device was opened with the default buffer size (512 samples) and rate (48 kHz) instead, so the program "
+        "starts again. Choose a buffer size the driver can take in the audio tab of the division (Settings in the division "
+        "header); the program remembers the one you choose.\n\nThe crash is in the CrashLogs folder of the program's "
+        "application-data folder - Configuration Editor > Report a problem... sends it.");
+}
+
 void MainComponent::showMissingAudioDevicesIfDue()
 {
     if (!missingAudioDevicesReportPending || juce::Time::getMillisecondCounterHiRes() < missingDevicesReportAtMs) return;
@@ -3587,7 +3652,10 @@ juce::AudioDeviceManager* MainComponent::sharedHostFor(const juce::String& typeN
         // perspectives are the driver's physical outputs (extra bits are ignored).
         if (!setup->hasAttribute("audioDeviceOutChans"))
             setup->setAttribute("audioDeviceOutChans", juce::String::repeatedString("1", 64));
+        applySafeStart(*setup);
+        beginDeviceOpen(*setup);
         error = host->initialise(0, 2, setup.get(), false);
+        endDeviceOpen();
     }
     else
         host->setCurrentAudioDeviceType(typeName, true);   // no host open yet: the type's default device
@@ -5529,6 +5597,10 @@ void MainComponent::showKeyboardsDialog(int onlyManual)
                 };
                 addAndMakeVisible(irApplyAll);
                 refreshReverbLabel();
+                deviceStatus.setFont(juce::FontOptions(13.0f));
+                deviceStatus.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+                deviceStatus.setJustificationType(juce::Justification::centredLeft);
+                addAndMakeVisible(deviceStatus);
                 startTimerHz(5);
                 refreshChannels();
             }
@@ -5638,6 +5710,8 @@ void MainComponent::showKeyboardsDialog(int onlyManual)
                 panelButton.setBounds(buttons.removeFromLeft(buttons.getWidth() / 2).reduced(2, 0));
                 reopenButton.setBounds(buttons.reduced(2, 0));
                 applyAll.setBounds(area.getX() + labelColumnWidth + 2, area.getY() + 28, controlsWidth - 4, 22);
+                // What the driver really runs: device, buffer, rate, latency (the boxes above show the request).
+                deviceStatus.setBounds(area.getX() + 4, area.getY() + 54, area.getWidth() - 8, 22);
                 for (int index = 0; index < channelButtons.size(); ++index)
                 {
                     auto* button = channelButtons[index];
@@ -5737,6 +5811,7 @@ void MainComponent::showKeyboardsDialog(int onlyManual)
             juce::OwnedArray<juce::ToggleButton> channelButtons;
             juce::ToggleButton applyAll;
             juce::TextButton panelButton, reopenButton;
+            juce::Label deviceStatus;
             double knownRate = 0.0;                         // the rate this route ran at (kept across a device change)
             juce::TextButton irLoadButton, irClearButton;
             juce::Label irLabel, wetLabel, irSectionLabel;
@@ -5829,6 +5904,17 @@ void MainComponent::showKeyboardsDialog(int onlyManual)
                     : owner.applyAudioToAll).load(), juce::dontSendNotification);
                 {
                     auto* device = selector != nullptr ? selector->deviceManager.getCurrentAudioDevice() : nullptr;
+                    juce::String running;
+                    if (device != nullptr && device->isOpen())
+                    {
+                        const int buffer = device->getCurrentBufferSizeSamples();
+                        const double rate = device->getCurrentSampleRate();
+                        running << "Running: " << device->getName() << "  -  buffer " << buffer << " samples";
+                        if (rate > 0.0) running << " (" << juce::String(1000.0 * buffer / rate, 1) << " ms) at " << juce::String(rate, 0) << " Hz";
+                        running << ", output latency " << device->getOutputLatencyInSamples() << " samples";
+                    }
+                    else running = "No device open on this route.";
+                    if (deviceStatus.getText() != running) deviceStatus.setText(running, juce::dontSendNotification);
 #if !JUCE_LINUX
                     panelButton.setEnabled(device != nullptr && device->hasControlPanel());
 #endif
@@ -15233,6 +15319,7 @@ void MainComponent::timerCallback()
     updateExpressionInertia();
     updateHeldBankNavigation();
     showMissingAudioDevicesIfDue();
+    showSafeStartNoticeIfDue();
     showPortableNoticeIfDue();
     updateEmptyHint();
     updateMissingTreeNotices();

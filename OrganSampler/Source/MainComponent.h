@@ -925,6 +925,16 @@ private:
     bool isAudioDeviceOpenSomewhere(const juce::String& deviceName);
     bool isAudioDeviceAvailableNow(const juce::String& typeName, const juce::String& deviceName, juce::String* error);
     void showMissingAudioDevicesIfDue();
+    // Safe start: a marker file while a device is being opened; if it is still
+    // there at the next start, that device is opened with the default buffer and
+    // rate once (a buffer the driver crashes on must not lock the program out).
+    juce::File deviceOpenMarker() const;
+    void beginDeviceOpen(const juce::XmlElement& setup);
+    void endDeviceOpen();
+    void applySafeStart(juce::XmlElement& setup);
+    void showSafeStartNoticeIfDue();
+    juce::String crashedWhileOpening;   // "type|device|buffer|rate" of the open that crashed last time (this session only)
+    juce::String safeStartNotice;       // the message to show once the loading is over
     void noteIfDeviceMissing(juce::AudioDeviceManager& manager, const juce::XmlElement* wanted);
     // Main window placement: remembered position and maximised state.
     int savedWindowX = INT_MIN, savedWindowY = INT_MIN;

@@ -17,9 +17,10 @@ configuration. Free software under the GNU GPL v3. Windows, macOS and Linux.
 
 1. **The program:** the latest build on the
    [releases page](https://github.com/zurek-jiri/OrganSampler/releases)
-   (pre-release builds for testers; one executable for Windows 10/11, macOS
-   - 11 Big Sur or newer on Apple silicon, 10.11 El Capitan or newer on
-   Intel Macs - or Linux, no installation).
+   (pre-release builds for testers; one executable, no installation:
+   Windows 10/11 64-bit; macOS 11 Big Sur or newer on Apple silicon, 10.11
+   El Capitan or newer on Intel Macs; Linux x86-64 with glibc 2.38 or newer -
+   Ubuntu 24.04, Mint 22, Debian 13, Fedora 39 and newer).
 2. **An organ to play:** download
    [**RuralOrgan.zip**](https://github.com/zurek-jiri/OrganSampler/releases/download/rural-organ-0.8/RuralOrgan.zip)
    (about 950 MB) - the **Rural Organ** demo: a small village organ, three

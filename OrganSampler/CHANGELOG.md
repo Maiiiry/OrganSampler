@@ -12,6 +12,23 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.100] - 2026-10-16
+
+### Fixed
+- A crash while an audio device was being opened (a buffer size the driver
+  cannot take, for example) locked the program out: every start crashed
+  again. Now a marker is written while a device opens; if it is still there
+  at the next start, that device is opened with the default buffer (512) and
+  rate (48 kHz) once, and a message says so.
+
+### Added
+- The audio tab shows what the driver really runs: device, buffer size in
+  samples and milliseconds, sample rate and output latency ("Running: ...").
+- The manual (8.8) says what each build needs (Windows 10/11; macOS 11 or
+  10.11 on Intel; Linux with glibc 2.38) and where the settings, the
+  activity log and the crash reports are on each system - macOS:
+  `~/Library/OrganSampler`. The website and the release say the same.
+
 ## [0.8.99] - 2026-10-16
 
 ### Fixed
