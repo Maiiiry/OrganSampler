@@ -111,16 +111,25 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   over (use a non-portable configuration of this machine, a portable one would ask for the root); quit the program
   afterwards. No legend above the table. Every README looks the same. Stralsund: 53 + 18 = 71.
 
-## Pending for the next Linux session (delete when done)
-- The dual boot clock: Windows keeps the hardware clock in LOCAL time (the default, `RealTimeIsUniversal` not
-  set) and it was set correctly on 15 October 2026 (Windows had been 2 h behind because Linux had written UTC
-  into it). Make Linux agree: `sudo timedatectl set-local-rtc 1 --adjust-system-clock`, then check
-  `timedatectl` ("RTC in local TZ: yes") and the time. Never set `RealTimeIsUniversal` on Windows again: its
-  Windows Time service cannot resync (NTP blocked for the service), so a UTC RTC would leave Windows 2 h off.
-- Copy the Linux binary of the newest release to `~/Downloads/OrganSampler` (git pull done on 16 Oct 2026).
-- The NTFS disk `/mnt/pracovni` was mounted read-only on 16 Oct 2026 (Windows fast startup / unclean shutdown?):
-  the session report went to `~/CLAUDE_REPORTS.pending.md` - append it to `OrganSampler/CLAUDE_REPORTS.md` once
-  the disk is writable, then delete the pending file.
+## Pending for the next Windows session (delete when done)
+- `git pull` in `F:\JUCE_PROJEKTY\OrganSamplerC` (the NTFS checkout is at 0.8.98; git cannot run there from
+  Linux: "expected submodule path 'JUCE' not to be a symbolic link"), then Projucer resave + icon copy, build,
+  deliver to `C:\OrganSampler`.
+- The dual boot clock is settled: Windows and Linux both keep the hardware clock in local time
+  (`timedatectl` says "RTC in local TZ: yes"); never set `RealTimeIsUniversal` on Windows. Windows fast startup
+  is off (`powercfg /h off`), so the NTFS disks are writable from Linux.
+
+## Compile checks on Linux without a toolchain for the whole program
+- `g++ -std=c++17 -fsyntax-only -w -DJUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1 -DJUCE_STANDALONE_APPLICATION=1
+  -DJUCE_USE_CURL=0 -DJUCE_WEB_BROWSER=0 -DJUCE_MODULE_AVAILABLE_juce_dsp=1 -DJUCE_LINUX=1 -DNDEBUG
+  -I JuceLibraryCode -I ../JUCE/modules -I ../ThirdParty/signalsmith -I /tmp/stubinc Source/<file>.cpp` (run in
+  `~/OrganSamplerC-linux/OrganSampler`) checks a source in seconds (SamplerEngine.cpp 4 s, MainComponent.cpp
+  longer). `/tmp/stubinc/alsa/asoundlib.h` is a stub of the seven ALSA symbols PlatformAudio.h uses
+  (snd_pcm_t, snd_pcm_open/close, snd_strerror, snd_device_name_hint/get_hint/free_hint, SND_PCM_STREAM_PLAYBACK,
+  SND_PCM_NONBLOCK; libasound2-dev is not installed); recreate it when /tmp was cleared. Real builds come from CI.
+- Never start `~/Downloads/OrganSampler` with a made-up flag such as `--version`: it opens the program (kill it).
+  `--selftest "<folder>;<folder>"` is the offline test (folders separated by ';'), with `ORGAN_SELFTEST_IR=<wav>`,
+  `ORGAN_IR_LIGHT=1`. `gh` is not installed on Linux: the GitHub API with the token from `git credential fill`.
 
 ## Testing
 - Windows delivery: after every release build copy the exe to `C:\OrganSampler\OrganSampler_<version>.exe`
