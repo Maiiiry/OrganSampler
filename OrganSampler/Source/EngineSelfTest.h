@@ -450,6 +450,17 @@ namespace EngineSelfTest
             engine.setManualTremulant(manual, true, 4.4f, 8.0f, 260.0f);
             engine.setManualExpressionGain(manual, 0.7f);
         }
+        // ORGAN_IR_LIGHT=1: the IR reverbs in Light processing (the automatic choice on a weak computer).
+        if (const char* lightEnv = std::getenv("ORGAN_IR_LIGHT"); lightEnv != nullptr && juce::String(lightEnv).getIntValue() != 0)
+            engine.setReverbProcessingLight(true);
+        if (selfTestIr.existsAsFile())
+        {
+            const auto summary = engine.getReverbSummary();
+            report << "IR processing: " << (summary.light ? "Light" : "Full") << " - " << summary.routes << " route(s), "
+                   << juce::String(summary.totalCostMsPerSecond, 1) << " ms of one thread per second of audio (worst route "
+                   << juce::String(summary.worstCostMsPerSecond, 1) << " ms; " << juce::String(summary.irSecondsPerSecond, 1)
+                   << " IR-channel-seconds per second; at full quality about " << juce::String(summary.estimatedFullMsPerSecond, 1) << " ms)\n";
+        }
         for (auto* stop : engine.getStops()) engine.setStopEnabled(stop, true);
         auto noteOnAll = [&](int note) { for (int m = 0; m < divisions; ++m) engine.noteOn(note, 127, m); };
         auto noteOffAll = [&](int note) { for (int m = 0; m < divisions; ++m) engine.noteOff(note, m); };

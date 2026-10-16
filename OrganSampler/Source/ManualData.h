@@ -1755,6 +1755,32 @@ static const char* const kManualText_part8 =
     "otherwise. Loading takes longer. *Keep each file's own rate* loads faster and\n"
     "plays the files by interpolation. Takes effect at the next load.\n"
     "\n"
+    "### IR processing\n"
+    "\n"
+    "How the IR reverbs of the routes are convolved. *Full* convolves every route\n"
+    "with its impulse response as it is. That is heavy on memory traffic rather\n"
+    "than on arithmetic: a true stereo IR of 7 s on six routes (three divisions,\n"
+    "each with its default and its auxiliary route, as in Rural Organ) streams\n"
+    "more than 3 GB/s through the partitioned convolutions, and a weak computer -\n"
+    "an old laptop, a Core 2 Duo - cannot render the pipes beside it; it crackles\n"
+    "at a few dozen voices whatever the buffer size. *Light* runs the convolution\n"
+    "at a quarter of the sample rate (half when the high cut of the wet signal\n"
+    "lies above 2.5 kHz, so that the wet band stays intact), trims the IR where\n"
+    "its energy has fallen 60 dB below the whole (a church IR of 7 s is there\n"
+    "after 3.5 s; what follows is inaudible under the organ) and reduces a true\n"
+    "stereo IR to its direct channels - a small fraction of the work, the same\n"
+    "room, a little less air in the top of the reverb. *Automatic* (default)\n"
+    "measures every reverb when it is built - two tail periods of noise through\n"
+    "its engines, timed - and chooses Light when the routes' reverbs would take\n"
+    "more than 18 % of a render thread per second of audio (35 % for a single\n"
+    "route), or when a convolution falls behind its period twelve times in a row\n"
+    "while playing; it remembers that choice for this computer and returns to\n"
+    "Full when Full would clearly fit again (below 12 %). The line below the\n"
+    "setting says what the reverbs cost now; the activity log records every\n"
+    "measurement and choice. Full and Light set the mode by hand. The setting\n"
+    "belongs to the computer, not to the organ: a portable configuration does not\n"
+    "carry it.\n"
+    "\n"
     "### Maximum polyphony\n"
     "\n"
     "The number of voices that may sound at once (64 to 300000, default 30000).\n"
@@ -1792,6 +1818,8 @@ static const char* const kManualText_part8 =
     "\n"
     "Everything in \"Getting the most polyphony\" (the auxiliary routes, the IR\n"
     "reverbs, the drivers) raises or lowers the number you will arrive at. Above\n"
+    ;
+static const char* const kManualText_part9 =
     "all, do not be afraid of a larger audio buffer: a latency of about 10 ms\n"
     "(512 samples at 48 kHz) is absolutely fine for organ playing, and even 20 ms\n"
     "is still perfectly comfortable, while chasing the smallest buffer cuts the\n"
@@ -1818,8 +1846,6 @@ static const char* const kManualText_part8 =
     "   division, slowly at first: one key, twice a second. The voices are watched\n"
     "   every second. Whenever they stop rising below the current target, the\n"
     "   stimulus grows at once - more keys spread over the compass (up to all 61),\n"
-    ;
-static const char* const kManualText_part9 =
     "   then the octave couplers of every division onto itself (16' and 4',\n"
     "   whether they are on the grid or not: three pipes per key), then a faster\n"
     "   rate (up to 16 strikes a second). A wet set with several perspectives and\n"
@@ -1994,6 +2020,8 @@ static const char* const kManualText_part9 =
     "\n"
     "### Key velocity: treble cut opens over\n"
     "\n"
+    ;
+static const char* const kManualText_part10 =
     "How long the treble cut of a gentle key takes to open fully after the key goes\n"
     "down (5 to 1000 ms, default 80).\n"
     "\n"
@@ -2020,8 +2048,6 @@ static const char* const kManualText_part9 =
     "\n"
     "How a pipe beyond the compass (or in a gap) gets its pitch from a neighbour's\n"
     "sample: *Resampling*, *Pitch shift (resampling + timbre correction)*, *Pitch\n"
-    ;
-static const char* const kManualText_part10 =
     "shift + time stretch (attack and release)* (the default) or *Phase vocoder\n"
     "(Signalsmith Stretch)* (optional, for those who prefer it). \"The\n"
     "transposition methods\" describes each with its strengths and weaknesses. Switching the method rebuilds the copies of every\n"
@@ -2196,6 +2222,8 @@ static const char* const kManualText_part10 =
     "\n"
     "### Top bar: Record\n"
     "\n"
+    ;
+static const char* const kManualText_part11 =
     "Shows or hides the Record button (the stereo mix to a WAV file).\n"
     "\n"
     "### Top bar: Stop List\n"
@@ -2222,8 +2250,6 @@ static const char* const kManualText_part10 =
     "\n"
     "### Top bar: Ignored Patterns\n"
     "\n"
-    ;
-static const char* const kManualText_part11 =
     "Shows or hides the button editing the ignored folders list.\n"
     "\n"
     "### Top bar: One-shot Patterns\n"
@@ -2398,6 +2424,8 @@ static const char* const kManualText_part11 =
     "How slowly the shutters follow the pedal (50 to 2000 ms, default 300). Larger\n"
     "= heavier, smoother movement; a sudden pedal stroke then takes this long to\n"
     "arrive.\n"
+    ;
+static const char* const kManualText_part12 =
     "\n"
     "### Division volume\n"
     "\n"
@@ -2424,8 +2452,6 @@ static const char* const kManualText_part11 =
     "### Perspective volume\n"
     "\n"
     "The level of one perspective of this division (-31 to +6 dB, default 0); -31\n"
-    ;
-static const char* const kManualText_part12 =
     "dB switches the perspective off completely and saves its voices.\n"
     "\n"
     "### Perspective channel separation\n"

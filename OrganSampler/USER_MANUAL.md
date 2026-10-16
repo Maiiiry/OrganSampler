@@ -1735,6 +1735,32 @@ plays exactly like a 48 kHz one and a 96 kHz set needs half the RAM it would
 otherwise. Loading takes longer. *Keep each file's own rate* loads faster and
 plays the files by interpolation. Takes effect at the next load.
 
+### IR processing
+
+How the IR reverbs of the routes are convolved. *Full* convolves every route
+with its impulse response as it is. That is heavy on memory traffic rather
+than on arithmetic: a true stereo IR of 7 s on six routes (three divisions,
+each with its default and its auxiliary route, as in Rural Organ) streams
+more than 3 GB/s through the partitioned convolutions, and a weak computer -
+an old laptop, a Core 2 Duo - cannot render the pipes beside it; it crackles
+at a few dozen voices whatever the buffer size. *Light* runs the convolution
+at a quarter of the sample rate (half when the high cut of the wet signal
+lies above 2.5 kHz, so that the wet band stays intact), trims the IR where
+its energy has fallen 60 dB below the whole (a church IR of 7 s is there
+after 3.5 s; what follows is inaudible under the organ) and reduces a true
+stereo IR to its direct channels - a small fraction of the work, the same
+room, a little less air in the top of the reverb. *Automatic* (default)
+measures every reverb when it is built - two tail periods of noise through
+its engines, timed - and chooses Light when the routes' reverbs would take
+more than 18 % of a render thread per second of audio (35 % for a single
+route), or when a convolution falls behind its period twelve times in a row
+while playing; it remembers that choice for this computer and returns to
+Full when Full would clearly fit again (below 12 %). The line below the
+setting says what the reverbs cost now; the activity log records every
+measurement and choice. Full and Light set the mode by hand. The setting
+belongs to the computer, not to the organ: a portable configuration does not
+carry it.
+
 ### Maximum polyphony
 
 The number of voices that may sound at once (64 to 300000, default 30000).

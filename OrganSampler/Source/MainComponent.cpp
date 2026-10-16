@@ -9396,7 +9396,7 @@ namespace
         static const juce::StringArray keys{ "windowX", "windowY", "windowWidth", "windowHeight", "windowMaximised", "twoWindows",
             "divisionScreen", "dialogBounds", "uiScalePercent", "copyCacheFolder", "copyCacheEnabled", "sampleStorageFloat",
             "renderThreads", "renderThreadPreset", "renderThreadsWasapi", "showUnusableAudioDevices", "configEditorCollapsed", "configurationFile",
-            "loadLastConfigurationAtStartup", "maxPolyphony" };
+            "loadLastConfigurationAtStartup", "maxPolyphony", "irProcessing", "irLightAuto" };
         return keys;
     }
 }
@@ -11902,6 +11902,90 @@ void MainComponent::finishDivisionsLoadEnd(const std::vector<int>& manuals)
         activeFolderLoader.reset();
         if (reopen >= 0) showStopBuildingDialog(reopen);
     });
+    // The IR reverbs stand now (built with the routes): the automatic choice of
+    // their processing, before anybody plays.
+    {
+        juce::Component::SafePointer<MainComponent> safeThis(this);
+        juce::Timer::callAfterDelay(1500, [safeThis] { if (safeThis != nullptr) safeThis->applyIrProcessing(true); });
+    }
+}
+
+// IR processing: "full" and "light" as set; "automatic" measures. Every route's
+// reverb measured its own cost when it was built (ms of one thread per second
+// of audio, two tail periods of noise through its engines); the routes' costs
+// are added up per render thread. Above 18 % of a thread (or 35 % for a single
+// route) the pipes would be short of time: Light is chosen, and kept on this
+// computer (irLightAuto) until Full would clearly fit again (below 12 %,
+// estimated from the Light cost). The runtime guard of the engine (a
+// convolution exceeding 60 % of its period twelve times in a row) switches to
+// Light the same way while playing.
+void MainComponent::applyIrProcessing(bool fromLoad)
+{
+    if (irProcessing == "full" || irProcessing == "light")
+    {
+        engine.setReverbProcessingLight(irProcessing == "light");
+        return;
+    }
+    const auto summary = engine.getReverbSummary();
+    if (summary.routes == 0) return;
+    const int threads = engine.getRenderWorkerCount() + 1;
+    const double perThread = summary.totalCostMsPerSecond / juce::jmax(1, threads);
+    auto describe = [&]
+    {
+        return juce::String(summary.routes) + " route(s) with IR cost " + juce::String(summary.totalCostMsPerSecond, 1)
+            + " ms of one thread per second of audio (" + juce::String(perThread / 10.0, 1) + " % per render thread over " + juce::String(threads)
+            + " threads, worst route " + juce::String(summary.worstCostMsPerSecond, 1) + " ms, "
+            + juce::String(summary.irSecondsPerSecond, 1) + " IR-channel-seconds per second)";
+    };
+    if (!summary.light)
+    {
+        const bool needLight = perThread > 180.0 || summary.worstCostMsPerSecond > 350.0;
+        CrashHandler::note("IR processing: Full - " + describe() + (needLight ? " - too much for this computer, Light chosen" : " - kept"));
+        if (!needLight) return;
+        irLightAuto = true;
+        engine.setReverbProcessingLight(true);
+        saveSettings();
+        refreshConfigurationEditor();
+        const auto after = engine.getReverbSummary();
+        CrashHandler::note("IR processing: Light - " + juce::String(after.routes) + " route(s) now cost " + juce::String(after.totalCostMsPerSecond, 1) + " ms per second of audio");
+        if (!irLightNoticeShown)
+        {
+            irLightNoticeShown = true;
+            juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, "IR reverb: Light processing chosen for this computer",
+                "The convolution reverbs of the " + juce::String(summary.routes) + " audio routes would take " + juce::String(perThread / 10.0, 0)
+                + " % of a render thread at full quality, which leaves too little for the pipes on this computer. They now run in Light "
+                "processing - a quarter of the sample rate, the tail trimmed where it has fallen 60 dB, no stereo cross terms - the same "
+                "room with a little less air in the top. Configuration Editor > Engine > IR processing shows the cost and can force Full or Light.",
+                "OK", this);
+        }
+        return;
+    }
+    // Light: back to Full only when Full would clearly fit (the Light cost times its savings).
+    const double fullPerThread = summary.estimatedFullMsPerSecond / juce::jmax(1, threads);
+    const bool fullFits = fullPerThread < 120.0 && summary.estimatedFullMsPerSecond / juce::jmax(1, summary.routes) < 250.0;
+    CrashHandler::note("IR processing: Light - " + describe() + "; Full would cost about " + juce::String(fullPerThread / 10.0, 1)
+        + " % per thread" + (fullFits && irLightAuto ? " - Full chosen again" : " - Light kept"));
+    if (fullFits && irLightAuto)
+    {
+        irLightAuto = false;
+        engine.setReverbProcessingLight(false);
+        saveSettings();
+        refreshConfigurationEditor();
+    }
+    juce::ignoreUnused(fromLoad);
+}
+
+juce::String MainComponent::irProcessingStatus() const
+{
+    const auto summary = engine.getReverbSummary();
+    if (summary.routes == 0) return "no route has an IR reverb";
+    const int threads = engine.getRenderWorkerCount() + 1;
+    juce::String text = juce::String(summary.light ? "Light" : "Full");
+    if (irProcessing == "automatic") text << " (automatic)";
+    text << ": " << summary.routes << " route(s), " << juce::String(summary.totalCostMsPerSecond, 1) << " ms of one thread per second of audio = "
+         << juce::String(summary.totalCostMsPerSecond / juce::jmax(1, threads) / 10.0, 1) << " % of each of the " << threads << " render threads";
+    if (summary.light) text << "; Full would cost about " << juce::String(summary.estimatedFullMsPerSecond / juce::jmax(1, threads) / 10.0, 1) << " %";
+    return text;
 }
 
 juce::var MainComponent::stopBuildToVar(const ManualConfig::StopBuild& build)
@@ -13955,6 +14039,10 @@ void MainComponent::loadSettings()
     stopListShowTransmissions = parsed.getProperty("stopListShowTransmissions", false);
     resampleOnLoad = parsed.getProperty("resampleOnLoad", true);
     engine.setResampleOnLoad(resampleOnLoad);
+    irProcessing = parsed.getProperty("irProcessing", "automatic").toString();
+    if (irProcessing != "full" && irProcessing != "light") irProcessing = "automatic";
+    irLightAuto = parsed.getProperty("irLightAuto", false);
+    engine.setReverbProcessingLight(irProcessing == "light" || (irProcessing == "automatic" && irLightAuto));
     {
         // Per-slider visibility; older settings had one switch for all of them.
         const bool allShown = parsed.getProperty("showGlobalSliders", true);
@@ -14504,6 +14592,8 @@ void MainComponent::saveSettings()
     obj->setProperty("equalAt440", equalAt440);
     obj->setProperty("sampleStorageFloat", sampleStorageFloat);
     obj->setProperty("resampleOnLoad", resampleOnLoad);
+    obj->setProperty("irProcessing", irProcessing);
+    obj->setProperty("irLightAuto", irLightAuto);
     obj->setProperty("stopListShowTransmissions", stopListShowTransmissions);
     obj->setProperty("renderThreads", renderThreads);
     obj->setProperty("renderThreadPreset", renderThreadPreset);
@@ -15320,6 +15410,29 @@ void MainComponent::timerCallback()
 {
     updateExpressionInertia();
     updateHeldBankNavigation();
+    // The engine's runtime guard: a route's convolution did not keep up with its
+    // period - Light processing, unless the user fixed the mode.
+    if (engine.takeReverbOverloadFlag())
+    {
+        CrashHandler::note("IR processing: a route's convolution exceeded 60 % of its period twelve times in a row");
+        if (irProcessing == "automatic" && !engine.isReverbProcessingLight())
+        {
+            irLightAuto = true;
+            engine.setReverbProcessingLight(true);
+            saveSettings();
+            refreshConfigurationEditor();
+            CrashHandler::note("IR processing: Light chosen by the runtime guard");
+            if (!irLightNoticeShown)
+            {
+                irLightNoticeShown = true;
+                juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, "IR reverb: Light processing chosen for this computer",
+                    "The convolution reverb of a route did not keep up with the audio period on this computer. The IR reverbs now run in Light "
+                    "processing - a quarter of the sample rate, the tail trimmed where it has fallen 60 dB, no stereo cross terms - the same "
+                    "room with a little less air in the top. Configuration Editor > Engine > IR processing shows the cost and can force Full or Light.",
+                    "OK", this);
+            }
+        }
+    }
     showMissingAudioDevicesIfDue();
     showSafeStartNoticeIfDue();
     showPortableNoticeIfDue();
@@ -18579,6 +18692,27 @@ void MainComponent::showConfigurationEditor()
                 o.saveSettings();
             }, "Files recorded at 96 or 44.1 kHz: resampling them once while loading takes longer but they then play "
                "exactly like 48 kHz files and need half the RAM (96 kHz). Takes effect the next time a division folder is loaded.");
+            {
+                const int selected = o.irProcessing == "full" ? 1 : o.irProcessing == "light" ? 2 : 0;
+                addCombo("IR processing", { "Automatic: Light when this computer cannot afford Full  [default]",
+                    "Full (the IR as it is)", "Light (quarter rate, tail trimmed at -60 dB, no stereo cross terms)" }, selected,
+                    [&o](int index)
+                {
+                    o.irProcessing = index == 1 ? "full" : index == 2 ? "light" : "automatic";
+                    if (index == 0) { o.irLightAuto = false; o.engine.setReverbProcessingLight(false); }
+                    o.applyIrProcessing(false);
+                    o.saveSettings();
+                    o.refreshConfigurationEditor();
+                }, "The convolution of the IR reverbs. Full convolves every route with the IR as it is; it is heavy on memory "
+                   "traffic (a 7 s true stereo IR on six routes streams over 3 GB/s), and a weak computer cannot render the pipes "
+                   "beside it. Light runs the convolution at a quarter of the sample rate (half when the high cut lies above 2.5 kHz), "
+                   "trims the IR where its energy has fallen 60 dB and reduces a true stereo IR to its direct channels - a small "
+                   "fraction of the work, the same room, a little less air in the top. Automatic measures every reverb when it is "
+                   "built and chooses Light when the routes' reverbs would take more than 18 % of a render thread (35 % for a "
+                   "single route), or when a convolution falls behind its period while playing; it remembers the choice for this "
+                   "computer and returns to Full when Full would clearly fit.");
+                addInfo("IR reverbs now", o.irProcessingStatus());
+            }
             addSlider("Maximum polyphony", 64.0, (double)SamplerEngine::maxVoices, 1.0, " voices", engine.getMaxPolyphony(), 30000.0,
                 [&o](double value) { o.engine.setMaxPolyphony((int)value); o.saveSettings(); },
                 "Oldest voices are faded out when this many pipes sound at once.");

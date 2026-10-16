@@ -545,6 +545,15 @@ namespace
             float lp[2]{ 0.0f, 0.0f }, hp[2]{ 0.0f, 0.0f };
             std::vector<float> delay[2];
             int delayMask = 0, delayWrite = 0;
+            // Light processing: the convolution runs at the rate divided by
+            // rateDivider. The input is low-passed (anti-alias) and every
+            // rateDivider-th sample taken; the wet result is zero-stuffed back and
+            // low-passed again. Four biquads (8th-order Butterworth) per channel
+            // and direction, the phases carried across blocks so that any block
+            // length works.
+            juce::dsp::IIR::Filter<float> downFilter[2][4], upFilter[2][4];
+            int downPhase = 0, upPhase = 0;
+            juce::AudioBuffer<float> down{ 2, kMaxBlock / 2 + 8 };   // the decimated input / wet (rateDivider >= 2)
         };
         std::vector<std::unique_ptr<Pair>> pairs;
         juce::AudioBuffer<float> scratch{ 4, kMaxBlock };
@@ -552,6 +561,18 @@ namespace
         int channels = 0;
         int irSamples = 0;                // at the prepared rate
         double seconds = 0.0, irSampleRate = 0.0, preparedRate = 0.0;
+        // Light processing (weak computers): rate divider 2 or 4 (1 = full), the
+        // IR trimmed where its energy has fallen 60 dB (usedSeconds), a true
+        // stereo IR reduced to its LL/RR channels. costMsPerSecond: measured at
+        // the build - the ms of one thread this reverb takes per second of audio.
+        bool light = false;
+        bool crossTermsDropped = false;   // a true stereo IR reduced to LL/RR (Light)
+        int rateDivider = 1;
+        int convolutionBlock = 256;       // the block the engines were prepared for (preparedBlock / rateDivider, rounded up)
+        double usedSeconds = 0.0;
+        double costMsPerSecond = 0.0;
+        // Runtime guard: tasks that took more than 60 % of their period in a row.
+        int slowTasks = 0;
         std::atomic<float> wet{ 0.3f };
         // Tone of the wet signal (ReverbTone), read by the render thread.
         std::atomic<float> highCutHz{ 2000.0f }, lowCutHz{ 195.0f }, preDelayMs{ 0.0f }, wetGain{ 0.63f };
@@ -2215,6 +2236,9 @@ struct SamplerEngine::Impl
     std::array<std::unique_ptr<Route>, kMaxRoutes> routes;
     std::atomic<int> routeCount{ 0 };
     std::atomic<bool> suspended{ false };
+    // IR processing: Light (weak computers, see RouteReverb) and the overload flag of the runtime guard.
+    std::atomic<bool> reverbLight{ false };
+    std::atomic<bool> reverbOverload{ false };
 
     struct MidiCommand { uint8_t note = 0, velocity = 0; int8_t manual = -1; bool on = false; };
     static constexpr uint32_t midiRingSize = 8192;
@@ -2583,7 +2607,8 @@ struct SamplerEngine::Impl
                 int frames = (int)juce::jmin<int64_t>(reader->lengthInSamples, maxFrames);
                 const float decay = juce::jlimit(5.0f, 100.0f, route.reverbTone.decayPercent) / 100.0f;
                 frames = juce::jmax(64, (int)std::lround(frames * decay));
-                const int channels = (int)reader->numChannels;
+                const double fullSeconds = frames / juce::jmax(1.0, reader->sampleRate);
+                int channels = (int)reader->numChannels;
                 juce::AudioBuffer<float> ir(channels, frames);
                 reader->read(&ir, 0, frames, 0, true, true);
                 // Fade-out 0 % leaves the IR exactly as recorded (its own tail is the
@@ -2608,6 +2633,57 @@ struct SamplerEngine::Impl
                         }
                     }
                 }
+                // Light processing: the IR ends where its energy has fallen 60 dB (a
+                // church IR of 7 s is there after 3.5 s; what follows is inaudible
+                // under the organ) with a 100 ms fade, and a true stereo IR keeps its
+                // direct channels only (LL, RR). Half the memory and work, or less.
+                const bool lightMode = reverbLight.load(std::memory_order_relaxed);
+                bool crossTermsDropped = false;
+                if (lightMode)
+                {
+                    double total = 0.0;
+                    for (int c = 0; c < channels; ++c)
+                    {
+                        const float* d = ir.getReadPointer(c);
+                        for (int i = 0; i < frames; ++i) total += (double)d[i] * d[i];
+                    }
+                    if (total > 1.0e-12)
+                    {
+                        double remaining = 0.0;
+                        int cut = frames;
+                        for (int i = frames - 1; i >= 0; --i)
+                        {
+                            for (int c = 0; c < channels; ++c) { const float v = ir.getReadPointer(c)[i]; remaining += (double)v * v; }
+                            if (remaining >= total * 1.0e-6) { cut = i + 1; break; }
+                        }
+                        const int fade = (int)(0.1 * reader->sampleRate);
+                        cut = juce::jmin(frames, cut + fade);
+                        if (cut < frames)
+                        {
+                            const int start = juce::jmax(0, cut - fade);
+                            for (int c = 0; c < channels; ++c)
+                            {
+                                float* d = ir.getWritePointer(c);
+                                for (int i = start; i < cut; ++i)
+                                {
+                                    const float p = (float)(i - start) / (float)juce::jmax(1, cut - start);
+                                    d[i] *= 0.5f * (1.0f + std::cos(juce::MathConstants<float>::pi * p));
+                                }
+                            }
+                            frames = cut;
+                            ir.setSize(channels, frames, true, false, true);
+                        }
+                    }
+                    if (channels >= 4)
+                    {
+                        juce::AudioBuffer<float> direct(2, frames);
+                        direct.copyFrom(0, 0, ir, 0, 0, frames);
+                        direct.copyFrom(1, 0, ir, 3, 0, frames);
+                        ir = std::move(direct);
+                        channels = 2;
+                        crossTermsDropped = true;
+                    }
+                }
                 // One normalisation for the whole IR: unit energy per output channel.
                 double energy = 0.0;
                 for (int c = 0; c < channels; ++c)
@@ -2622,7 +2698,8 @@ struct SamplerEngine::Impl
                 fresh = std::make_unique<RouteReverb>();
                 fresh->trueStereo = trueStereo;
                 fresh->channels = channels;
-                fresh->seconds = frames / juce::jmax(1.0, reader->sampleRate);
+                fresh->seconds = fullSeconds;
+                fresh->usedSeconds = frames / juce::jmax(1.0, reader->sampleRate);
                 fresh->irSampleRate = reader->sampleRate;
                 fresh->preparedRate = juce::jmax(8000.0, route.sampleRate.load(std::memory_order_relaxed));
                 fresh->preparedBlock = juce::jlimit(32, RouteReverb::kMaxBlock, route.blockSize.load(std::memory_order_relaxed));
@@ -2633,7 +2710,15 @@ struct SamplerEngine::Impl
                 fresh->wetGain.store(juce::Decibels::decibelsToGain(juce::jlimit(-40.0f, 12.0f, route.reverbTone.wetDb)), std::memory_order_relaxed);
                 const int delaySize = juce::nextPowerOfTwo((int)(RouteReverb::kMaxPreDelaySeconds * fresh->preparedRate) + RouteReverb::kMaxBlock);
                 const int pairCount = juce::jmax(1, juce::countNumberOfBits((juce::uint64)route.channelMask.load(std::memory_order_relaxed)) / 2);
-                const juce::dsp::ProcessSpec spec{ fresh->preparedRate, (juce::uint32)fresh->preparedBlock, 2 };
+                // Light: the convolution runs at a quarter of the rate (half when the
+                // high cut lies above 2.5 kHz, so that the wet band stays intact);
+                // the engines take blocks of the decimated length.
+                fresh->light = lightMode;
+                fresh->crossTermsDropped = crossTermsDropped;
+                fresh->rateDivider = lightMode ? (route.reverbTone.highCutHz <= 2500.0f ? 4 : 2) : 1;
+                fresh->convolutionBlock = (fresh->preparedBlock + fresh->rateDivider - 1) / fresh->rateDivider + (fresh->rateDivider > 1 ? 1 : 0);
+                const double convolutionRate = fresh->preparedRate / fresh->rateDivider;
+                const juce::dsp::ProcessSpec spec{ convolutionRate, (juce::uint32)fresh->convolutionBlock, 2 };
                 auto stereoCopy = [&](int c0, int c1)
                 {
                     juce::AudioBuffer<float> copy(2, frames);
@@ -2645,9 +2730,9 @@ struct SamplerEngine::Impl
                 // The tail engines do their large FFT every kHeadSize samples. Feeding
                 // each engine a different number of zero blocks first spreads those
                 // bursts over different callbacks instead of piling them into one.
-                const int blocksPerPeriod = juce::jmax(1, RouteReverb::kHeadSize / fresh->preparedBlock);
+                const int blocksPerPeriod = juce::jmax(1, RouteReverb::kHeadSize / fresh->convolutionBlock);
                 const int routeOrdinal = juce::jmax(0, routeIndexOf(&route));
-                juce::AudioBuffer<float> zeros(2, fresh->preparedBlock);
+                juce::AudioBuffer<float> zeros(2, fresh->convolutionBlock);
                 zeros.clear();
                 auto stagger = [&](juce::dsp::Convolution& convolution, int blocks)
                 {
@@ -2677,7 +2762,68 @@ struct SamplerEngine::Impl
                         pair->right.prepare(spec);
                         stagger(pair->right, ((routeOrdinal + p) * 5 + blocksPerPeriod / 2) % blocksPerPeriod);
                     }
+                    if (fresh->rateDivider > 1)
+                    {
+                        // Anti-alias before the decimation and image rejection after the
+                        // interpolation: an 8th-order Butterworth at 0.4 of the reduced
+                        // rate (4.8 kHz at a quarter of 48 kHz; the wet path's high cut
+                        // of 2 kHz lies well below), four biquads with the Butterworth Qs.
+                        const float cutoff = (float)(0.4 * convolutionRate);
+                        static const float qs[4]{ 0.50979558f, 0.60134489f, 0.89997622f, 2.56291545f };
+                        for (int ch = 0; ch < 2; ++ch)
+                            for (int k = 0; k < 4; ++k)
+                            {
+                                pair->downFilter[ch][k].coefficients = juce::dsp::IIR::Coefficients<float>::makeLowPass(fresh->preparedRate, cutoff, qs[k]);
+                                pair->upFilter[ch][k].coefficients = juce::dsp::IIR::Coefficients<float>::makeLowPass(fresh->preparedRate, cutoff, qs[k]);
+                                pair->downFilter[ch][k].reset();
+                                pair->upFilter[ch][k].reset();
+                            }
+                        pair->down.setSize(2, RouteReverb::kMaxBlock / fresh->rateDivider + 8);
+                        pair->down.clear();
+                    }
                     fresh->pairs.push_back(std::move(pair));
+                }
+                // The cost of this reverb on this computer: two tail periods of noise
+                // through every engine, timed - the ms of one thread per second of
+                // audio. The automatic choice of Light processing adds the routes up.
+                {
+                    const int blocks = juce::jmax(1, 2 * RouteReverb::kHeadSize / fresh->convolutionBlock);
+                    juce::AudioBuffer<float> noise(2, fresh->convolutionBlock), work(2, fresh->convolutionBlock);
+                    juce::Random random(1234);
+                    for (int c = 0; c < 2; ++c)
+                        for (int i = 0; i < fresh->convolutionBlock; ++i) noise.setSample(c, i, random.nextFloat() * 0.2f - 0.1f);
+                    const double start = juce::Time::getMillisecondCounterHiRes();
+                    for (auto& pair : fresh->pairs)
+                        for (int b = 0; b < blocks; ++b)
+                        {
+                            work.makeCopyOf(noise, true);
+                            juce::dsp::AudioBlock<float> block(work);
+                            juce::dsp::ProcessContextReplacing<float> context(block);
+                            pair->left.process(context);
+                            if (trueStereo)
+                            {
+                                work.makeCopyOf(noise, true);
+                                juce::dsp::AudioBlock<float> block2(work);
+                                juce::dsp::ProcessContextReplacing<float> context2(block2);
+                                pair->right.process(context2);
+                            }
+                        }
+                    const double elapsed = juce::Time::getMillisecondCounterHiRes() - start;
+                    const double audioSeconds = (double)blocks * fresh->convolutionBlock * fresh->rateDivider / juce::jmax(1.0, fresh->preparedRate);
+                    fresh->costMsPerSecond = audioSeconds > 0.0 ? elapsed / audioSeconds : 0.0;
+                    // Clean engines again, staggered as before.
+                    int ordinal = 0;
+                    for (auto& pair : fresh->pairs)
+                    {
+                        pair->left.reset();
+                        stagger(pair->left, ((routeOrdinal + ordinal) * 5) % blocksPerPeriod);
+                        if (trueStereo)
+                        {
+                            pair->right.reset();
+                            stagger(pair->right, ((routeOrdinal + ordinal) * 5 + blocksPerPeriod / 2) % blocksPerPeriod);
+                        }
+                        ++ordinal;
+                    }
                 }
             }
         }
@@ -2718,6 +2864,7 @@ struct SamplerEngine::Impl
         RouteReverb* rv = route.reverb.get();
         if (rv == nullptr || rv->pairs.empty()) { route.irOutValid = false; return; }
         juce::ScopedNoDenormals noDenormals;
+        const int64_t taskStart = juce::Time::getHighResolutionTicks();
         const int totalSamples = route.irInFrames;
         if (totalSamples <= 0) { route.irOutValid = false; return; }
         const float wet = rv->wet.load(std::memory_order_relaxed);
@@ -2804,7 +2951,48 @@ struct SamplerEngine::Impl
                 float* s1 = rv->scratch.getWritePointer(1);
                 float* s2 = rv->scratch.getWritePointer(2);
                 float* s3 = rv->scratch.getWritePointer(3);
-                if (rv->trueStereo)
+                if (rv->rateDivider > 1)
+                {
+                    // Light: the input low-passed and every D-th sample taken, the
+                    // convolution at the reduced rate, the wet result zero-stuffed and
+                    // low-passed back to the full rate. The phases run on across
+                    // blocks, so the decimated count of a block equals its
+                    // interpolated count whatever the block length.
+                    const int D = rv->rateDivider;
+                    float* dl = pair.down.getWritePointer(0);
+                    float* dr = pair.down.getWritePointer(1);
+                    const int capacity = pair.down.getNumSamples();
+                    int k = 0, phase = pair.downPhase;
+                    for (int i = 0; i < n; ++i)
+                    {
+                        float xl = L[offset + i], xr = R[offset + i];
+                        for (int f = 0; f < 4; ++f) { xl = pair.downFilter[0][f].processSample(xl); xr = pair.downFilter[1][f].processSample(xr); }
+                        if (phase == 0 && k < capacity) { dl[k] = xl; dr[k] = xr; ++k; }
+                        if (++phase >= D) phase = 0;
+                    }
+                    pair.downPhase = phase;
+                    if (k > 0)
+                    {
+                        float* a[2]{ dl, dr };
+                        juce::dsp::AudioBlock<float> blockA(a, 2, (size_t)k);
+                        juce::dsp::ProcessContextReplacing<float> ctxA(blockA);
+                        pair.left.process(ctxA);   // a true stereo IR is reduced to LL/RR in Light: one engine
+                    }
+                    int j = 0;
+                    phase = pair.upPhase;
+                    const float gain = (float)D;
+                    for (int i = 0; i < n; ++i)
+                    {
+                        float yl = 0.0f, yr = 0.0f;
+                        if (phase == 0 && j < k) { yl = dl[j] * gain; yr = dr[j] * gain; ++j; }
+                        if (++phase >= D) phase = 0;
+                        for (int f = 0; f < 4; ++f) { yl = pair.upFilter[0][f].processSample(yl); yr = pair.upFilter[1][f].processSample(yr); }
+                        s0[i] = yl;
+                        s1[i] = yr;
+                    }
+                    pair.upPhase = phase;
+                }
+                else if (rv->trueStereo)
                 {
                     juce::FloatVectorOperations::copy(s0, L + offset, n);
                     juce::FloatVectorOperations::copy(s1, L + offset, n);
@@ -2833,6 +3021,18 @@ struct SamplerEngine::Impl
                 juce::FloatVectorOperations::copy(wetL + offset, s0, n);
                 juce::FloatVectorOperations::copy(wetR + offset, s1, n);
             }
+        }
+        // Runtime guard: a convolution that takes more than 60 % of its period
+        // twelve times in a row is an overload - the automatic Light processing
+        // answers it (MainComponent reads the flag).
+        {
+            const double elapsedMs = juce::Time::highResolutionTicksToSeconds(juce::Time::getHighResolutionTicks() - taskStart) * 1000.0;
+            const double periodMs = 1000.0 * totalSamples / juce::jmax(1.0, rv->preparedRate);
+            if (elapsedMs > 0.6 * periodMs)
+            {
+                if (++rv->slowTasks >= 12) { reverbOverload.store(true, std::memory_order_relaxed); rv->slowTasks = 0; }
+            }
+            else rv->slowTasks = 0;
         }
         route.irOutFrames = totalSamples;
         route.irOutValid = true;
@@ -5080,7 +5280,8 @@ void SamplerEngine::setPerspectiveReverbTone(int manualIndex, const juce::String
         Route* r = impl->ensureRoute(manualIndex, perspective);
         if (r == nullptr) return;
         const bool decayChanged = std::abs(r->reverbTone.decayPercent - tone.decayPercent) > 0.01f
-            || std::abs(r->reverbTone.fadePercent - tone.fadePercent) > 0.01f;
+            || std::abs(r->reverbTone.fadePercent - tone.fadePercent) > 0.01f
+            || (impl->reverbLight.load(std::memory_order_relaxed) && (r->reverbTone.highCutHz <= 2500.0f) != (tone.highCutHz <= 2500.0f));   // Light's rate divider follows the high cut
         r->reverbTone = tone;
         if (r->reverb != nullptr)
         {
@@ -5149,9 +5350,64 @@ SamplerEngine::ReverbInfo SamplerEngine::getPerspectiveReverbInfo(int manualInde
             info.channels = r->reverb->channels;
             info.seconds = r->reverb->seconds;
             info.sampleRate = r->reverb->irSampleRate;
+            info.light = r->reverb->light;
+            info.rateDivider = r->reverb->rateDivider;
+            info.usedSeconds = r->reverb->usedSeconds;
+            info.costMsPerSecond = r->reverb->costMsPerSecond;
         }
     }
     return info;
+}
+
+SamplerEngine::ReverbSummary SamplerEngine::getReverbSummary() const
+{
+    ReverbSummary summary;
+    const juce::ScopedLock sl(controlLock);
+    summary.light = impl->reverbLight.load(std::memory_order_relaxed);
+    const int count = impl->routeCount.load(std::memory_order_acquire);
+    for (int i = 0; i < count; ++i)
+    {
+        const Route& r = *impl->routes[(size_t)i];
+        if (r.reverb == nullptr || r.reverb->pairs.empty()) continue;
+        ++summary.routes;
+        const double cost = r.reverb->costMsPerSecond;
+        summary.totalCostMsPerSecond += cost;
+        summary.worstCostMsPerSecond = juce::jmax(summary.worstCostMsPerSecond, cost);
+        // What the same reverb would cost at full quality: the rate divider, the
+        // trimmed share of the IR and the dropped cross terms multiply back.
+        double factor = r.reverb->rateDivider;
+        if (r.reverb->usedSeconds > 0.0 && r.reverb->seconds > r.reverb->usedSeconds) factor *= r.reverb->seconds / r.reverb->usedSeconds;
+        if (r.reverb->crossTermsDropped) factor *= 2.0;
+        summary.estimatedFullMsPerSecond += cost * factor;
+        summary.irSecondsPerSecond += r.reverb->usedSeconds * (double)r.reverb->pairs.size() * (r.reverb->trueStereo ? 4.0 : 2.0);
+    }
+    return summary;
+}
+
+void SamplerEngine::setReverbProcessingLight(bool light)
+{
+    std::vector<Route*> rebuild;
+    {
+        const juce::ScopedLock sl(controlLock);
+        if (impl->reverbLight.exchange(light) == light) return;
+        const int count = impl->routeCount.load(std::memory_order_acquire);
+        for (int i = 0; i < count; ++i)
+        {
+            Route& r = *impl->routes[(size_t)i];
+            if (r.reverbIrFile != juce::File() || r.reverb != nullptr) rebuild.push_back(&r);
+        }
+    }
+    for (auto* r : rebuild) impl->rebuildRouteReverb(*r);
+}
+
+bool SamplerEngine::isReverbProcessingLight() const noexcept
+{
+    return impl->reverbLight.load(std::memory_order_relaxed);
+}
+
+bool SamplerEngine::takeReverbOverloadFlag() noexcept
+{
+    return impl->reverbOverload.exchange(false, std::memory_order_relaxed);
 }
 
 void SamplerEngine::setManualSampleRate(int manualIndex, double newSampleRate)

@@ -776,8 +776,36 @@ public:
     void setPerspectiveReverbWet(int manualIndex, const juce::String& perspective, float wet);
     // The device buffer size of a route: the reverb's convolution is partitioned by it.
     void setPerspectiveBlockSize(int manualIndex, const juce::String& perspective, int blockSize);
-    struct ReverbInfo { int channels = 0; double seconds = 0.0; double sampleRate = 0.0; juce::String error; };
+    struct ReverbInfo
+    {
+        int channels = 0; double seconds = 0.0; double sampleRate = 0.0; juce::String error;
+        // As built: Light processing, its rate divider (1 = full rate), the
+        // seconds of the IR really convolved (trimmed in Light), and the cost
+        // measured at the build - ms of one thread per second of audio.
+        bool light = false; int rateDivider = 1; double usedSeconds = 0.0; double costMsPerSecond = 0.0;
+    };
     ReverbInfo getPerspectiveReverbInfo(int manualIndex, const juce::String& perspective) const;
+    // IR processing for weak computers: Light runs every route's convolution at a
+    // quarter of the sample rate (half when the high cut lies above 2.5 kHz),
+    // trims the IR where its energy has fallen 60 dB and reduces a true stereo
+    // IR to its LL/RR channels - a fraction of the memory traffic and work of
+    // the full convolution, inaudible under the organ with the wet path's 2 kHz
+    // high cut. Rebuilds every route's reverb; message thread.
+    void setReverbProcessingLight(bool light);
+    bool isReverbProcessingLight() const noexcept;
+    // All routes' reverbs as built: their number, the summed and the worst cost
+    // (ms of one thread per second of audio, measured at the build), what the
+    // same reverbs would cost at full quality, the mode, and the mono-channel
+    // IR seconds convolved per second of audio (the size of the task).
+    struct ReverbSummary
+    {
+        int routes = 0; bool light = false;
+        double totalCostMsPerSecond = 0.0, worstCostMsPerSecond = 0.0, estimatedFullMsPerSecond = 0.0, irSecondsPerSecond = 0.0;
+    };
+    ReverbSummary getReverbSummary() const;
+    // The runtime guard: some route's convolution took more than 60 % of its
+    // period twelve times in a row (cleared when read).
+    bool takeReverbOverloadFlag() noexcept;
     // Shaping of the wet (reverberated) signal: distance loses highs (high cut),
     // rumble is removed (low cut), pre-delay separates direct sound from the
     // room, wet level trims the reverb, decay shortens the IR (fade at its end).

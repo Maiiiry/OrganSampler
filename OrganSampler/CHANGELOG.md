@@ -12,6 +12,26 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.103] - 2026-10-16
+
+### Added
+- IR processing for weak computers (Configuration Editor > Engine > "IR
+  processing": Automatic, Full, Light). Full convolves the IR as it is -
+  heavy on memory traffic: a 7 s true stereo IR on six routes (Rural Organ
+  with its auxiliary routes) streams over 3 GB/s, and an old laptop
+  crackled at 48 voices whatever the buffer. Light runs the convolution at
+  a quarter of the sample rate (half when the wet high cut lies above
+  2.5 kHz), trims the IR where its energy has fallen 60 dB and reduces a true
+  stereo IR to its direct channels - a fraction of the work, the same room,
+  a little less air in the top. Automatic (default) measures every reverb
+  when it is built and chooses Light when the routes' reverbs would take
+  more than 18 % of a render thread (35 % for a single route), or when a
+  convolution falls behind its period twelve times in a row while playing;
+  the choice is remembered for this computer (not in a portable
+  configuration) and Full returns when it would clearly fit. The
+  measurements and choices are in the activity log; the self-test reports
+  the cost (`ORGAN_IR_LIGHT=1` runs it in Light).
+
 ## [0.8.102] - 2026-10-16
 
 ### Fixed

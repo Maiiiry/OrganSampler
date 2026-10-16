@@ -532,6 +532,14 @@ private:
     }
     bool sampleStorageFloat = false;
     bool resampleOnLoad = true;   // samples of other rates are resampled to 48 kHz while loading
+    // IR processing (Configuration Editor > Engine): "automatic" (Light on a
+    // computer that cannot afford Full, see applyIrProcessing), "full", "light".
+    // irLightAuto: the automatic choice made on this computer, kept over starts.
+    juce::String irProcessing{ "automatic" };
+    bool irLightAuto = false;
+    bool irLightNoticeShown = false;
+    void applyIrProcessing(bool fromLoad);
+    juce::String irProcessingStatus() const;
     int renderThreads = 0;                          // custom worker count, 0 = use the preset
     juce::String renderThreadPreset{ "allMinusOne" }; // all | allMinusOne | physical | physicalMinusOne
     int workersForCurrentPreset() const;
