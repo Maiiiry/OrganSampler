@@ -115,7 +115,10 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   into it). Make Linux agree: `sudo timedatectl set-local-rtc 1 --adjust-system-clock`, then check
   `timedatectl` ("RTC in local TZ: yes") and the time. Never set `RealTimeIsUniversal` on Windows again: its
   Windows Time service cannot resync (NTP blocked for the service), so a UTC RTC would leave Windows 2 h off.
-- `git pull` in `~/OrganSamplerC-linux`; copy the Linux binary of the newest release to `~/Downloads/OrganSampler`.
+- Copy the Linux binary of the newest release to `~/Downloads/OrganSampler` (git pull done on 16 Oct 2026).
+- The NTFS disk `/mnt/pracovni` was mounted read-only on 16 Oct 2026 (Windows fast startup / unclean shutdown?):
+  the session report went to `~/CLAUDE_REPORTS.pending.md` - append it to `OrganSampler/CLAUDE_REPORTS.md` once
+  the disk is writable, then delete the pending file.
 
 ## Testing
 - Windows delivery: after every release build copy the exe to `C:\OrganSampler\OrganSampler_<version>.exe`
