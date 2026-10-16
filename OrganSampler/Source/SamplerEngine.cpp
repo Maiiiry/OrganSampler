@@ -616,7 +616,7 @@ namespace
         // hands the block's dry output pairs to irIn, posts the task, and mixes the
         // wet result of the PREVIOUS block (irOut) into this one. Allocated by
         // rebuildRouteReverb (message thread) for the reverb's pairs.
-        juce::AudioBuffer<float> irIn, irOut;   // pairs x 2 channels, kMaxBlockFrames
+        juce::AudioBuffer<float> irIn, irOut;   // pairs x 2 channels, RouteReverb::kMaxBlock frames (a whole device block)
         int irInFrames = 0, irOutFrames = 0;    // frames handed in / frames of the finished wet block
         bool irOutValid = false;                // irOut holds the previous block's wet signal
         int irTaskIndex = -1;                   // the pool task slot (= route index) while a task may be pending
@@ -2684,7 +2684,11 @@ struct SamplerEngine::Impl
         // The buffers of the asynchronous convolution (the task reads irIn, writes
         // irOut): sized for the pairs before the swap, never on the audio thread.
         const int pairsWanted = fresh != nullptr ? (int)fresh->pairs.size() : 0;
-        juce::AudioBuffer<float> inBuffer(juce::jmax(2, 2 * pairsWanted), kMaxBlockFrames), outBuffer(juce::jmax(2, 2 * pairsWanted), kMaxBlockFrames);
+        // Sized for the largest device block the engine accepts (RouteReverb::kMaxBlock),
+        // not for the render chunk: the callback hands over the WHOLE device block.
+        // With kMaxBlockFrames (1024) a buffer of 2048 overflowed the heap here
+        // (crash in the convolution, corrupted heap elsewhere - macOS, RME, 2048).
+        juce::AudioBuffer<float> inBuffer(juce::jmax(2, 2 * pairsWanted), RouteReverb::kMaxBlock), outBuffer(juce::jmax(2, 2 * pairsWanted), RouteReverb::kMaxBlock);
         inBuffer.clear(); outBuffer.clear();
         {
             const juce::SpinLock::ScopedLockType lk(route.renderLock);
@@ -2848,6 +2852,9 @@ struct SamplerEngine::Impl
         const float wet = rv->wet.load(std::memory_order_relaxed);
         if (wet <= 0.0005f) return;
         if (route.irIn.getNumChannels() < 2 || route.irOut.getNumChannels() < 2) return;
+        // A block the hand-over buffers cannot hold (never, the callback drops
+        // such blocks; a second guard all the same): this block stays dry.
+        if (totalSamples > route.irIn.getNumSamples() || totalSamples > route.irOut.getNumSamples()) return;
         const float dry = 1.0f - wet;
         const float wetGain = wet * rv->wetGain.load(std::memory_order_relaxed);
         // The previous block's convolution must be over (it had a whole period).

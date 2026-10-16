@@ -12,6 +12,18 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.101] - 2026-10-16
+
+### Fixed
+- Crash with a device buffer above 1024 samples on a route with an IR reverb
+  (issue #3: macOS 10.13, RME Fireface UFX at 2048, Rural Organ): the
+  hand-over buffers of the convolution held 1024 samples but received the
+  whole device block, which overran the heap - the crash in the convolution,
+  and the corrupted heap behind the earlier crashes while loading a
+  configuration. The buffers now hold 4096 samples (the engine's maximum
+  block); a larger block stays dry, and the audio callback turns blocks
+  beyond 4096 samples into silence instead of overrunning anything.
+
 ## [0.8.100] - 2026-10-16
 
 ### Fixed

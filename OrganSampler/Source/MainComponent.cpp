@@ -346,7 +346,9 @@ public:
             else realtimeResult.store(2, std::memory_order_relaxed);   // already realtime (JACK / PipeWire)
         }
 #endif
-        if (numSamples > juce::jmax(64, expectedBlock.load(std::memory_order_relaxed) * 4))
+        // Beyond the prepared headroom, or beyond the longest block the engine's
+        // fixed buffers take (4096 = RouteReverb::kMaxBlock): silence, not a crash.
+        if (numSamples > juce::jmax(64, expectedBlock.load(std::memory_order_relaxed) * 4) || numSamples > 4096)
         {
             for (int channel = 0; channel < numOutputs; ++channel)
                 if (outputs[channel] != nullptr) juce::FloatVectorOperations::clear(outputs[channel], numSamples);
