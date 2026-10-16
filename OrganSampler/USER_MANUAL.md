@@ -2493,6 +2493,13 @@ browser with its fields filled in from the dialog: drag `logs.zip` into
 GitHub account is needed to submit; the report is public, like every issue
 of a free program.
 
+GitHub may first ask you to sign in or to make the account, and after that
+it sometimes lands on another page instead of the form. The message that
+stays open in OrganSampler has *Open the GitHub form* for that: press it
+again, signed in, and the form opens filled in. The same link is in the
+report folder as `Report on GitHub.html` - a double-click opens it, even
+days later.
+
 ## 8.8 Free software, licences, platforms
 
 OrganSampler is free software under the GNU GPL v3; the source code is on

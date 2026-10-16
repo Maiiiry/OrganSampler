@@ -11,7 +11,9 @@ question open - and lets you add screenshot files of your own. It then opens
 the [bug report form](https://github.com/zurek-jiri/OrganSampler/issues/new/choose)
 in your browser with the fields filled in, and the report folder on your
 Desktop: drag the zip into "Logs", the pictures into "Screenshots", submit. A
-free GitHub account is needed to submit.
+free GitHub account is needed to submit; if GitHub asks you to sign in and
+then lands elsewhere, press *Open the GitHub form* in the message that stays
+open in the program (or open `Report on GitHub.html` in the report folder).
 
 The activity log is what makes a report fixable: it records every device,
 every load and the last minutes before a crash.

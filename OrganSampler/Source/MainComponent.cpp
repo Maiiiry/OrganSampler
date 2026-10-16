@@ -4327,9 +4327,47 @@ juce::File MainComponent::writeProblemReport(const juce::String& what, const juc
         .withParameter("what", what)
         .withParameter("steps", steps)
         .withParameter("hardware", cpu + ", " + juce::String(ramMb / 1024.0, 0) + " GB RAM");
+    // The link to the filled-in form as a file in the folder: a double-click opens
+    // it again - after a sign-in, a password reset or a new account, when GitHub
+    // forgot where the user was going.
+    {
+        const auto link = issueUrl.toString(true);
+        juce::String page;
+        page << "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\"><title>OrganSampler - report on GitHub</title>\n"
+             << "<meta http-equiv=\"refresh\" content=\"0;url=" << link.replace("\"", "&quot;") << "\"></head>\n"
+             << "<body style=\"font-family:sans-serif;max-width:40em;margin:3em auto\"><h1>OrganSampler - report on GitHub</h1>\n"
+             << "<p>The GitHub form with your report filled in opens now. If it does not, or if GitHub asked you to sign in and "
+             << "then showed another page, click here (signed in):</p>\n"
+             << "<p><a href=\"" << link.replace("\"", "&quot;") << "\">Open the report form</a></p>\n"
+             << "<p>Then drag <b>logs.zip</b> into the \"Logs\" field and the PNG pictures into \"Screenshots\", and press "
+             << "\"Submit new issue\".</p></body></html>\n";
+        folder.getChildFile("Report on GitHub.html").replaceWithText(page);
+    }
     CrashHandler::note("Problem report written to " + folder.getFullPathName() + " (" + juce::String(shots) + " window shot(s), "
         + juce::String(extraShots.size()) + " file(s) added)");
     return folder;
+}
+
+void MainComponent::showAfterReport(const juce::URL& url, const juce::File& folder)
+{
+    // Stays until "Done": GitHub may ask the user to sign in (or to make a free
+    // account) and then land somewhere else - the form is opened again from here,
+    // filled in, as often as needed; the link is in the folder as well.
+    auto* window = new juce::AlertWindow("Report a problem",
+        "The report folder is on your Desktop (" + folder.getFileName() + ") and the GitHub form is opening in your browser "
+        "with the fields filled in. Drag logs.zip into the \"Logs\" field and the PNG pictures into \"Screenshots\", check the text, "
+        "press \"Submit new issue\".\n\n"
+        "If GitHub asked you to sign in (or to make a free account) and then showed another page, press \"Open the GitHub form\" "
+        "here once more - signed in, the form opens filled in. The link is also in the folder as \"Report on GitHub.html\".",
+        juce::MessageBoxIconType::InfoIcon);
+    window->addButton("Open the GitHub form", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    window->addButton("Open the report folder", 2);
+    window->addButton("Done", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    window->enterModalState(true, juce::ModalCallbackFunction::create([url, folder](int result)
+    {
+        if (result == 1) { url.launchInDefaultBrowser(); showAfterReport(url, folder); }
+        else if (result == 2) { folder.revealToUser(); showAfterReport(url, folder); }
+    }), true);
 }
 
 void MainComponent::showProblemReportDialog()
@@ -4395,9 +4433,7 @@ void MainComponent::showProblemReportDialog()
                 if (auto* window = findParentComponentOfClass<juce::DialogWindow>()) window->exitModalState(0);
                 folder.revealToUser();
                 url.launchInDefaultBrowser();
-                juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, "Report a problem",
-                    "The report folder is on your Desktop (" + folder.getFileName() + ") and the GitHub form is opening in your browser.\n\n"
-                    "Drag logs.zip into the \"Logs\" field and the PNG pictures into \"Screenshots\", check the text, press \"Submit new issue\".");
+                MainComponent::showAfterReport(url, folder);
             };
             addAndMakeVisible(create);
             cancel.setButtonText("Cancel");

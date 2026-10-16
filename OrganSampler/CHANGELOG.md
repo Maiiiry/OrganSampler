@@ -12,6 +12,15 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.99] - 2026-10-16
+
+### Fixed
+- Report a problem: when GitHub asked for a sign-in (or a new account) and
+  then landed on another page, the filled-in form was lost. The message
+  after the report now stays open with *Open the GitHub form* (opens it
+  again, filled in, as often as needed) and *Open the report folder*, and
+  the folder holds `Report on GitHub.html` with the same link.
+
 ## [0.8.98] - 2026-10-15
 
 ### Changed

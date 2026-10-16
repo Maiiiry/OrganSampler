@@ -352,6 +352,8 @@ private:
     void showProblemReportDialog();
     juce::File writeProblemReport(const juce::String& what, const juce::String& steps, bool windowShots,
         const juce::Array<juce::File>& extraShots, juce::URL& issueUrl);
+    // After the report: the message with "Open the GitHub form" (again) and "Open the report folder".
+    static void showAfterReport(const juce::URL& url, const juce::File& folder);
     std::shared_ptr<std::vector<SamplerEngine::FolderAssignment>> stopBuildMap(int manual) const;   // nullptr while inactive
     ManualConfig::StopBuild deriveStopBuildFromEngine(int manual) const;   // the table as the loaded stops are
     void extendStopBuildWithTree(int manual, const juce::File& tree, int treeIndex);   // a tree added to a built division
