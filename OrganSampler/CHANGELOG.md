@@ -12,7 +12,7 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
-## [0.8.103] - 2026-10-16
+## [0.8.104] - 2026-10-16
 
 ### Added
 - IR processing for weak computers (Configuration Editor > Engine > "IR
@@ -30,7 +30,8 @@ title shows the version. Released executables are named `OrganSampler_<version>.
   the choice is remembered for this computer (not in a portable
   configuration) and Full returns when it would clearly fit. The
   measurements and choices are in the activity log; the self-test reports
-  the cost (`ORGAN_IR_LIGHT=1` runs it in Light).
+  the cost (`ORGAN_IR_LIGHT=1` runs it in Light). The choice is made 1.5 s
+  after a load and looked at again every 5 s when a reverb was built since.
 
 ## [0.8.102] - 2026-10-16
 

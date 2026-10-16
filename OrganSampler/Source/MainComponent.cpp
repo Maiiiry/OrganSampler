@@ -11927,6 +11927,8 @@ void MainComponent::applyIrProcessing(bool fromLoad)
         return;
     }
     const auto summary = engine.getReverbSummary();
+    irEvaluatedRoutes = summary.routes;
+    irEvaluatedCost = summary.totalCostMsPerSecond;
     if (summary.routes == 0) return;
     const int threads = engine.getRenderWorkerCount() + 1;
     const double perThread = summary.totalCostMsPerSecond / juce::jmax(1, threads);
@@ -15410,6 +15412,15 @@ void MainComponent::timerCallback()
 {
     updateExpressionInertia();
     updateHeldBankNavigation();
+    // Reverbs built since the last automatic choice (a device opened later, a
+    // route's IR changed): every 5 s the choice looks again.
+    if (irProcessing == "automatic" && activeFolderLoader == nullptr && ++irEvaluateDivider >= 200)
+    {
+        irEvaluateDivider = 0;
+        const auto summary = engine.getReverbSummary();
+        if (summary.routes != irEvaluatedRoutes || std::abs(summary.totalCostMsPerSecond - irEvaluatedCost) > 1.0)
+            applyIrProcessing(false);
+    }
     // The engine's runtime guard: a route's convolution did not keep up with its
     // period - Light processing, unless the user fixed the mode.
     if (engine.takeReverbOverloadFlag())

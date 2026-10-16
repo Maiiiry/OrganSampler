@@ -538,6 +538,9 @@ private:
     juce::String irProcessing{ "automatic" };
     bool irLightAuto = false;
     bool irLightNoticeShown = false;
+    int irEvaluatedRoutes = -1;             // the reverbs the automatic choice last looked at (timer: a new build re-evaluates)
+    double irEvaluatedCost = -1.0;
+    int irEvaluateDivider = 0;
     void applyIrProcessing(bool fromLoad);
     juce::String irProcessingStatus() const;
     int renderThreads = 0;                          // custom worker count, 0 = use the preset
