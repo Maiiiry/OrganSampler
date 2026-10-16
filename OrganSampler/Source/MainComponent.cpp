@@ -16569,6 +16569,13 @@ struct MainComponent::PolyphonyMeasurement
     bool keysDown = false;
     int strikeIntervalMs = 250;       // keys toggled every 250 ms = 2 strikes a second
     int highestCleanPeak = 0, highestCleanKeys = 0, highestCleanStrikes = 0;
+    // The best clean SECOND seen on the way up (every callback within 85 % of its
+    // period, none late), with the share of the period its longest callback took
+    // and the voices scaled to 80 % of the period: the verdict when the target
+    // was never reached and held - a weak computer that breaks at 1900 voices
+    // after clean seconds at 1600 gets 1500, not half of 1900.
+    int cleanSecondPeak = 0, cleanSecondKeys = 0, cleanSecondStrikes = 0, cleanSecondSafe = 0;
+    float cleanSecondShare = 0.0f;
     int firstFailingPeak = 0, firstFailingKeys = 0, firstFailingStrikes = 0;
     juce::String failReason;          // what ended the climb (for the report)
     bool exhausted = false;           // all 61 keys at the top rate and the voices still below the target
@@ -16928,6 +16935,21 @@ void MainComponent::startPolyphonyMeasurement()
         // Breaking up at any moment ends the run: the voices of that second are
         // where this organ stops being clean on this computer.
         bool brokeUp = late > 0 || callbackShare > 1.0f || worst > 1.0f;
+        // A clean second at a settled level counts towards the verdict (see cleanSecondSafe).
+        if (late == 0 && callbackShare <= 0.85f && worst <= 0.85f && state->secondsSinceChange >= 1 && state->second >= 2
+            && state->lastPeakSecond > 0)
+        {
+            const float share = juce::jmax(callbackShare, worst);
+            const int safe = share > 0.8f ? juce::roundToInt(state->lastPeakSecond * 0.8f / share) : state->lastPeakSecond;
+            if (safe > state->cleanSecondSafe)
+            {
+                state->cleanSecondSafe = safe;
+                state->cleanSecondPeak = state->lastPeakSecond;
+                state->cleanSecondKeys = state->currentKeys;
+                state->cleanSecondStrikes = state->currentStrikes;
+                state->cleanSecondShare = share;
+            }
+        }
         // A late driver callback while every callback stayed within its period
         // comes from outside as often as not (the system, another program): the
         // level gets one more chance; a second time it counts.
@@ -17153,8 +17175,11 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
     // clean is the new maximum polyphony; the slider is there for anyone who
     // wants it lower (more headroom) or higher (the brave).
     const int highestCleanKeys = state->highestCleanKeys, firstFailingKeys = state->firstFailingKeys;
-    auto hundreds = [](int v) { return juce::jlimit(64, SamplerEngine::maxVoices, (v / 100) * 100); };
-    const int newLimit = hundreds(state->highestCleanPeak > 0 ? state->highestCleanPeak : juce::jmax(200, state->firstFailingPeak / 2));
+    // Rounded down to fifties below 1000 voices (a weak computer lives there and
+    // needs the fine steps), to hundreds above.
+    auto hundreds = [](int v) { return juce::jlimit(64, SamplerEngine::maxVoices, v < 1000 ? (v / 50) * 50 : (v / 100) * 100); };
+    const int cleanBase = juce::jmax(state->highestCleanPeak, state->cleanSecondSafe);
+    const int newLimit = hundreds(cleanBase > 0 ? cleanBase : juce::jmax(200, state->firstFailingPeak / 2));
     engine.setMaxPolyphony(newLimit);
     saveSettings();
     refreshConfigurationEditor();
@@ -17174,9 +17199,15 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
              << ". Clean means every single callback within 85 % of its period and the driver never called late; the DSP field shows a "
                 "peak that fades over a fraction of a second, so it may read lower at the moment the run ends. Above the limit the sound may "
                 "still be fine most of the time - until the first callback that is not.";
+    else if (firstFailingKeys > 0 && state->cleanSecondSafe > 0)
+        text << ": the most voices in a second that stayed clean was " << state->cleanSecondPeak << " (" << levelText(state->cleanSecondKeys, state->cleanSecondStrikes)
+             << "), with the longest callback at " << juce::roundToInt(state->cleanSecondShare * 100.0f) << " % of its period"
+             << (state->cleanSecondShare > 0.8f ? " - scaled to 80 % of the period, that is " + juce::String(state->cleanSecondSafe) + " voices" : juce::String())
+             << "; at " << state->firstFailingPeak << " voices (" << levelText(firstFailingKeys, state->firstFailingStrikes) << ") it broke: " << state->failReason
+             << ". Clean means every single callback within 85 % of its period and the driver never called late.";
     else if (firstFailingKeys > 0)
         text << ": the sound broke up already at " << state->firstFailingPeak << " voices (" << levelText(firstFailingKeys, state->firstFailingStrikes)
-             << "), so half of that. Look at the advice below.";
+             << ") and no second before it was clean, so half of that. Look at the advice below.";
     else if (state->exhausted)
         text << ": this organ has no more voices to give - all 61 keys struck 16 times a second on every division reached "
              << state->highestCleanPeak << " voices and the audio stayed clean. The computer is not the limit here.";
@@ -17361,9 +17392,11 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
                 + ", save the configuration and measure again. Nothing else matters until then.";
         }
     }
-    CrashHandler::note("Polyphony measurement done: limit set to " + juce::String(newLimit) + " (highest clean level "
-        + juce::String(highestCleanKeys) + " keys, " + juce::String(state->highestCleanPeak) + " voices; first failing level "
-        + juce::String(firstFailingKeys) + " keys, " + juce::String(state->firstFailingPeak) + " voices)");
+    CrashHandler::note("Polyphony measurement done: limit set to " + juce::String(newLimit) + " (highest clean held level "
+        + juce::String(highestCleanKeys) + " keys, " + juce::String(state->highestCleanPeak) + " voices; best clean second "
+        + juce::String(state->cleanSecondPeak) + " voices at " + juce::String(state->cleanSecondKeys) + " keys / " + juce::String(state->cleanSecondStrikes)
+        + " strikes, longest callback " + juce::String(juce::roundToInt(state->cleanSecondShare * 100.0f)) + " % -> " + juce::String(state->cleanSecondSafe)
+        + " safe; first failing level " + juce::String(firstFailingKeys) + " keys, " + juce::String(state->firstFailingPeak) + " voices)");
     // The report in a window of its own (an alert box cannot scroll, and the
     // advice names every route on Windows Audio and every auxiliary route). The
     // level glides back after OK.

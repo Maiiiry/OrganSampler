@@ -12,6 +12,18 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.102] - 2026-10-16
+
+### Fixed
+- Polyphony measurement on a computer that never reaches the 2000-voice
+  target (issue #4: Core 2 Duo, clean seconds at 1600 voices, breakup at
+  1931, limit set to 900): only a held target counted as "clean", so the
+  limit fell to half of the failing level. Every clean second on the way up
+  now counts - its voices scaled to 80 % of the period when the longest
+  callback took more - and the limit is the best of them; below 1000 voices
+  the limit is rounded to fifties, not hundreds. The report says which second
+  it was and why.
+
 ## [0.8.101] - 2026-10-16
 
 ### Fixed
