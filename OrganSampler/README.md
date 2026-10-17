@@ -11,7 +11,6 @@ data table and licence text is embedded at build time.
 
 - Version: see `CHANGELOG.md` (semantic versioning; the window title shows it).
 - User documentation: `USER_MANUAL.md`.
-- Development log of changes: `CLAUDE_REPORTS.md`.
 
 ## Building
 

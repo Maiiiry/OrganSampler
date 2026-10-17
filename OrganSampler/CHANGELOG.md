@@ -376,8 +376,8 @@ title shows the version. Released executables are named `OrganSampler_<version>.
 - One snapshot of the settings a day (`settings-YYYY-MM-DD.json` beside
   settings.json, seven kept) and a `.bak` of every configuration file that
   is overwritten, so a lost stop folder or table row can be found again.
-- `CLAUDE.md` at the repository root: the project's standing rules (icons,
-  versions, paths, releases) for every working session.
+- The project's standing rules (icons, versions, paths, releases) written
+  down at the repository root for every working session.
 
 ## [0.8.90] - 2026-10-15
 

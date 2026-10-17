@@ -25,7 +25,8 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   `site/index.html` (`data-version` spans), `configurations/rural-organ/README.md` ("Saved with OrganSampler ..."),
   `OrganSampler/CHANGELOG.md`. Before tagging, grep the previous version string over the repo (CHANGELOG excepted).
 - Regenerate `OrganSampler/Source/ManualData.h` after any manual edit: `python OrganSampler/Tools/generate_manual_data.py`.
-- Commit with `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`, push, tag `v<version>`; CI builds Windows,
+- Commit (plain commit messages: no Co-Authored-By trailer, no assistant name anywhere in the repository - the
+  user is the only contributor), push, tag `v<version>`; CI builds Windows,
   macOS (Apple silicon, macOS 11+), Intel macOS 10.11+ and Linux and publishes a pre-release; the release job deletes
   every older `v*` release and tag. The Rural Organ demo release `rural-organ-0.8` stays. Only Sonus Paradisi is ever
   named for samples; never "sample set" - say sample folders / folder tree.

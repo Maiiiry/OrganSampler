@@ -1401,7 +1401,7 @@ namespace EngineSelfTest
                                 break;
                             }
                         // Reported, not judged: the rendered step differs from the samples'
-                        // relation by the playback path (open question, see CLAUDE_REPORTS 0.8.22).
+                        // relation by the playback path (open question since 0.8.22).
                         const double step = levelStep(pipe);
                         const bool stepOk = std::abs(step - sourceStep) <= 4.0;
                         // ... and the same with the release played from its very start (the
