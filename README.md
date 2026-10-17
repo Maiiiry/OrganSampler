@@ -5,7 +5,7 @@ list, perform.
 
 **[⬇ RELEASES - download the program](https://github.com/zurek-jiri/OrganSampler/releases) &nbsp;|&nbsp; [⬇ Rural Organ demo](https://github.com/zurek-jiri/OrganSampler/releases/tag/rural-organ-0.8) &nbsp;|&nbsp; [Configurations, Organs](configurations/INDEX.md)**
 
-[![Latest release](https://img.shields.io/github/v/release/zurek-jiri/OrganSampler?include_prereleases&label=download%20the%20latest%20build)](https://github.com/zurek-jiri/OrganSampler/releases)
+[![Latest build](https://img.shields.io/github/v/tag/zurek-jiri/OrganSampler?sort=semver&label=download%20the%20latest%20build)](https://github.com/zurek-jiri/OrganSampler/releases)
 
 OrganSampler plays sampled pipe organs from plain folders of WAV files - one
 folder per stop, its pipes as WAV files - and turns any number of such folders into
