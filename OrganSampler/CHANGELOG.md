@@ -12,6 +12,28 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.111] - 2026-10-17
+
+### Changed
+- "A stop" is every button of the grid - stops, transmissions, extensions and
+  stop folders with a sound - wherever stops are counted or switched: the
+  polyphony measurement's retreat (half of every division's stops off when
+  no second is clean) switched only the stops with samples of their own and
+  left the transmissions and extensions playing; it now halves the grid of
+  every division. The measurement's summary counts the stops the same way
+  and says how many convolutions the IR routes really take (routes of one
+  device with the same channels and IR settings are convolved once).
+- Unpack archive is one window: the archive at the top (Browse... or a pasted
+  path), the folder to unpack into under it (proposed: the archive's folder),
+  then Unpack - instead of two bare file dialogs.
+- Configuration Editor: a button is never wider than its caption needs (150
+  px), and the top-bar switches have their button on the same row.
+- Windows and dialogs keep 2 % of the screen's height free above and below
+  (the taskbar, dock or panel already taken off), and the fit is checked
+  again shortly after a window opens - the title bar stays visible and
+  draggable on small screens, a tall dialog is shrunk instead of centred
+  off the screen.
+
 ## [0.8.110] - 2026-10-17
 
 ### Changed

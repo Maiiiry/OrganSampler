@@ -88,7 +88,14 @@ private:
     LeftOnlyTextButton shutdownButton{ "Shut down PC" };   // saves, quits and shuts the computer down (hidden by default)
     LeftOnlyTextButton unpackArchiveButton{ "Unpack archive" };   // RAR sample archives unpacked by libarchive (hidden by default)
     void unpackArchiveDialog();
+    void startUnpack(const juce::File& archive, const juce::File& destination);   // the work with its progress window, then the report
     std::unique_ptr<juce::FileChooser> archiveChooser;
+    // Every button of the grid (stops, transmissions, extensions, stop folders
+    // with a sound) in grid order - what "a stop" means when stops are counted or
+    // switched (never only the stops with samples of their own). From the Stop
+    // List when it exists, from the engine otherwise.
+    std::vector<Voicer::GridItem> gridStopItems() const;
+    void setGridItemEnabled(const Voicer::GridItem& item, bool enabled);   // a stop folder with its children
     // ========== KONEC PŘIDANÉ ČÁSTI ==========
     // Which buttons the top bar shows (Configuration Editor > Console). Missing
     // keys use the defaults: everything on except Stop-Merging, Load Voicing and

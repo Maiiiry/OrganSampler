@@ -1566,6 +1566,13 @@ MainComponent::MainComponent()
             juce::Component::SafePointer<MainComponent> safeThis(this);
             juce::MessageManager::callAsync([safeThis] { if (safeThis != nullptr) safeThis->showConfigurationEditor(); });
         }
+    // ORGAN_OPEN_UNPACK=1 opens the Unpack archive window 2 s after the start (screenshots).
+    if (const char* env = std::getenv("ORGAN_OPEN_UNPACK"))
+        if (juce::String(env).getIntValue() != 0)
+        {
+            juce::Component::SafePointer<MainComponent> safeThis(this);
+            juce::Timer::callAfterDelay(2000, [safeThis] { if (safeThis != nullptr) safeThis->unpackArchiveDialog(); });
+        }
     // ORGAN_JACK_BUFFER=<frames>[,<seconds>]: that long after the start (default
     // 40 s) the first JACK route asks for this buffer size, exactly as a choice
     // in its audio tab does (PipeWire's clock changes, the other JACK routes
@@ -4940,9 +4947,18 @@ namespace
     // top) and, when it sticks out, the window is shrunk and moved, the top edge
     // first, up to four times. The window's own bounds are in its scaled space;
     // the ratio between them and the peer's screen pixels maps the correction.
-    void fitWindowOnScreen(juce::Component& window, const juce::String& what)
+    // The work area of a display with 2 % of its height kept free above and
+    // below: the title bar and the bottom edge stay visible (and reachable by the
+    // mouse) whatever the taskbar, dock or panel takes, with a reserve.
+    juce::Rectangle<int> workAreaWithMargins(const juce::Rectangle<int>& userArea)
+    {
+        return userArea.reduced(0, juce::roundToInt(userArea.getHeight() * 0.02));
+    }
+
+    void fitWindowOnScreen(juce::Component& window, const juce::String& what, bool logAlways = true)
     {
         juce::String log = what + ": ";
+        bool corrected = false;
         for (int attempt = 0; attempt < 4; ++attempt)
         {
             auto* peer = window.getPeer();
@@ -4955,9 +4971,10 @@ namespace
             const auto* display = displays.getDisplayForRect(outer, false);
             if (display == nullptr) display = displays.getPrimaryDisplay();
             if (display == nullptr) break;
-            const auto work = display->userBounds.toNearestInt();
-            if (attempt == 0) log << "work area " << work.toString() << ", frame " << outer.toString();
+            const auto work = workAreaWithMargins(display->userBounds.toNearestInt());
+            if (attempt == 0) log << "work area " << work.toString() << " (2 % margins), frame " << outer.toString();
             if (work.contains(outer)) break;
+            corrected = true;
             int width = outer.getWidth(), height = outer.getHeight();
             const double shrink = juce::jmin(1.0, (double)work.getWidth() / juce::jmax(1, width), (double)work.getHeight() / juce::jmax(1, height));
             if (shrink < 0.999)
@@ -4972,7 +4989,17 @@ namespace
             window.setBounds((newClient.toFloat() * (float)scale).toNearestInt());
             log << " -> " << newClient.toString();
         }
-        CrashHandler::note(log);
+        if (logAlways || corrected) CrashHandler::note(log);
+    }
+
+    // The fit now and again a little later: a window manager places and decorates
+    // a new window after it is shown (the frame read back at once can be the
+    // wrong one), and some centre a tall window with its title bar off the top.
+    void fitWindowOnScreenSoon(juce::Component::SafePointer<juce::Component> window, const juce::String& what)
+    {
+        juce::MessageManager::callAsync([window, what] { if (window != nullptr && window->isShowing()) fitWindowOnScreen(*window, what, true); });
+        for (const int delay : { 150, 700, 2000 })
+            juce::Timer::callAfterDelay(delay, [window, what] { if (window != nullptr && window->isShowing()) fitWindowOnScreen(*window, what, false); });
     }
 }
 
@@ -4990,7 +5017,7 @@ void MainComponent::placeDialog(juce::Component& window, const juce::String& key
             {
                 // Never smaller than the design size while the screen allows it (a
                 // window remembered at another interface size would hide controls).
-                const auto area = UIScale::toWindowSpace(display.userBounds.toNearestInt());
+                const auto area = UIScale::toWindowSpace(workAreaWithMargins(display.userBounds.toNearestInt()));
                 auto bounds = UIScale::toWindowSpace(it->second);
                 bounds.setSize(juce::jmin(juce::jmax(bounds.getWidth(), defaultWidth), area.getWidth() - 16),
                                juce::jmin(juce::jmax(bounds.getHeight(), defaultHeight), area.getHeight() - 40));
@@ -5003,18 +5030,25 @@ void MainComponent::placeDialog(juce::Component& window, const juce::String& key
         juce::Rectangle<int> around(0, 0, 1920, 1080);
         if (auto* top = getTopLevelComponent(); top != nullptr && top != this) around = UIScale::toScreenSpace(top->getBounds());
         else if (const auto* primary = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()) around = primary->userBounds.toNearestInt();
-        window.setBounds(juce::Rectangle<int>(defaultWidth, defaultHeight).withCentre(UIScale::toWindowSpace(around.getCentre())));
+        auto bounds = juce::Rectangle<int>(defaultWidth, defaultHeight).withCentre(UIScale::toWindowSpace(around.getCentre()));
+        // Never taller or wider than the screen it lands on (2 % kept free above and below, and room for the frame).
+        const auto& displays = juce::Desktop::getInstance().getDisplays();
+        const auto* display = displays.getDisplayForPoint(around.getCentre().toFloat(), false);
+        if (display == nullptr) display = displays.getPrimaryDisplay();
+        if (display != nullptr)
+        {
+            const auto area = UIScale::toWindowSpace(workAreaWithMargins(display->userBounds.toNearestInt()));
+            bounds.setSize(juce::jmin(bounds.getWidth(), area.getWidth() - 16), juce::jmin(bounds.getHeight(), area.getHeight() - 40));
+            bounds = bounds.constrainedWithin(area);
+        }
+        window.setBounds(bounds);
     }
     trackedDialogs.erase(std::remove_if(trackedDialogs.begin(), trackedDialogs.end(),
         [&](const auto& entry) { return entry.first == key || entry.second == nullptr; }), trackedDialogs.end());
     trackedDialogs.emplace_back(key, juce::Component::SafePointer<juce::Component>(&window));
     // Once the window is on the screen: its whole frame inside the work area
     // (a dialog taller than a small screen came up with the title bar off the top).
-    juce::Component::SafePointer<juce::Component> safeWindow(&window);
-    juce::MessageManager::callAsync([safeWindow, key]
-    {
-        if (safeWindow != nullptr && safeWindow->isShowing()) fitWindowOnScreen(*safeWindow, "Dialog " + key);
-    });
+    fitWindowOnScreenSoon(juce::Component::SafePointer<juce::Component>(&window), "Dialog " + key);
 }
 
 void MainComponent::rememberDialogBounds()
@@ -10766,23 +10800,132 @@ bool MainComponent::isHeaderButtonShown(const juce::String& key) const
 // unpacker of their own - macOS has none with a window.
 void MainComponent::unpackArchiveDialog()
 {
-    const auto start = lastSettingsDirectory.isDirectory() ? lastSettingsDirectory : juce::File::getSpecialLocation(juce::File::userHomeDirectory);
-    archiveChooser = std::make_unique<juce::FileChooser>("Unpack archive: choose the RAR archive of the sample folders", start, ArchiveExtractor::fileFilter());
-    juce::Component::SafePointer<MainComponent> safeThis(this);
-    archiveChooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
-        [safeThis](const juce::FileChooser& chooser)
+    // One window, read from the top: the archive (what one looks for first) as a
+    // path with a Browse button, under it the folder to unpack into the same way
+    // (proposed: the archive's own folder), then Unpack. Everyone sees what is
+    // chosen; the paths can be typed or pasted as well.
+    struct Panel final : public juce::Component
+    {
+        MainComponent& owner;
+        juce::Label archiveLabel, folderLabel, hint;
+        juce::TextEditor archive, folder;
+        juce::TextButton browseArchive{ "Browse..." }, browseFolder{ "Browse..." }, unpack{ "Unpack" }, cancel{ "Cancel" };
+        std::unique_ptr<juce::FileChooser> chooser;
+        bool folderTyped = false;   // the user chose the folder: the archive no longer proposes it
+        static juce::File fileOf(const juce::String& text)
         {
-            if (safeThis == nullptr) return;
-            const auto archive = chooser.getResult();
-            if (!archive.existsAsFile()) return;
-            safeThis->archiveChooser = std::make_unique<juce::FileChooser>("Unpack archive: choose the folder to unpack " + archive.getFileName() + " into",
-                archive.getParentDirectory(), "*");
-            safeThis->archiveChooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
-                [safeThis, archive](const juce::FileChooser& folderChooser)
+            const auto trimmed = text.trim().unquoted();
+            return juce::File::isAbsolutePath(trimmed) ? juce::File(trimmed) : juce::File();
+        }
+        Panel(MainComponent& o, const juce::File& start) : owner(o)
+        {
+            archiveLabel.setText("1. The RAR archive of the sample folders:", juce::dontSendNotification);
+            folderLabel.setText("2. Unpack into this folder (the archive's folder tree is created inside it):", juce::dontSendNotification);
+            hint.setText("Then: Stop List > Load folder... and choose the unpacked folder tree, or Load Configuration when a configuration came with the samples.",
+                juce::dontSendNotification);
+            hint.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+            hint.setJustificationType(juce::Justification::topLeft);
+            hint.setFont(juce::FontOptions(14.0f));
+            archive.setTextToShowWhenEmpty("the .rar file (Browse... or paste its path)", juce::Colours::grey);
+            folder.setText(start.getFullPathName(), false);
+            archive.onTextChange = [this] { proposeFolder(); refresh(); };
+            folder.onTextChange = [this] { folderTyped = true; refresh(); };
+            browseArchive.onClick = [this]
+            {
+                const auto known = fileOf(archive.getText());
+                chooser = std::make_unique<juce::FileChooser>("The RAR archive of the sample folders",
+                    known.existsAsFile() ? known : fileOf(folder.getText()), ArchiveExtractor::fileFilter());
+                chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this](const juce::FileChooser& c)
                 {
-                    if (safeThis == nullptr) return;
-                    const auto destination = folderChooser.getResult();
-                    if (destination == juce::File()) return;
+                    const auto chosen = c.getResult();
+                    if (!chosen.existsAsFile()) return;
+                    archive.setText(chosen.getFullPathName(), false);
+                    folderTyped = false;
+                    proposeFolder();
+                    refresh();
+                });
+            };
+            browseFolder.onClick = [this]
+            {
+                const auto known = fileOf(folder.getText());
+                chooser = std::make_unique<juce::FileChooser>("The folder to unpack into", known.isDirectory() ? known : juce::File(), "*");
+                chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories, [this](const juce::FileChooser& c)
+                {
+                    const auto chosen = c.getResult();
+                    if (chosen == juce::File()) return;
+                    folder.setText(chosen.getFullPathName(), false);
+                    folderTyped = true;
+                    refresh();
+                });
+            };
+            unpack.onClick = [this]
+            {
+                const auto a = fileOf(archive.getText()), d = fileOf(folder.getText());
+                if (!a.existsAsFile() || d == juce::File()) return;
+                juce::Component::SafePointer<MainComponent> safeOwner(&owner);
+                close();
+                juce::MessageManager::callAsync([safeOwner, a, d] { if (safeOwner != nullptr) safeOwner->startUnpack(a, d); });
+            };
+            cancel.onClick = [this] { close(); };
+            for (auto* c : std::initializer_list<juce::Component*>{ &archiveLabel, &archive, &browseArchive, &folderLabel, &folder, &browseFolder, &hint, &unpack, &cancel })
+                addAndMakeVisible(c);
+            refresh();
+            setSize(680, 262);
+        }
+        void proposeFolder()
+        {
+            if (folderTyped) return;
+            const auto a = fileOf(archive.getText());
+            if (a.existsAsFile()) folder.setText(a.getParentDirectory().getFullPathName(), false);
+        }
+        void refresh() { unpack.setEnabled(fileOf(archive.getText()).existsAsFile() && fileOf(folder.getText()) != juce::File()); }
+        void close()
+        {
+            if (auto* window = findParentComponentOfClass<juce::DialogWindow>())
+                juce::MessageManager::callAsync([safeWindow = juce::Component::SafePointer<juce::DialogWindow>(window)] { if (safeWindow != nullptr) safeWindow->exitModalState(0); });
+        }
+        void resized() override
+        {
+            auto area = getLocalBounds().reduced(14, 12);
+            archiveLabel.setBounds(area.removeFromTop(24));
+            auto row = area.removeFromTop(28);
+            browseArchive.setBounds(row.removeFromRight(110));
+            row.removeFromRight(8);
+            archive.setBounds(row);
+            area.removeFromTop(14);
+            folderLabel.setBounds(area.removeFromTop(24));
+            row = area.removeFromTop(28);
+            browseFolder.setBounds(row.removeFromRight(110));
+            row.removeFromRight(8);
+            folder.setBounds(row);
+            area.removeFromTop(10);
+            auto buttons = area.removeFromBottom(30);
+            cancel.setBounds(buttons.removeFromRight(110));
+            buttons.removeFromRight(8);
+            unpack.setBounds(buttons.removeFromRight(130));
+            area.removeFromBottom(8);
+            hint.setBounds(area);
+        }
+    };
+    const auto start = lastSettingsDirectory.isDirectory() ? lastSettingsDirectory : juce::File::getSpecialLocation(juce::File::userHomeDirectory);
+    juce::DialogWindow::LaunchOptions options;
+    options.dialogTitle = "Unpack archive";
+    options.dialogBackgroundColour = juce::Colours::darkgrey;
+    options.content.setOwned(new Panel(*this, start));
+    options.componentToCentreAround = this;
+    options.escapeKeyTriggersCloseButton = true;
+    options.useNativeTitleBar = true;
+    options.resizable = false;
+    if (auto* window = options.launchAsync()) placeDialog(*window, "unpackArchive", 680, 262);
+}
+
+void MainComponent::startUnpack(const juce::File& archive, const juce::File& destination)
+{
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    {
+        {
+            {
+                {
                     // The work on a thread with a progress window (modal: the Stop List
                     // must not load the folders while they are still being written).
                     struct UnpackJob final : public juce::ThreadWithProgressWindow
@@ -10826,8 +10969,67 @@ void MainComponent::unpackArchiveDialog()
                         *poll = nullptr;
                     };
                     juce::Timer::callAfterDelay(300, [poll] { if (*poll) (*poll)(); });
-                });
-        });
+                }
+            }
+        }
+    }
+}
+
+std::vector<Voicer::GridItem> MainComponent::gridStopItems() const
+{
+    if (voicer != nullptr)
+    {
+        auto items = voicer->gridItems();
+        if (!items.empty()) return items;
+    }
+    // No Stop List rows yet: the same rule from the engine, in its order.
+    std::vector<Voicer::GridItem> items;
+    const auto& stops = engine.getStops();
+    for (auto* stop : stops)
+    {
+        if (stop->groupMaster.isEmpty())
+        {
+            bool sounds = !stop->container;
+            for (int i = 0; !sounds && i < stops.size(); ++i)
+                if (stops[i]->groupMaster == stop->name && stops[i]->primaryManual == stop->primaryManual) sounds = true;
+            for (int i = 0; !sounds && i < stops.size(); ++i)
+                for (const auto& t : stops[i]->transmissions)
+                    if (t.groupMaster == stop->name && t.manual == stop->primaryManual) { sounds = true; break; }
+            if (sounds)
+            {
+                Voicer::GridItem item;
+                item.manual = stop->primaryManual; item.stop = stop; item.folder = stop->container; item.enabled = stop->enabled; item.caption = stop->name;
+                items.push_back(item);
+            }
+        }
+        for (int i = 0; i < (int)stop->transmissions.size(); ++i)
+        {
+            const auto& t = stop->transmissions[(size_t)i];
+            if (t.groupMaster.isNotEmpty()) continue;
+            Voicer::GridItem item;
+            item.manual = t.manual; item.stop = stop; item.transmission = i; item.enabled = t.enabled; item.caption = stop->name;
+            items.push_back(item);
+        }
+    }
+    std::stable_sort(items.begin(), items.end(), [](const Voicer::GridItem& a, const Voicer::GridItem& b) { return a.manual < b.manual; });
+    return items;
+}
+
+void MainComponent::setGridItemEnabled(const Voicer::GridItem& item, bool enabled)
+{
+    if (item.stop == nullptr) return;
+    if (item.transmission >= 0) { engine.setTransmissionEnabled(item.stop, item.transmission, enabled); return; }
+    engine.setStopEnabled(item.stop, enabled);
+    if (!item.folder) return;
+    // A stop folder switches with everything indented under it.
+    for (auto* other : engine.getStops())
+    {
+        if (other != item.stop && other->groupMaster == item.stop->name && other->primaryManual == item.stop->primaryManual)
+            engine.setStopEnabled(other, enabled);
+        for (int i = 0; i < (int)other->transmissions.size(); ++i)
+            if (other->transmissions[(size_t)i].groupMaster == item.stop->name && other->transmissions[(size_t)i].manual == item.stop->primaryManual)
+                engine.setTransmissionEnabled(other, i, enabled);
+    }
 }
 
 void MainComponent::clearSampleLibraryInMemory()
@@ -15051,7 +15253,7 @@ void MainComponent::placeMainWindow(juce::ResizableWindow& window)
     juce::BorderSize<int> frame(31, 8, 8, 8);
     if (auto* peer = window.getPeer())
         if (const auto present = peer->getFrameSizeIfPresent()) frame = *present;
-    const auto inner = frame.subtractedFrom(work);
+    const auto inner = frame.subtractedFrom(workAreaWithMargins(work));   // 2 % free above and below
     int width = juce::jmin(savedWindowWidth, inner.getWidth());
     int height = juce::jmin(savedWindowHeight, inner.getHeight());
     int x = savedWindowX != INT_MIN ? savedWindowX : inner.getCentreX() - width / 2;
@@ -15067,6 +15269,7 @@ void MainComponent::placeMainWindow(juce::ResizableWindow& window)
     CrashHandler::note("Main window: work area " + work.toString() + ", interface " + juce::String(UIScale::percent())
         + " %, asked for " + juce::Rectangle<int>(x, y, width, height).toString());
     fitWindowOnScreen(window, "Main window");
+    fitWindowOnScreenSoon(juce::Component::SafePointer<juce::Component>(&window), "Main window");
     if (savedWindowMaximised) window.setFullScreen(true);
 }
 
@@ -16995,7 +17198,7 @@ void MainComponent::startPolyphonyMeasurement()
         // What is under test: the routes by device (type and name, one stream
         // each for ASIO and Windows Audio), and how many carry an IR.
         std::map<juce::String, std::map<juce::String, int>> routesByType;   // type -> device -> routes
-        int irRoutes = 0;
+        int irRoutes = 0, irShared = 0;   // routes with an IR; those of them convolved together with another (shared IR)
         for (int manual = 0; manual <= manualCount; ++manual)
             for (const auto& perspective : engine.getPerspectivesForManual(manual))
             {
@@ -17006,7 +17209,11 @@ void MainComponent::startPolyphonyMeasurement()
                 ++routesByType[manager->getCurrentAudioDeviceType()][device->getName()];
                 const auto& entries = manualConfigs[(size_t)manual].perspectiveAudio;
                 const auto found = entries.find(perspectiveRouteKey(manual, perspective));
-                if (found != entries.end() && found->second.reverbIrPath.isNotEmpty()) ++irRoutes;
+                if (found != entries.end() && found->second.reverbIrPath.isNotEmpty())
+                {
+                    ++irRoutes;
+                    if (engine.getPerspectiveReverbInfo(manual, perspective).sharedWith.isNotEmpty()) ++irShared;
+                }
             }
         // Grouped by type ("Windows Audio: 2 on "A", 1 on "B"") so ten devices do
         // not take ten clauses; the progress window is sized to the result.
@@ -17021,8 +17228,13 @@ void MainComponent::startPolyphonyMeasurement()
                 first = false;
             }
         }
-        state->summary = juce::String(engine.getStops().size()) + " stops, " + juce::String(state->routeCount) + " audio routes - " + devices
-            + "; IR reverb on " + juce::String(irRoutes) + " route(s)";
+        // Stops = every button of the grid (stops, transmissions, extensions, stop
+        // folders); the IR routes with the convolutions they really take (routes of
+        // one device with the same channels and IR settings are convolved once).
+        state->summary = juce::String(gridStopItems().size()) + " stops (buttons of the grid), " + juce::String(state->routeCount) + " audio routes - " + devices
+            + "; IR reverb on " + juce::String(irRoutes) + " route(s)"
+            + (irRoutes > 0 ? " = " + juce::String(irRoutes - irShared) + " convolution(s)"
+                + (irShared > 0 ? " (" + juce::String(irShared) + " share the convolution of a route with the same device, channels and IR settings)" : juce::String()) : juce::String());
     }
     CrashHandler::note("Polyphony measurement started: " + state->summary + ", previous limit " + juce::String(state->previousLimit));
     // Very quiet output (-42 dB, reached within 50 ms - before the first strike); the engine renders as if it were heard.
@@ -17278,18 +17490,21 @@ void MainComponent::startPolyphonyMeasurement()
                             safeThis->setCouplerEnabled(juce::String(manual) + "-" + juce::String(manual) + "-" + footage, false);
                     state->couplersOn = false;
                 }
+                // The stops are the buttons of the grid - stops, transmissions, extensions
+                // and stop folders alike (a transmission plays pipes as any stop does): in
+                // every division the first half (grid order) stays on, the rest goes off.
                 int kept = 0, off = 0, total = 0;
+                const auto items = safeThis->gridStopItems();
                 for (int manual = 0; manual <= safeThis->manualCount; ++manual)
                 {
-                    std::vector<Stop*> on;
-                    for (auto* stop : safeThis->engine.getStops())
-                        if (stop->primaryManual == manual && stop->enabled) on.push_back(stop);
+                    std::vector<const Voicer::GridItem*> on;
+                    for (const auto& item : items) if (item.manual == manual && item.enabled) on.push_back(&item);
                     total += (int)on.size();
                     const int keep = juce::jmax(1, (int)on.size() / 2);
                     for (size_t i = 0; i < on.size(); ++i)
                     {
                         if ((int)i < keep) { ++kept; continue; }
-                        safeThis->engine.setStopEnabled(on[i], false);
+                        safeThis->setGridItemEnabled(*on[i], false);
                         ++off;
                     }
                 }
@@ -18590,7 +18805,18 @@ void MainComponent::showConfigurationEditor()
                 if (hidden) continue;
                 row.label->setBounds(12, y, labelWidth, row.height);
                 const int helpWidth = row.help ? 30 : 0;
-                if (row.control) row.control->setBounds(labelWidth + 20, y + 2, width - labelWidth - 32 - helpWidth, row.height - 4);
+                if (row.control)
+                {
+                    int controlWidth = width - labelWidth - 32 - helpWidth;
+                    // A button needs no more than its caption - 150 px, never the whole row.
+                    if (auto* button = dynamic_cast<juce::TextButton*>(row.control.get()))
+                    {
+                        juce::GlyphArrangement glyphs;
+                        glyphs.addLineOfText(button->getLookAndFeel().getTextButtonFont(*button, row.height - 4), button->getButtonText(), 0.0f, 0.0f);
+                        controlWidth = juce::jmin(controlWidth, juce::jmax(150, (int)std::ceil(glyphs.getBoundingBox(0, -1, true).getWidth()) + 30));
+                    }
+                    row.control->setBounds(labelWidth + 20, y + 2, controlWidth, row.height - 4);
+                }
                 if (row.help) row.help->setBounds(width - 12 - 26, y + 3, 26, row.height - 6);
                 y += row.height + 2;
             }
@@ -18757,6 +18983,40 @@ void MainComponent::showConfigurationEditor()
             combo->onChange = [raw, onChange] { if (onChange && raw->getSelectedId() > 0) onChange(raw->getSelectedId() - 1); };
             dumpOption("choice: " + items.joinIntoString(" | "), text, tooltip);
             addRow(text, std::move(combo), 30, tooltip, helpSection);
+        }
+
+        // An on/off switch and a button on ONE row (the switch at the left, the
+        // button beside it, 150 px): a row never spends its width on a button, and
+        // a setting with its action stays one line.
+        struct ToggleAndButton final : public juce::Component
+        {
+            juce::ToggleButton toggle;
+            juce::TextButton button;
+            explicit ToggleAndButton(const juce::String& caption) : button(caption) { addAndMakeVisible(toggle); addAndMakeVisible(button); }
+            void resized() override
+            {
+                auto area = getLocalBounds();
+                toggle.setBounds(area.removeFromLeft(juce::jmin(110, area.getWidth() / 2)));
+                area.removeFromLeft(10);
+                button.setBounds(area.removeFromLeft(juce::jmin(150, area.getWidth())));
+            }
+        };
+        void addToggleButton(const juce::String& text, bool state, std::function<void(bool)> onChange, const juce::String& caption,
+            std::function<void()> onClick, const juce::String& tooltip = {}, const juce::String& helpSection = {})
+        {
+            auto control = std::make_unique<ToggleAndButton>(caption);
+            control->toggle.setButtonText(state ? "enabled" : "disabled");
+            control->toggle.setToggleState(state, juce::dontSendNotification);
+            auto* raw = control.get();
+            control->toggle.onClick = [raw, onChange]
+            {
+                raw->toggle.setButtonText(raw->toggle.getToggleState() ? "enabled" : "disabled");
+                if (onChange) onChange(raw->toggle.getToggleState());
+            };
+            control->button.onClick = std::move(onClick);
+            if (tooltip.isNotEmpty()) { control->toggle.setTooltip(tooltip); control->button.setTooltip(tooltip); }
+            dumpOption("on/off + button \"" + caption + "\"", text, tooltip);
+            addRow(text, std::move(control), 30, tooltip, helpSection);
         }
 
         void addToggle(const juce::String& text, bool state, std::function<void(bool)> onChange,
@@ -19324,15 +19584,15 @@ void MainComponent::showConfigurationEditor()
                 {
                     const juce::String key(item.key);
                     if (key == "configurationEditor") continue;   // the way back here stays
-                    addToggle(juce::String("Top bar: ") + item.label, o.isHeaderButtonShown(key), [&o, key](bool state)
+                    juce::Component::SafePointer<juce::Button> target(item.button);
+                    addToggleButton(juce::String("Top bar: ") + item.label, o.isHeaderButtonShown(key), [&o, key](bool state)
                     {
                         o.headerButtonShown[key] = state;
                         o.saveSettings();
                         o.resized();
-                    }, "Shows or hides this button in the top bar of the main window.");
-                    juce::Component::SafePointer<juce::Button> target(item.button);
-                    addButton(juce::String("    ") + item.label, item.label, [target] { if (target != nullptr) target->triggerClick(); },
-                        "The same as the button in the top bar - without having to show it there.");
+                    }, item.label, [target] { if (target != nullptr) target->triggerClick(); },
+                        "Shows or hides this button in the top bar of the main window; the button beside the switch does the same "
+                        "as the one in the top bar - without having to show it there.");
                 }
             }
             addToggle("Melody/bass couplers: new extreme key only", o.melodyBassNewKeysOnly, [&o](bool state)

@@ -3,6 +3,10 @@
 **Pipe organ sampler for creative minds.** Design your console, build your stop
 list, perform.
 
+**Downloads:** [the program (Releases)](https://github.com/zurek-jiri/OrganSampler/releases) -
+[the Rural Organ demo](https://github.com/zurek-jiri/OrganSampler/releases/tag/rural-organ-0.8) -
+[organ configurations](configurations/INDEX.md)
+
 OrganSampler plays sampled pipe organs from plain folders of WAV files - one
 folder per stop, its pipes as WAV files - and turns any number of such folders into
 an organ with up to seven manuals and a pedal: massive polyphony, per-key

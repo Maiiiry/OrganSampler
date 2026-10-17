@@ -3787,6 +3787,48 @@ juce::String Voicer::stopListMarkdown() const
     return "Stop List rows: " + juce::String(total) + "\n\n" + table;
 }
 
+std::vector<Voicer::GridItem> Voicer::gridItems() const
+{
+    struct Placed { int y, x; GridItem item; };
+    std::vector<Placed> placed;
+    for (auto* row : stopRows)
+    {
+        if (row == nullptr || !row->isVisible()) continue;
+        Stop* stop = row->getStop();
+        if (stop == nullptr) continue;
+        GridItem item;
+        item.manual = row->divisionIndex();
+        item.stop = stop;
+        item.caption = row->caption();
+        item.enabled = row->routeEnabled();
+        if (auto* t = row->transmission())
+        {
+            if (t->groupMaster.isNotEmpty()) continue;   // nested in a stop folder: the folder is the item
+            item.transmission = row->getTransmissionIndex();
+        }
+        else
+        {
+            if (stop->groupMaster.isNotEmpty()) continue;
+            if (stop->container)
+            {
+                // A stop folder counts when something under it sounds.
+                item.folder = true;
+                if (groupChildren(stop).empty() && groupChildTransmissions(stop).empty()) continue;
+            }
+        }
+        placed.push_back({ row->getY(), row->getX(), item });
+    }
+    std::stable_sort(placed.begin(), placed.end(), [](const Placed& a, const Placed& b)
+    {
+        if (a.item.manual != b.item.manual) return a.item.manual < b.item.manual;
+        return a.y != b.y ? a.y < b.y : a.x < b.x;
+    });
+    std::vector<GridItem> items;
+    items.reserve(placed.size());
+    for (auto& p : placed) items.push_back(p.item);
+    return items;
+}
+
 bool Voicer::wheelBlockedAt(juce::Point<int> screenPosition) const
 {
     // The wheel belongs to the sliders only inside the rectangle of an open

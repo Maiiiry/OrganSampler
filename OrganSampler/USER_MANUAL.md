@@ -443,10 +443,12 @@ folders, not archives: unpack the archive first, then *Load folder...* the
 folder tree it contained. Three ways:
 
 - **In OrganSampler:** the top-bar button *Unpack archive* (hidden by default:
-  Configuration Editor > Console shows it, and the same section has a button
-  that does the same without showing it). It asks for the `.rar` file, then
-  for the folder to unpack into (proposed: the folder of the archive), shows
-  the progress and can be cancelled; at the end it says where the folders are.
+  Configuration Editor > Console shows it, and the same row has a button that
+  does the same without showing it). One window: at the top the `.rar` file
+  (*Browse...*, or paste its path), under it the folder to unpack into
+  (proposed: the folder of the archive; the archive's own folder tree is
+  created inside it), then *Unpack*. The progress is shown and can be
+  cancelled; at the end the program says where the folders are.
   RAR 4 and RAR 5 archives, solid or not, are read by libarchive (BSD
   licence), the files written as they are - no password-protected archives,
   and a multi-part archive (`.part1.rar`, `.part2.rar` ...) is unpacked from

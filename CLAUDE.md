@@ -81,6 +81,24 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   or registration sets on/off states and must never replace, add to or remove from the list (0.8.92).
 - The voicing state keeps entries of stops the engine could not build (missing folders) and writes them back;
   never let a save drop voicing of a stop that merely failed to load.
+- "A stop" is every button of the grid: a stop with samples, every transmission, every extension, and a stop
+  folder that has at least one sound under it (its own or a child's); rows nested in a stop folder are not
+  stops (the folder is). NEVER count or switch only the stops with samples of their own (`engine.getStops()`
+  with `enabled`): use `MainComponent::gridStopItems()` / `Voicer::gridItems()` (grid order) and
+  `setGridItemEnabled()` - the polyphony measurement, its retreat and every "N stops" text do (0.8.111).
+
+## Dialogs and layout
+- Every window and dialog must be wholly visible: title bar (draggable) and bottom edge included, with 2 % of
+  the screen height free above and below AFTER the taskbar/dock/panel is taken off (`workAreaWithMargins`,
+  `fitWindowOnScreen` + `fitWindowOnScreenSoon` retries at 150/700/2000 ms - window managers place a window
+  after it shows). A dialog taller than that is shrunk, never centred with its edges off the screen.
+- Use the space of a dialog: a button is 100-150 px wide, never stretched over the row; a switch and its
+  button (or any setting and its action) go on ONE row (`addToggleButton`), never the button under the switch.
+  A dialog that asks for a file and a folder shows both as path fields with Browse... buttons in one window,
+  the thing the user looks for first at the top (Unpack archive), never a chain of bare file dialogs.
+- GitHub's repository tabs (Code, Issues, Pull requests, Actions...) are fixed; a "Releases" tab cannot be
+  added. The downloads are linked in the first lines of README.md (Releases, Rural Organ demo, INDEX.md)
+  and in the repository's About box (the website).
 
 - A configuration README is WRITTEN BY THE PROGRAM: saving a portable configuration puts `<name>.README.md`
   beside the `.json` (`MainComponent::configurationReadme`; dev: `ORGAN_SAVE_PORTABLE=<file>` with
