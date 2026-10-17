@@ -1,4 +1,4 @@
-# Organ configurations
+# Configurations, Organs
 
 A configuration is a complete organ built in OrganSampler - the folder trees
 of the samples, the Stop List, the voicing, the audio routes, couplers,

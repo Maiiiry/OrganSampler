@@ -127,9 +127,21 @@ jobs:
           files: artifacts/**/*
           prerelease: true
           body: |
-            Pre-release build for testers - not an official release yet. One program, no installation: unpack the archive of your system and start the program. Windows 10/11 64-bit: `OrganSampler-windows.zip` (`OrganSampler.exe` inside); macOS: `OrganSampler-macos.zip` for Apple silicon Macs on macOS 11 Big Sur or newer, `OrganSampler-macos-10.11-intel.zip` for Intel Macs on macOS 10.11 El Capitan or newer (both unsigned: right-click > Open the first time; untested by the project); Linux x86-64 with glibc 2.38 or newer (Ubuntu 24.04, Mint 22, Debian 13, Fedora 39 and newer): `OrganSampler-linux-x86_64.tar.gz` (`tar xzf`, the executable bit is kept). Changes: see `OrganSampler/CHANGELOG.md`.
+            Pre-release build for testers - not an official release yet.
 
-            **An organ to play:** the Rural Organ demo (dry recordings with IR reverb, sample folders and configuration included) - https://github.com/zurek-jiri/OrganSampler/releases/tag/rural-organ-0.8. **More organs:** sample folders in wave format from Sonus Paradisi, https://www.sonusparadisi.cz/en/organs.html (free material: https://www.sonusparadisi.cz/en/free-stuff.html); ready-made configurations: the list in `configurations/INDEX.md`, https://github.com/zurek-jiri/OrganSampler/blob/main/configurations/INDEX.md.
+            **One program, no installation: download the archive of your system below, unpack it, start the program.**
+
+            - **Windows 10/11 (64-bit):** `OrganSampler-windows.zip` - `OrganSampler.exe` inside.
+            - **macOS, Apple silicon (macOS 11 Big Sur or newer):** `OrganSampler-macos.zip` - the app inside. Unsigned: right-click > Open the first time.
+            - **macOS, Intel (macOS 10.11 El Capitan or newer):** `OrganSampler-macos-10.11-intel.zip` - the app inside. Unsigned: right-click > Open the first time. Untested by the project.
+            - **Linux x86-64 (glibc 2.38 or newer: Ubuntu 24.04, Mint 22, Debian 13, Fedora 39 and newer):** `OrganSampler-linux-x86_64.tar.gz` - `tar xzf` it; the program is executable as it comes.
+            - The two *Source code* entries are added by GitHub to every release: not needed for playing.
+
+            **An organ to play:** [the Rural Organ demo](https://github.com/zurek-jiri/OrganSampler/releases/tag/rural-organ-0.8) - a small village organ with its sample folders and configuration, dry recordings with IR reverb.
+
+            **More organs:** [Configurations, Organs](https://github.com/zurek-jiri/OrganSampler/blob/main/configurations/INDEX.md) - ready-made configurations for sample folders in wave format from [Sonus Paradisi](https://www.sonusparadisi.cz/en/organs.html) ([free material](https://www.sonusparadisi.cz/en/free-stuff.html)).
+
+            **Changes:** [OrganSampler/CHANGELOG.md](https://github.com/zurek-jiri/OrganSampler/blob/main/OrganSampler/CHANGELOG.md).
       # Only the newest build stays on the releases page: every older v* release
       # (and its tag) is deleted; the Rural Organ demo release is kept.
       - name: Delete the older program releases

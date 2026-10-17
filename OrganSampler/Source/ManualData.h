@@ -450,13 +450,15 @@ static const char* const kManualText_part2 =
     "folders, not archives: unpack the archive first, then *Load folder...* the\n"
     "folder tree it contained. Three ways:\n"
     "\n"
-    "- **In OrganSampler:** the top-bar button *Unpack archive* (hidden by default:\n"
-    "  Configuration Editor > Console shows it, and the same row has a button that\n"
-    "  does the same without showing it). One window: at the top the `.rar` file\n"
-    "  (*Browse...*, or paste its path), under it the folder to unpack into\n"
-    "  (proposed: the folder of the archive; the archive's own folder tree is\n"
-    "  created inside it), then *Unpack*. The progress is shown and can be\n"
-    "  cancelled; at the end the program says where the folders are.\n"
+    "- **In OrganSampler:** the top-bar button *Unpack archive* (Configuration\n"
+    "  Editor > Console hides it, and the same row has a button that does the same\n"
+    "  without the top bar). One window: at the top the `.rar` file or files -\n"
+    "  *Browse...* (select several with Ctrl or Shift), or paste the paths, one\n"
+    "  per line - under it the folder to unpack into (proposed: the folder of the\n"
+    "  first archive; each archive's own folder tree is created inside it), then\n"
+    "  *Unpack*. Several archives are unpacked one after another with one\n"
+    "  progress bar; it can be cancelled, and at the end the program says where\n"
+    "  the folders are.\n"
     "  RAR 4 and RAR 5 archives, solid or not, are read by libarchive (BSD\n"
     "  licence), the files written as they are - no password-protected archives,\n"
     "  and a multi-part archive (`.part1.rar`, `.part2.rar` ...) is unpacked from\n"
@@ -604,10 +606,10 @@ static const char* const kManualText_part2 =
     "  consoles (a MIDI piston on a console without a screen), where nobody could\n"
     "  react. An instrument without an open configuration file is kept as\n"
     "  \"Shutdown rescue configuration.json\" beside the settings.\n"
-    "- **GLOBAL RESET**: see \"GLOBAL RESET\".\n"
-    "- **Configuration Editor**: every program setting in one scrolling dialog:\n"
     ;
 static const char* const kManualText_part3 =
+    "- **GLOBAL RESET**: see \"GLOBAL RESET\".\n"
+    "- **Configuration Editor**: every program setting in one scrolling dialog:\n"
     "  see \"8. Configuration Editor reference\".\n"
     "\n"
     "## 2.2 The combination row\n"
@@ -806,10 +808,10 @@ static const char* const kManualText_part3 =
     "  any stop that must not have the full compass gets no extension. The stop's\n"
     "  transmissions are not affected (each transmission has its own boxes).\n"
     "- **Treble per key** (-9 to +9 dB) - a high shelf per pipe, above the\n"
-    "  frequency set in *Treble per key: shelf start frequency* (default 1800 Hz).\n"
-    "- A *Reset to 0 dB* button sits beside each header; dragging with the right\n"
     ;
 static const char* const kManualText_part4 =
+    "  frequency set in *Treble per key: shelf start frequency* (default 1800 Hz).\n"
+    "- A *Reset to 0 dB* button sits beside each header; dragging with the right\n"
     "  mouse button paints one value across a row of sliders.\n"
     "- The sliders light up while the key sounds. A **green thumb** marks a filled\n"
     "  pipe (hover it: the tooltip names the stop, the sample file and the shift it\n"
@@ -1008,10 +1010,10 @@ static const char* const kManualText_part4 =
     "\n"
     "# 5. The Divisions dialog\n"
     "\n"
-    "*Settings* in a division header opens the dialog at that division; the\n"
-    "division is chosen at the top. The settings of a division are the same as in\n"
     ;
 static const char* const kManualText_part5 =
+    "*Settings* in a division header opens the dialog at that division; the\n"
+    "division is chosen at the top. The settings of a division are the same as in\n"
     "its section of the Configuration Editor (\"Division sections (Pedal, Manual I\n"
     "... Manual VII)\" describes every one of them); the dialog adds the keyboard\n"
     "drawing, the coupler and swell learning, and the audio tabs.\n"
@@ -1210,10 +1212,10 @@ static const char* const kManualText_part5 =
     "  packet into shorter deadlines - an IR's tail FFT alone can exceed a block\n"
     "  of 256 - without lowering the latency at all.\n"
     "\n"
-    "The price of mixing drivers (ASIO beside WASAPI in one organ) - read this\n"
-    "before you do it:\n"
     ;
 static const char* const kManualText_part6 =
+    "The price of mixing drivers (ASIO beside WASAPI in one organ) - read this\n"
+    "before you do it:\n"
     "\n"
     "- **Less polyphony.** Every WASAPI route renders its pipes on its own thread,\n"
     "  separately from the ASIO routes; the processor's time is split, and the DSP\n"
@@ -1412,10 +1414,10 @@ static const char* const kManualText_part6 =
     "  cores. This is the layout with the highest polyphony. The buffer size sets\n"
     "  how much time each block of audio may take: a buffer of 512 samples allows\n"
     "  twice the work of 256, at twice the latency.\n"
-    "- **The buffer size: do not chase the smallest one.** A small buffer\n"
-    "  (64 or 128 samples) cuts the reachable polyphony dramatically, because\n"
     ;
 static const char* const kManualText_part7 =
+    "- **The buffer size: do not chase the smallest one.** A small buffer\n"
+    "  (64 or 128 samples) cuts the reachable polyphony dramatically, because\n"
     "  every block must be rendered in a fraction of the time. An organ does not\n"
     "  need it: the action of a real organ has its own delay, and a latency of\n"
     "  about 10 ms (512 samples at 48 kHz) is absolutely fine for organ playing -\n"
@@ -1614,10 +1616,10 @@ static const char* const kManualText_part7 =
     "Excellent within an octave either way. Weaknesses: upwards the vocoder\n"
     "slightly wobbles the pitch (a gentle unsteadiness of the tone); two octaves\n"
     "away the copy loses level and body; the attack's transient is smeared over the\n"
-    "analysis block (half a second for a 32' pipe) and inharmonic content can\n"
-    "tremulate. And it often breaks the loops: the loop points are kept, but the\n"
     ;
 static const char* const kManualText_part8 =
+    "analysis block (half a second for a 32' pipe) and inharmonic content can\n"
+    "tremulate. And it often breaks the loops: the loop points are kept, but the\n"
     "vocoder's output at the loop end no longer matches the loop start exactly, so\n"
     "the seam becomes audible as a click or a bump at every repeat. The setting\n"
     "*Filled pipes: loop crossfade* exists for this - a long blend over the seam\n"
@@ -1816,10 +1818,10 @@ static const char* const kManualText_part8 =
     "Routes that share everything the reverb depends on share one convolution\n"
     "(since 0.8.109): rendered by the same audio device to the same output\n"
     "channels, with the same impulse response, dry/wet, wet volume, high and low\n"
-    "cut, pre-delay, decay and fade-out. Convolution is linear - the reverb of the\n"
-    "summed dry signal of such routes is the sum of their reverbs - so the sound is\n"
     ;
 static const char* const kManualText_part9 =
+    "cut, pre-delay, decay and fade-out. Convolution is linear - the reverb of the\n"
+    "summed dry signal of such routes is the sum of their reverbs - so the sound is\n"
     "the same and the work is paid once per group: Rural Organ's three divisions on\n"
     "one device, each with its default and its auxiliary route, run two\n"
     "convolutions instead of six. The IR caption of a route that rides on\n"
@@ -2018,10 +2020,10 @@ static const char* const kManualText_part9 =
     "\n"
     "### Wind: one stop's share of the full sag\n"
     "\n"
-    "The sag a single engaged 8' stop produces, relative to the sag with many stops\n"
-    "engaged (2 to 100 %, default 20). Smaller footages count less. A lower value\n"
     ;
 static const char* const kManualText_part10 =
+    "The sag a single engaged 8' stop produces, relative to the sag with many stops\n"
+    "engaged (2 to 100 %, default 20). Smaller footages count less. A lower value\n"
     "keeps a solo stop steady and lets the sag come with full registration.\n"
     "\n"
     "### Wind: one pipe's share of the full sag\n"
@@ -2220,10 +2222,10 @@ static const char* const kManualText_part10 =
     "shifts). *Cubic interpolation* lowers the interpolation images by about 20 dB\n"
     "for these voices only. *Cubic + anti-alias filter* (default) also removes what\n"
     "would fold back when a pipe is transposed upwards: a low-passed copy of the\n"
-    "source is built for each such filled pipe (a few MB per rank, nothing for stops\n"
-    "without upward shifts). Real pipes are never touched.\n"
     ;
 static const char* const kManualText_part11 =
+    "source is built for each such filled pipe (a few MB per rank, nothing for stops\n"
+    "without upward shifts). Real pipes are never touched.\n"
     "\n"
     "### Treble per key: shelf start frequency\n"
     "\n"
@@ -2337,9 +2339,9 @@ static const char* const kManualText_part11 =
     "### Top bar: Unpack archive\n"
     "\n"
     "Shows or hides the Unpack archive button (see \"Unpacking sample archives\n"
-    "(RAR)\"): a RAR archive of sample folders unpacked by the program into a\n"
-    "folder of your choice. Hidden by default; the button below this toggle does\n"
-    "the same without showing it.\n"
+    "(RAR)\"): RAR archives of sample folders unpacked by the program into a\n"
+    "folder of your choice. Shown by default; the button beside this switch does\n"
+    "the same without the top bar.\n"
     "\n"
     "### Top bar: GLOBAL RESET\n"
     "\n"
@@ -2422,10 +2424,10 @@ static const char* const kManualText_part11 =
     "dialog (see \"Keyboard, MIDI and compass\", \"Swell, tremulant, wind\" and \"The\n"
     "audio tabs\").\n"
     "\n"
-    "### Stops and sample folders\n"
-    "\n"
     ;
 static const char* const kManualText_part12 =
+    "### Stops and sample folders\n"
+    "\n"
     "The folder trees loaded for this division, and the *Stop building...* button\n"
     "that opens the Stop List (see \"Folder trees and the pool\") at it.\n"
     "\n"
@@ -2624,10 +2626,10 @@ static const char* const kManualText_part12 =
     "\n"
     "- **Windows:** `OrganSampler-windows.zip` - Windows 10 or 11, 64-bit. ASIO,\n"
     "  Windows Audio (WASAPI) and the aggregated WASAPI device.\n"
-    "- **macOS:** `OrganSampler-macos.zip` runs on Apple silicon Macs with macOS\n"
-    "  11 Big Sur or newer; `OrganSampler-macos-10.11-intel.zip` on Intel Macs\n"
     ;
 static const char* const kManualText_part13 =
+    "- **macOS:** `OrganSampler-macos.zip` runs on Apple silicon Macs with macOS\n"
+    "  11 Big Sur or newer; `OrganSampler-macos-10.11-intel.zip` on Intel Macs\n"
     "  with macOS 10.11 El Capitan or newer. CoreAudio.\n"
     "- **Linux:** `OrganSampler-linux-x86_64.tar.gz` - x86-64 with glibc 2.38 or\n"
     "  newer - a distribution of 2024 or later: Ubuntu 24.04, Linux Mint 22,\n"

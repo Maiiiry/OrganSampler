@@ -3,9 +3,9 @@
 **Pipe organ sampler for creative minds.** Design your console, build your stop
 list, perform.
 
-**Downloads:** [the program (Releases)](https://github.com/zurek-jiri/OrganSampler/releases) -
-[the Rural Organ demo](https://github.com/zurek-jiri/OrganSampler/releases/tag/rural-organ-0.8) -
-[organ configurations](configurations/INDEX.md)
+## [⬇ RELEASES - download the program](https://github.com/zurek-jiri/OrganSampler/releases) &nbsp;|&nbsp; [⬇ Rural Organ demo](https://github.com/zurek-jiri/OrganSampler/releases/tag/rural-organ-0.8) &nbsp;|&nbsp; [Configurations, Organs](configurations/INDEX.md)
+
+[![Latest release](https://img.shields.io/github/v/release/zurek-jiri/OrganSampler?include_prereleases&label=download%20the%20latest%20build)](https://github.com/zurek-jiri/OrganSampler/releases)
 
 OrganSampler plays sampled pipe organs from plain folders of WAV files - one
 folder per stop, its pipes as WAV files - and turns any number of such folders into
@@ -50,8 +50,9 @@ configuration. Free software under the GNU GPL v3. Windows, macOS and Linux.
 - User manual: [`OrganSampler/USER_MANUAL.md`](OrganSampler/USER_MANUAL.md)
   (also inside the program: Configuration Editor > About & licences)
 - Changes: [`OrganSampler/CHANGELOG.md`](OrganSampler/CHANGELOG.md)
-- Organ configurations to share and download: [`configurations/`](configurations/README.md),
-  the list of the published organs: [`configurations/INDEX.md`](configurations/INDEX.md)
+- Configurations, Organs - ready-made organs to download and share: the list
+  [`configurations/INDEX.md`](configurations/INDEX.md), how it works
+  [`configurations/`](configurations/README.md)
 - Problems and ideas: *Configuration Editor > Report a problem...* in the
   program bundles the logs and opens the
   [bug report](https://github.com/zurek-jiri/OrganSampler/issues/new/choose);

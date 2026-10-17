@@ -10781,7 +10781,7 @@ std::vector<MainComponent::HeaderButtonInfo> MainComponent::headerButtons()
         { &saveConfigurationButton, 170, "saveConfiguration", "Save Configuration", true },
         { &configurationEditorButton, 175, "configurationEditor", "Configuration Editor", true },
         { &shutdownButton, 130, "shutdown", "Shut down PC", false },
-        { &unpackArchiveButton, 150, "unpackArchive", "Unpack archive", false },
+        { &unpackArchiveButton, 150, "unpackArchive", "Unpack archive", true },
         { &resetButton, 180, "globalReset", "GLOBAL RESET", true }
     };
 }
@@ -10790,7 +10790,7 @@ bool MainComponent::isHeaderButtonShown(const juce::String& key) const
 {
     const auto found = headerButtonShown.find(key);
     if (found != headerButtonShown.end()) return found->second;
-    return !(key == "stopMerging" || key == "loadVoicing" || key == "saveVoicing" || key == "shutdown" || key == "unpackArchive");
+    return !(key == "stopMerging" || key == "loadVoicing" || key == "saveVoicing" || key == "shutdown");   // Unpack archive shown by default (0.8.112): the first thing a newcomer needs
 }
 
 // "Unpack archive": a RAR archive of sample folders is unpacked by libarchive
@@ -10808,7 +10808,7 @@ void MainComponent::unpackArchiveDialog()
     {
         MainComponent& owner;
         juce::Label archiveLabel, folderLabel, hint;
-        juce::TextEditor archive, folder;
+        juce::TextEditor archive, folder;   // archive: one path per line - several archives are unpacked one after another
         juce::TextButton browseArchive{ "Browse..." }, browseFolder{ "Browse..." }, unpack{ "Unpack" }, cancel{ "Cancel" };
         std::unique_ptr<juce::FileChooser> chooser;
         bool folderTyped = false;   // the user chose the folder: the archive no longer proposes it
@@ -10817,29 +10817,44 @@ void MainComponent::unpackArchiveDialog()
             const auto trimmed = text.trim().unquoted();
             return juce::File::isAbsolutePath(trimmed) ? juce::File(trimmed) : juce::File();
         }
+        juce::Array<juce::File> archives() const
+        {
+            juce::Array<juce::File> files;
+            for (const auto& line : juce::StringArray::fromLines(archive.getText()))
+            {
+                const auto file = fileOf(line);
+                if (file.existsAsFile()) files.addIfNotAlreadyThere(file);
+            }
+            return files;
+        }
         Panel(MainComponent& o, const juce::File& start) : owner(o)
         {
-            archiveLabel.setText("1. The RAR archive of the sample folders:", juce::dontSendNotification);
-            folderLabel.setText("2. Unpack into this folder (the archive's folder tree is created inside it):", juce::dontSendNotification);
+            archiveLabel.setText("1. The RAR archive(s) of the sample folders - several at once, one per line:", juce::dontSendNotification);
+            folderLabel.setText("2. Unpack into this folder (each archive's folder tree is created inside it):", juce::dontSendNotification);
             hint.setText("Then: Stop List > Load folder... and choose the unpacked folder tree, or Load Configuration when a configuration came with the samples.",
                 juce::dontSendNotification);
             hint.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
             hint.setJustificationType(juce::Justification::topLeft);
             hint.setFont(juce::FontOptions(14.0f));
-            archive.setTextToShowWhenEmpty("the .rar file (Browse... or paste its path)", juce::Colours::grey);
+            archive.setMultiLine(true, false);
+            archive.setReturnKeyStartsNewLine(true);
+            archive.setScrollbarsShown(true);
+            archive.setTextToShowWhenEmpty("the .rar file(s): Browse... (select several with Ctrl or Shift), or paste the paths", juce::Colours::grey);
             folder.setText(start.getFullPathName(), false);
             archive.onTextChange = [this] { proposeFolder(); refresh(); };
             folder.onTextChange = [this] { folderTyped = true; refresh(); };
             browseArchive.onClick = [this]
             {
-                const auto known = fileOf(archive.getText());
-                chooser = std::make_unique<juce::FileChooser>("The RAR archive of the sample folders",
-                    known.existsAsFile() ? known : fileOf(folder.getText()), ArchiveExtractor::fileFilter());
-                chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this](const juce::FileChooser& c)
+                const auto known = archives();
+                chooser = std::make_unique<juce::FileChooser>("The RAR archive(s) of the sample folders - select several with Ctrl or Shift",
+                    !known.isEmpty() ? known.getFirst() : fileOf(folder.getText()), ArchiveExtractor::fileFilter());
+                chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::canSelectMultipleItems,
+                    [this](const juce::FileChooser& c)
                 {
-                    const auto chosen = c.getResult();
-                    if (!chosen.existsAsFile()) return;
-                    archive.setText(chosen.getFullPathName(), false);
+                    juce::StringArray lines;
+                    for (const auto& chosen : c.getResults()) if (chosen.existsAsFile()) lines.add(chosen.getFullPathName());
+                    if (lines.isEmpty()) return;
+                    archive.setText(lines.joinIntoString("\n"), false);
                     folderTyped = false;
                     proposeFolder();
                     refresh();
@@ -10860,8 +10875,9 @@ void MainComponent::unpackArchiveDialog()
             };
             unpack.onClick = [this]
             {
-                const auto a = fileOf(archive.getText()), d = fileOf(folder.getText());
-                if (!a.existsAsFile() || d == juce::File()) return;
+                const auto a = archives();
+                const auto d = fileOf(folder.getText());
+                if (a.isEmpty() || d == juce::File()) return;
                 juce::Component::SafePointer<MainComponent> safeOwner(&owner);
                 close();
                 juce::MessageManager::callAsync([safeOwner, a, d] { if (safeOwner != nullptr) safeOwner->startUnpack(a, d); });
@@ -10870,15 +10886,20 @@ void MainComponent::unpackArchiveDialog()
             for (auto* c : std::initializer_list<juce::Component*>{ &archiveLabel, &archive, &browseArchive, &folderLabel, &folder, &browseFolder, &hint, &unpack, &cancel })
                 addAndMakeVisible(c);
             refresh();
-            setSize(680, 262);
+            setSize(700, 330);
         }
         void proposeFolder()
         {
             if (folderTyped) return;
-            const auto a = fileOf(archive.getText());
-            if (a.existsAsFile()) folder.setText(a.getParentDirectory().getFullPathName(), false);
+            const auto a = archives();
+            if (!a.isEmpty()) folder.setText(a.getFirst().getParentDirectory().getFullPathName(), false);
         }
-        void refresh() { unpack.setEnabled(fileOf(archive.getText()).existsAsFile() && fileOf(folder.getText()) != juce::File()); }
+        void refresh()
+        {
+            const int count = archives().size();
+            unpack.setEnabled(count > 0 && fileOf(folder.getText()) != juce::File());
+            unpack.setButtonText(count > 1 ? "Unpack " + juce::String(count) + " archives" : juce::String("Unpack"));
+        }
         void close()
         {
             if (auto* window = findParentComponentOfClass<juce::DialogWindow>())
@@ -10888,8 +10909,8 @@ void MainComponent::unpackArchiveDialog()
         {
             auto area = getLocalBounds().reduced(14, 12);
             archiveLabel.setBounds(area.removeFromTop(24));
-            auto row = area.removeFromTop(28);
-            browseArchive.setBounds(row.removeFromRight(110));
+            auto row = area.removeFromTop(84);
+            browseArchive.setBounds(row.removeFromRight(110).removeFromTop(28));
             row.removeFromRight(8);
             archive.setBounds(row);
             area.removeFromTop(14);
@@ -10902,7 +10923,7 @@ void MainComponent::unpackArchiveDialog()
             auto buttons = area.removeFromBottom(30);
             cancel.setBounds(buttons.removeFromRight(110));
             buttons.removeFromRight(8);
-            unpack.setBounds(buttons.removeFromRight(130));
+            unpack.setBounds(buttons.removeFromRight(170));
             area.removeFromBottom(8);
             hint.setBounds(area);
         }
@@ -10916,63 +10937,77 @@ void MainComponent::unpackArchiveDialog()
     options.escapeKeyTriggersCloseButton = true;
     options.useNativeTitleBar = true;
     options.resizable = false;
-    if (auto* window = options.launchAsync()) placeDialog(*window, "unpackArchive", 680, 262);
+    if (auto* window = options.launchAsync()) placeDialog(*window, "unpackArchive", 700, 330);
 }
 
-void MainComponent::startUnpack(const juce::File& archive, const juce::File& destination)
+void MainComponent::startUnpack(const juce::Array<juce::File>& archives, const juce::File& destination)
 {
+    if (archives.isEmpty()) return;
     juce::Component::SafePointer<MainComponent> safeThis(this);
+    // The work on a thread with a progress window (modal: the Stop List must not
+    // load the folders while they are still being written); several archives one
+    // after another, the progress bar over all of them.
+    struct UnpackJob final : public juce::ThreadWithProgressWindow
     {
+        UnpackJob(const juce::Array<juce::File>& a, const juce::File& d, juce::Component* over)
+            : juce::ThreadWithProgressWindow(a.size() == 1 ? "Unpacking " + a.getFirst().getFileName() : "Unpacking " + juce::String(a.size()) + " archives",
+                true, true, 10000, "Cancel", over), archives(a), destination(d) {}
+        void run() override
         {
+            const int count = archives.size();
+            for (int i = 0; i < count && !threadShouldExit(); ++i)
             {
+                const auto& archive = archives.getReference(i);
+                const juce::String prefix = count > 1 ? archive.getFileName() + " (" + juce::String(i + 1) + " of " + juce::String(count) + "): " : juce::String();
+                results.add(ArchiveExtractor::extract(archive, destination, [this, i, count, &prefix](double share, const juce::String& name)
                 {
-                    // The work on a thread with a progress window (modal: the Stop List
-                    // must not load the folders while they are still being written).
-                    struct UnpackJob final : public juce::ThreadWithProgressWindow
-                    {
-                        UnpackJob(const juce::File& a, const juce::File& d, juce::Component* over)
-                            : juce::ThreadWithProgressWindow("Unpacking " + a.getFileName(), true, true, 10000, "Cancel", over), archive(a), destination(d) {}
-                        void run() override
-                        {
-                            result = ArchiveExtractor::extract(archive, destination, [this](double share, const juce::String& name)
-                            {
-                                setProgress(share);
-                                setStatusMessage(name.isNotEmpty() ? name : juce::String("..."));
-                                return !threadShouldExit();
-                            });
-                        }
-                        juce::File archive, destination;
-                        ArchiveExtractor::Result result;
-                    };
-                    auto job = std::make_shared<UnpackJob>(archive, destination, safeThis.getComponent());
-                    job->launchThread();   // returns at once; the window closes itself when run() ends
-                    // Poll for the end (the thread's own callback is not available before JUCE 8 on every platform).
-                    auto poll = std::make_shared<std::function<void()>>();
-                    *poll = [safeThis, job, poll]
-                    {
-                        if (job->isThreadRunning()) { juce::Timer::callAfterDelay(200, [poll] { (*poll)(); }); return; }
-                        if (safeThis == nullptr) return;
-                        const auto& r = job->result;
-                        safeThis->lastSettingsDirectory = job->destination;
-                        safeThis->saveLastDirectory();
-                        juce::String text;
-                        if (r.error.isNotEmpty()) text << r.error << "\n\n";
-                        else if (r.cancelled) text << "Cancelled.\n\n";
-                        text << juce::String(r.files) << " file(s) in " << juce::String(r.directories) << " folder(s), "
-                             << juce::String(r.bytes / (1024 * 1024)) << " MB, unpacked into\n" << job->destination.getFullPathName();
-                        if (r.skipped > 0) text << "\n" << r.skipped << " entr(ies) skipped (not files or folders, or names leading outside the folder).";
-                        if (r.topFolder != juce::File()) text << "\n\nThe archive's folder: " << r.topFolder.getFullPathName();
-                        text << "\n\nNext: Stop List > Load folder... and choose the folder tree of the samples (the folder that holds the "
-                                "stops' folders, or the division folders), or Load Configuration when a configuration came with the samples.";
-                        juce::AlertWindow::showMessageBoxAsync(r.error.isNotEmpty() ? juce::MessageBoxIconType::WarningIcon : juce::MessageBoxIconType::InfoIcon,
-                            "Unpack archive", text, "OK", safeThis.getComponent());
-                        *poll = nullptr;
-                    };
-                    juce::Timer::callAfterDelay(300, [poll] { if (*poll) (*poll)(); });
-                }
+                    setProgress((i + share) / count);
+                    setStatusMessage(prefix + (name.isNotEmpty() ? name : juce::String("...")));
+                    return !threadShouldExit();
+                }));
+                if (results.getLast().error.isNotEmpty() || results.getLast().cancelled) break;
             }
         }
-    }
+        juce::Array<juce::File> archives;
+        juce::File destination;
+        juce::Array<ArchiveExtractor::Result> results;
+    };
+    auto job = std::make_shared<UnpackJob>(archives, destination, safeThis.getComponent());
+    job->launchThread();   // returns at once; the window closes itself when run() ends
+    // Poll for the end (the thread's own callback is not available before JUCE 8 on every platform).
+    auto poll = std::make_shared<std::function<void()>>();
+    *poll = [safeThis, job, poll]
+    {
+        if (job->isThreadRunning()) { juce::Timer::callAfterDelay(200, [poll] { (*poll)(); }); return; }
+        if (safeThis == nullptr) return;
+        safeThis->lastSettingsDirectory = job->destination;
+        safeThis->saveLastDirectory();
+        juce::String text;
+        bool failed = false;
+        int files = 0, folders = 0, skipped = 0;
+        juce::int64 bytes = 0;
+        juce::StringArray topFolders;
+        for (int i = 0; i < job->results.size(); ++i)
+        {
+            const auto& r = job->results.getReference(i);
+            if (r.error.isNotEmpty()) { failed = true; text << job->archives[i].getFileName() << ": " << r.error << "\n\n"; }
+            else if (r.cancelled) text << job->archives[i].getFileName() << ": cancelled.\n\n";
+            files += r.files; folders += r.directories; skipped += r.skipped; bytes += r.bytes;
+            if (r.topFolder != juce::File()) topFolders.addIfNotAlreadyThere(r.topFolder.getFullPathName());
+        }
+        if (job->results.size() < job->archives.size())
+            text << juce::String(job->archives.size() - job->results.size()) << " archive(s) not unpacked (stopped after the one above).\n\n";
+        text << juce::String(job->archives.size()) << " archive(s): " << juce::String(files) << " file(s) in " << juce::String(folders) << " folder(s), "
+             << juce::String(bytes / (1024 * 1024)) << " MB, unpacked into\n" << job->destination.getFullPathName();
+        if (skipped > 0) text << "\n" << skipped << " entr(ies) skipped (not files or folders, or names leading outside the folder).";
+        if (!topFolders.isEmpty()) text << "\n\nThe archives' folder(s):\n" << topFolders.joinIntoString("\n");
+        text << "\n\nNext: Stop List > Load folder... and choose the folder tree of the samples (the folder that holds the "
+                "stops' folders, or the division folders), or Load Configuration when a configuration came with the samples.";
+        juce::AlertWindow::showMessageBoxAsync(failed ? juce::MessageBoxIconType::WarningIcon : juce::MessageBoxIconType::InfoIcon,
+            "Unpack archive", text, "OK", safeThis.getComponent());
+        *poll = nullptr;
+    };
+    juce::Timer::callAfterDelay(300, [poll] { if (*poll) (*poll)(); });
 }
 
 std::vector<Voicer::GridItem> MainComponent::gridStopItems() const
@@ -14446,6 +14481,9 @@ void MainComponent::loadSettings()
     if (auto* shown = parsed.getProperty("headerButtons", juce::var()).getDynamicObject())
         for (const auto& property : shown->getProperties())
             headerButtonShown[property.name.toString()] = (bool)property.value;
+    // 0.8.112: Unpack archive is shown by default - once also for settings saved
+    // before (they stored every button's state, this one as hidden).
+    if (!(bool)parsed.getProperty("unpackArchiveShownOnce", false)) headerButtonShown["unpackArchive"] = true;
     divisionScreen.fill(0);
     if (auto* screens = parsed.getProperty("divisionScreen", juce::var()).getArray())
         for (int i = 0; i < SamplerEngine::maxManuals && i < screens->size(); ++i) divisionScreen[(size_t)i] = juce::jlimit(0, 1, (int)screens->getReference(i));
@@ -14920,6 +14958,7 @@ void MainComponent::saveSettings()
         juce::DynamicObject::Ptr shown = new juce::DynamicObject();
         for (const auto& item : headerButtons()) shown->setProperty(juce::Identifier(item.key), isHeaderButtonShown(item.key));
         obj->setProperty("headerButtons", juce::var(shown.get()));
+        obj->setProperty("unpackArchiveShownOnce", true);   // the one-time default of 0.8.112 applied (see loadSettings)
     }
     {
         juce::Array<juce::var> screens;

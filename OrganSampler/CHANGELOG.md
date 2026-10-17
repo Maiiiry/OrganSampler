@@ -12,6 +12,18 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.112] - 2026-10-17
+
+### Changed
+- Unpack archive unpacks several RAR archives at once: Browse... selects
+  them together (Ctrl or Shift), or their paths go one per line; they are
+  unpacked one after another into the chosen folder with one progress bar
+  and one report. The top-bar button is shown by default - it is the first
+  thing a newcomer needs.
+- The release page: one line per system, the unpacking in bold, the demo
+  and the organ configurations as links; README starts with the downloads
+  (Releases, Rural Organ demo, "Configurations, Organs").
+
 ## [0.8.111] - 2026-10-17
 
 ### Changed

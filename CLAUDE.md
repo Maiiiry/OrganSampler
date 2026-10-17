@@ -96,9 +96,13 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   button (or any setting and its action) go on ONE row (`addToggleButton`), never the button under the switch.
   A dialog that asks for a file and a folder shows both as path fields with Browse... buttons in one window,
   the thing the user looks for first at the top (Unpack archive), never a chain of bare file dialogs.
-- GitHub's repository tabs (Code, Issues, Pull requests, Actions...) are fixed; a "Releases" tab cannot be
-  added. The downloads are linked in the first lines of README.md (Releases, Rural Organ demo, INDEX.md)
-  and in the repository's About box (the website).
+- GitHub's repository tabs (Code, Issues, Pull requests, Actions...) are fixed; a "Releases" or
+  "Configurations" tab cannot be added. README.md therefore starts with a heading of links: RELEASES (the
+  program), the Rural Organ demo, "Configurations, Organs" (always that name - people want organs), plus a
+  release badge. Every release carries two "Source code" assets added by GitHub itself - they cannot be
+  removed; the release bodies say they are not needed.
+- Release bodies and READMEs are for humans: one bullet per system/platform, the one sentence that matters
+  (how to unpack, what to download) in bold on its own line, links as links - never one long paragraph.
 
 - A configuration README is WRITTEN BY THE PROGRAM: saving a portable configuration puts `<name>.README.md`
   beside the `.json` (`MainComponent::configurationReadme`; dev: `ORGAN_SAVE_PORTABLE=<file>` with

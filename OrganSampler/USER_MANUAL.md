@@ -442,13 +442,15 @@ Sample folders are mostly distributed as RAR archives, and the program loads
 folders, not archives: unpack the archive first, then *Load folder...* the
 folder tree it contained. Three ways:
 
-- **In OrganSampler:** the top-bar button *Unpack archive* (hidden by default:
-  Configuration Editor > Console shows it, and the same row has a button that
-  does the same without showing it). One window: at the top the `.rar` file
-  (*Browse...*, or paste its path), under it the folder to unpack into
-  (proposed: the folder of the archive; the archive's own folder tree is
-  created inside it), then *Unpack*. The progress is shown and can be
-  cancelled; at the end the program says where the folders are.
+- **In OrganSampler:** the top-bar button *Unpack archive* (Configuration
+  Editor > Console hides it, and the same row has a button that does the same
+  without the top bar). One window: at the top the `.rar` file or files -
+  *Browse...* (select several with Ctrl or Shift), or paste the paths, one
+  per line - under it the folder to unpack into (proposed: the folder of the
+  first archive; each archive's own folder tree is created inside it), then
+  *Unpack*. Several archives are unpacked one after another with one
+  progress bar; it can be cancelled, and at the end the program says where
+  the folders are.
   RAR 4 and RAR 5 archives, solid or not, are read by libarchive (BSD
   licence), the files written as they are - no password-protected archives,
   and a multi-part archive (`.part1.rar`, `.part2.rar` ...) is unpacked from
@@ -2311,9 +2313,9 @@ fires from its learned MIDI control, which is how a headless console uses it.
 ### Top bar: Unpack archive
 
 Shows or hides the Unpack archive button (see "Unpacking sample archives
-(RAR)"): a RAR archive of sample folders unpacked by the program into a
-folder of your choice. Hidden by default; the button below this toggle does
-the same without showing it.
+(RAR)"): RAR archives of sample folders unpacked by the program into a
+folder of your choice. Shown by default; the button beside this switch does
+the same without the top bar.
 
 ### Top bar: GLOBAL RESET
 
