@@ -12,6 +12,18 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.105] - 2026-10-17
+
+### Fixed
+- The main window on a small screen (an old laptop, a 1280 x 800 MacBook):
+  it could come up taller than the screen, centred by the window system
+  with the title bar and the close button off the top. After placing the
+  window the program now reads back where the window system put its frame
+  and shrinks and moves it until the whole frame is inside the work area;
+  the activity log records the screen, the interface size and the result.
+- The automatic switch of the IR reverbs to Light processing is silent:
+  no dialog, only the activity log and Configuration Editor > Engine say it.
+
 ## [0.8.104] - 2026-10-16
 
 ### Added

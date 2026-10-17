@@ -11950,16 +11950,7 @@ void MainComponent::applyIrProcessing(bool fromLoad)
         refreshConfigurationEditor();
         const auto after = engine.getReverbSummary();
         CrashHandler::note("IR processing: Light - " + juce::String(after.routes) + " route(s) now cost " + juce::String(after.totalCostMsPerSecond, 1) + " ms per second of audio");
-        if (!irLightNoticeShown)
-        {
-            irLightNoticeShown = true;
-            juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, "IR reverb: Light processing chosen for this computer",
-                "The convolution reverbs of the " + juce::String(summary.routes) + " audio routes would take " + juce::String(perThread / 10.0, 0)
-                + " % of a render thread at full quality, which leaves too little for the pipes on this computer. They now run in Light "
-                "processing - a quarter of the sample rate, the tail trimmed where it has fallen 60 dB, no stereo cross terms - the same "
-                "room with a little less air in the top. Configuration Editor > Engine > IR processing shows the cost and can force Full or Light.",
-                "OK", this);
-        }
+        // Silent: the log and the Configuration Editor say it; no dialog interrupts the player.
         return;
     }
     // Light: back to Full only when Full would clearly fit (the Light cost times its savings).
@@ -14909,6 +14900,34 @@ void MainComponent::placeMainWindow(juce::ResizableWindow& window)
     x = juce::jlimit(inner.getX(), juce::jmax(inner.getX(), inner.getRight() - width), x);
     y = juce::jlimit(inner.getY(), juce::jmax(inner.getY(), inner.getBottom() - height), y);
     window.setBounds(UIScale::toWindowSpace(juce::Rectangle<int>(x, y, width, height)));
+    // Read back where the window system really put the frame (the peers scale
+    // differently from platform to platform, and a window taller than a small
+    // screen is centred by the system with its title bar off the top): whatever
+    // does not fit the work area is shrunk and moved to the top until the whole
+    // frame, title bar and close button included, is on the screen.
+    juce::String placement = "Main window: work area " + work.toString() + ", interface " + juce::String(UIScale::percent())
+        + " %, asked for " + juce::Rectangle<int>(x, y, width, height).toString();
+    for (int attempt = 0; attempt < 4; ++attempt)
+    {
+        auto* peer = window.getPeer();
+        if (peer == nullptr) break;
+        const auto peerFrame = peer->getFrameSizeIfPresent();
+        const auto actual = (peerFrame ? *peerFrame : frame).addedTo(peer->getBounds());
+        placement << "; frame on screen " << actual.toString();
+        if (work.contains(actual)) break;
+        const double shrink = juce::jmin(1.0, (double)work.getWidth() / juce::jmax(1, actual.getWidth()),
+            (double)work.getHeight() / juce::jmax(1, actual.getHeight()));
+        if (shrink < 0.999)
+        {
+            width = juce::jmax(400, (int)std::floor(width * shrink) - 2);
+            height = juce::jmax(300, (int)std::floor(height * shrink) - 2);
+        }
+        // Moved so that the frame lies inside: the title bar first.
+        x = juce::jlimit(inner.getX(), juce::jmax(inner.getX(), inner.getRight() - width), x - juce::jmax(0, actual.getRight() - work.getRight()) + juce::jmax(0, work.getX() - actual.getX()));
+        y = juce::jlimit(inner.getY(), juce::jmax(inner.getY(), inner.getBottom() - height), y - juce::jmax(0, actual.getBottom() - work.getBottom()) + juce::jmax(0, work.getY() - actual.getY()));
+        window.setBounds(UIScale::toWindowSpace(juce::Rectangle<int>(x, y, width, height)));
+    }
+    CrashHandler::note(placement);
     if (savedWindowMaximised) window.setFullScreen(true);
 }
 
@@ -15432,16 +15451,7 @@ void MainComponent::timerCallback()
             engine.setReverbProcessingLight(true);
             saveSettings();
             refreshConfigurationEditor();
-            CrashHandler::note("IR processing: Light chosen by the runtime guard");
-            if (!irLightNoticeShown)
-            {
-                irLightNoticeShown = true;
-                juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, "IR reverb: Light processing chosen for this computer",
-                    "The convolution reverb of a route did not keep up with the audio period on this computer. The IR reverbs now run in Light "
-                    "processing - a quarter of the sample rate, the tail trimmed where it has fallen 60 dB, no stereo cross terms - the same "
-                    "room with a little less air in the top. Configuration Editor > Engine > IR processing shows the cost and can force Full or Light.",
-                    "OK", this);
-            }
+            CrashHandler::note("IR processing: Light chosen by the runtime guard");   // silently: the log and the Configuration Editor say it
         }
     }
     showMissingAudioDevicesIfDue();
