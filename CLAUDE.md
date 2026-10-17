@@ -111,10 +111,12 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   over (use a non-portable configuration of this machine, a portable one would ask for the root); quit the program
   afterwards. No legend above the table. Every README looks the same. Stralsund: 53 + 18 = 71.
 
-## Pending for the next Windows session (delete when done)
-- `git pull` in `F:\JUCE_PROJEKTY\OrganSamplerC` (the NTFS checkout is at 0.8.98; git cannot run there from
-  Linux: "expected submodule path 'JUCE' not to be a symbolic link"), then Projucer resave + icon copy, build,
-  deliver to `C:\OrganSampler`.
+## Pending for the next Linux session (delete when done)
+- `git pull` in `~/OrganSamplerC-linux` (the NTFS checkout `F:` is current, 0.8.109; git cannot run there from
+  Linux: "expected submodule path 'JUCE' not to be a symbolic link"); copy the Linux binary of the newest release
+  to `~/Downloads/OrganSampler`.
+- Windows builds: never run two MSBuilds of the solution at once - the second fails with C1041 (PDB) and can
+  leave orphaned `cl.exe` processes (0 s CPU, parent gone) holding the PDB; stop them before the next build.
 - The dual boot clock is settled: Windows and Linux both keep the hardware clock in local time
   (`timedatectl` says "RTC in local TZ: yes"); never set `RealTimeIsUniversal` on Windows. Windows fast startup
   is off (`powercfg /h off`), so the NTFS disks are writable from Linux.
