@@ -89,6 +89,7 @@ private:
     LeftOnlyTextButton unpackArchiveButton{ "Unpack archive" };   // RAR sample archives unpacked by libarchive (hidden by default)
     void unpackArchiveDialog();
     void startUnpack(const juce::Array<juce::File>& archives, const juce::File& destination);   // the work (one archive after another) with its progress window, then the report
+    juce::Component::SafePointer<juce::DialogWindow> unpackWindow;   // the Unpack archive window (not modal: a file chooser beside it must keep the focus)
     std::unique_ptr<juce::FileChooser> archiveChooser;
     // Every button of the grid (stops, transmissions, extensions, stop folders
     // with a sound) in grid order - what "a stop" means when stops are counted or

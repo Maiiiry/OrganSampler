@@ -12,6 +12,24 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.114] - 2026-10-17
+
+### Fixed
+- Unpack archive: the window is no longer modal, so a file chooser opened
+  from it keeps the focus (on Linux the modal window took it back at every
+  click; 0.8.113 hid the window meanwhile, which on Windows hid the chooser
+  with it). A second press of the top-bar button brings the open window to
+  the front.
+- Polyphony measurement: a level that breaks up after its clean seconds is
+  not clean - the best clean second of the level before it counts, and the
+  narrowing down continues between that level and the broken one (a Core 2
+  Duo laptop: 610 voices clean for three seconds, then 102 % of the period
+  at the same 610; the report called 610 both fine and broken and the run
+  stopped there).
+- The question whether to save before quitting or loading another
+  configuration is tied to the main window and kept on top of it: a window
+  manager could leave it behind the main window, unseen.
+
 ## [0.8.113] - 2026-10-17
 
 ### Changed

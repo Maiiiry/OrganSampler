@@ -1814,6 +1814,27 @@ void MainComponent::requestQuit(std::function<void()> proceed)
     askToKeepChanges("Quit OrganSampler", "quit", std::move(proceed));
 }
 
+namespace
+{
+    // A question the user must answer before the program goes on (quit, load
+    // another configuration): the alert is tied to the main window, and once it
+    // exists it is put on top of everything and kept there - a window manager
+    // (Linux) may otherwise leave it behind the main window, unseen.
+    void askOnTop(juce::MessageBoxOptions options, juce::Component* over, std::function<void(int)> callback)
+    {
+        const juce::String title = options.getTitle();
+        juce::AlertWindow::showAsync(options.withAssociatedComponent(over), std::move(callback));
+        auto& desktop = juce::Desktop::getInstance();
+        for (int i = desktop.getNumComponents(); --i >= 0;)
+            if (auto* alert = dynamic_cast<juce::AlertWindow*>(desktop.getComponent(i)))
+                if (alert->getName() == title)
+                {
+                    alert->setAlwaysOnTop(true);
+                    alert->toFront(true);
+                }
+    }
+}
+
 void MainComponent::askToKeepChanges(const juce::String& title, const juce::String& continueVerb, std::function<void()> proceed)
 {
     juce::Component::SafePointer<MainComponent> safeThis(this);
@@ -1827,14 +1848,14 @@ void MainComponent::askToKeepChanges(const juce::String& title, const juce::Stri
     {
         const bool builtSomething = !sampleTrees.empty() || !engine.getStops().isEmpty();
         if (!builtSomething) { if (proceed) proceed(); return; }
-        juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+        askOnTop(juce::MessageBoxOptions()
             .withIconType(juce::MessageBoxIconType::QuestionIcon)
             .withTitle(title)
             .withMessage("The instrument was changed (sample folders, stops, voicing, settings) but no configuration file is open.\n"
                 "Save it as a new configuration file? Without that these changes are lost: the next start begins with an empty instrument.")
             .withButton("Save to a file...")
             .withButton(continueCapitalised + " without saving")
-            .withButton("Cancel"),
+            .withButton("Cancel"), this,
             [safeThis, proceed](int result)
             {
                 // JUCE result codes for three buttons: first = 1, second = 2, third (Cancel) = 0.
@@ -1849,13 +1870,13 @@ void MainComponent::askToKeepChanges(const juce::String& title, const juce::Stri
         if (proceed) proceed();
         return;
     }
-    juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+    askOnTop(juce::MessageBoxOptions()
         .withIconType(juce::MessageBoxIconType::QuestionIcon)
         .withTitle(title)
         .withMessage("Save the changed settings into the configuration \"" + currentConfigurationName + "\" before you " + continueVerb + "?")
         .withButton("Save and " + continueVerb)
         .withButton(continueCapitalised + " without saving")
-        .withButton("Cancel"),
+        .withButton("Cancel"), this,
         [safeThis, proceed](int result)
         {
             if (safeThis == nullptr || result == 0) return;
@@ -10848,11 +10869,9 @@ void MainComponent::unpackArchiveDialog()
                 const auto known = archives();
                 chooser = std::make_unique<juce::FileChooser>("The RAR archive(s) of the sample folders - select several with Ctrl or Shift",
                     !known.isEmpty() ? known.getFirst() : fileOf(folder.getText()), ArchiveExtractor::fileFilter());
-                hideWhileChoosing(true);
                 chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::canSelectMultipleItems,
                     [this](const juce::FileChooser& c)
                 {
-                    hideWhileChoosing(false);
                     juce::StringArray lines;
                     for (const auto& chosen : c.getResults()) if (chosen.existsAsFile()) lines.add(chosen.getFullPathName());
                     if (lines.isEmpty()) return;
@@ -10866,10 +10885,8 @@ void MainComponent::unpackArchiveDialog()
             {
                 const auto known = fileOf(folder.getText());
                 chooser = std::make_unique<juce::FileChooser>("The folder to unpack into", known.isDirectory() ? known : juce::File(), "*");
-                hideWhileChoosing(true);
                 chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories, [this](const juce::FileChooser& c)
                 {
-                    hideWhileChoosing(false);
                     const auto chosen = c.getResult();
                     if (chosen == juce::File()) return;
                     folder.setText(chosen.getFullPathName(), false);
@@ -10892,17 +10909,6 @@ void MainComponent::unpackArchiveDialog()
             refresh();
             setSize(700, 330);
         }
-        // While a file chooser is open this window steps aside (hidden) and comes
-        // back in front once the chooser is closed: on Linux the modal window
-        // pushed itself in front of the chooser at every click.
-        void hideWhileChoosing(bool choosing)
-        {
-            if (auto* window = findParentComponentOfClass<juce::DialogWindow>())
-            {
-                window->setVisible(!choosing);
-                if (!choosing) window->toFront(true);
-            }
-        }
         void proposeFolder()
         {
             if (folderTyped) return;
@@ -10917,8 +10923,7 @@ void MainComponent::unpackArchiveDialog()
         }
         void close()
         {
-            if (auto* window = findParentComponentOfClass<juce::DialogWindow>())
-                juce::MessageManager::callAsync([safeWindow = juce::Component::SafePointer<juce::DialogWindow>(window)] { if (safeWindow != nullptr) safeWindow->exitModalState(0); });
+            if (auto* window = findParentComponentOfClass<juce::DialogWindow>()) window->closeButtonPressed();
         }
         void resized() override
         {
@@ -10943,16 +10948,30 @@ void MainComponent::unpackArchiveDialog()
             hint.setBounds(area);
         }
     };
+    // The window is NOT modal (0.8.114): a modal one took the focus back from the
+    // file chooser at every click (Linux), and hiding it hid the chooser with it
+    // (Windows parents the chooser to it). An ordinary window beside the main one
+    // leaves the chooser alone; a second press brings the open window to the front.
+    struct UnpackWindow final : public juce::DialogWindow
+    {
+        UnpackWindow() : juce::DialogWindow("Unpack archive", juce::Colours::darkgrey, true, true)
+        {
+            setUsingNativeTitleBar(true);
+            setResizable(false, false);
+        }
+        void closeButtonPressed() override
+        {
+            juce::MessageManager::callAsync([self = juce::Component::SafePointer<UnpackWindow>(this)] { delete self.getComponent(); });
+        }
+    };
+    if (unpackWindow != nullptr) { unpackWindow->toFront(true); return; }
     const auto start = lastSettingsDirectory.isDirectory() ? lastSettingsDirectory : juce::File::getSpecialLocation(juce::File::userHomeDirectory);
-    juce::DialogWindow::LaunchOptions options;
-    options.dialogTitle = "Unpack archive";
-    options.dialogBackgroundColour = juce::Colours::darkgrey;
-    options.content.setOwned(new Panel(*this, start));
-    options.componentToCentreAround = this;
-    options.escapeKeyTriggersCloseButton = true;
-    options.useNativeTitleBar = true;
-    options.resizable = false;
-    if (auto* window = options.launchAsync()) placeDialog(*window, "unpackArchive", 700, 330);
+    auto* window = new UnpackWindow();
+    window->setContentOwned(new Panel(*this, start), true);
+    unpackWindow = window;
+    window->setVisible(true);
+    placeDialog(*window, "unpackArchive", 700, 330);
+    window->toFront(true);
 }
 
 void MainComponent::startUnpack(const juce::Array<juce::File>& archives, const juce::File& destination)
@@ -17106,6 +17125,14 @@ struct MainComponent::PolyphonyMeasurement
     // after clean seconds at 1600 gets 1500, not half of 1900.
     int cleanSecondPeak = 0, cleanSecondKeys = 0, cleanSecondStrikes = 0, cleanSecondSafe = 0;
     float cleanSecondShare = 0.0f;
+    double cleanSecondFraction = 1.0;   // the share of the stops at that level
+    // The best clean second of the level before it: a level that breaks up after
+    // its clean seconds is not clean, and the level before it counts instead
+    // (a laptop: 610 voices clean for three seconds, then 102 % at the same
+    // 610 - the report said 610 was fine and 610 broke).
+    int prevCleanSecondPeak = 0, prevCleanSecondKeys = 0, prevCleanSecondStrikes = 0, prevCleanSecondSafe = 0;
+    float prevCleanSecondShare = 0.0f;
+    double prevCleanSecondFraction = 1.0;
     int firstFailingPeak = 0, firstFailingKeys = 0, firstFailingStrikes = 0;
     juce::String failReason;          // what ended the climb (for the report)
     bool exhausted = false;           // every key of every division at the top rate and the voices still below the target
@@ -17616,11 +17643,21 @@ void MainComponent::startPolyphonyMeasurement()
             const int safe = share > 0.8f ? juce::roundToInt(state->lastPeakSecond * 0.8f / share) : state->lastPeakSecond;
             if (safe > state->cleanSecondSafe)
             {
+                const bool sameLevel = state->cleanSecondKeys == state->currentKeys && state->cleanSecondStrikes == state->currentStrikes
+                    && std::abs(state->cleanSecondFraction - state->stopFraction) < 1.0e-9;
+                if (!sameLevel && state->cleanSecondSafe > 0)
+                {
+                    // A new level takes the lead: the old one is kept in case the new one breaks up later.
+                    state->prevCleanSecondSafe = state->cleanSecondSafe; state->prevCleanSecondPeak = state->cleanSecondPeak;
+                    state->prevCleanSecondKeys = state->cleanSecondKeys; state->prevCleanSecondStrikes = state->cleanSecondStrikes;
+                    state->prevCleanSecondShare = state->cleanSecondShare; state->prevCleanSecondFraction = state->cleanSecondFraction;
+                }
                 state->cleanSecondSafe = safe;
                 state->cleanSecondPeak = state->lastPeakSecond;
                 state->cleanSecondKeys = state->currentKeys;
                 state->cleanSecondStrikes = state->currentStrikes;
                 state->cleanSecondShare = share;
+                state->cleanSecondFraction = state->stopFraction;
                 if (state->highestCleanPeak < safe) { state->cleanStopsEngaged = state->stopsEngaged; state->cleanStopsTotal = state->stopsTotal; }
             }
         }
@@ -17647,6 +17684,18 @@ void MainComponent::startPolyphonyMeasurement()
                 state->failReason = why;
             }
             CrashHandler::note("Polyphony measurement: failed at " + juce::String(voices) + " voices (" + describe() + "): " + why);
+            // The level whose clean seconds led broke up after them: it is not clean
+            // after all, and the best clean second of the level before it counts.
+            if (state->cleanSecondSafe > 0 && state->cleanSecondKeys == state->currentKeys && state->cleanSecondStrikes == state->currentStrikes
+                && std::abs(state->cleanSecondFraction - state->stopFraction) < 1.0e-9 && state->highestCleanKeys != state->currentKeys)
+            {
+                CrashHandler::note("Polyphony measurement: the clean seconds at this level (" + juce::String(state->cleanSecondPeak)
+                    + " voices) do not count - the level broke up after them; the best clean second before it: " + juce::String(state->prevCleanSecondPeak) + " voices");
+                state->cleanSecondSafe = state->prevCleanSecondSafe; state->cleanSecondPeak = state->prevCleanSecondPeak;
+                state->cleanSecondKeys = state->prevCleanSecondKeys; state->cleanSecondStrikes = state->prevCleanSecondStrikes;
+                state->cleanSecondShare = state->prevCleanSecondShare; state->cleanSecondFraction = state->prevCleanSecondFraction;
+                state->prevCleanSecondSafe = 0; state->prevCleanSecondPeak = 0; state->prevCleanSecondKeys = 0; state->prevCleanSecondStrikes = 0;
+            }
             if (state->refineByStops)
             {
                 // This share of the stops failed: the next one lies below it.
