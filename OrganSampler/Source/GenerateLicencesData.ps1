@@ -33,7 +33,8 @@ $items = @(
     @{ Name = 'kLicenceAgpl3';           File = (Join-Path $Root 'ThirdParty\licence-texts\AGPL-3.0.txt') },
     @{ Name = 'kLicenceAsioNotice';      File = (Join-Path $Root 'ThirdParty\notices\ASIO-SDK-notice.txt') },
     @{ Name = 'kLicenceSignalsmithStretch'; File = (Join-Path $Root 'ThirdParty\signalsmith\LICENSE-signalsmith-stretch.txt') },
-    @{ Name = 'kLicenceSignalsmithLinear';  File = (Join-Path $Root 'ThirdParty\signalsmith\LICENSE-signalsmith-linear.txt') }
+    @{ Name = 'kLicenceSignalsmithLinear';  File = (Join-Path $Root 'ThirdParty\signalsmith\LICENSE-signalsmith-linear.txt') },
+    @{ Name = 'kLicenceLibarchive';         File = (Join-Path $Root 'ThirdParty\notices\libarchive-COPYING.txt') }
 )
 
 $sb = New-Object System.Text.StringBuilder

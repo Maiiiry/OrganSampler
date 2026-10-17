@@ -11,6 +11,7 @@ About & licences.
 | Steinberg ASIO SDK (Steinberg Media Technologies GmbH) | 2.3.4 | GNU GPLv3 option of the dual licence (proprietary ASIO licence or GPLv3) | `ASIOSDK/` |
 | Signalsmith Stretch (Signalsmith Audio Ltd) | main, 2026 | MIT | `ThirdParty/signalsmith/signalsmith-stretch.h` |
 | Signalsmith Linear (Signalsmith Audio Ltd) | main, 2026 | MIT | `ThirdParty/signalsmith/signalsmith-linear/` |
+| libarchive (Tim Kientzle and contributors) | 3.8.9 | BSD 2-clause (its COPYING) | `ThirdParty/libarchive/` (git submodule, tag v3.8.9); the Visual Studio build links `ThirdParty/libarchive-prebuilt/win-x64/archive.lib`, built from the same sources with the same options. Unpacks RAR sample archives inside the program ("Unpack archive"). |
 
 ASIO is a trademark and software of Steinberg Media Technologies GmbH. ASIO
 support is compiled into the Windows build only; the macOS and Linux builds use
@@ -21,5 +22,6 @@ you play (Sonus Paradisi and others) remain the property of their authors.
 
 The licence texts: `LICENSE` (GPLv3), `ThirdParty/licence-texts/AGPL-3.0.txt`,
 `ASIOSDK/LICENSE.txt`, `ThirdParty/signalsmith/LICENSE-signalsmith-stretch.txt`,
-`ThirdParty/signalsmith/LICENSE-signalsmith-linear.txt`, and the notices in
+`ThirdParty/signalsmith/LICENSE-signalsmith-linear.txt`,
+`ThirdParty/notices/libarchive-COPYING.txt`, and the notices in
 `ThirdParty/notices/`.

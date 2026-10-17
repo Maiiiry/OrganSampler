@@ -964,6 +964,9 @@
     <ClCompile Include="..\..\..\ASIOSDK\common\asio.cpp">
       <Filter>OrganSampler\Source</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\Source\ArchiveExtract.cpp">
+      <Filter>OrganSampler\Source</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\Source\Main.cpp">
       <Filter>OrganSampler\Source</Filter>
     </ClCompile>
@@ -5161,6 +5164,9 @@
       <Filter>OrganSampler\Source</Filter>
     </ClInclude>
     <ClInclude Include="..\..\Source\voicer.h">
+      <Filter>OrganSampler\Source</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Source\ArchiveExtract.h">
       <Filter>OrganSampler\Source</Filter>
     </ClInclude>
     <ClInclude Include="..\..\Source\MainComponent.h">

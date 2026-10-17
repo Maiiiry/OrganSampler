@@ -10,6 +10,7 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 #include "AggregatedWASAPIAudio.h"
 #include "PlatformAudio.h"
+#include "ArchiveExtract.h"
 
 namespace
 {
@@ -836,6 +837,10 @@ MainComponent::MainComponent()
     shutdownButton.setTooltip("Saves the configuration, quits OrganSampler and shuts the computer down at once - no question "
         "asked (for consoles without a screen).");
     shutdownButton.onClick = [this] { shutdownComputer(); };
+    addAndMakeVisible(unpackArchiveButton);
+    unpackArchiveButton.setTooltip("Unpacks a RAR archive of sample folders into a folder of your choice (libarchive, RAR 4 and RAR 5) - "
+        "for computers without an unpacker, macOS above all. Then load the folders in the Stop List.");
+    unpackArchiveButton.onClick = [this] { unpackArchiveDialog(); };
 
     addAndMakeVisible(enableAllButton);
     enableAllButton.setButtonText("Tutti");
@@ -1480,6 +1485,20 @@ MainComponent::MainComponent()
                 CrashHandler::note("ORGAN_FILL_ALIASES_SAVE: " + juce::String(filled) + " alias(es) filled, configuration saved to " + file.getFullPathName());
             }
             else CrashHandler::note("ORGAN_FILL_ALIASES_SAVE: " + juce::String(filled) + " alias(es) filled, no configuration file open");
+        });
+    }
+    // Development: ORGAN_UNPACK="<archive>|<folder>" unpacks the archive into the
+    // folder 3 s after start (the libarchive path tested without the dialogs).
+    if (const char* unpack = std::getenv("ORGAN_UNPACK"))
+    {
+        const juce::String spec(juce::String::fromUTF8(unpack));
+        const juce::File archive(spec.upToFirstOccurrenceOf("|", false, false));
+        const juce::File folder(spec.fromFirstOccurrenceOf("|", false, false));
+        juce::Timer::callAfterDelay(3000, [archive, folder]
+        {
+            const auto r = ArchiveExtractor::extract(archive, folder, [](double, const juce::String&) { return true; });
+            CrashHandler::note("ORGAN_UNPACK: " + juce::String(r.files) + " file(s), " + juce::String(r.skipped) + " skipped, "
+                + juce::String(r.bytes) + " bytes" + (r.error.isNotEmpty() ? ", ERROR " + r.error : "") + " (" + ArchiveExtractor::libraryVersion() + ")");
         });
     }
     // Development: ORGAN_SAVE_PORTABLE=<file> saves the loaded organ as a
@@ -9774,7 +9793,9 @@ juce::String MainComponent::configurationReadme(const juce::var& configuration, 
                 for (const auto& route : *routes)
                 {
                     const auto routeName = route.getProperty("name", "").toString();
-                    const auto xml = route.getProperty("audioDeviceStateXml", "").toString();
+                    // The default route's device lives at the division level; its entry here is a placeholder.
+                    auto xml = route.getProperty("audioDeviceStateXml", "").toString();
+                    if (xml.isEmpty() && routeName.equalsIgnoreCase("default")) xml = item.getProperty("audioDeviceStateXml", "").toString();
                     const bool silent = xml.isEmpty() || (!xml.contains("deviceType=") && xml.contains("audioOutputDeviceName=\"\""));
                     (silent ? unused : used).add(routeName);
                 }
@@ -10664,6 +10685,7 @@ std::vector<MainComponent::HeaderButtonInfo> MainComponent::headerButtons()
         { &saveConfigurationButton, 170, "saveConfiguration", "Save Configuration", true },
         { &configurationEditorButton, 175, "configurationEditor", "Configuration Editor", true },
         { &shutdownButton, 130, "shutdown", "Shut down PC", false },
+        { &unpackArchiveButton, 150, "unpackArchive", "Unpack archive", false },
         { &resetButton, 180, "globalReset", "GLOBAL RESET", true }
     };
 }
@@ -10672,7 +10694,78 @@ bool MainComponent::isHeaderButtonShown(const juce::String& key) const
 {
     const auto found = headerButtonShown.find(key);
     if (found != headerButtonShown.end()) return found->second;
-    return !(key == "stopMerging" || key == "loadVoicing" || key == "saveVoicing" || key == "shutdown");
+    return !(key == "stopMerging" || key == "loadVoicing" || key == "saveVoicing" || key == "shutdown" || key == "unpackArchive");
+}
+
+// "Unpack archive": a RAR archive of sample folders is unpacked by libarchive
+// into a folder the user chooses (proposed: beside the archive), with a progress
+// window and the chance to cancel; the result says where the folders are, so the
+// Stop List's "Load folder..." is the next step. For the computers without an
+// unpacker of their own - macOS has none with a window.
+void MainComponent::unpackArchiveDialog()
+{
+    const auto start = lastSettingsDirectory.isDirectory() ? lastSettingsDirectory : juce::File::getSpecialLocation(juce::File::userHomeDirectory);
+    archiveChooser = std::make_unique<juce::FileChooser>("Unpack archive: choose the RAR archive of the sample folders", start, ArchiveExtractor::fileFilter());
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    archiveChooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+        [safeThis](const juce::FileChooser& chooser)
+        {
+            if (safeThis == nullptr) return;
+            const auto archive = chooser.getResult();
+            if (!archive.existsAsFile()) return;
+            safeThis->archiveChooser = std::make_unique<juce::FileChooser>("Unpack archive: choose the folder to unpack " + archive.getFileName() + " into",
+                archive.getParentDirectory(), "*");
+            safeThis->archiveChooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                [safeThis, archive](const juce::FileChooser& folderChooser)
+                {
+                    if (safeThis == nullptr) return;
+                    const auto destination = folderChooser.getResult();
+                    if (destination == juce::File()) return;
+                    // The work on a thread with a progress window (modal: the Stop List
+                    // must not load the folders while they are still being written).
+                    struct UnpackJob final : public juce::ThreadWithProgressWindow
+                    {
+                        UnpackJob(const juce::File& a, const juce::File& d, juce::Component* over)
+                            : juce::ThreadWithProgressWindow("Unpacking " + a.getFileName(), true, true, 10000, "Cancel", over), archive(a), destination(d) {}
+                        void run() override
+                        {
+                            result = ArchiveExtractor::extract(archive, destination, [this](double share, const juce::String& name)
+                            {
+                                setProgress(share);
+                                setStatusMessage(name.isNotEmpty() ? name : juce::String("..."));
+                                return !threadShouldExit();
+                            });
+                        }
+                        juce::File archive, destination;
+                        ArchiveExtractor::Result result;
+                    };
+                    auto job = std::make_shared<UnpackJob>(archive, destination, safeThis.getComponent());
+                    job->launchThread();   // returns at once; the window closes itself when run() ends
+                    // Poll for the end (the thread's own callback is not available before JUCE 8 on every platform).
+                    auto poll = std::make_shared<std::function<void()>>();
+                    *poll = [safeThis, job, poll]
+                    {
+                        if (job->isThreadRunning()) { juce::Timer::callAfterDelay(200, [poll] { (*poll)(); }); return; }
+                        if (safeThis == nullptr) return;
+                        const auto& r = job->result;
+                        safeThis->lastSettingsDirectory = job->destination;
+                        safeThis->saveLastDirectory();
+                        juce::String text;
+                        if (r.error.isNotEmpty()) text << r.error << "\n\n";
+                        else if (r.cancelled) text << "Cancelled.\n\n";
+                        text << juce::String(r.files) << " file(s) in " << juce::String(r.directories) << " folder(s), "
+                             << juce::String(r.bytes / (1024 * 1024)) << " MB, unpacked into\n" << job->destination.getFullPathName();
+                        if (r.skipped > 0) text << "\n" << r.skipped << " entr(ies) skipped (not files or folders, or names leading outside the folder).";
+                        if (r.topFolder != juce::File()) text << "\n\nThe archive's folder: " << r.topFolder.getFullPathName();
+                        text << "\n\nNext: Stop List > Load folder... and choose the folder tree of the samples (the folder that holds the "
+                                "stops' folders, or the division folders), or Load Configuration when a configuration came with the samples.";
+                        juce::AlertWindow::showMessageBoxAsync(r.error.isNotEmpty() ? juce::MessageBoxIconType::WarningIcon : juce::MessageBoxIconType::InfoIcon,
+                            "Unpack archive", text, "OK", safeThis.getComponent());
+                        *poll = nullptr;
+                    };
+                    juce::Timer::callAfterDelay(300, [poll] { if (*poll) (*poll)(); });
+                });
+        });
 }
 
 void MainComponent::clearSampleLibraryInMemory()
@@ -17780,6 +17873,7 @@ void MainComponent::showAboutDialog(const juce::String& manualSection, const juc
         { "Steinberg ASIO SDK 2.3.4 - GPL v3 option", kLicenceAsioNoticeParts, kLicenceAsioNoticePartCount },
         { "Signalsmith Stretch - MIT", kLicenceSignalsmithStretchParts, kLicenceSignalsmithStretchPartCount },
         { "Signalsmith Linear - MIT", kLicenceSignalsmithLinearParts, kLicenceSignalsmithLinearPartCount },
+        { "libarchive 3.8.9 - BSD", kLicenceLibarchiveParts, kLicenceLibarchivePartCount },
     };
     // The manual's text with hyperlinks: a click on a link (a chapter named in
     // the text) jumps to that chapter; the mouse shows a hand over it.
@@ -19116,7 +19210,8 @@ void MainComponent::showConfigurationEditor()
                     o.twoWindows ? 1 : 0, [&o](int index) { o.setTwoWindows(index == 1); },
                     "With two windows every division section below offers \"Shown in window\"; the second window "
                     "starts empty and can be moved to another screen. Its position is remembered.");
-                // Which buttons the top bar shows.
+                // Which buttons the top bar shows - and every one of them pressable
+                // right here, so that nobody has to put a button on the top bar to use it.
                 for (const auto& item : o.headerButtons())
                 {
                     const juce::String key(item.key);
@@ -19127,6 +19222,9 @@ void MainComponent::showConfigurationEditor()
                         o.saveSettings();
                         o.resized();
                     }, "Shows or hides this button in the top bar of the main window.");
+                    juce::Component::SafePointer<juce::Button> target(item.button);
+                    addButton(juce::String("    ") + item.label, item.label, [target] { if (target != nullptr) target->triggerClick(); },
+                        "The same as the button in the top bar - without having to show it there.");
                 }
             }
             addToggle("Melody/bass couplers: new extreme key only", o.melodyBassNewKeysOnly, [&o](bool state)

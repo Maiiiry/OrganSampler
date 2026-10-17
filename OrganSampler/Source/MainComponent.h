@@ -86,6 +86,9 @@ private:
     LeftOnlyTextButton configurationEditorButton{ "Configuration Editor" };
     LeftOnlyTextButton stopListButton{ "Stop List" };   // the table of every division's stops, folders and transmissions
     LeftOnlyTextButton shutdownButton{ "Shut down PC" };   // saves, quits and shuts the computer down (hidden by default)
+    LeftOnlyTextButton unpackArchiveButton{ "Unpack archive" };   // RAR sample archives unpacked by libarchive (hidden by default)
+    void unpackArchiveDialog();
+    std::unique_ptr<juce::FileChooser> archiveChooser;
     // ========== KONEC PŘIDANÉ ČÁSTI ==========
     // Which buttons the top bar shows (Configuration Editor > Console). Missing
     // keys use the defaults: everything on except Stop-Merging, Load Voicing and

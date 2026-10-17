@@ -440,6 +440,32 @@ static const char* const kManualText_part2 =
     "  Stars at both ends match anywhere, like no star at all. Capital letters do\n"
     "  not matter; underscores and other characters count exactly as written.\n"
     "\n"
+    "### Unpacking sample archives (RAR)\n"
+    "\n"
+    "Sample folders are mostly distributed as RAR archives, and the program loads\n"
+    "folders, not archives: unpack the archive first, then *Load folder...* the\n"
+    "folder tree it contained. Three ways:\n"
+    "\n"
+    "- **In OrganSampler:** the top-bar button *Unpack archive* (hidden by default:\n"
+    "  Configuration Editor > Console shows it, and the same section has a button\n"
+    "  that does the same without showing it). It asks for the `.rar` file, then\n"
+    "  for the folder to unpack into (proposed: the folder of the archive), shows\n"
+    "  the progress and can be cancelled; at the end it says where the folders are.\n"
+    "  RAR 4 and RAR 5 archives, solid or not, are read by libarchive (BSD\n"
+    "  licence), the files written as they are - no password-protected archives,\n"
+    "  and a multi-part archive (`.part1.rar`, `.part2.rar` ...) is unpacked from\n"
+    "  its first part only when the parts lie together. Nothing else is needed:\n"
+    "  this is the way on macOS, which has no unpacker with a window of its own.\n"
+    "- **With a free program:** 7-Zip on Windows (https://www.7-zip.org), Keka or\n"
+    "  The Unarchiver on macOS, `unrar x` or `7z x` in a terminal on Linux. WinRAR\n"
+    "  itself unpacks as well (as a trial). Right-click the archive, choose\n"
+    "  \"Extract to ...\".\n"
+    "- **A zip** needs no program at all: every system opens it by a double-click.\n"
+    "\n"
+    "Unpack onto a fast disk with room for the whole set (a large organ is many\n"
+    "gigabytes), and keep the folder structure as it comes out: the configurations\n"
+    "published for a set name its folders as the archive created them.\n"
+    "\n"
     "## 1.5 Configurations and settings\n"
     "\n"
     "A **configuration** is one file holding everything about an instrument: the\n"
@@ -580,6 +606,8 @@ static const char* const kManualText_part2 =
     "\n"
     "The row holds the combination pistons (their number is set in *Configuration\n"
     "Editor > Console > Combination pistons*), the *Set* button, the *<<* and *>>*\n"
+    ;
+static const char* const kManualText_part3 =
     "stepping buttons, *Save* and *Load* for combination files, and the crescendo.\n"
     "\n"
     "- Click a piston to recall its registration (stops, transmissions, couplers,\n"
@@ -606,8 +634,6 @@ static const char* const kManualText_part2 =
     "(otherwise the steps only add), clears all steps, and saves or loads the steps\n"
     "as a file.\n"
     "\n"
-    ;
-static const char* const kManualText_part3 =
     "## 2.4 Global sound sliders and the polyphony display\n"
     "\n"
     "The sliders of *Configuration Editor > Global sound* can each be shown on the\n"
@@ -782,6 +808,8 @@ static const char* const kManualText_part3 =
     "  was made with, \"HW Tromp 16', sample 039-D#.wav, -12 st (from key 51)\"). An\n"
     "  **orange note name** means the sample has no loop points. A **grey slider**\n"
     "  means the stop has no pipe there at all.\n"
+    ;
+static const char* const kManualText_part4 =
     "\n"
     "## 3.4 Transmissions and extensions\n"
     "\n"
@@ -808,8 +836,6 @@ static const char* const kManualText_part3 =
     "sounds once, and stops only when no route holds it any more. While several\n"
     "routes hold it, the loudest of them sets its volume and the highest *Treble\n"
     "per key* setting among them sets its tone; when the loudest route lets go,\n"
-    ;
-static const char* const kManualText_part4 =
     "the volume glides to the next loudest, and the tone follows in the same way.\n"
     "The tuning is different: a pipe can be retuned differently in different\n"
     "transpositions (the pure intervals of the extensions, see above), and a\n"
@@ -984,6 +1010,8 @@ static const char* const kManualText_part4 =
     "\n"
     "## 5.1 Keyboard, MIDI and compass\n"
     "\n"
+    ;
+static const char* const kManualText_part5 =
     "- *MIDI keyboard device* and *MIDI channel*. When another division listens to\n"
     "  the same device and channel a note \"Shared with ...\" appears (one key then\n"
     "  plays all of them).\n"
@@ -1010,8 +1038,6 @@ static const char* const kManualText_part4 =
     "oscillations, strength, settling lag and the divisions fed from the same wind.\n"
     "All of them are described in \"Division sections (Pedal, Manual I ... Manual\n"
     "VII)\", from \"Swell: maximum attenuation when closed\" on.\n"
-    ;
-static const char* const kManualText_part5 =
     "\n"
     "The tremulant's strength wanders between 60 and 100 % of the set depth, and\n"
     "every key stroke shakes the wind with a random strength, so nothing repeats\n"
@@ -1186,6 +1212,8 @@ static const char* const kManualText_part5 =
     "  load reaches 100 % sooner than with ASIO alone.\n"
     "- **Different latencies.** ASIO and WASAPI answer at different speeds, so\n"
     "  divisions on different drivers do not speak at the same moment after the\n"
+    ;
+static const char* const kManualText_part6 =
     "  key is pressed. While playing this is confusing - though now and then it\n"
     "  imitates, by accident, the different delays of the actions of a real\n"
     "  organ's divisions.\n"
@@ -1212,8 +1240,6 @@ static const char* const kManualText_part5 =
     "  Sound*. Every card is listed with its *Profile* box; choose **Pro Audio**\n"
     "  for the interface the organ plays through.\n"
     "- GNOME (Ubuntu, Fedora): *Settings > Sound > Output*: pick the interface\n"
-    ;
-static const char* const kManualText_part6 =
     "  under *Output Device* and set *Configuration* to **Pro Audio**.\n"
     "- Any desktop: the program `pavucontrol`, tab *Configuration*, the card's\n"
     "  profile box.\n"
@@ -1388,6 +1414,8 @@ static const char* const kManualText_part6 =
     "  even 20 ms (1024 samples) is still perfectly comfortable. Choose the\n"
     "  larger buffer and take the polyphony.\n"
     "- **Windows Audio.** All routes on one Windows Audio device share one stream\n"
+    ;
+static const char* const kManualText_part7 =
     "  and one callback, rendered by the whole pool of *Render threads* - the\n"
     "  same layout as ASIO, with the 10 ms period of the Windows audio engine\n"
     "  (a buffer of 480 samples at 48 kHz) instead of the driver's buffer. Only\n"
@@ -1414,8 +1442,6 @@ static const char* const kManualText_part6 =
     "The *DSP* value is the whole callback of the busiest audio device - the\n"
     "render of all its routes, the note bookkeeping of attacks and releases, the\n"
     "copies to the device - as a share of the device's period, held at its peak\n"
-    ;
-static const char* const kManualText_part7 =
     "for a moment. That is what decides about dropouts: at 100 % the next\n"
     "callback is late. A value of several hundred percent means the audio thread\n"
     "was kept waiting by something else on the computer, not that the voices took\n"
@@ -1590,6 +1616,8 @@ static const char* const kManualText_part7 =
     "hides it at least partly. The slowest build of the three, though still\n"
     "seconds per stop.\n"
     "\n"
+    ;
+static const char* const kManualText_part8 =
     "The other methods can also worsen the seamlessness of a loop, unfortunately:\n"
     "every resampled copy has its loop points moved to whole periods of the new\n"
     "pitch, and a seam that was perfect in the recording is then only nearly\n"
@@ -1616,8 +1644,6 @@ static const char* const kManualText_part7 =
     "  points more; beyond an octave every further octave in either direction adds\n"
     "  15 points with the resampling methods and 25 with the phase vocoder, because\n"
     "  a copy two octaves away is a pipe of another size. A pipe is one copy: inside\n"
-    ;
-static const char* const kManualText_part8 =
     "  the stop's own compass the stop's value applies; a pipe beyond it, asked for\n"
     "  by transmissions only, takes the value of the first transmission in the\n"
     "  stop's list whose shifted compass holds it. Changing it rebuilds only the\n"
@@ -1792,6 +1818,8 @@ static const char* const kManualText_part8 =
     "computer can render so that an overload fades old voices rather than crackles:\n"
     "set the maximum polyphony so that the *DSP* value never exceeds 100 %, to\n"
     "avoid cracks and dropouts. The polyphony display of the main window shows\n"
+    ;
+static const char* const kManualText_part9 =
     "*NOW* (the voices sounding), *PEAK* (the most that sounded since the last\n"
     "reset), *DSP* (the load) and *LIMIT* (this setting).\n"
     "\n"
@@ -1818,8 +1846,6 @@ static const char* const kManualText_part8 =
     "\n"
     "Everything in \"Getting the most polyphony\" (the auxiliary routes, the IR\n"
     "reverbs, the drivers) raises or lowers the number you will arrive at. Above\n"
-    ;
-static const char* const kManualText_part9 =
     "all, do not be afraid of a larger audio buffer: a latency of about 10 ms\n"
     "(512 samples at 48 kHz) is absolutely fine for organ playing, and even 20 ms\n"
     "is still perfectly comfortable, while chasing the smallest buffer cuts the\n"
@@ -1994,6 +2020,8 @@ static const char* const kManualText_part9 =
     "\n"
     "The shelf following the tremulant: this much high-frequency loss at the bottom\n"
     "of its dip (default 4 dB), so the tone breathes as well as the level.\n"
+    ;
+static const char* const kManualText_part10 =
     "\n"
     "### Tremulant: harmonic filter phase\n"
     "\n"
@@ -2020,8 +2048,6 @@ static const char* const kManualText_part9 =
     "\n"
     "### Key velocity: treble cut opens over\n"
     "\n"
-    ;
-static const char* const kManualText_part10 =
     "How long the treble cut of a gentle key takes to open fully after the key goes\n"
     "down (5 to 1000 ms, default 80).\n"
     "\n"
@@ -2196,6 +2222,8 @@ static const char* const kManualText_part10 =
     "size (50 to 300 %). The first start estimates it from the screen so that Full\n"
     "HD, 4K and Retina screens show the console alike; double-click returns to that\n"
     "estimate. Applied when the slider is released: every open window keeps its\n"
+    ;
+static const char* const kManualText_part11 =
     "place and size on the screen, only its content changes size.\n"
     "\n"
     "### Divisions\n"
@@ -2222,8 +2250,6 @@ static const char* const kManualText_part10 =
     "\n"
     "### Top bar: Record\n"
     "\n"
-    ;
-static const char* const kManualText_part11 =
     "Shows or hides the Record button (the stereo mix to a WAV file).\n"
     "\n"
     "### Top bar: Stop List\n"
@@ -2283,6 +2309,13 @@ static const char* const kManualText_part11 =
     "Shows or hides the Shut down PC button (see \"Top bar buttons\"): save, quit and shut the\n"
     "computer down without any question. Hidden by default. A hidden button still\n"
     "fires from its learned MIDI control, which is how a headless console uses it.\n"
+    "\n"
+    "### Top bar: Unpack archive\n"
+    "\n"
+    "Shows or hides the Unpack archive button (see \"Unpacking sample archives\n"
+    "(RAR)\"): a RAR archive of sample folders unpacked by the program into a\n"
+    "folder of your choice. Hidden by default; the button below this toggle does\n"
+    "the same without showing it.\n"
     "\n"
     "### Top bar: GLOBAL RESET\n"
     "\n"
@@ -2391,6 +2424,8 @@ static const char* const kManualText_part11 =
     "or treble cut (see \"Key velocity: fade-in at the lowest velocity\") and always\n"
     "the top velocity layer (see \"Velocity layers\"). For consoles whose keys send\n"
     "unreliable velocities.\n"
+    ;
+static const char* const kManualText_part12 =
     "\n"
     "### Bass octave layout\n"
     "\n"
@@ -2424,8 +2459,6 @@ static const char* const kManualText_part11 =
     "How slowly the shutters follow the pedal (50 to 2000 ms, default 300). Larger\n"
     "= heavier, smoother movement; a sudden pedal stroke then takes this long to\n"
     "arrive.\n"
-    ;
-static const char* const kManualText_part12 =
     "\n"
     "### Division volume\n"
     "\n"

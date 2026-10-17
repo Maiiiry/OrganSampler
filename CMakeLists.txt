@@ -9,7 +9,7 @@
 # what the GitHub Actions workflow and the macOS/Linux builds use. Both compile
 # the same sources with the same defines.
 cmake_minimum_required(VERSION 3.22)
-project(OrganSampler VERSION 0.8.105 LANGUAGES C CXX)
+project(OrganSampler VERSION 0.8.106 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -39,7 +39,24 @@ target_sources(OrganSampler PRIVATE
     "${ORGAN_SRC}/MainComponent.cpp"
     "${ORGAN_SRC}/SamplerEngine.cpp"
     "${ORGAN_SRC}/voicer.cpp"
+    "${ORGAN_SRC}/ArchiveExtract.cpp"
     "${ORGAN_SRC}/AlignedNew.cpp")
+
+# libarchive (BSD licence, git submodule ThirdParty/libarchive): RAR archives are
+# unpacked inside the program (ArchiveExtract.cpp). Built from source as a static
+# library with its readers only - no tar/cpio tools, no tests, no external
+# compression or crypto libraries, so every platform builds it alike. (The
+# Projucer/Visual Studio build links the prebuilt ThirdParty/libarchive-prebuilt
+# instead, made from the same sources with the same options.)
+foreach(option ENABLE_TEST ENABLE_INSTALL ENABLE_TAR ENABLE_CPIO ENABLE_CAT ENABLE_UNZIP ENABLE_OPENSSL ENABLE_ZLIB ENABLE_BZip2
+        ENABLE_LZMA ENABLE_ZSTD ENABLE_LZ4 ENABLE_LZO ENABLE_LIBXML2 ENABLE_EXPAT ENABLE_ICONV ENABLE_CNG ENABLE_XATTR ENABLE_ACL
+        ENABLE_LIBB2 ENABLE_PCREPOSIX ENABLE_PCRE2POSIX ENABLE_WIN32_XMLLITE ENABLE_MBEDTLS ENABLE_NETTLE BUILD_SHARED_LIBS)
+    set(${option} OFF CACHE BOOL "" FORCE)
+endforeach()
+add_subdirectory(ThirdParty/libarchive EXCLUDE_FROM_ALL)
+target_include_directories(OrganSampler PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/libarchive/libarchive")
+target_compile_definitions(OrganSampler PRIVATE LIBARCHIVE_STATIC=1)
+target_link_libraries(OrganSampler PRIVATE archive_static)
 # The Mac compatibility file defines symbols of the C++ library under their own
 # names; as a native (non-LTO) object the linker treats them like the library's.
 if(APPLE)

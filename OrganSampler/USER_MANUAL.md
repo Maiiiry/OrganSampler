@@ -432,6 +432,32 @@ Principal 8
   Stars at both ends match anywhere, like no star at all. Capital letters do
   not matter; underscores and other characters count exactly as written.
 
+### Unpacking sample archives (RAR)
+
+Sample folders are mostly distributed as RAR archives, and the program loads
+folders, not archives: unpack the archive first, then *Load folder...* the
+folder tree it contained. Three ways:
+
+- **In OrganSampler:** the top-bar button *Unpack archive* (hidden by default:
+  Configuration Editor > Console shows it, and the same section has a button
+  that does the same without showing it). It asks for the `.rar` file, then
+  for the folder to unpack into (proposed: the folder of the archive), shows
+  the progress and can be cancelled; at the end it says where the folders are.
+  RAR 4 and RAR 5 archives, solid or not, are read by libarchive (BSD
+  licence), the files written as they are - no password-protected archives,
+  and a multi-part archive (`.part1.rar`, `.part2.rar` ...) is unpacked from
+  its first part only when the parts lie together. Nothing else is needed:
+  this is the way on macOS, which has no unpacker with a window of its own.
+- **With a free program:** 7-Zip on Windows (https://www.7-zip.org), Keka or
+  The Unarchiver on macOS, `unrar x` or `7z x` in a terminal on Linux. WinRAR
+  itself unpacks as well (as a trial). Right-click the archive, choose
+  "Extract to ...".
+- **A zip** needs no program at all: every system opens it by a double-click.
+
+Unpack onto a fast disk with room for the whole set (a large organ is many
+gigabytes), and keep the folder structure as it comes out: the configurations
+published for a set name its folders as the archive created them.
+
 ## 1.5 Configurations and settings
 
 A **configuration** is one file holding everything about an instrument: the
@@ -2257,6 +2283,13 @@ Shows or hides the Save Configuration button.
 Shows or hides the Shut down PC button (see "Top bar buttons"): save, quit and shut the
 computer down without any question. Hidden by default. A hidden button still
 fires from its learned MIDI control, which is how a headless console uses it.
+
+### Top bar: Unpack archive
+
+Shows or hides the Unpack archive button (see "Unpacking sample archives
+(RAR)"): a RAR archive of sample folders unpacked by the program into a
+folder of your choice. Hidden by default; the button below this toggle does
+the same without showing it.
 
 ### Top bar: GLOBAL RESET
 

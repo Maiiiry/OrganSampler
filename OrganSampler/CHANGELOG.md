@@ -12,6 +12,26 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.106] - 2026-10-17
+
+### Added
+- "Unpack archive" (top bar, hidden by default; Configuration Editor >
+  Console shows it or presses it): a RAR archive of sample folders - RAR 4
+  and RAR 5, the form most sample folders come in - is unpacked by the
+  program into a folder of your choice, with progress and cancel, for the
+  computers without an unpacker of their own (macOS). libarchive 3.8.9 (BSD
+  licence) does the reading; it is a git submodule, built from source by
+  CMake and linked prebuilt by the Visual Studio project. Manual: "Unpacking
+  sample archives (RAR)" in chapter 1.4.
+- Every top-bar button can be pressed in Configuration Editor > Console as
+  well, beside its show/hide toggle - no need to put a button on the top bar
+  to use it.
+
+### Fixed
+- The README written beside a portable configuration said the default
+  route was unused: its device lives at the division level, not in the
+  route list.
+
 ## [0.8.105] - 2026-10-17
 
 ### Fixed
