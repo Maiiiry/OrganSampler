@@ -1787,6 +1787,18 @@ measurement and choice. Full and Light set the mode by hand. The setting
 belongs to the computer, not to the organ: a portable configuration does not
 carry it.
 
+Routes that share everything the reverb depends on share one convolution
+(since 0.8.109): rendered by the same audio device to the same output
+channels, with the same impulse response, dry/wet, wet volume, high and low
+cut, pre-delay, decay and fade-out. Convolution is linear - the reverb of the
+summed dry signal of such routes is the sum of their reverbs - so the sound is
+the same and the work is paid once per group: Rural Organ's three divisions on
+one device, each with its default and its auxiliary route, run two
+convolutions instead of six. The IR caption of a route that rides on
+another's convolution says *(shared)* and its tooltip names the route; a
+route whose settings differ in anything keeps its own convolution. Nothing
+needs to be set: the grouping follows the settings and the devices.
+
 ### Maximum polyphony
 
 The number of voices that may sound at once (64 to 300000, default 30000).

@@ -522,6 +522,48 @@ namespace EngineSelfTest
         };
 
         { BlockStats s; renderBlocks(40, s); describe("Silence", s); }
+        if (selfTestIr.existsAsFile() && divisions >= 2)
+        {
+            // Shared IR: every route has the same output channels, IR and settings
+            // here, so once they are told they render on one device (as this
+            // test's renderBlockForManual does, one after another) they must become
+            // one convolution - and a chord must come out at the same level as
+            // with a convolution per route (convolution is linear: the reverb of
+            // the summed dry signal is the sum of the reverbs).
+            const int chord[]{ 48, 55, 60, 64, 67 };
+            auto chordLevelDb = [&](const juce::String& label)
+            {
+                for (int note : chord) noteOnAll(note);
+                BlockStats warm; renderBlocks(60, warm);
+                std::vector<float> captured;
+                capture = &captured;
+                BlockStats held; renderBlocks(200, held);
+                capture = nullptr;
+                double sum = 0.0;
+                for (const float v : captured) sum += (double)v * v;
+                for (int note : chord) noteOffAll(note);
+                BlockStats rel; renderBlocks(600, rel);   // releases and most of the reverb tail die
+                describe(label, held);
+                return 10.0 * std::log10(sum / (captured.empty() ? 1.0 : (double)captured.size()) + 1.0e-20);   // (no jmax<size_t>: GCC picks juce_dsp's SIMD overload)
+            };
+            const double ownDb = chordLevelDb("Shared IR check, a convolution per route");
+            for (int manual = 0; manual < divisions; ++manual)
+                for (const auto& perspective : engine.getPerspectivesForManual(manual))
+                    engine.setPerspectiveDeviceKey(manual, perspective, "selftest|one device");
+            const auto shared = engine.getReverbSummary();
+            const double sharedDb = chordLevelDb("Shared IR check, every route on one device");
+            for (int manual = 0; manual < divisions; ++manual)
+                for (const auto& perspective : engine.getPerspectivesForManual(manual))
+                    engine.setPerspectiveDeviceKey(manual, perspective, {});
+            const auto own = engine.getReverbSummary();
+            const double diff = sharedDb - ownDb;
+            report << "Shared IR: " << (shared.routes + shared.sharedRoutes) << " route(s) on one device in " << shared.routes
+                   << " convolution(s) (" << shared.sharedRoutes << " shared; apart again: " << own.routes << " convolution(s), "
+                   << own.sharedRoutes << " shared); chord level " << juce::String(ownDb, 2) << " dB apart, " << juce::String(sharedDb, 2)
+                   << " dB shared, difference " << juce::String(diff, 2) << " dB"
+                   << ((shared.routes == 1 && shared.sharedRoutes == shared.routes + shared.sharedRoutes - 1 && own.sharedRoutes == 0
+                        && std::abs(diff) < 1.5) ? "  -> OK" : "  *** WRONG ***") << "\n";
+        }
         if (std::getenv("ORGAN_SELFTEST_BENCH") != nullptr)
         {
             // Polyphony benchmark only (ORGAN_SELFTEST_BENCH=1): every stop on,

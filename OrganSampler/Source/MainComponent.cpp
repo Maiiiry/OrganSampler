@@ -536,6 +536,12 @@ public:
             const int channels = juce::jmax(1, device->getOutputChannelNames().size());
             const int block = juce::jmax(1, device->getCurrentBufferSizeSamples());
             owner.engine.setPerspectiveBlockSize(manual, perspective, block);
+            // The device this route renders on: routes of one device with the same
+            // channels and IR settings share one convolution (shared IR).
+            // (The device object itself tells the routes of one device apart from
+            // private Aggregated WASAPI devices of the same name on other threads.)
+            owner.engine.setPerspectiveDeviceKey(manual, perspective, device->getTypeName() + "|" + device->getName()
+                + "|" + juce::String::toHexString((juce::pointer_sized_int)device));
             // Some drivers deliver more frames than announced; keep headroom so
             // the real-time callback never has to reallocate.
             scratch.setSize(channels, block * 4, false, false, true);
@@ -573,7 +579,7 @@ public:
             // the user (Driver Control Panel / Reopen buttons in the audio tab).
         }
     }
-    void audioDeviceStopped() override {}
+    void audioDeviceStopped() override { owner.engine.setPerspectiveDeviceKey(manual, perspective, {}); }
     void setUseConfiguredOutputs(bool shouldUse) { useConfiguredOutputs = shouldUse; }
 
     // Called about once a second from the GUI timer. Returns an empty string
@@ -5714,6 +5720,7 @@ void MainComponent::showKeyboardsDialog(int onlyManual)
                     text = "IR: " + irFile.getFileNameWithoutExtension();
                     if (info.error.isNotEmpty()) text << "  (error)";
                     else if (info.channels <= 0) text << "  (loading)";
+                    else if (info.sharedWith.isNotEmpty()) text << "  (shared)";
                     const juce::String kind = info.channels >= 4 ? "true stereo (4 channels: LL LR RL RR)"
                         : info.channels == 2 ? "stereo" : info.channels == 1 ? "mono" : "unknown";
                     tip << irFile.getFileName() << "\n" << irFile.getFullPathName() << "\n"
@@ -5726,7 +5733,10 @@ void MainComponent::showKeyboardsDialog(int onlyManual)
                         << juce::roundToInt(config.reverbTone.lowCutHz) << " Hz, pre-delay "
                         << juce::String(config.reverbTone.preDelayMs, 1) << " ms\n"
                         << "Decay " << juce::roundToInt(config.reverbTone.decayPercent) << " %, fade-out "
-                        << juce::roundToInt(config.reverbTone.fadePercent) << " %\nRight-click: IR settings.";
+                        << juce::roundToInt(config.reverbTone.fadePercent) << " %\n"
+                        << (info.sharedWith.isNotEmpty() ? "Shared IR: convolved together with " + info.sharedWith
+                            + " (same device, output channels and IR settings) - one convolution for both.\n" : juce::String())
+                        << "Right-click: IR settings.";
                 }
                 if (text != irLabel.getText()) irLabel.setText(text, juce::dontSendNotification);
                 if (tip != irLabel.getTooltip()) irLabel.setTooltip(tip);
@@ -12079,7 +12089,9 @@ void MainComponent::applyIrProcessing(bool fromLoad)
     const double perThread = summary.totalCostMsPerSecond / juce::jmax(1, threads);
     auto describe = [&]
     {
-        return juce::String(summary.routes) + " route(s) with IR cost " + juce::String(summary.totalCostMsPerSecond, 1)
+        return juce::String(summary.routes + summary.sharedRoutes) + " route(s) with an IR in " + juce::String(summary.routes)
+            + " convolution(s)" + (summary.sharedRoutes > 0 ? " (" + juce::String(summary.sharedRoutes) + " shared)" : juce::String())
+            + ", IR cost " + juce::String(summary.totalCostMsPerSecond, 1)
             + " ms of one thread per second of audio (" + juce::String(perThread / 10.0, 1) + " % per render thread over " + juce::String(threads)
             + " threads, worst route " + juce::String(summary.worstCostMsPerSecond, 1) + " ms, "
             + juce::String(summary.irSecondsPerSecond, 1) + " IR-channel-seconds per second)";
@@ -12120,7 +12132,9 @@ juce::String MainComponent::irProcessingStatus() const
     const int threads = engine.getRenderWorkerCount() + 1;
     juce::String text = juce::String(summary.light ? "Light" : "Full");
     if (irProcessing == "automatic") text << " (automatic)";
-    text << ": " << summary.routes << " route(s), " << juce::String(summary.totalCostMsPerSecond, 1) << " ms of one thread per second of audio = "
+    text << ": " << (summary.routes + summary.sharedRoutes) << " route(s) in " << summary.routes << " convolution(s)"
+         << (summary.sharedRoutes > 0 ? " (" + juce::String(summary.sharedRoutes) + " share the convolution of a route with the same device, channels and IR settings)" : juce::String())
+         << ", " << juce::String(summary.totalCostMsPerSecond, 1) << " ms of one thread per second of audio = "
          << juce::String(summary.totalCostMsPerSecond / juce::jmax(1, threads) / 10.0, 1) << " % of each of the " << threads << " render threads";
     if (summary.light) text << "; Full would cost about " << juce::String(summary.estimatedFullMsPerSecond / juce::jmax(1, threads) / 10.0, 1) << " %";
     return text;

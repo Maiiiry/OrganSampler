@@ -776,6 +776,10 @@ public:
     void setPerspectiveReverbWet(int manualIndex, const juce::String& perspective, float wet);
     // The device buffer size of a route: the reverb's convolution is partitioned by it.
     void setPerspectiveBlockSize(int manualIndex, const juce::String& perspective, int blockSize);
+    // The device (type|name) whose callback renders the route, empty when none:
+    // routes of one device with the same output channels and IR settings share
+    // one convolution (shared IR). Message thread.
+    void setPerspectiveDeviceKey(int manualIndex, const juce::String& perspective, const juce::String& key);
     struct ReverbInfo
     {
         int channels = 0; double seconds = 0.0; double sampleRate = 0.0; juce::String error;
@@ -783,6 +787,7 @@ public:
         // seconds of the IR really convolved (trimmed in Light), and the cost
         // measured at the build - ms of one thread per second of audio.
         bool light = false; int rateDivider = 1; double usedSeconds = 0.0; double costMsPerSecond = 0.0;
+        juce::String sharedWith;   // shared IR: the route ("manual N perspective P") whose convolution this route rides on; empty when its own
     };
     ReverbInfo getPerspectiveReverbInfo(int manualIndex, const juce::String& perspective) const;
     // IR processing for weak computers: Light runs every route's convolution at a
@@ -800,6 +805,7 @@ public:
     struct ReverbSummary
     {
         int routes = 0; bool light = false;
+        int sharedRoutes = 0;   // routes whose IR is convolved by another route of the same device, channels and IR settings (shared IR)
         double totalCostMsPerSecond = 0.0, worstCostMsPerSecond = 0.0, estimatedFullMsPerSecond = 0.0, irSecondsPerSecond = 0.0;
     };
     ReverbSummary getReverbSummary() const;

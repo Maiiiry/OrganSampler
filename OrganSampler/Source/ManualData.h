@@ -1807,6 +1807,20 @@ static const char* const kManualText_part8 =
     "belongs to the computer, not to the organ: a portable configuration does not\n"
     "carry it.\n"
     "\n"
+    "Routes that share everything the reverb depends on share one convolution\n"
+    "(since 0.8.109): rendered by the same audio device to the same output\n"
+    "channels, with the same impulse response, dry/wet, wet volume, high and low\n"
+    "cut, pre-delay, decay and fade-out. Convolution is linear - the reverb of the\n"
+    "summed dry signal of such routes is the sum of their reverbs - so the sound is\n"
+    "the same and the work is paid once per group: Rural Organ's three divisions on\n"
+    "one device, each with its default and its auxiliary route, run two\n"
+    "convolutions instead of six. The IR caption of a route that rides on\n"
+    "another's convolution says *(shared)* and its tooltip names the route; a\n"
+    "route whose settings differ in anything keeps its own convolution. Nothing\n"
+    "needs to be set: the grouping follows the settings and the devices.\n"
+    ;
+static const char* const kManualText_part9 =
+    "\n"
     "### Maximum polyphony\n"
     "\n"
     "The number of voices that may sound at once (64 to 300000, default 30000).\n"
@@ -1818,8 +1832,6 @@ static const char* const kManualText_part8 =
     "computer can render so that an overload fades old voices rather than crackles:\n"
     "set the maximum polyphony so that the *DSP* value never exceeds 100 %, to\n"
     "avoid cracks and dropouts. The polyphony display of the main window shows\n"
-    ;
-static const char* const kManualText_part9 =
     "*NOW* (the voices sounding), *PEAK* (the most that sounded since the last\n"
     "reset), *DSP* (the load) and *LIMIT* (this setting).\n"
     "\n"
@@ -2008,6 +2020,8 @@ static const char* const kManualText_part9 =
     "\n"
     "The sag with one key held, relative to the sag with many keys held (default\n"
     "50 %).\n"
+    ;
+static const char* const kManualText_part10 =
     "\n"
     "### Wind: two pipes' share of the full sag\n"
     "\n"
@@ -2020,8 +2034,6 @@ static const char* const kManualText_part9 =
     "The strength of the whole wind model, 0 to 100 % (default 100). The steady sag\n"
     "of held keys and engaged stops follows it directly; every key stroke shakes the\n"
     "wind with a random 40 to 100 % of it, so repeated notes never sound mechanical.\n"
-    ;
-static const char* const kManualText_part10 =
     "0 % switches the wind model off everywhere.\n"
     "\n"
     "### Tremulant: harmonic filter\n"
@@ -2210,6 +2222,8 @@ static const char* const kManualText_part10 =
     "The *Treble per key* sliders of the voicing raise or lower everything above\n"
     "this frequency (120 to 5000 Hz, default 1800): a high shelf whose transition\n"
     "band runs from here to about twice this frequency. A pipe whose recorded\n"
+    ;
+static const char* const kManualText_part11 =
     "fundamental lies higher starts its shelf at that fundamental instead. The\n"
     "velocity treble cut uses the same frequency.\n"
     "\n"
@@ -2222,8 +2236,6 @@ static const char* const kManualText_part10 =
     "\n"
     "## 8.4 Console\n"
     "\n"
-    ;
-static const char* const kManualText_part11 =
     "### Interface size\n"
     "\n"
     "The size of every window, button, slider and text, in per cent of the design\n"
@@ -2412,6 +2424,8 @@ static const char* const kManualText_part11 =
     "### Shown in window\n"
     "\n"
     "With two program windows: the window this division is shown in. A division is\n"
+    ;
+static const char* const kManualText_part12 =
     "in one window only; the divisions of each window share its width.\n"
     "\n"
     "### MIDI keyboard device\n"
@@ -2424,8 +2438,6 @@ static const char* const kManualText_part11 =
     "\n"
     "The MIDI channel (1 to 16) of the division on that device.\n"
     "\n"
-    ;
-static const char* const kManualText_part12 =
     "### Ignore MIDI velocity (organ keys)\n"
     "\n"
     "On: every key is sent as full velocity, so there is never a velocity fade-in\n"
@@ -2614,6 +2626,8 @@ static const char* const kManualText_part12 =
     "  successors. ALSA or JACK (PipeWire).\n"
     "\n"
     "Where the program keeps its files (settings, the activity log, crash\n"
+    ;
+static const char* const kManualText_part13 =
     "reports) - the \"application-data folder\" of this manual:\n"
     "\n"
     "- Windows: `%APPDATA%\\OrganSampler` (`C:\\Users\\<you>\\AppData\\Roaming\\OrganSampler`)\n"
@@ -2626,8 +2640,6 @@ static const char* const kManualText_part12 =
     "well, in `~/Library/Logs/DiagnosticReports` (named `OrganSampler_...`).\n"
     "`settings.json` is the state of the program, `settings-<date>.json` the\n"
     "snapshot of each of the last seven days. If the program crashes at every\n"
-    ;
-static const char* const kManualText_part13 =
     "start, move `settings.json` away (keep it for the report) and it starts\n"
     "clean; a crash while an audio device was being opened is caught by the\n"
     "program itself: the next start opens that device with the default buffer\n"

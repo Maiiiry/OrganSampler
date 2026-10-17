@@ -604,6 +604,19 @@ namespace
         SamplerEngine::ReverbTone reverbTone;
         juce::String reverbError;
         std::unique_ptr<RouteReverb> reverb;
+        // The device (type|name) whose callback renders this route: the routes of
+        // one device render one after another in it (MainComponent sets it when
+        // the device starts). Shared IR: routes of one device with the same output
+        // channels and the same IR settings (file, wet, tone, decay) convolve once -
+        // the first of them owns the engines and the hand-over buffers, the others
+        // (reverbOwner set) add their dry signal to its input and carry no engines.
+        juce::String deviceKey;
+        Route* reverbOwner = nullptr;
+        int reverbGroupSize = 1;            // owner: the routes of its group, itself included
+        int reverbGroupArrived = 0;         // owner: routes that handed their dry over in the current block
+        uint32_t reverbGroupBlockId = 0;    // owner: the current block (one up per block)
+        uint32_t reverbGroupSeenBlock = 0;  // every route: the owner's block it last handed over to
+        juce::SpinLock reverbGroupLock;     // owner: the hand-over (one thread in practice; a lock all the same)
 
         juce::SpinLock renderLock;
         std::vector<uint32_t> active;               // owned by the render thread
@@ -2590,7 +2603,7 @@ struct SamplerEngine::Impl
     {
         std::unique_ptr<RouteReverb> fresh;
         route.reverbError.clear();
-        if (route.reverbIrFile.existsAsFile())
+        if (route.reverbOwner == nullptr && route.reverbIrFile.existsAsFile())   // a follower of a shared IR builds nothing: its owner convolves for it
         {
             juce::AudioFormatManager formats;
             formats.registerBasicFormats();
@@ -2838,11 +2851,13 @@ struct SamplerEngine::Impl
         inBuffer.clear(); outBuffer.clear();
         {
             const juce::SpinLock::ScopedLockType lk(route.renderLock);
+            const juce::SpinLock::ScopedLockType gl(route.reverbGroupLock);   // the followers of a shared IR touch irIn in their own renders
             // A convolution of the previous block may still run on a worker: it
             // uses the reverb about to go, so it finishes first.
             if (route.irTaskIndex >= 0) pool->waitTask(route.irTaskIndex);
             route.irTaskIndex = -1;
             route.irOutValid = false;
+            route.reverbGroupArrived = 0;
             route.irInFrames = route.irOutFrames = 0;
             std::swap(route.irIn, inBuffer);
             std::swap(route.irOut, outBuffer);
@@ -2850,6 +2865,74 @@ struct SamplerEngine::Impl
         }
         // 'fresh' now holds the previous reverb and is destroyed here, outside the lock.
     }
+
+    // Shared IR: the roles of the routes after any change of a route's device,
+    // channels or IR settings (message thread). Routes of one device with the
+    // same output channels and the same IR settings form a group: the first
+    // (by route index) owns the engines, the others follow it. Owners without
+    // engines (new, or followers until now) are built, followers drop theirs;
+    // 'changed' is rebuilt as well when 'rebuildChanged' says so (its IR or its
+    // decay changed). Sharing is exact: convolution is linear, the group's wet
+    // is the sum of its routes' wets, and all of them go to the same channels.
+    void regroupReverbs(Route* changed, bool rebuildChanged)
+    {
+        std::vector<Route*> rebuild;
+        std::map<juce::String, std::vector<Route*>> groups;
+        const int count = routeCount.load(std::memory_order_acquire);
+        for (int i = 0; i < count; ++i)
+        {
+            Route& r = *routes[(size_t)i];
+            if (r.reverbIrFile == juce::File() || r.deviceKey.isEmpty()) continue;
+            const auto& t = r.reverbTone;
+            const juce::String key = r.deviceKey + "|" + juce::String((juce::int64)r.channelMask.load(std::memory_order_relaxed)) + "|"
+                + r.reverbIrFile.getFullPathName() + "|" + juce::String(r.reverbWet, 4) + "|" + juce::String(t.highCutHz, 1) + "|"
+                + juce::String(t.lowCutHz, 1) + "|" + juce::String(t.preDelayMs, 2) + "|" + juce::String(t.wetDb, 2) + "|"
+                + juce::String(t.decayPercent, 1) + "|" + juce::String(t.fadePercent, 1);
+            groups[key].push_back(&r);
+        }
+        std::map<Route*, std::pair<Route*, int>> desired;   // route -> its owner (nullptr = itself) and the group's size
+        for (auto& group : groups)
+            for (size_t m = 0; m < group.second.size(); ++m)
+                desired[group.second[m]] = { m == 0 ? nullptr : group.second[0], (int)group.second.size() };
+        int shared = 0;
+        for (int i = 0; i < count; ++i)
+        {
+            Route& r = *routes[(size_t)i];
+            const auto found = desired.find(&r);
+            Route* groupOwner = found != desired.end() ? found->second.first : nullptr;
+            const int size = found != desired.end() ? found->second.second : 1;
+            const bool wasFollower = r.reverbOwner != nullptr;
+            if (groupOwner != r.reverbOwner || r.reverbGroupSize != size)
+            {
+                const juce::SpinLock::ScopedLockType lk(r.renderLock);
+                const juce::SpinLock::ScopedLockType gl(r.reverbGroupLock);
+                if (r.irTaskIndex >= 0) pool->waitTask(r.irTaskIndex);
+                r.irTaskIndex = -1;
+                r.reverbOwner = groupOwner;
+                r.reverbGroupSize = size;
+                r.reverbGroupArrived = 0;
+                r.reverbGroupSeenBlock = 0;
+                r.irOutValid = false;
+            }
+            if (groupOwner != nullptr)
+            {
+                ++shared;
+                if (r.reverb != nullptr) rebuild.push_back(&r);   // installs none: the follower's engines go
+            }
+            else if (r.reverbIrFile != juce::File() && (r.reverb == nullptr || wasFollower || (rebuildChanged && &r == changed)))
+                rebuild.push_back(&r);
+        }
+        for (auto* r : rebuild) rebuildRouteReverb(*r);
+        if (shared != lastSharedReverbs)
+        {
+            lastSharedReverbs = shared;
+            int convolutions = 0;
+            for (int i = 0; i < count; ++i) if (routes[(size_t)i]->reverb != nullptr && !routes[(size_t)i]->reverb->pairs.empty()) ++convolutions;
+            CrashHandler::note("IR reverbs: " + juce::String(convolutions + shared) + " route(s) with an IR in " + juce::String(convolutions)
+                + " convolution(s) - " + juce::String(shared) + " route(s) share the convolution of another route of the same device, channels and IR settings");
+        }
+    }
+    int lastSharedReverbs = -1;
 
     // Worker side of the IR reverb: the dry block handed over in irIn is
     // convolved and shaped into irOut (wet only). One task per route at a time.
@@ -3047,20 +3130,46 @@ struct SamplerEngine::Impl
     // period that way, with tail-FFT bursts far beyond it).
     void applyRouteReverb(Route& route, juce::AudioBuffer<float>& buffer, const BlockContext& ctx, int numOuts, int totalSamples) noexcept
     {
-        RouteReverb* rv = route.reverb.get();
+        // Shared IR: the engines and the hand-over buffers live in the group's
+        // owner; a follower only adds its dry signal there. The routes of one
+        // device render one after another in its callback: the first of the group
+        // to render in a block takes the previous block's wet of the whole group
+        // into its own output (every route of the group goes to the same channels,
+        // so the sum is the same) and starts the new input; the last posts the task.
+        Route& host = route.reverbOwner != nullptr ? *route.reverbOwner : route;
+        // Taken before the owner's engines are looked at: a follower's render holds
+        // its own renderLock only, and the owner's reverb is swapped under this lock too.
+        const juce::SpinLock::ScopedLockType groupLock(host.reverbGroupLock);
+        RouteReverb* rv = host.reverb.get();
         if (rv == nullptr || rv->pairs.empty()) return;
         const float wet = rv->wet.load(std::memory_order_relaxed);
         if (wet <= 0.0005f) return;
-        if (route.irIn.getNumChannels() < 2 || route.irOut.getNumChannels() < 2) return;
+        if (host.irIn.getNumChannels() < 2 || host.irOut.getNumChannels() < 2) return;
         // A block the hand-over buffers cannot hold (never, the callback drops
         // such blocks; a second guard all the same): this block stays dry.
-        if (totalSamples > route.irIn.getNumSamples() || totalSamples > route.irOut.getNumSamples()) return;
+        if (totalSamples > host.irIn.getNumSamples() || totalSamples > host.irOut.getNumSamples()) return;
         const float dry = 1.0f - wet;
         const float wetGain = wet * rv->wetGain.load(std::memory_order_relaxed);
+        const bool sharedGroup = host.reverbGroupSize > 1;
+        bool first = true;
+        if (sharedGroup)
+        {
+            // A route arriving for the second time in one block means a new block
+            // whose predecessor the group never completed (a route of it skipped
+            // its render): what did arrive is convolved now, the new block starts.
+            if (host.reverbGroupArrived > 0 && route.reverbGroupSeenBlock == host.reverbGroupBlockId)
+            {
+                postRouteConvolution(host);
+                host.reverbGroupArrived = 0;
+            }
+            first = host.reverbGroupArrived == 0;
+            if (first) ++host.reverbGroupBlockId;
+            route.reverbGroupSeenBlock = host.reverbGroupBlockId;
+        }
         // The previous block's convolution must be over (it had a whole period).
-        if (route.irTaskIndex >= 0) pool->waitTask(route.irTaskIndex);
-        const int pairCount = juce::jmin((int)rv->pairs.size(), route.irIn.getNumChannels() / 2, route.irOut.getNumChannels() / 2);
-        const bool mixPrevious = route.irOutValid && route.irOutFrames == totalSamples;
+        if (first && host.irTaskIndex >= 0) pool->waitTask(host.irTaskIndex);
+        const int pairCount = juce::jmin((int)rv->pairs.size(), host.irIn.getNumChannels() / 2, host.irOut.getNumChannels() / 2);
+        const bool mixPrevious = first && host.irOutValid && host.irOutFrames == totalSamples;
         int pairIndex = 0;
         for (int ci = 0; ci + 1 < ctx.outCount && pairIndex < pairCount; ci += 2, ++pairIndex)
         {
@@ -3068,14 +3177,22 @@ struct SamplerEngine::Impl
             if (chL < 0 || chL >= numOuts || chR < 0 || chR >= numOuts) continue;
             float* L = buffer.getWritePointer(chL);
             float* R = buffer.getWritePointer(chR);
-            // This block's dry output goes to the worker...
-            juce::FloatVectorOperations::copy(route.irIn.getWritePointer(2 * pairIndex), L, totalSamples);
-            juce::FloatVectorOperations::copy(route.irIn.getWritePointer(2 * pairIndex + 1), R, totalSamples);
-            // ... and the previous block's wet signal comes out here.
+            // This block's dry output goes to the worker (the group's sum)...
+            if (first)
+            {
+                juce::FloatVectorOperations::copy(host.irIn.getWritePointer(2 * pairIndex), L, totalSamples);
+                juce::FloatVectorOperations::copy(host.irIn.getWritePointer(2 * pairIndex + 1), R, totalSamples);
+            }
+            else
+            {
+                juce::FloatVectorOperations::add(host.irIn.getWritePointer(2 * pairIndex), L, totalSamples);
+                juce::FloatVectorOperations::add(host.irIn.getWritePointer(2 * pairIndex + 1), R, totalSamples);
+            }
+            // ... and the previous block's wet signal (of the whole group) comes out with its first route.
             if (mixPrevious)
             {
-                const float* wetL = route.irOut.getReadPointer(2 * pairIndex);
-                const float* wetR = route.irOut.getReadPointer(2 * pairIndex + 1);
+                const float* wetL = host.irOut.getReadPointer(2 * pairIndex);
+                const float* wetR = host.irOut.getReadPointer(2 * pairIndex + 1);
                 for (int i = 0; i < totalSamples; ++i)
                 {
                     L[i] = L[i] * dry + wetL[i] * wetGain;
@@ -3088,17 +3205,27 @@ struct SamplerEngine::Impl
                 juce::FloatVectorOperations::multiply(R, dry, totalSamples);
             }
         }
-        route.irInFrames = totalSamples;
-        route.irOutValid = false;
-        route.irTask.impl = this;
-        route.irTask.route = &route;
-        const int index = routeIndexOf(&route);
-        route.irTaskIndex = index;
-        if (index < 0 || !pool->postTask(index, &Impl::convolveRouteTask, &route.irTask))
+        host.irInFrames = totalSamples;
+        if (first) host.irOutValid = false;
+        if (sharedGroup && ++host.reverbGroupArrived < host.reverbGroupSize) return;   // the others of the group still to come; the last one posts
+        host.reverbGroupArrived = 0;
+        postRouteConvolution(host);
+    }
+
+    // The convolution of the dry block in host.irIn goes to a worker (the
+    // previous one is over: waited above). Render thread, host.reverbGroupLock held.
+    void postRouteConvolution(Route& host) noexcept
+    {
+        if (host.irTaskIndex >= 0) pool->waitTask(host.irTaskIndex);
+        host.irTask.impl = this;
+        host.irTask.route = &host;
+        const int index = routeIndexOf(&host);
+        host.irTaskIndex = index;
+        if (index < 0 || !pool->postTask(index, &Impl::convolveRouteTask, &host.irTask))
         {
             // No slot (cannot happen: one per route) - convolve here, as before.
-            route.irTaskIndex = -1;
-            convolveRoute(route);
+            host.irTaskIndex = -1;
+            convolveRoute(host);
         }
     }
 
@@ -5259,9 +5386,10 @@ void SamplerEngine::setPerspectiveOutputChannels(int manualIndex, const juce::St
             r->channelMask.store(mask);
             r->maskExplicit.store(true);
             if (pairsChanged && r->reverb != nullptr) changed = r;
+            if (changed == nullptr) changed = r;   // the channels decide the sharing of the IR
         }
     }
-    if (changed != nullptr) impl->rebuildRouteReverb(*changed);   // one convolution per output pair
+    if (changed != nullptr) impl->regroupReverbs(changed, changed->reverb != nullptr || changed->reverbOwner != nullptr);   // one convolution per output pair
 }
 
 void SamplerEngine::setWindShares(float oneStop, float onePipe, float twoPipes) noexcept
@@ -5275,6 +5403,7 @@ void SamplerEngine::setPerspectiveReverbTone(int manualIndex, const juce::String
 {
     if (manualIndex < 0 || manualIndex >= maxManuals || perspective.isEmpty()) return;
     Route* rebuild = nullptr;
+    Route* changed = nullptr;
     {
         const juce::ScopedLock sl(controlLock);
         Route* r = impl->ensureRoute(manualIndex, perspective);
@@ -5291,8 +5420,11 @@ void SamplerEngine::setPerspectiveReverbTone(int manualIndex, const juce::String
             r->reverb->wetGain.store(juce::Decibels::decibelsToGain(juce::jlimit(-40.0f, 12.0f, tone.wetDb)), std::memory_order_relaxed);
             if (decayChanged) rebuild = r;   // the IR itself is shortened
         }
+        changed = r;
     }
-    if (rebuild != nullptr) impl->rebuildRouteReverb(*rebuild);
+    // The tone is part of what a shared IR must have in common: regroup (the
+    // decay change rebuilds the IR itself).
+    impl->regroupReverbs(changed, rebuild != nullptr);
 }
 
 void SamplerEngine::setPerspectiveBlockSize(int manualIndex, const juce::String& perspective, int blockSize)
@@ -5323,18 +5455,34 @@ void SamplerEngine::setPerspectiveReverb(int manualIndex, const juce::String& pe
         route->reverbIrFile = impulseResponse;
         route->reverbWet = juce::jlimit(0.0f, 1.0f, wet);
     }
-    impl->rebuildRouteReverb(*route);
+    impl->regroupReverbs(route, true);
+}
+
+void SamplerEngine::setPerspectiveDeviceKey(int manualIndex, const juce::String& perspective, const juce::String& key)
+{
+    if (manualIndex < 0 || manualIndex >= maxManuals || perspective.isEmpty()) return;
+    Route* route = nullptr;
+    {
+        const juce::ScopedLock sl(controlLock);
+        route = impl->ensureRoute(manualIndex, perspective);
+        if (route == nullptr || route->deviceKey == key) return;
+        route->deviceKey = key;
+    }
+    impl->regroupReverbs(route, false);
 }
 
 void SamplerEngine::setPerspectiveReverbWet(int manualIndex, const juce::String& perspective, float wet)
 {
     if (manualIndex < 0 || manualIndex >= maxManuals || perspective.isEmpty()) return;
-    const juce::ScopedLock sl(controlLock);
-    if (Route* r = impl->ensureRoute(manualIndex, perspective))
+    Route* route = nullptr;
     {
-        r->reverbWet = juce::jlimit(0.0f, 1.0f, wet);
-        if (r->reverb != nullptr) r->reverb->wet.store(r->reverbWet, std::memory_order_relaxed);
+        const juce::ScopedLock sl(controlLock);
+        route = impl->ensureRoute(manualIndex, perspective);
+        if (route == nullptr) return;
+        route->reverbWet = juce::jlimit(0.0f, 1.0f, wet);
+        if (route->reverb != nullptr) route->reverb->wet.store(route->reverbWet, std::memory_order_relaxed);
     }
+    impl->regroupReverbs(route, false);   // the wet is part of what a shared IR must have in common
 }
 
 SamplerEngine::ReverbInfo SamplerEngine::getPerspectiveReverbInfo(int manualIndex, const juce::String& perspective) const
@@ -5344,6 +5492,12 @@ SamplerEngine::ReverbInfo SamplerEngine::getPerspectiveReverbInfo(int manualInde
     const juce::ScopedLock sl(controlLock);
     if (Route* r = impl->findRoute(manualIndex, perspective.isEmpty() ? juce::String("default") : perspective))
     {
+        if (r->reverbOwner != nullptr)
+        {
+            // Shared IR: the owner convolves for this route - its engines, its error.
+            info.sharedWith = "manual " + juce::String(r->reverbOwner->manual) + " perspective " + r->reverbOwner->perspective;
+            r = r->reverbOwner;
+        }
         info.error = r->reverbError;
         if (r->reverb != nullptr)
         {
@@ -5368,6 +5522,7 @@ SamplerEngine::ReverbSummary SamplerEngine::getReverbSummary() const
     for (int i = 0; i < count; ++i)
     {
         const Route& r = *impl->routes[(size_t)i];
+        if (r.reverbOwner != nullptr) { ++summary.sharedRoutes; continue; }   // convolved by its owner
         if (r.reverb == nullptr || r.reverb->pairs.empty()) continue;
         ++summary.routes;
         const double cost = r.reverb->costMsPerSecond;
@@ -5398,6 +5553,7 @@ void SamplerEngine::setReverbProcessingLight(bool light)
         }
     }
     for (auto* r : rebuild) impl->rebuildRouteReverb(*r);
+    impl->regroupReverbs(nullptr, false);
 }
 
 bool SamplerEngine::isReverbProcessingLight() const noexcept

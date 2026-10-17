@@ -12,6 +12,25 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.109] - 2026-10-17
+
+### Added
+- Shared IR processing: routes rendered by the same audio device to the same
+  output channels with the same IR settings (file, dry/wet, wet volume, high
+  and low cut, pre-delay, decay, fade-out) are convolved once. Convolution is
+  linear, so the sum of the routes' wet signals equals the wet of their summed
+  dry signals - the sound is the same, the work of the convolution is paid
+  once per group instead of once per route (Rural Organ's three divisions on
+  one device: six convolutions become two). The first route of a group (by
+  route order) owns the engines, the others hand their dry block over to it in
+  the device's callback and the last one starts the convolution; the previous
+  block's wet of the whole group comes out with the first route. A route
+  whose settings differ in anything keeps its own convolution, as before;
+  every change of a route's device, channels or IR settings regroups. The
+  IR caption of a route that rides on another's convolution says "(shared)",
+  its tooltip which route; the Configuration Editor's "IR reverbs now" line
+  and the activity log count routes and convolutions.
+
 ## [0.8.108] - 2026-10-17
 
 ### Fixed
