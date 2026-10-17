@@ -522,6 +522,31 @@ namespace EngineSelfTest
         };
 
         { BlockStats s; renderBlocks(40, s); describe("Silence", s); }
+        {
+            // Release overlap: one key of division 0 held for 320 ms and released;
+            // the voices block by block afterwards. At the release the sustaining
+            // voice fades out while the release voice fades in - two voices per
+            // pipe for the crossfade - so the peak lies right after the release.
+            // (Blocks paced in real time by renderBlocks: the notes start on the wall clock.)
+            engine.noteOn(60, 127, 0);
+            int held = 0;
+            for (int b = 0; b < 60; ++b) { BlockStats t; renderBlocks(1, t); held = juce::jmax(held, engine.getCurrentPolyphony()); }
+            engine.noteOff(60, 0);
+            int peakAfter = 0, peakAtMs = -1, overlapMs = 0, zeroAtMs = -1;
+            constexpr double stepMs = 1000.0 * 256 / 48000.0;   // renderBlocks(1) = 256 frames whatever the block size
+            for (int b = 0; b < 200; ++b)
+            {
+                BlockStats t; renderBlocks(1, t);
+                const int now = engine.getCurrentPolyphony();
+                if (now > peakAfter) { peakAfter = now; peakAtMs = (int)std::lround(b * stepMs); }
+                if (now > held) overlapMs += (int)std::lround(stepMs);
+                if (now == 0 && zeroAtMs < 0) zeroAtMs = (int)std::lround(b * stepMs);
+            }
+            report << "Release overlap (key 60 of division 0, every stop on): " << held << " voices while held; after the release the peak was "
+                   << peakAfter << " voices " << peakAtMs << " ms after it, more than while held for " << overlapMs
+                   << " ms, silence " << (zeroAtMs >= 0 ? juce::String(zeroAtMs) + " ms" : juce::String("not within 1 s")) << " after it\n";
+            { BlockStats t; for (int drain = 0; drain < 200 && engine.getCurrentPolyphony() > 0; ++drain) renderBlocks(1, t); }
+        }
         if (selfTestIr.existsAsFile() && divisions >= 2)
         {
             // Shared IR: every route has the same output channels, IR and settings
