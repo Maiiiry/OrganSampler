@@ -1873,12 +1873,12 @@ happens:
    routes with an IR - and grows with that text; below it, the current
    target, the stimulus and the voices now.
 2. Every stop is engaged and keys are struck again and again on every
-   division, slowly at first: one key, twice a second. The voices are watched
+   division - each over its own compass, the pedal from its lowest key -
+   slowly at first: one key, twice a second. The voices are watched
    every second. Whenever they stop rising below the current target, the
-   stimulus grows at once - more keys spread over the compass (up to all 61),
-   then the octave couplers of every division onto itself (16' and 4',
-   whether they are on the grid or not: three pipes per key), then a faster
-   rate (up to 16 strikes a second). A wet set with several perspectives and
+   stimulus grows at once - more keys spread over the compass (up to every
+   key of every division), then a faster rate (up to 16 strikes a second).
+   No coupler is used: every division is struck itself. A wet set with several perspectives and
    long releases reaches tens of thousands of voices with a handful of keys;
    a dry set gives little more than what is being pressed, so it ends up with
    every key hammered and the couplers on. The IR reverbs of the routes run
@@ -1890,8 +1890,20 @@ happens:
    no single route exceeded its budget, and the driver never called late (a
    callback more than half a period behind its time is a dropout). The first
    breakup ends the climb; the run then narrows down between the last clean
-   and the failing number of keys, twice, letting the tails die away in
-   between. When even all 61 keys struck 16 times a second produce no more
+   and the failing number of keys - twice, up to five times while the
+   failing level still lies more than a tenth above the clean one - letting
+   the tails die away in between. When the keys cannot be split any further
+   and the gap is still wide (a weak computer: clean at 474 voices, broken at
+   742), the run narrows down by stops as well: at the failing number of keys
+   a share of the registration is engaged - every button of the grid counts,
+   transmissions and extensions included - halved towards the clean side, up
+   to four times, so that the result is what the computer really renders, not
+   the last coarse step below it. When the clean and the failing level differ
+   in the rate (every key was down already), the rate between them is split
+   first. A level whose callbacks stay between 85 and 100 % of the period for
+   two seconds is neither clean nor a breakup: it counts as a failure, and the
+   run narrows down below it. Below 1 000 voices the result is taken as
+   measured, not rounded. When even all 61 keys struck 16 times a second produce no more
    voices and the audio stays clean, the organ itself is the limit, not the
    computer. The *DSP* field may read lower than 85 % at the moment the run
    ends: it shows a peak that fades within a fraction of a second, while the

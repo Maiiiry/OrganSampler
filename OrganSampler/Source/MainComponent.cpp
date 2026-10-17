@@ -10848,9 +10848,11 @@ void MainComponent::unpackArchiveDialog()
                 const auto known = archives();
                 chooser = std::make_unique<juce::FileChooser>("The RAR archive(s) of the sample folders - select several with Ctrl or Shift",
                     !known.isEmpty() ? known.getFirst() : fileOf(folder.getText()), ArchiveExtractor::fileFilter());
+                hideWhileChoosing(true);
                 chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::canSelectMultipleItems,
                     [this](const juce::FileChooser& c)
                 {
+                    hideWhileChoosing(false);
                     juce::StringArray lines;
                     for (const auto& chosen : c.getResults()) if (chosen.existsAsFile()) lines.add(chosen.getFullPathName());
                     if (lines.isEmpty()) return;
@@ -10864,8 +10866,10 @@ void MainComponent::unpackArchiveDialog()
             {
                 const auto known = fileOf(folder.getText());
                 chooser = std::make_unique<juce::FileChooser>("The folder to unpack into", known.isDirectory() ? known : juce::File(), "*");
+                hideWhileChoosing(true);
                 chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories, [this](const juce::FileChooser& c)
                 {
+                    hideWhileChoosing(false);
                     const auto chosen = c.getResult();
                     if (chosen == juce::File()) return;
                     folder.setText(chosen.getFullPathName(), false);
@@ -10887,6 +10891,17 @@ void MainComponent::unpackArchiveDialog()
                 addAndMakeVisible(c);
             refresh();
             setSize(700, 330);
+        }
+        // While a file chooser is open this window steps aside (hidden) and comes
+        // back in front once the chooser is closed: on Linux the modal window
+        // pushed itself in front of the chooser at every click.
+        void hideWhileChoosing(bool choosing)
+        {
+            if (auto* window = findParentComponentOfClass<juce::DialogWindow>())
+            {
+                window->setVisible(!choosing);
+                if (!choosing) window->toFront(true);
+            }
         }
         void proposeFolder()
         {
@@ -17093,8 +17108,8 @@ struct MainComponent::PolyphonyMeasurement
     float cleanSecondShare = 0.0f;
     int firstFailingPeak = 0, firstFailingKeys = 0, firstFailingStrikes = 0;
     juce::String failReason;          // what ended the climb (for the report)
-    bool exhausted = false;           // all 61 keys at the top rate and the voices still below the target
-    bool couplersOn = false;          // the octave couplers of every division to itself (16' and 4', whether on the grid or not): after all 61 keys, before a faster rate
+    bool exhausted = false;           // every key of every division at the top rate and the voices still below the target
+    int maxKeys = 61;                 // the largest compass of the divisions: the key ceiling of a level
     // Refinement after the first breakup: the stimulus halfway between the last
     // clean and the failing key count (same rate), twice; the tails die away
     // first ("draining"), then the voices build up to their plateau and are judged.
@@ -17109,6 +17124,27 @@ struct MainComponent::PolyphonyMeasurement
     // thirty-second of the stops), so that something real gets measured.
     int retreats = 0, stopsTotal = 0, stopsEngaged = 0;
     bool retreatRestart = false;      // the drain ends in a fresh climb (1 key, 2 strikes), not in a narrowed-down level
+    // The registration as the measurement found it - every engaged button of the
+    // grid (stops, transmissions, extensions, stop folders), in grid order - and
+    // the share of it engaged now: 1 at the start, halved by every retreat.
+    // Narrowing down by stops: when the keys cannot be split any further and the
+    // failing level still lies well above the clean one (a weak computer: clean
+    // at 474 voices, broken at 742 - the truth may be 625), the share of the
+    // stops is searched between the two at the failing key count, a binary
+    // search on the registration, up to four times (a sixteenth of the stops).
+    std::vector<Voicer::GridItem> baseline;
+    double stopFraction = 1.0, refineLowFraction = 0.0, refineHighFraction = 1.0;
+    int stopRefinements = 0;
+    bool refineByStops = false;       // the current narrowed-down level is a share of the stops (at refineHighKeys / refineHighStrikes), not a key count
+    // Narrowing down by the rate: the clean level and the failing one differ in
+    // strikes a second (every key was down already), so the rate between them is
+    // split first - 4 and 8 give 6, then 5 or 7.
+    int refineLowStrikes = 0, refineHighStrikes = 0, refineNextStrikes = 0, strikeRefinements = 0;
+    bool refineByStrikes = false;
+    // The grey zone: callbacks between 85 and 100 % of the period are not clean
+    // and not a breakup; two such seconds at one level count as its failure.
+    int greySeconds = 0;
+    int cleanStopsEngaged = 0, cleanStopsTotal = 0;   // the registration of the best clean level (for the report)
     // Of the current hold
     float holdShare = 0.0f, holdWorstBlock = 0.0f; int holdLate = 0, holdPeak = 0;
     // "No longer rising": the polyphony of the second before the last one.
@@ -17320,17 +17356,28 @@ void MainComponent::startPolyphonyMeasurement()
     state->window = options.launchAsync();
     state->label = label;
 
-    // The keys of a level are spread evenly over 36-96 on every division.
+    // The keys of a level are spread evenly over every division's own compass
+    // (the pedal over its 30 or 32 keys from its lowest note, a manual over its
+    // 56 or 61): a division with fewer keys than the level has them all down.
+    // Every division is struck, so no coupler is ever needed (0.8.113).
+    for (int manual = 0; manual <= manualCount; ++manual)
+        state->maxKeys = juce::jmax(state->maxKeys, manualConfigs[(size_t)manual].compassHigh - manualConfigs[(size_t)manual].compassLow + 1);
+    state->maxKeys = juce::jlimit(1, 128, state->maxKeys);
     auto keys = [safeThis, state](bool on)
     {
         if (safeThis == nullptr) return;
-        const int count = juce::jlimit(1, 61, state->currentKeys);
         for (int manual = 0; manual <= safeThis->manualCount; ++manual)
+        {
+            const auto& config = safeThis->manualConfigs[(size_t)manual];
+            const int low = juce::jlimit(0, 127, juce::jmin(config.compassLow, config.compassHigh));
+            const int high = juce::jlimit(low, 127, juce::jmax(config.compassLow, config.compassHigh));
+            const int count = juce::jlimit(1, high - low + 1, state->currentKeys);
             for (int i = 0; i < count; ++i)
             {
-                const int note = count == 1 ? 60 : 36 + juce::roundToInt(60.0 * i / (count - 1));
+                const int note = count == 1 ? (low + high) / 2 : low + juce::roundToInt((double)(high - low) * i / (count - 1));
                 safeThis->routeKeyboardNote(manual, note, on ? 127 : 0, on);
             }
+        }
     };
     auto alive = [safeThis, state] { return safeThis != nullptr && safeThis->polyphonyMeasurement == state; };
 
@@ -17358,17 +17405,43 @@ void MainComponent::startPolyphonyMeasurement()
     auto describe = [state]
     {
         return juce::String(state->currentKeys) + " keys on every division, struck " + juce::String(state->currentStrikes) + " times a second"
-            + (state->couplersOn ? ", octave couplers on" : "")
             + (state->retreats > 0 ? ", " + juce::String(state->stopsEngaged) + " of " + juce::String(state->stopsTotal) + " stops" : juce::String());
+    };
+    // The share of the registration engaged: in every division the first part
+    // (grid order) of the buttons engaged at the start stays on, the rest goes
+    // off - stops, transmissions, extensions and stop folders alike. Returns
+    // engaged and total.
+    auto applyStopFraction = [safeThis, state](double fraction) -> std::pair<int, int>
+    {
+        int kept = 0, total = 0;
+        if (safeThis == nullptr) return { 0, 0 };
+        for (int manual = 0; manual <= safeThis->manualCount; ++manual)
+        {
+            std::vector<const Voicer::GridItem*> items;
+            for (const auto& item : state->baseline) if (item.manual == manual) items.push_back(&item);
+            total += (int)items.size();
+            const int keep = items.empty() ? 0 : juce::jlimit(1, (int)items.size(), juce::roundToInt((double)items.size() * fraction));
+            for (size_t i = 0; i < items.size(); ++i)
+            {
+                safeThis->setGridItemEnabled(*items[i], (int)i < keep);
+                if ((int)i < keep) ++kept;
+            }
+        }
+        state->stopFraction = fraction;
+        state->stopsTotal = total;
+        state->stopsEngaged = kept;
+        if (safeThis->voicer) safeThis->voicer->updateStopStates();
+        return { kept, total };
     };
     auto setStimulus = [safeThis, state, alive, keys, describe](int keyCount, int strikes)
     {
         if (!alive()) return;
         if (state->keysDown) { keys(false); state->keysDown = false; }   // the old set of keys up before the count changes
-        state->currentKeys = juce::jlimit(1, 61, keyCount);
+        state->currentKeys = juce::jlimit(1, state->maxKeys, keyCount);
         state->currentStrikes = juce::jlimit(1, 16, strikes);
         state->strikeIntervalMs = juce::jmax(30, 500 / state->currentStrikes);
         state->secondsSinceChange = 0;
+        state->greySeconds = 0;
         state->lateRetried = false;
         CrashHandler::note("Polyphony measurement: stimulus " + describe() + " (target " + juce::String(state->targetVoices) + " voices)");
     };
@@ -17378,7 +17451,12 @@ void MainComponent::startPolyphonyMeasurement()
         juce::String head;
         if (state->refining)
             head = state->draining ? "Narrowing down: letting the tails die away"
-                : (state->holding ? "Narrowing down: holding and judging" : "Narrowing down between " + juce::String(state->refineLowKeys) + " and "
+                : (state->holding ? "Narrowing down: holding and judging"
+                    : state->refineByStops ? "Narrowing down by stops: " + juce::String(state->stopsEngaged) + " of " + juce::String(state->stopsTotal)
+                        + " at " + juce::String(state->refineHighKeys) + " keys, " + juce::String(state->refineHighStrikes) + " strikes a second - the voices building up"
+                    : state->refineByStrikes ? "Narrowing down between " + juce::String(state->refineLowStrikes) + " and " + juce::String(state->refineHighStrikes)
+                        + " strikes a second at " + juce::String(state->refineHighKeys) + " keys - the voices building up"
+                    : "Narrowing down between " + juce::String(state->refineLowKeys) + " and "
                     + juce::String(state->refineHighKeys) + " keys - the voices building up");
         else head = "Target " + juce::String(state->targetVoices) + " voices" + (state->holding ? " - holding and judging" : " - the voices building up");
         state->label->setText(state->summary + "\n\n" + head + "\n" + describe() + ", " + juce::String(state->lastPeakSecond) + " voices now"
@@ -17387,24 +17465,82 @@ void MainComponent::startPolyphonyMeasurement()
     };
     // After a breakup: halfway between the clean and the failing key count, twice.
     // Returns false when there is nothing left to try (the run is over).
-    auto startRefine = [safeThis, state, alive, keys]() -> bool
+    auto startRefine = [safeThis, state, alive, keys, applyStopFraction]() -> bool
     {
         if (!alive()) return false;
-        const int mid = (state->refineLowKeys + state->refineHighKeys) / 2;
-        if (state->refinements >= 2 || mid <= state->refineLowKeys || mid >= state->refineHighKeys) return false;
-        ++state->refinements;
-        state->refining = true;
-        state->draining = true;
-        state->drainSeconds = 0;
-        state->holding = false;
-        if (state->keysDown) { keys(false); state->keysDown = false; }
-        CrashHandler::note("Polyphony measurement: narrowing down between " + juce::String(state->refineLowKeys) + " and "
-            + juce::String(state->refineHighKeys) + " keys: " + juce::String(mid) + " keys next, the tails dying away first");
-        return true;
+        // Worth another step? The failing level against the best clean level:
+        // twice by keys as a rule, up to five times while the gap is still more
+        // than a tenth (a weak computer lives at a few hundred voices, where a
+        // step of keys is a big share of the result).
+        const int cleanVoices = juce::jmax(state->highestCleanPeak, state->cleanSecondSafe);
+        const bool wideGap = cleanVoices == 0 || state->firstFailingPeak > cleanVoices * 1.1;
+        auto begin = [state, keys]
+        {
+            state->refining = true;
+            state->draining = true;
+            state->drainSeconds = 0;
+            state->holding = false;
+            if (state->keysDown) { keys(false); state->keysDown = false; }
+        };
+        if (!state->refineByStops && state->refineByStrikes)
+        {
+            const int mid = (state->refineLowStrikes + state->refineHighStrikes) / 2;
+            if (mid > state->refineLowStrikes && mid < state->refineHighStrikes && state->strikeRefinements < 3)
+            {
+                ++state->strikeRefinements;
+                state->refineNextStrikes = mid;
+                begin();
+                CrashHandler::note("Polyphony measurement: narrowing down between " + juce::String(state->refineLowStrikes) + " and "
+                    + juce::String(state->refineHighStrikes) + " strikes a second at " + juce::String(state->refineHighKeys) + " keys: "
+                    + juce::String(mid) + " strikes next, the tails dying away first");
+                return true;
+            }
+        }
+        else if (!state->refineByStops)
+        {
+            const int mid = (state->refineLowKeys + state->refineHighKeys) / 2;
+            if (mid > state->refineLowKeys && mid < state->refineHighKeys && (state->refinements < 2 || (wideGap && state->refinements < 5)))
+            {
+                ++state->refinements;
+                begin();
+                CrashHandler::note("Polyphony measurement: narrowing down between " + juce::String(state->refineLowKeys) + " and "
+                    + juce::String(state->refineHighKeys) + " keys: " + juce::String(mid) + " keys next, the tails dying away first");
+                return true;
+            }
+        }
+        // The keys cannot be split any further and the gap is still wide: the
+        // registration can be split - a share of the stops at the failing key
+        // count, between the share where the clean level is expected (the voices
+        // grow about in proportion) and the share that failed.
+        if (wideGap && cleanVoices > 0 && state->stopRefinements < 4 && !state->baseline.empty())
+        {
+            if (!state->refineByStops)
+            {
+                state->refineHighFraction = state->stopFraction;
+                state->refineLowFraction = state->firstFailingPeak > 0
+                    ? juce::jlimit(0.0, state->stopFraction, state->stopFraction * (double)cleanVoices / (double)state->firstFailingPeak) : 0.0;
+            }
+            const double fraction = (state->refineLowFraction + state->refineHighFraction) / 2.0;
+            if (state->refineHighFraction - state->refineLowFraction >= 1.0 / 16.0 && fraction > 0.0 && fraction < state->refineHighFraction)
+            {
+                ++state->stopRefinements;
+                state->refineByStops = true;
+                state->refineByStrikes = false;
+                if (state->refineHighStrikes <= 0) state->refineHighStrikes = state->currentStrikes;
+                begin();
+                const auto engaged = applyStopFraction(fraction);
+                CrashHandler::note("Polyphony measurement: narrowing down by stops - " + juce::String(engaged.first) + " of " + juce::String(engaged.second)
+                    + " stops (" + juce::String(juce::roundToInt(fraction * 100.0)) + " %, between " + juce::String(juce::roundToInt(state->refineLowFraction * 100.0))
+                    + " and " + juce::String(juce::roundToInt(state->refineHighFraction * 100.0)) + " %) at " + juce::String(state->refineHighKeys)
+                    + " keys, " + juce::String(state->refineHighStrikes) + " strikes a second next, the tails dying away first");
+                return true;
+            }
+        }
+        return false;
     };
 
     auto tick = std::make_shared<std::function<void()>>();
-    *tick = [safeThis, state, alive, setStimulus, showProgress, describe, startRefine, keys, tick]
+    *tick = [safeThis, state, alive, setStimulus, showProgress, describe, startRefine, keys, tick, applyStopFraction]
     {
         if (!alive()) return;
         ++state->second;
@@ -17422,6 +17558,8 @@ void MainComponent::startPolyphonyMeasurement()
             {
                 state->draining = false;
                 if (state->retreatRestart) { state->retreatRestart = false; setStimulus(1, 2); }   // the climb from the start with fewer stops
+                else if (state->refineByStops) setStimulus(state->refineHighKeys, state->refineHighStrikes);
+                else if (state->refineByStrikes) setStimulus(state->refineHighKeys, state->refineNextStrikes);
                 else setStimulus((state->refineLowKeys + state->refineHighKeys) / 2, state->currentStrikes);
                 state->peak = 0; state->holdPeak = 0; state->peakSecond = 0; state->lastPeakSecond = 0;   // the failed level's voices are gone
                 state->peakHistory[0] = state->peakHistory[1] = 0;
@@ -17470,6 +17608,7 @@ void MainComponent::startPolyphonyMeasurement()
         // where this organ stops being clean on this computer.
         bool brokeUp = late > 0 || callbackShare > 1.0f || worst > 1.0f;
         // A clean second at a settled level counts towards the verdict (see cleanSecondSafe).
+        if (late == 0 && callbackShare <= 0.85f && worst <= 0.85f) state->greySeconds = 0;
         if (late == 0 && callbackShare <= 0.85f && worst <= 0.85f && state->secondsSinceChange >= 1 && state->second >= 2
             && state->lastPeakSecond > 0)
         {
@@ -17482,6 +17621,7 @@ void MainComponent::startPolyphonyMeasurement()
                 state->cleanSecondKeys = state->currentKeys;
                 state->cleanSecondStrikes = state->currentStrikes;
                 state->cleanSecondShare = share;
+                if (state->highestCleanPeak < safe) { state->cleanStopsEngaged = state->stopsEngaged; state->cleanStopsTotal = state->stopsTotal; }
             }
         }
         // A late driver callback while every callback stayed within its period
@@ -17497,7 +17637,7 @@ void MainComponent::startPolyphonyMeasurement()
         // A failure (a breakup, or a hold judged unclean): the failing level is
         // remembered and the run narrows down between the clean and the failing
         // key count - or ends when there is nothing left between them.
-        auto failAt = [safeThis, state, startRefine, describe, keys](int voices, const juce::String& why)
+        auto failAt = [safeThis, state, startRefine, describe, keys, applyStopFraction](int voices, const juce::String& why)
         {
             if (state->firstFailingPeak == 0 || voices < state->firstFailingPeak || state->refining)
             {
@@ -17507,11 +17647,45 @@ void MainComponent::startPolyphonyMeasurement()
                 state->failReason = why;
             }
             CrashHandler::note("Polyphony measurement: failed at " + juce::String(voices) + " voices (" + describe() + "): " + why);
-            if (state->highestCleanStrikes == state->currentStrikes && state->highestCleanKeys > 0)
+            if (state->refineByStops)
             {
-                state->refineLowKeys = state->highestCleanKeys;
-                state->refineHighKeys = state->currentKeys;
+                // This share of the stops failed: the next one lies below it.
+                state->refineHighFraction = state->stopFraction;
                 if (startRefine()) return;
+            }
+            else if (state->refineByStrikes)
+            {
+                // This rate failed: the next one lies below it.
+                state->refineHighStrikes = state->currentStrikes;
+                if (startRefine()) return;
+            }
+            else
+            {
+                // The clean reference: the highest level held clean, or - when no
+                // target was ever held - the best clean second on the way up. The
+                // truth lies between it and this failing level: by keys when the
+                // rate is the same, by the rate when every key was down already,
+                // then by stops.
+                const int cleanKeys = state->highestCleanKeys > 0 ? state->highestCleanKeys : state->cleanSecondKeys;
+                const int cleanStrikes = state->highestCleanKeys > 0 ? state->highestCleanStrikes : state->cleanSecondStrikes;
+                if (cleanKeys > 0)
+                {
+                    state->refineHighKeys = state->currentKeys;
+                    state->refineHighStrikes = state->currentStrikes;
+                    if (cleanStrikes == state->currentStrikes && cleanKeys <= state->currentKeys)
+                    {
+                        state->refineLowKeys = cleanKeys;
+                        state->refineLowStrikes = cleanStrikes;
+                        if (startRefine()) return;
+                    }
+                    else if (cleanStrikes < state->currentStrikes)
+                    {
+                        state->refineLowKeys = state->currentKeys;
+                        state->refineLowStrikes = cleanStrikes;
+                        state->refineByStrikes = true;
+                        if (startRefine()) return;
+                    }
+                }
             }
             // Nothing was clean yet: the registration itself is too much for this
             // computer. Retreat - the octave couplers off, half of every division's
@@ -17522,34 +17696,12 @@ void MainComponent::startPolyphonyMeasurement()
             {
                 ++state->retreats;
                 if (state->keysDown) { keys(false); state->keysDown = false; }
-                if (state->couplersOn)
-                {
-                    for (int manual = 0; manual <= safeThis->manualCount; ++manual)
-                        for (const char* footage : { "16", "4" })
-                            safeThis->setCouplerEnabled(juce::String(manual) + "-" + juce::String(manual) + "-" + footage, false);
-                    state->couplersOn = false;
-                }
                 // The stops are the buttons of the grid - stops, transmissions, extensions
                 // and stop folders alike (a transmission plays pipes as any stop does): in
                 // every division the first half (grid order) stays on, the rest goes off.
-                int kept = 0, off = 0, total = 0;
-                const auto items = safeThis->gridStopItems();
-                for (int manual = 0; manual <= safeThis->manualCount; ++manual)
-                {
-                    std::vector<const Voicer::GridItem*> on;
-                    for (const auto& item : items) if (item.manual == manual && item.enabled) on.push_back(&item);
-                    total += (int)on.size();
-                    const int keep = juce::jmax(1, (int)on.size() / 2);
-                    for (size_t i = 0; i < on.size(); ++i)
-                    {
-                        if ((int)i < keep) { ++kept; continue; }
-                        safeThis->setGridItemEnabled(*on[i], false);
-                        ++off;
-                    }
-                }
-                if (state->stopsTotal == 0) state->stopsTotal = total;
-                state->stopsEngaged = kept;
-                if (safeThis->voicer) safeThis->voicer->updateStopStates();
+                const int before = state->stopsEngaged;
+                const auto engaged = applyStopFraction(state->stopFraction / 2.0);
+                const int kept = engaged.first, off = juce::jmax(0, before - engaged.first);
                 safeThis->engine.noteOffAll();
                 // The climb from the start: the failing level forgotten, the tails dying away first.
                 state->targetVoices = 2000;
@@ -17597,6 +17749,7 @@ void MainComponent::startPolyphonyMeasurement()
                     if (alive() && state->draining) juce::Timer::callAfterDelay(1000, [tick] { (*tick)(); });
                     return;
                 }
+                if (state->holdPeak >= state->highestCleanPeak) { state->cleanStopsEngaged = state->stopsEngaged; state->cleanStopsTotal = state->stopsTotal; }
                 state->highestCleanPeak = juce::jmax(state->highestCleanPeak, state->holdPeak);
                 state->highestCleanKeys = state->currentKeys;
                 state->highestCleanStrikes = state->currentStrikes;
@@ -17604,7 +17757,9 @@ void MainComponent::startPolyphonyMeasurement()
                 if (state->refining)
                 {
                     // Clean at the narrowed-down level: the next one lies above it.
-                    state->refineLowKeys = state->currentKeys;
+                    if (state->refineByStops) state->refineLowFraction = state->stopFraction;
+                    else if (state->refineByStrikes) state->refineLowStrikes = state->currentStrikes;
+                    else state->refineLowKeys = state->currentKeys;
                     if (!startRefine()) { safeThis->finishPolyphonyMeasurement(false); return; }
                     juce::Timer::callAfterDelay(1000, [tick] { (*tick)(); });
                     return;
@@ -17634,35 +17789,34 @@ void MainComponent::startPolyphonyMeasurement()
             state->secondsHeld = 0;
             state->holdShare = 0.0f; state->holdWorstBlock = 0.0f; state->holdLate = 0; state->holdPeak = state->lastPeakSecond;
         }
+        else if (state->secondsSinceChange >= 2 && juce::jmax(callbackShare, worst) > 0.85f && ++state->greySeconds >= 2)
+        {
+            // Not a breakup, not clean either - callbacks between 85 and 100 % of the
+            // period for two seconds: this level fails, and the run narrows down
+            // below it instead of climbing on into the breakup.
+            failAt(juce::jmax(state->lastPeakSecond, state->peak), "the longest callback took " + juce::String(juce::roundToInt(juce::jmax(callbackShare, worst) * 100.0f))
+                + " % of its period for two seconds (85 % is the limit)");
+            if (alive() && state->draining) juce::Timer::callAfterDelay(1000, [tick] { (*tick)(); });
+            return;
+        }
         else if (state->secondsSinceChange >= 2 && state->lastPeakSecond < juce::roundToInt(state->peakSecondBeforeChange() * 1.05))
         {
             // Below the target and no longer rising: more keys at once - as many as
             // the shortfall suggests (the voices grow about in proportion), at
             // least one more, at most half as many again, so the target is not
-            // overshot by much - then the octave couplers (every division pulled
-            // at 16' and 4' onto itself - the catalog has them whether they are
-            // on the grid or not: three pipes per key), then a faster rate.
-            if (state->currentKeys < 61)
+            // overshot by much - then a faster rate.
+            if (state->currentKeys < state->maxKeys)
             {
                 const int have = juce::jmax(1, state->lastPeakSecond);
                 const int wanted = (int)std::ceil((double)state->currentKeys * (double)state->targetVoices / (double)have);
                 setStimulus(juce::jlimit(state->currentKeys + 1, juce::jmax(state->currentKeys + 1, state->currentKeys * 3 / 2), wanted), state->currentStrikes);
             }
-            else if (!state->couplersOn)
-            {
-                state->couplersOn = true;
-                for (int manual = 0; manual <= safeThis->manualCount; ++manual)
-                    for (const char* footage : { "16", "4" })
-                        safeThis->setCouplerEnabled(juce::String(manual) + "-" + juce::String(manual) + "-" + footage, true);
-                CrashHandler::note("Polyphony measurement: the octave couplers (16' and 4') of every division engaged");
-                state->secondsSinceChange = 0;
-            }
-            else if (state->currentStrikes < 16) setStimulus(61, state->currentStrikes * 2);
+            else if (state->currentStrikes < 16) setStimulus(state->maxKeys, state->currentStrikes * 2);   // every key of every division: a faster rate (no couplers - every division is struck itself)
             else
             {
-                state->exhausted = true;   // all 61 keys 16 times a second: this organ has no more voices to give
+                state->exhausted = true;   // every key of every division 16 times a second: this organ has no more voices to give
                 state->highestCleanPeak = juce::jmax(state->highestCleanPeak, state->peak);
-                state->highestCleanKeys = 61; state->highestCleanStrikes = 16;
+                state->highestCleanKeys = state->maxKeys; state->highestCleanStrikes = 16;
                 safeThis->finishPolyphonyMeasurement(false);
                 return;
             }
@@ -17703,6 +17857,11 @@ void MainComponent::startPolyphonyMeasurement()
                 + juce::String(juce::roundToInt(idle.asioMaxCallbackShare * 100.0f)) + " % of the period; other devices longest gap "
                 + juce::String(idle.otherMaxGapMs, 1) + " ms");
             safeThis->enableAllStops();
+            // The registration under test - every engaged button of the grid, in grid
+            // order: the retreat and the narrowing down by stops take their shares of it.
+            state->baseline.clear();
+            for (const auto& item : safeThis->gridStopItems()) if (item.enabled) state->baseline.push_back(item);
+            state->stopsTotal = state->stopsEngaged = (int)state->baseline.size();
             safeThis->engine.takeMaxBlockLoad();
             safeThis->takeLateCallbacksOfAllRoutes();
             safeThis->takeDeviceLateCallbacks();
@@ -17759,9 +17918,9 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
     // clean is the new maximum polyphony; the slider is there for anyone who
     // wants it lower (more headroom) or higher (the brave).
     const int highestCleanKeys = state->highestCleanKeys, firstFailingKeys = state->firstFailingKeys;
-    // Rounded down to fifties below 1000 voices (a weak computer lives there and
-    // needs the fine steps), to hundreds above.
-    auto hundreds = [](int v) { return juce::jlimit(64, SamplerEngine::maxVoices, v < 1000 ? (v / 50) * 50 : (v / 100) * 100); };
+    // Exactly what was measured below 1000 voices (a weak computer lives there,
+    // and fifty voices of six hundred are a lot), rounded down to hundreds above.
+    auto hundreds = [](int v) { return juce::jlimit(64, SamplerEngine::maxVoices, v < 1000 ? v : (v / 100) * 100); };
     const int cleanBase = juce::jmax(state->highestCleanPeak, state->cleanSecondSafe);
     const int newLimit = hundreds(cleanBase > 0 ? cleanBase : juce::jmax(200, state->firstFailingPeak / 2));
     engine.setMaxPolyphony(newLimit);
@@ -17794,11 +17953,14 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
              << ") and no second before it was clean" << (state->retreats > 0 ? ", even with " + juce::String(state->stopsEngaged) + " of " + juce::String(state->stopsTotal)
                 + " stops after " + juce::String(state->retreats) + " retreat(s)" : juce::String()) << ", so half of that. Look at the advice below.";
     if (state->retreats > 0 && (state->highestCleanPeak > 0 || state->cleanSecondSafe > 0))
-        text << " Measured with " << state->stopsEngaged << " of " << state->stopsTotal << " stops engaged: the full registration broke the sound up at the very "
+        text << " Measured with " << state->cleanStopsEngaged << " of " << state->cleanStopsTotal << " stops engaged: the full registration broke the sound up at the very "
                 "first strike, so the measurement switched half of the stops off (" << state->retreats << " time(s)) until a second stayed clean - the "
                 "voices found are what this computer renders cleanly, whatever the stops.";
+    if (state->stopRefinements > 0)
+        text << " The keys alone could not get closer, so the run narrowed down by stops as well (" << state->stopRefinements << " step(s): a share of the "
+                "registration at the failing number of keys); the clean level was measured with " << state->cleanStopsEngaged << " of " << state->cleanStopsTotal << " stops.";
     else if (state->exhausted)
-        text << ": this organ has no more voices to give - all 61 keys struck 16 times a second on every division reached "
+        text << ": this organ has no more voices to give - every key of every division struck 16 times a second reached "
              << state->highestCleanPeak << " voices and the audio stayed clean. The computer is not the limit here.";
     else
         text << ": every target up to " << state->highestCleanPeak << " voices stayed clean.";
@@ -17895,8 +18057,6 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
                       "Decay, a stereo instead of a true-stereo IR, or fewer routes with an IR lower it.";
         else advice << ".";
     }
-    if (state->couplersOn)
-        advice << "\n\nThe octave couplers (16' and 4') of every division were engaged from 61 keys on to pile up more voices; they are restored as they were.";
     {
         // Hyper-threads render slower than the physical cores alone (measured: more
         // and higher peaks) - the one setting of the computer worth a word.

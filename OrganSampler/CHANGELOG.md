@@ -12,6 +12,32 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.113] - 2026-10-17
+
+### Changed
+- The polyphony measurement gets closer on weak computers: it narrows down
+  between the clean and the failing level up to five times by keys while
+  the gap is more than a tenth, also when no target was ever held (the clean
+  seconds on the way up count), and when the keys cannot be split any
+  further it narrows down by stops - a share of the registration at the
+  failing number of keys, halved towards the clean side, up to four times.
+  When the clean and the failing level differ in the rate (every key was
+  down already), the rate between them is split first (4 and 8 strikes a
+  second give 6, then 5 or 7). A level whose callbacks stay between 85 and
+  100 % of the period for two seconds - not clean, not a breakup - now
+  counts as a failure and the run narrows down below it instead of climbing
+  on into the breakup (a run that was clean at 2 756 voices and broke at
+  3 915 settled for 2 700 without looking between). A result below 1 000
+  voices is taken as measured, no longer rounded down to fifties (clean at
+  474, broken at 742 used to give 450; the truth may be 625).
+- The measurement strikes every division over its own compass (the pedal
+  from its lowest key) and uses no couplers any more - the octave couplers
+  tripled the voices in one step, too coarse a step on a weak computer; every
+  division is struck itself, so none is needed.
+- Unpack archive on Linux: the window steps aside while a file chooser is
+  open and comes back in front when it closes (it used to push itself in
+  front of the chooser at every click).
+
 ## [0.8.112] - 2026-10-17
 
 ### Changed

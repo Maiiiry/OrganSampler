@@ -1895,12 +1895,12 @@ static const char* const kManualText_part9 =
     "   routes with an IR - and grows with that text; below it, the current\n"
     "   target, the stimulus and the voices now.\n"
     "2. Every stop is engaged and keys are struck again and again on every\n"
-    "   division, slowly at first: one key, twice a second. The voices are watched\n"
+    "   division - each over its own compass, the pedal from its lowest key -\n"
+    "   slowly at first: one key, twice a second. The voices are watched\n"
     "   every second. Whenever they stop rising below the current target, the\n"
-    "   stimulus grows at once - more keys spread over the compass (up to all 61),\n"
-    "   then the octave couplers of every division onto itself (16' and 4',\n"
-    "   whether they are on the grid or not: three pipes per key), then a faster\n"
-    "   rate (up to 16 strikes a second). A wet set with several perspectives and\n"
+    "   stimulus grows at once - more keys spread over the compass (up to every\n"
+    "   key of every division), then a faster rate (up to 16 strikes a second).\n"
+    "   No coupler is used: every division is struck itself. A wet set with several perspectives and\n"
     "   long releases reaches tens of thousands of voices with a handful of keys;\n"
     "   a dry set gives little more than what is being pressed, so it ends up with\n"
     "   every key hammered and the couplers on. The IR reverbs of the routes run\n"
@@ -1912,8 +1912,20 @@ static const char* const kManualText_part9 =
     "   no single route exceeded its budget, and the driver never called late (a\n"
     "   callback more than half a period behind its time is a dropout). The first\n"
     "   breakup ends the climb; the run then narrows down between the last clean\n"
-    "   and the failing number of keys, twice, letting the tails die away in\n"
-    "   between. When even all 61 keys struck 16 times a second produce no more\n"
+    "   and the failing number of keys - twice, up to five times while the\n"
+    "   failing level still lies more than a tenth above the clean one - letting\n"
+    "   the tails die away in between. When the keys cannot be split any further\n"
+    "   and the gap is still wide (a weak computer: clean at 474 voices, broken at\n"
+    "   742), the run narrows down by stops as well: at the failing number of keys\n"
+    "   a share of the registration is engaged - every button of the grid counts,\n"
+    "   transmissions and extensions included - halved towards the clean side, up\n"
+    "   to four times, so that the result is what the computer really renders, not\n"
+    "   the last coarse step below it. When the clean and the failing level differ\n"
+    "   in the rate (every key was down already), the rate between them is split\n"
+    "   first. A level whose callbacks stay between 85 and 100 % of the period for\n"
+    "   two seconds is neither clean nor a breakup: it counts as a failure, and the\n"
+    "   run narrows down below it. Below 1 000 voices the result is taken as\n"
+    "   measured, not rounded. When even all 61 keys struck 16 times a second produce no more\n"
     "   voices and the audio stays clean, the organ itself is the limit, not the\n"
     "   computer. The *DSP* field may read lower than 85 % at the moment the run\n"
     "   ends: it shows a peak that fades within a fraction of a second, while the\n"
@@ -2008,6 +2020,8 @@ static const char* const kManualText_part9 =
     "\n"
     "### Wind: harmonic filter\n"
     "\n"
+    ;
+static const char* const kManualText_part10 =
     "The same shelf following the wind sag: this much high-frequency loss at the\n"
     "full sag (default 2 dB). Big chords starve the wind, and a starved pipe is\n"
     "duller as well as flatter.\n"
@@ -2020,8 +2034,6 @@ static const char* const kManualText_part9 =
     "\n"
     "### Wind: one stop's share of the full sag\n"
     "\n"
-    ;
-static const char* const kManualText_part10 =
     "The sag a single engaged 8' stop produces, relative to the sag with many stops\n"
     "engaged (2 to 100 %, default 20). Smaller footages count less. A lower value\n"
     "keeps a solo stop steady and lets the sag come with full registration.\n"
@@ -2210,6 +2222,8 @@ static const char* const kManualText_part10 =
     "### Filled pipes cache folder\n"
     "\n"
     "Where the cache files live. By default `FilledPipesCache` in the\n"
+    ;
+static const char* const kManualText_part11 =
     "application-data folder, usually on the system drive; the row then says\n"
     "\"(default)\". *Choose...* opens a folder dialog: pick a folder on a big drive\n"
     "(beside the samples, say). The files built so far are moved there at once, so\n"
@@ -2222,8 +2236,6 @@ static const char* const kManualText_part10 =
     "shifts). *Cubic interpolation* lowers the interpolation images by about 20 dB\n"
     "for these voices only. *Cubic + anti-alias filter* (default) also removes what\n"
     "would fold back when a pipe is transposed upwards: a low-passed copy of the\n"
-    ;
-static const char* const kManualText_part11 =
     "source is built for each such filled pipe (a few MB per rank, nothing for stops\n"
     "without upward shifts). Real pipes are never touched.\n"
     "\n"
@@ -2412,6 +2424,8 @@ static const char* const kManualText_part11 =
     "perspective. Every prefix that belongs to the same perspective must stand on\n"
     "that one line, separated by semicolons; the perspective takes its name from\n"
     "the first entry of the line (\"Direct;01-dirMk2H-;dir\" makes folders with any\n"
+    ;
+static const char* const kManualText_part12 =
     "of the three prefixes the perspective \"Direct\"). Defaults: Direct, Diffuse and\n"
     "Rear. Prefixes found in a newly loaded set are added here by themselves (a\n"
     "prefix that shares its stem with a known perspective joins its line; an\n"
@@ -2424,8 +2438,6 @@ static const char* const kManualText_part11 =
     "dialog (see \"Keyboard, MIDI and compass\", \"Swell, tremulant, wind\" and \"The\n"
     "audio tabs\").\n"
     "\n"
-    ;
-static const char* const kManualText_part12 =
     "### Stops and sample folders\n"
     "\n"
     "The folder trees loaded for this division, and the *Stop building...* button\n"
@@ -2614,6 +2626,8 @@ static const char* const kManualText_part12 =
     "days later.\n"
     "\n"
     "## 8.8 Free software, licences, platforms\n"
+    ;
+static const char* const kManualText_part13 =
     "\n"
     "OrganSampler is free software under the GNU GPL v3; the source code is on\n"
     "GitHub and every release is built there from it. *About & licences...* at the\n"
@@ -2626,8 +2640,6 @@ static const char* const kManualText_part12 =
     "\n"
     "- **Windows:** `OrganSampler-windows.zip` - Windows 10 or 11, 64-bit. ASIO,\n"
     "  Windows Audio (WASAPI) and the aggregated WASAPI device.\n"
-    ;
-static const char* const kManualText_part13 =
     "- **macOS:** `OrganSampler-macos.zip` runs on Apple silicon Macs with macOS\n"
     "  11 Big Sur or newer; `OrganSampler-macos-10.11-intel.zip` on Intel Macs\n"
     "  with macOS 10.11 El Capitan or newer. CoreAudio.\n"
