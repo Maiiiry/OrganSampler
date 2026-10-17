@@ -3,7 +3,7 @@
 **Pipe organ sampler for creative minds.** Design your console, build your stop
 list, perform.
 
-## [⬇ RELEASES - download the program](https://github.com/zurek-jiri/OrganSampler/releases) &nbsp;|&nbsp; [⬇ Rural Organ demo](https://github.com/zurek-jiri/OrganSampler/releases/tag/rural-organ-0.8) &nbsp;|&nbsp; [Configurations, Organs](configurations/INDEX.md)
+**[⬇ RELEASES - download the program](https://github.com/zurek-jiri/OrganSampler/releases) &nbsp;|&nbsp; [⬇ Rural Organ demo](https://github.com/zurek-jiri/OrganSampler/releases/tag/rural-organ-0.8) &nbsp;|&nbsp; [Configurations, Organs](configurations/INDEX.md)**
 
 [![Latest release](https://img.shields.io/github/v/release/zurek-jiri/OrganSampler?include_prereleases&label=download%20the%20latest%20build)](https://github.com/zurek-jiri/OrganSampler/releases)
 
