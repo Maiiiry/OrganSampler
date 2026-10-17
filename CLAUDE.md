@@ -40,9 +40,14 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   a BOM to the subject line. Tag only after `git log -1` shows the new commit.
 - Windows: `git` is not on PATH - use Visual Studio's
   (`C:\Program Files\Microsoft Visual Studio\18\Community\...\Team Explorer\Git\cmd\git.exe`); after pulling,
-  run `C:\JUCE9\Projucer.exe --resave OrganSampler\OrganSampler.jucer` and copy the .ico (above), commit the regenerated
+  run `C:\JUCE9\Projucer.exe --resave OrganSampler\OrganSampler.jucer` and copy the .ico (above)
+  (the first `--resave` after a change sometimes prints nothing and writes nothing - check `versionString` in
+  `JuceLibraryCode/JuceHeader.h` and run it again until it prints "Finished saving"), commit the regenerated
   `Builds/VisualStudio2026` and `JuceLibraryCode`. Linux clone: `~/OrganSamplerC-linux` (git cannot run on the NTFS
-  checkout from Linux); Linux builds come from CI only, the binary goes to `~/Downloads/OrganSampler` by rename. On Linux `gh` is NOT on
+  checkout from Linux); Linux builds come from CI only: `OrganSampler-linux-x86_64.tar.gz`, unpacked to
+  `~/Downloads/OrganSampler`. Releases carry the native archive of each system, never a bare executable (0.8.110):
+  `OrganSampler-windows.zip` (OrganSampler.exe inside), `OrganSampler-macos.zip` / `OrganSampler-macos-10.11-intel.zip`
+  (the app), `OrganSampler-linux-x86_64.tar.gz` (keeps the executable bit); names without a version. On Linux `gh` is NOT on
   PATH: use `~/tools/gh/bin/gh` (export PATH="$HOME/tools/gh/bin:$PATH"); never run `~/Downloads/OrganSampler` with
   made-up flags such as `--version` - it starts the program.
 

@@ -167,9 +167,13 @@ static const char* const kManualText_part0 =
     "\n"
     "## 1.2 Installation\n"
     "\n"
-    "OrganSampler is one executable file. Put it anywhere and start it; no\n"
-    "installation is needed, and nothing is read from beside it. Everything the\n"
-    "program remembers\n"
+    "OrganSampler is one executable file. It comes from the releases page as the\n"
+    "archive native to your system - `OrganSampler-windows.zip` (with\n"
+    "`OrganSampler.exe` inside), `OrganSampler-macos.zip` or\n"
+    "`OrganSampler-macos-10.11-intel.zip` (the app), `OrganSampler-linux-x86_64.tar.gz`\n"
+    "(`tar xzf`; the program stays executable). Unpack it, put the program\n"
+    "anywhere and start it; no installation is needed, and nothing is read from\n"
+    "beside it. Everything the program remembers\n"
     "(settings, voicing, combinations, the filled-pipes cache) lives in the user's\n"
     "application-data folder:\n"
     "\n"
@@ -198,12 +202,12 @@ static const char* const kManualText_part0 =
     "## 1.3 The first start, step by step\n"
     "\n"
     "### Step 1: Size\n"
+    ;
+static const char* const kManualText_part1 =
     "\n"
     "The window opens sized for your screen; resize it by dragging its edges like\n"
     "any other window. If the elements of the console - buttons, sliders, text -\n"
     "are too big or too small for your screen, open *Configuration Editor* (top\n"
-    ;
-static const char* const kManualText_part1 =
     "bar) and move *Interface size*.\n"
     "\n"
     "### Step 2: Divisions\n"
@@ -400,12 +404,12 @@ static const char* const kManualText_part1 =
     "```\n"
     "\n"
     "  A set with one release per pipe has just the folder `rel`. A stop without any\n"
+    ;
+static const char* const kManualText_part2 =
     "  release folder plays as well: when the key is let go the sound fades out\n"
     "  (the *Sustain fade-out* of Global sound) and the voice falls silent, with no\n"
     "  room decay.\n"
     "- **Loop points and pitch** come from the WAV's smpl chunk. A sustained sample\n"
-    ;
-static const char* const kManualText_part2 =
     "  without loop points is looped as a whole (a short fade at its end, no click).\n"
     "- **Microphone perspectives.** When the same stops exist under several\n"
     "  prefixes (\"dir-Principal 8\", \"dif-Principal 8\", \"rear-Principal 8\") the\n"
@@ -602,12 +606,12 @@ static const char* const kManualText_part2 =
     "- **Configuration Editor**: every program setting in one scrolling dialog:\n"
     "  see \"8. Configuration Editor reference\".\n"
     "\n"
+    ;
+static const char* const kManualText_part3 =
     "## 2.2 The combination row\n"
     "\n"
     "The row holds the combination pistons (their number is set in *Configuration\n"
     "Editor > Console > Combination pistons*), the *Set* button, the *<<* and *>>*\n"
-    ;
-static const char* const kManualText_part3 =
     "stepping buttons, *Save* and *Load* for combination files, and the crescendo.\n"
     "\n"
     "- Click a piston to recall its registration (stops, transmissions, couplers,\n"
@@ -804,12 +808,12 @@ static const char* const kManualText_part3 =
     "- A *Reset to 0 dB* button sits beside each header; dragging with the right\n"
     "  mouse button paints one value across a row of sliders.\n"
     "- The sliders light up while the key sounds. A **green thumb** marks a filled\n"
+    ;
+static const char* const kManualText_part4 =
     "  pipe (hover it: the tooltip names the stop, the sample file and the shift it\n"
     "  was made with, \"HW Tromp 16', sample 039-D#.wav, -12 st (from key 51)\"). An\n"
     "  **orange note name** means the sample has no loop points. A **grey slider**\n"
     "  means the stop has no pipe there at all.\n"
-    ;
-static const char* const kManualText_part4 =
     "\n"
     "## 3.4 Transmissions and extensions\n"
     "\n"
@@ -1006,12 +1010,12 @@ static const char* const kManualText_part4 =
     "division is chosen at the top. The settings of a division are the same as in\n"
     "its section of the Configuration Editor (\"Division sections (Pedal, Manual I\n"
     "... Manual VII)\" describes every one of them); the dialog adds the keyboard\n"
+    ;
+static const char* const kManualText_part5 =
     "drawing, the coupler and swell learning, and the audio tabs.\n"
     "\n"
     "## 5.1 Keyboard, MIDI and compass\n"
     "\n"
-    ;
-static const char* const kManualText_part5 =
     "- *MIDI keyboard device* and *MIDI channel*. When another division listens to\n"
     "  the same device and channel a note \"Shared with ...\" appears (one key then\n"
     "  plays all of them).\n"
@@ -1208,12 +1212,12 @@ static const char* const kManualText_part5 =
     "before you do it:\n"
     "\n"
     "- **Less polyphony.** Every WASAPI route renders its pipes on its own thread,\n"
+    ;
+static const char* const kManualText_part6 =
     "  separately from the ASIO routes; the processor's time is split, and the DSP\n"
     "  load reaches 100 % sooner than with ASIO alone.\n"
     "- **Different latencies.** ASIO and WASAPI answer at different speeds, so\n"
     "  divisions on different drivers do not speak at the same moment after the\n"
-    ;
-static const char* const kManualText_part6 =
     "  key is pressed. While playing this is confusing - though now and then it\n"
     "  imitates, by accident, the different delays of the actions of a real\n"
     "  organ's divisions.\n"
@@ -1410,12 +1414,12 @@ static const char* const kManualText_part6 =
     "  (64 or 128 samples) cuts the reachable polyphony dramatically, because\n"
     "  every block must be rendered in a fraction of the time. An organ does not\n"
     "  need it: the action of a real organ has its own delay, and a latency of\n"
+    ;
+static const char* const kManualText_part7 =
     "  about 10 ms (512 samples at 48 kHz) is absolutely fine for organ playing -\n"
     "  even 20 ms (1024 samples) is still perfectly comfortable. Choose the\n"
     "  larger buffer and take the polyphony.\n"
     "- **Windows Audio.** All routes on one Windows Audio device share one stream\n"
-    ;
-static const char* const kManualText_part7 =
     "  and one callback, rendered by the whole pool of *Render threads* - the\n"
     "  same layout as ASIO, with the 10 ms period of the Windows audio engine\n"
     "  (a buffer of 480 samples at 48 kHz) instead of the driver's buffer. Only\n"
@@ -1612,12 +1616,12 @@ static const char* const kManualText_part7 =
     "tremulate. And it often breaks the loops: the loop points are kept, but the\n"
     "vocoder's output at the loop end no longer matches the loop start exactly, so\n"
     "the seam becomes audible as a click or a bump at every repeat. The setting\n"
+    ;
+static const char* const kManualText_part8 =
     "*Filled pipes: loop crossfade* exists for this - a long blend over the seam\n"
     "hides it at least partly. The slowest build of the three, though still\n"
     "seconds per stop.\n"
     "\n"
-    ;
-static const char* const kManualText_part8 =
     "The other methods can also worsen the seamlessness of a loop, unfortunately:\n"
     "every resampled copy has its loop points moved to whole periods of the new\n"
     "pitch, and a seam that was perfect in the recording is then only nearly\n"
@@ -1814,12 +1818,12 @@ static const char* const kManualText_part8 =
     "summed dry signal of such routes is the sum of their reverbs - so the sound is\n"
     "the same and the work is paid once per group: Rural Organ's three divisions on\n"
     "one device, each with its default and its auxiliary route, run two\n"
+    ;
+static const char* const kManualText_part9 =
     "convolutions instead of six. The IR caption of a route that rides on\n"
     "another's convolution says *(shared)* and its tooltip names the route; a\n"
     "route whose settings differ in anything keeps its own convolution. Nothing\n"
     "needs to be set: the grouping follows the settings and the devices.\n"
-    ;
-static const char* const kManualText_part9 =
     "\n"
     "### Maximum polyphony\n"
     "\n"
@@ -2016,12 +2020,12 @@ static const char* const kManualText_part9 =
     "engaged (2 to 100 %, default 20). Smaller footages count less. A lower value\n"
     "keeps a solo stop steady and lets the sag come with full registration.\n"
     "\n"
+    ;
+static const char* const kManualText_part10 =
     "### Wind: one pipe's share of the full sag\n"
     "\n"
     "The sag with one key held, relative to the sag with many keys held (default\n"
     "50 %).\n"
-    ;
-static const char* const kManualText_part10 =
     "\n"
     "### Wind: two pipes' share of the full sag\n"
     "\n"
@@ -2218,12 +2222,12 @@ static const char* const kManualText_part10 =
     "without upward shifts). Real pipes are never touched.\n"
     "\n"
     "### Treble per key: shelf start frequency\n"
+    ;
+static const char* const kManualText_part11 =
     "\n"
     "The *Treble per key* sliders of the voicing raise or lower everything above\n"
     "this frequency (120 to 5000 Hz, default 1800): a high shelf whose transition\n"
     "band runs from here to about twice this frequency. A pipe whose recorded\n"
-    ;
-static const char* const kManualText_part11 =
     "fundamental lies higher starts its shelf at that fundamental instead. The\n"
     "velocity treble cut uses the same frequency.\n"
     "\n"
@@ -2420,12 +2424,12 @@ static const char* const kManualText_part11 =
     "\n"
     "The folder trees loaded for this division, and the *Stop building...* button\n"
     "that opens the Stop List (see \"Folder trees and the pool\") at it.\n"
+    ;
+static const char* const kManualText_part12 =
     "\n"
     "### Shown in window\n"
     "\n"
     "With two program windows: the window this division is shown in. A division is\n"
-    ;
-static const char* const kManualText_part12 =
     "in one window only; the divisions of each window share its width.\n"
     "\n"
     "### MIDI keyboard device\n"
@@ -2616,18 +2620,18 @@ static const char* const kManualText_part12 =
     "built for Windows, macOS and Linux; the macOS and Linux builds have had less\n"
     "playing time than the Windows build. What each build needs:\n"
     "\n"
-    "- **Windows:** Windows 10 or 11, 64-bit. ASIO, Windows Audio (WASAPI) and\n"
-    "  the aggregated WASAPI device.\n"
+    "- **Windows:** `OrganSampler-windows.zip` - Windows 10 or 11, 64-bit. ASIO,\n"
+    "  Windows Audio (WASAPI) and the aggregated WASAPI device.\n"
     "- **macOS:** `OrganSampler-macos.zip` runs on Apple silicon Macs with macOS\n"
     "  11 Big Sur or newer; `OrganSampler-macos-10.11-intel.zip` on Intel Macs\n"
     "  with macOS 10.11 El Capitan or newer. CoreAudio.\n"
-    "- **Linux:** x86-64 with glibc 2.38 or newer - a distribution of 2024 or\n"
-    "  later: Ubuntu 24.04, Linux Mint 22, Debian 13, Fedora 39 and their\n"
-    "  successors. ALSA or JACK (PipeWire).\n"
-    "\n"
-    "Where the program keeps its files (settings, the activity log, crash\n"
+    "- **Linux:** `OrganSampler-linux-x86_64.tar.gz` - x86-64 with glibc 2.38 or\n"
     ;
 static const char* const kManualText_part13 =
+    "  newer - a distribution of 2024 or later: Ubuntu 24.04, Linux Mint 22,\n"
+    "  Debian 13, Fedora 39 and their successors. ALSA or JACK (PipeWire).\n"
+    "\n"
+    "Where the program keeps its files (settings, the activity log, crash\n"
     "reports) - the \"application-data folder\" of this manual:\n"
     "\n"
     "- Windows: `%APPDATA%\\OrganSampler` (`C:\\Users\\<you>\\AppData\\Roaming\\OrganSampler`)\n"

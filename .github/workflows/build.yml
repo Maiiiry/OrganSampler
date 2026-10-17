@@ -16,15 +16,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Every build is published as the platform's native archive (package):
+          # a zip on Windows and macOS, a tar.gz on Linux (it keeps the executable
+          # bit, so no chmod +x after unpacking). Never a bare executable.
           - name: Windows
             os: windows-latest
             artifact: OrganSampler-windows
             path: build/OrganSampler_artefacts/Release/OrganSampler.exe
+            package: OrganSampler-windows.zip
           - name: macOS
             os: macos-latest
             artifact: OrganSampler-macos
             path: build/OrganSampler_artefacts/Release/OrganSampler.app
-            zip: OrganSampler-macos.zip
+            package: OrganSampler-macos.zip
             cmake: -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
           # A test build for old Intel Macs (macOS 10.11 El Capitan and later - the
           # lowest JUCE allows). Untested by the project itself; it must not block
@@ -33,7 +37,7 @@ jobs:
             os: macos-latest
             artifact: OrganSampler-macos-10.11-intel
             path: build/OrganSampler_artefacts/Release/OrganSampler.app
-            zip: OrganSampler-macos-10.11-intel.zip
+            package: OrganSampler-macos-10.11-intel.zip
             # -faligned-allocation: C++17 aligned new/delete come from AlignedNew.cpp (the system
             # ones exist from 10.13). libc++'s availability stays ON: with it disabled
             # (-D_LIBCPP_DISABLE_AVAILABILITY) the headers assumed every libc++ symbol of the
@@ -46,6 +50,7 @@ jobs:
             os: ubuntu-latest
             artifact: OrganSampler-linux
             path: build/OrganSampler_artefacts/Release/OrganSampler
+            package: OrganSampler-linux-x86_64.tar.gz
     steps:
       - uses: actions/checkout@v4
         with:
@@ -85,14 +90,25 @@ jobs:
           Get-Content $report | Select-String -Pattern 'WRONG|FAIL|COMPLETED'
           if (-not (Select-String -Path $report -Pattern 'COMPLETED WITHOUT CRASH' -Quiet)) { throw "self-test did not complete" }
 
-      - name: Package (macOS)
+      - name: Package (macOS - zip of the app bundle)
         if: runner.os == 'macOS'
-        run: ditto -c -k --keepParent "${{ matrix.path }}" "${{ matrix.zip }}"
+        run: ditto -c -k --keepParent "${{ matrix.path }}" "${{ matrix.package }}"
+
+      - name: Package (Windows - zip)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path "${{ matrix.path }}" -DestinationPath "${{ matrix.package }}" -CompressionLevel Optimal
+
+      - name: Package (Linux - tar.gz, executable bit kept)
+        if: runner.os == 'Linux'
+        run: |
+          chmod +x "${{ matrix.path }}"
+          tar -czf "${{ matrix.package }}" -C "$(dirname "${{ matrix.path }}")" "$(basename "${{ matrix.path }}")"
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: ${{ runner.os == 'macOS' && matrix.zip || matrix.path }}
+          path: ${{ matrix.package }}
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -111,7 +127,7 @@ jobs:
           files: artifacts/**/*
           prerelease: true
           body: |
-            Pre-release build for testers - not an official release yet. Windows 10/11 64-bit: `OrganSampler.exe`; macOS: `OrganSampler-macos.zip` for Apple silicon Macs on macOS 11 Big Sur or newer, `OrganSampler-macos-10.11-intel.zip` for Intel Macs on macOS 10.11 El Capitan or newer (both unsigned: right-click > Open the first time; untested by the project); Linux x86-64 with glibc 2.38 or newer (Ubuntu 24.04, Mint 22, Debian 13, Fedora 39 and newer): `OrganSampler` (`chmod +x` first). Changes: see `OrganSampler/CHANGELOG.md`.
+            Pre-release build for testers - not an official release yet. One program, no installation: unpack the archive of your system and start the program. Windows 10/11 64-bit: `OrganSampler-windows.zip` (`OrganSampler.exe` inside); macOS: `OrganSampler-macos.zip` for Apple silicon Macs on macOS 11 Big Sur or newer, `OrganSampler-macos-10.11-intel.zip` for Intel Macs on macOS 10.11 El Capitan or newer (both unsigned: right-click > Open the first time; untested by the project); Linux x86-64 with glibc 2.38 or newer (Ubuntu 24.04, Mint 22, Debian 13, Fedora 39 and newer): `OrganSampler-linux-x86_64.tar.gz` (`tar xzf`, the executable bit is kept). Changes: see `OrganSampler/CHANGELOG.md`.
 
             **An organ to play:** the Rural Organ demo (dry recordings with IR reverb, sample folders and configuration included) - https://github.com/zurek-jiri/OrganSampler/releases/tag/rural-organ-0.8. **More organs:** sample folders in wave format from Sonus Paradisi, https://www.sonusparadisi.cz/en/organs.html (free material: https://www.sonusparadisi.cz/en/free-stuff.html); ready-made configurations: the list in `configurations/INDEX.md`, https://github.com/zurek-jiri/OrganSampler/blob/main/configurations/INDEX.md.
       # Only the newest build stays on the releases page: every older v* release

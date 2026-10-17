@@ -163,9 +163,13 @@ You can of course go on improving it in any way you like, and save it again.
 
 ## 1.2 Installation
 
-OrganSampler is one executable file. Put it anywhere and start it; no
-installation is needed, and nothing is read from beside it. Everything the
-program remembers
+OrganSampler is one executable file. It comes from the releases page as the
+archive native to your system - `OrganSampler-windows.zip` (with
+`OrganSampler.exe` inside), `OrganSampler-macos.zip` or
+`OrganSampler-macos-10.11-intel.zip` (the app), `OrganSampler-linux-x86_64.tar.gz`
+(`tar xzf`; the program stays executable). Unpack it, put the program
+anywhere and start it; no installation is needed, and nothing is read from
+beside it. Everything the program remembers
 (settings, voicing, combinations, the filled-pipes cache) lives in the user's
 application-data folder:
 
@@ -2588,14 +2592,14 @@ GmbH), Signalsmith Stretch and Signalsmith Linear (MIT). The same program is
 built for Windows, macOS and Linux; the macOS and Linux builds have had less
 playing time than the Windows build. What each build needs:
 
-- **Windows:** Windows 10 or 11, 64-bit. ASIO, Windows Audio (WASAPI) and
-  the aggregated WASAPI device.
+- **Windows:** `OrganSampler-windows.zip` - Windows 10 or 11, 64-bit. ASIO,
+  Windows Audio (WASAPI) and the aggregated WASAPI device.
 - **macOS:** `OrganSampler-macos.zip` runs on Apple silicon Macs with macOS
   11 Big Sur or newer; `OrganSampler-macos-10.11-intel.zip` on Intel Macs
   with macOS 10.11 El Capitan or newer. CoreAudio.
-- **Linux:** x86-64 with glibc 2.38 or newer - a distribution of 2024 or
-  later: Ubuntu 24.04, Linux Mint 22, Debian 13, Fedora 39 and their
-  successors. ALSA or JACK (PipeWire).
+- **Linux:** `OrganSampler-linux-x86_64.tar.gz` - x86-64 with glibc 2.38 or
+  newer - a distribution of 2024 or later: Ubuntu 24.04, Linux Mint 22,
+  Debian 13, Fedora 39 and their successors. ALSA or JACK (PipeWire).
 
 Where the program keeps its files (settings, the activity log, crash
 reports) - the "application-data folder" of this manual:

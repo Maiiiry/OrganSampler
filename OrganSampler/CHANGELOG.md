@@ -12,6 +12,20 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.110] - 2026-10-17
+
+### Changed
+- The releases carry the native archive of each system instead of bare
+  executables: `OrganSampler-windows.zip` (with `OrganSampler.exe` inside),
+  `OrganSampler-macos.zip` and `OrganSampler-macos-10.11-intel.zip` (the app
+  bundle, as before) and `OrganSampler-linux-x86_64.tar.gz`, which keeps the
+  executable bit - no `chmod +x` after unpacking. README, website and manual
+  say so.
+- The engine self-test's division swap check expected the old keyboard to
+  be silent after the swap; with two or more real divisions it carries the
+  stops of division 1, which is right - the check reported WRONG for the
+  engine's correct behaviour. It now expects what division 1 had.
+
 ## [0.8.109] - 2026-10-17
 
 ### Added

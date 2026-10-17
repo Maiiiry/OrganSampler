@@ -17,10 +17,12 @@ configuration. Free software under the GNU GPL v3. Windows, macOS and Linux.
 
 1. **The program:** the latest build on the
    [releases page](https://github.com/zurek-jiri/OrganSampler/releases)
-   (pre-release builds for testers; one executable, no installation:
-   Windows 10/11 64-bit; macOS 11 Big Sur or newer on Apple silicon, 10.11
-   El Capitan or newer on Intel Macs; Linux x86-64 with glibc 2.38 or newer -
-   Ubuntu 24.04, Mint 22, Debian 13, Fedora 39 and newer).
+   (pre-release builds for testers; one executable, no installation - unpack
+   the archive of your system: `OrganSampler-windows.zip` for Windows 10/11
+   64-bit; `OrganSampler-macos.zip` for macOS 11 Big Sur or newer on Apple
+   silicon, `OrganSampler-macos-10.11-intel.zip` for 10.11 El Capitan or newer
+   on Intel Macs; `OrganSampler-linux-x86_64.tar.gz` for Linux x86-64 with
+   glibc 2.38 or newer - Ubuntu 24.04, Mint 22, Debian 13, Fedora 39 and newer).
 2. **An organ to play:** download
    [**RuralOrgan.rar**](https://github.com/zurek-jiri/OrganSampler/releases/download/rural-organ-0.8/RuralOrgan.rar)
    (about 950 MB) - the **Rural Organ** demo: a small village organ, three
@@ -91,10 +93,11 @@ Windows developers may also use the Projucer project
 
 `.github/workflows/build.yml` builds Release on Windows, macOS and Linux for
 every push and pull request, runs the engine self-test on synthetic sample
-folders (Windows and Linux) and uploads the executables as artifacts. A tag `v*` also
-attaches them to a GitHub release. The macOS and Linux builds are not signed:
-macOS asks for confirmation the first time (right-click > Open), Linux needs
-`chmod +x OrganSampler`.
+folders (Windows and Linux) and uploads the packaged builds as artifacts - the
+native archive of each system: a zip with `OrganSampler.exe` on Windows, a zip
+of the app bundle on macOS, a tar.gz on Linux (it keeps the executable bit).
+A tag `v*` also attaches them to a GitHub release. The macOS and Linux builds
+are not signed: macOS asks for confirmation the first time (right-click > Open).
 
 ## Self-test
 
