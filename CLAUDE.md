@@ -133,9 +133,11 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
 
 ## Testing
 - Windows delivery: after every release build copy the exe to `C:\OrganSampler\OrganSampler_<version>.exe`
-  (the local MSBuild Release build or the CI exe) and point the desktop shortcut
-  `OrganSampler_<version>.exe – zástupce.lnk` at it (rename the previous version's shortcut; WScript.Shell
-  CreateShortcut, TargetPath + IconLocation). The user starts the program from that shortcut.
+  (the local MSBuild Release build or the CI exe) and retarget the EXISTING desktop shortcut in place
+  (today `OrganSampler_0.8.98.exe – zástupce.lnk`; find it by its TargetPath under `C:\OrganSampler\`; WScript.Shell
+  CreateShortcut, set TargetPath + IconLocation, Save). NEVER delete, rename or recreate the shortcut: Explorer
+  keeps icon positions by file name and a new file lands anywhere on the desktop. The user starts the program
+  from that shortcut.
 - Never build or launch the program while the user runs it. Linux test: `~/tools/linux_test.sh <exe> <seconds>`
   with `CFG=`, `ORGAN_OPEN_STOP_LIST=`, `ORGAN_JACK_BUFFER=`, `ORGAN_SAVE_PORTABLE=` hooks; the activity log is
   `~/.config/OrganSampler/CrashLogs/activity.log` (Windows: `%APPDATA%\OrganSampler\CrashLogs\activity.log`).

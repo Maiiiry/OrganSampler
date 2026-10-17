@@ -1806,7 +1806,13 @@ audio routes, the auxiliary routes, the IR reverbs, the drivers and the buffer
 sizes all change it (see "Getting the most polyphony"). It is saved with the
 configuration. The easiest way to find it is the button below it,
 "Measure the maximum polyphony", once the organ is loaded and its audio
-outputs are configured. By hand:
+outputs are configured. On a computer where the full registration breaks
+the sound up at the very first strike (no second stays clean), the
+measurement retreats by itself: the octave couplers go off, half of every
+division's stops are switched off, and the climb starts again from one key -
+up to five times, down to a thirty-second of the stops - until a second
+stays clean; the report then says with how many stops it measured, and the
+limit found is what the computer renders cleanly whatever the stops. By hand:
 
 1. Engage a large number of stops with long releases (a full registration of
    wet samples).

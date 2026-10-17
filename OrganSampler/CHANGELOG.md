@@ -12,6 +12,22 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.107] - 2026-10-17
+
+### Fixed
+- Every dialog (Divisions, Stop List, Couplers, Temperaments, Crescendo, the
+  reverb tone, the second window) is kept inside the screen's work area like
+  the main window: the frame is read back once the dialog shows and shrunk
+  or moved until the title bar and the close button are visible. The
+  activity log records it.
+- Polyphony measurement on a computer where the sound breaks up at the very
+  first strike (no clean second at all): the measurement no longer sets
+  "half of the failing level" (200 voices after a breakup at 42 made no
+  sense). It retreats - the octave couplers off, half of every division's
+  engaged stops switched off - and climbs again from one key, up to five
+  times (down to a thirty-second of the stops) until a second stays clean;
+  the report says with how many stops it measured.
+
 ## [0.8.106] - 2026-10-17
 
 ### Added

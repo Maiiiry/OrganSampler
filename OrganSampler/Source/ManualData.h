@@ -1828,7 +1828,13 @@ static const char* const kManualText_part9 =
     "sizes all change it (see \"Getting the most polyphony\"). It is saved with the\n"
     "configuration. The easiest way to find it is the button below it,\n"
     "\"Measure the maximum polyphony\", once the organ is loaded and its audio\n"
-    "outputs are configured. By hand:\n"
+    "outputs are configured. On a computer where the full registration breaks\n"
+    "the sound up at the very first strike (no second stays clean), the\n"
+    "measurement retreats by itself: the octave couplers go off, half of every\n"
+    "division's stops are switched off, and the climb starts again from one key -\n"
+    "up to five times, down to a thirty-second of the stops - until a second\n"
+    "stays clean; the report then says with how many stops it measured, and the\n"
+    "limit found is what the computer renders cleanly whatever the stops. By hand:\n"
     "\n"
     "1. Engage a large number of stops with long releases (a full registration of\n"
     "   wet samples).\n"
@@ -2014,14 +2020,14 @@ static const char* const kManualText_part9 =
     "The strength of the whole wind model, 0 to 100 % (default 100). The steady sag\n"
     "of held keys and engaged stops follows it directly; every key stroke shakes the\n"
     "wind with a random 40 to 100 % of it, so repeated notes never sound mechanical.\n"
+    ;
+static const char* const kManualText_part10 =
     "0 % switches the wind model off everywhere.\n"
     "\n"
     "### Tremulant: harmonic filter\n"
     "\n"
     "The shelf following the tremulant: this much high-frequency loss at the bottom\n"
     "of its dip (default 4 dB), so the tone breathes as well as the level.\n"
-    ;
-static const char* const kManualText_part10 =
     "\n"
     "### Tremulant: harmonic filter phase\n"
     "\n"
@@ -2216,14 +2222,14 @@ static const char* const kManualText_part10 =
     "\n"
     "## 8.4 Console\n"
     "\n"
+    ;
+static const char* const kManualText_part11 =
     "### Interface size\n"
     "\n"
     "The size of every window, button, slider and text, in per cent of the design\n"
     "size (50 to 300 %). The first start estimates it from the screen so that Full\n"
     "HD, 4K and Retina screens show the console alike; double-click returns to that\n"
     "estimate. Applied when the slider is released: every open window keeps its\n"
-    ;
-static const char* const kManualText_part11 =
     "place and size on the screen, only its content changes size.\n"
     "\n"
     "### Divisions\n"
@@ -2418,14 +2424,14 @@ static const char* const kManualText_part11 =
     "\n"
     "The MIDI channel (1 to 16) of the division on that device.\n"
     "\n"
+    ;
+static const char* const kManualText_part12 =
     "### Ignore MIDI velocity (organ keys)\n"
     "\n"
     "On: every key is sent as full velocity, so there is never a velocity fade-in\n"
     "or treble cut (see \"Key velocity: fade-in at the lowest velocity\") and always\n"
     "the top velocity layer (see \"Velocity layers\"). For consoles whose keys send\n"
     "unreliable velocities.\n"
-    ;
-static const char* const kManualText_part12 =
     "\n"
     "### Bass octave layout\n"
     "\n"
@@ -2620,11 +2626,13 @@ static const char* const kManualText_part12 =
     "well, in `~/Library/Logs/DiagnosticReports` (named `OrganSampler_...`).\n"
     "`settings.json` is the state of the program, `settings-<date>.json` the\n"
     "snapshot of each of the last seven days. If the program crashes at every\n"
+    ;
+static const char* const kManualText_part13 =
     "start, move `settings.json` away (keep it for the report) and it starts\n"
     "clean; a crash while an audio device was being opened is caught by the\n"
     "program itself: the next start opens that device with the default buffer\n"
     "and rate and says so.\n"
     "\n"
     ;
-static const char* const kManualTextParts[] = { kManualText_part0, kManualText_part1, kManualText_part2, kManualText_part3, kManualText_part4, kManualText_part5, kManualText_part6, kManualText_part7, kManualText_part8, kManualText_part9, kManualText_part10, kManualText_part11, kManualText_part12 };
-static const int kManualTextPartCount = 13;
+static const char* const kManualTextParts[] = { kManualText_part0, kManualText_part1, kManualText_part2, kManualText_part3, kManualText_part4, kManualText_part5, kManualText_part6, kManualText_part7, kManualText_part8, kManualText_part9, kManualText_part10, kManualText_part11, kManualText_part12, kManualText_part13 };
+static const int kManualTextPartCount = 14;

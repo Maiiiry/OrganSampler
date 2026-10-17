@@ -4925,6 +4925,51 @@ std::vector<MainComponent::SuspendedDevice> MainComponent::suspendWindowsAudioDe
     return suspended;
 }
 
+namespace
+{
+    // The whole frame of a top-level window - title bar and close button
+    // included - kept inside the work area of its screen. The frame is read back
+    // from the peer (the window systems scale differently, and a window taller
+    // than a small screen is centred by the system with its title bar off the
+    // top) and, when it sticks out, the window is shrunk and moved, the top edge
+    // first, up to four times. The window's own bounds are in its scaled space;
+    // the ratio between them and the peer's screen pixels maps the correction.
+    void fitWindowOnScreen(juce::Component& window, const juce::String& what)
+    {
+        juce::String log = what + ": ";
+        for (int attempt = 0; attempt < 4; ++attempt)
+        {
+            auto* peer = window.getPeer();
+            if (peer == nullptr) { if (attempt == 0) log << "no peer"; break; }
+            const auto client = peer->getBounds();
+            const auto frameSize = peer->getFrameSizeIfPresent();
+            const juce::BorderSize<int> frame = frameSize ? *frameSize : juce::BorderSize<int>(31, 8, 8, 8);
+            const auto outer = frame.addedTo(client);
+            const auto& displays = juce::Desktop::getInstance().getDisplays();
+            const auto* display = displays.getDisplayForRect(outer, false);
+            if (display == nullptr) display = displays.getPrimaryDisplay();
+            if (display == nullptr) break;
+            const auto work = display->userBounds.toNearestInt();
+            if (attempt == 0) log << "work area " << work.toString() << ", frame " << outer.toString();
+            if (work.contains(outer)) break;
+            int width = outer.getWidth(), height = outer.getHeight();
+            const double shrink = juce::jmin(1.0, (double)work.getWidth() / juce::jmax(1, width), (double)work.getHeight() / juce::jmax(1, height));
+            if (shrink < 0.999)
+            {
+                width = juce::jmax(200, (int)std::floor(width * shrink) - 2);
+                height = juce::jmax(150, (int)std::floor(height * shrink) - 2);
+            }
+            const int x = juce::jlimit(work.getX(), juce::jmax(work.getX(), work.getRight() - width), outer.getX());
+            const int y = juce::jlimit(work.getY(), juce::jmax(work.getY(), work.getBottom() - height), outer.getY());
+            const auto newClient = frame.subtractedFrom(juce::Rectangle<int>(x, y, width, height));
+            const double scale = client.getWidth() > 0 ? (double)window.getWidth() / (double)client.getWidth() : 1.0;
+            window.setBounds((newClient.toFloat() * (float)scale).toNearestInt());
+            log << " -> " << newClient.toString();
+        }
+        CrashHandler::note(log);
+    }
+}
+
 void MainComponent::placeDialog(juce::Component& window, const juce::String& key, int defaultWidth, int defaultHeight)
 {
     // Reopen where the user last had this kind of dialog (any division), as long
@@ -4957,6 +5002,13 @@ void MainComponent::placeDialog(juce::Component& window, const juce::String& key
     trackedDialogs.erase(std::remove_if(trackedDialogs.begin(), trackedDialogs.end(),
         [&](const auto& entry) { return entry.first == key || entry.second == nullptr; }), trackedDialogs.end());
     trackedDialogs.emplace_back(key, juce::Component::SafePointer<juce::Component>(&window));
+    // Once the window is on the screen: its whole frame inside the work area
+    // (a dialog taller than a small screen came up with the title bar off the top).
+    juce::Component::SafePointer<juce::Component> safeWindow(&window);
+    juce::MessageManager::callAsync([safeWindow, key]
+    {
+        if (safeWindow != nullptr && safeWindow->isShowing()) fitWindowOnScreen(*safeWindow, "Dialog " + key);
+    });
 }
 
 void MainComponent::rememberDialogBounds()
@@ -14998,29 +15050,9 @@ void MainComponent::placeMainWindow(juce::ResizableWindow& window)
     // screen is centred by the system with its title bar off the top): whatever
     // does not fit the work area is shrunk and moved to the top until the whole
     // frame, title bar and close button included, is on the screen.
-    juce::String placement = "Main window: work area " + work.toString() + ", interface " + juce::String(UIScale::percent())
-        + " %, asked for " + juce::Rectangle<int>(x, y, width, height).toString();
-    for (int attempt = 0; attempt < 4; ++attempt)
-    {
-        auto* peer = window.getPeer();
-        if (peer == nullptr) break;
-        const auto peerFrame = peer->getFrameSizeIfPresent();
-        const auto actual = (peerFrame ? *peerFrame : frame).addedTo(peer->getBounds());
-        placement << "; frame on screen " << actual.toString();
-        if (work.contains(actual)) break;
-        const double shrink = juce::jmin(1.0, (double)work.getWidth() / juce::jmax(1, actual.getWidth()),
-            (double)work.getHeight() / juce::jmax(1, actual.getHeight()));
-        if (shrink < 0.999)
-        {
-            width = juce::jmax(400, (int)std::floor(width * shrink) - 2);
-            height = juce::jmax(300, (int)std::floor(height * shrink) - 2);
-        }
-        // Moved so that the frame lies inside: the title bar first.
-        x = juce::jlimit(inner.getX(), juce::jmax(inner.getX(), inner.getRight() - width), x - juce::jmax(0, actual.getRight() - work.getRight()) + juce::jmax(0, work.getX() - actual.getX()));
-        y = juce::jlimit(inner.getY(), juce::jmax(inner.getY(), inner.getBottom() - height), y - juce::jmax(0, actual.getBottom() - work.getBottom()) + juce::jmax(0, work.getY() - actual.getY()));
-        window.setBounds(UIScale::toWindowSpace(juce::Rectangle<int>(x, y, width, height)));
-    }
-    CrashHandler::note(placement);
+    CrashHandler::note("Main window: work area " + work.toString() + ", interface " + juce::String(UIScale::percent())
+        + " %, asked for " + juce::Rectangle<int>(x, y, width, height).toString());
+    fitWindowOnScreen(window, "Main window");
     if (savedWindowMaximised) window.setFullScreen(true);
 }
 
@@ -16814,6 +16846,13 @@ struct MainComponent::PolyphonyMeasurement
     bool refining = false, draining = false;
     int drainSeconds = 0;
     bool lateRetried = false;         // one more chance per level after a late callback with callbacks within budget
+    // Retreat: when the sound breaks before any second was clean (the full
+    // registration is too much for this computer at the very first strike), the
+    // octave couplers go off and half of every division's engaged stops are
+    // switched off, and the climb starts again - up to five times (down to a
+    // thirty-second of the stops), so that something real gets measured.
+    int retreats = 0, stopsTotal = 0, stopsEngaged = 0;
+    bool retreatRestart = false;      // the drain ends in a fresh climb (1 key, 2 strikes), not in a narrowed-down level
     // Of the current hold
     float holdShare = 0.0f, holdWorstBlock = 0.0f; int holdLate = 0, holdPeak = 0;
     // "No longer rising": the polyphony of the second before the last one.
@@ -17054,7 +17093,8 @@ void MainComponent::startPolyphonyMeasurement()
     auto describe = [state]
     {
         return juce::String(state->currentKeys) + " keys on every division, struck " + juce::String(state->currentStrikes) + " times a second"
-            + (state->couplersOn ? ", octave couplers on" : "");
+            + (state->couplersOn ? ", octave couplers on" : "")
+            + (state->retreats > 0 ? ", " + juce::String(state->stopsEngaged) + " of " + juce::String(state->stopsTotal) + " stops" : juce::String());
     };
     auto setStimulus = [safeThis, state, alive, keys, describe](int keyCount, int strikes)
     {
@@ -17099,7 +17139,7 @@ void MainComponent::startPolyphonyMeasurement()
     };
 
     auto tick = std::make_shared<std::function<void()>>();
-    *tick = [safeThis, state, alive, setStimulus, showProgress, describe, startRefine, tick]
+    *tick = [safeThis, state, alive, setStimulus, showProgress, describe, startRefine, keys, tick]
     {
         if (!alive()) return;
         ++state->second;
@@ -17112,10 +17152,12 @@ void MainComponent::startPolyphonyMeasurement()
             safeThis->engine.takeMaxBlockLoad();
             safeThis->takeLateCallbacksOfAllRoutes();
             safeThis->takeDeviceLateCallbacks();
-            if (++state->drainSeconds >= 8 || safeThis->engine.getCurrentPolyphony() < state->highestCleanPeak / 2)
+            if (++state->drainSeconds >= 8 || safeThis->engine.getCurrentPolyphony() < state->highestCleanPeak / 2
+                || (state->retreatRestart && safeThis->engine.getCurrentPolyphony() == 0))
             {
                 state->draining = false;
-                setStimulus((state->refineLowKeys + state->refineHighKeys) / 2, state->currentStrikes);
+                if (state->retreatRestart) { state->retreatRestart = false; setStimulus(1, 2); }   // the climb from the start with fewer stops
+                else setStimulus((state->refineLowKeys + state->refineHighKeys) / 2, state->currentStrikes);
                 state->peak = 0; state->holdPeak = 0; state->peakSecond = 0; state->lastPeakSecond = 0;   // the failed level's voices are gone
                 state->peakHistory[0] = state->peakHistory[1] = 0;
             }
@@ -17190,7 +17232,7 @@ void MainComponent::startPolyphonyMeasurement()
         // A failure (a breakup, or a hold judged unclean): the failing level is
         // remembered and the run narrows down between the clean and the failing
         // key count - or ends when there is nothing left between them.
-        auto failAt = [safeThis, state, startRefine, describe](int voices, const juce::String& why)
+        auto failAt = [safeThis, state, startRefine, describe, keys](int voices, const juce::String& why)
         {
             if (state->firstFailingPeak == 0 || voices < state->firstFailingPeak || state->refining)
             {
@@ -17205,6 +17247,53 @@ void MainComponent::startPolyphonyMeasurement()
                 state->refineLowKeys = state->highestCleanKeys;
                 state->refineHighKeys = state->currentKeys;
                 if (startRefine()) return;
+            }
+            // Nothing was clean yet: the registration itself is too much for this
+            // computer. Retreat - the octave couplers off, half of every division's
+            // engaged stops off - and climb again from one key; "half of the failing
+            // level" would be no measurement at all.
+            const bool nothingClean = state->highestCleanPeak == 0 && state->cleanSecondSafe == 0 && !state->refining;
+            if (nothingClean && state->retreats < 5)
+            {
+                ++state->retreats;
+                if (state->keysDown) { keys(false); state->keysDown = false; }
+                if (state->couplersOn)
+                {
+                    for (int manual = 0; manual <= safeThis->manualCount; ++manual)
+                        for (const char* footage : { "16", "4" })
+                            safeThis->setCouplerEnabled(juce::String(manual) + "-" + juce::String(manual) + "-" + footage, false);
+                    state->couplersOn = false;
+                }
+                int kept = 0, off = 0, total = 0;
+                for (int manual = 0; manual <= safeThis->manualCount; ++manual)
+                {
+                    std::vector<Stop*> on;
+                    for (auto* stop : safeThis->engine.getStops())
+                        if (stop->primaryManual == manual && stop->enabled) on.push_back(stop);
+                    total += (int)on.size();
+                    const int keep = juce::jmax(1, (int)on.size() / 2);
+                    for (size_t i = 0; i < on.size(); ++i)
+                    {
+                        if ((int)i < keep) { ++kept; continue; }
+                        safeThis->engine.setStopEnabled(on[i], false);
+                        ++off;
+                    }
+                }
+                if (state->stopsTotal == 0) state->stopsTotal = total;
+                state->stopsEngaged = kept;
+                if (safeThis->voicer) safeThis->voicer->updateStopStates();
+                safeThis->engine.noteOffAll();
+                // The climb from the start: the failing level forgotten, the tails dying away first.
+                state->targetVoices = 2000;
+                state->firstFailingPeak = 0; state->firstFailingKeys = 0; state->firstFailingStrikes = 0; state->failReason.clear();
+                state->results.clear();
+                state->refining = false; state->refinements = 0; state->exhausted = false; state->holding = false; state->lateRetried = false;
+                state->peak = 0; state->holdPeak = 0; state->peakSecond = 0; state->lastPeakSecond = 0;
+                state->peakHistory[0] = state->peakHistory[1] = 0;
+                state->draining = true; state->drainSeconds = 0; state->retreatRestart = true;
+                CrashHandler::note("Polyphony measurement: nothing was clean - retreat " + juce::String(state->retreats) + ": " + juce::String(off)
+                    + " stop(s) switched off, " + juce::String(kept) + " of " + juce::String(state->stopsTotal) + " kept; the climb starts again");
+                return;
             }
             safeThis->finishPolyphonyMeasurement(false);
         };
@@ -17434,7 +17523,12 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
              << ". Clean means every single callback within 85 % of its period and the driver never called late.";
     else if (firstFailingKeys > 0)
         text << ": the sound broke up already at " << state->firstFailingPeak << " voices (" << levelText(firstFailingKeys, state->firstFailingStrikes)
-             << ") and no second before it was clean, so half of that. Look at the advice below.";
+             << ") and no second before it was clean" << (state->retreats > 0 ? ", even with " + juce::String(state->stopsEngaged) + " of " + juce::String(state->stopsTotal)
+                + " stops after " + juce::String(state->retreats) + " retreat(s)" : juce::String()) << ", so half of that. Look at the advice below.";
+    if (state->retreats > 0 && (state->highestCleanPeak > 0 || state->cleanSecondSafe > 0))
+        text << " Measured with " << state->stopsEngaged << " of " << state->stopsTotal << " stops engaged: the full registration broke the sound up at the very "
+                "first strike, so the measurement switched half of the stops off (" << state->retreats << " time(s)) until a second stayed clean - the "
+                "voices found are what this computer renders cleanly, whatever the stops.";
     else if (state->exhausted)
         text << ": this organ has no more voices to give - all 61 keys struck 16 times a second on every division reached "
              << state->highestCleanPeak << " voices and the audio stayed clean. The computer is not the limit here.";
