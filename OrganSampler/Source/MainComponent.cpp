@@ -143,15 +143,16 @@ private:
     void timerCallback() override
     {
         current = engine.getCurrentPolyphony();
+        const int recentPeak = engine.takeDisplayPeakPolyphony();   // the most voices at once since the last tick (every change counted, nothing between ticks missed)
         load = engine.getDisplayLoad();   // the whole driver callback, not the render alone
         if (!limitEditor.hasKeyboardFocus(true))
             limitEditor.setText(juce::String(engine.getMaxPolyphony()), false);
         const double now = juce::Time::getMillisecondCounterHiRes();
         // Peaks are held for three seconds, then fall back to the current value.
         constexpr double holdMs = 3000.0;
-        if (current > maximum)
+        if (recentPeak > maximum)
         {
-            maximum = current;
+            maximum = recentPeak;
             resetAt = now + holdMs;
         }
         else if (resetAt > 0.0 && now >= resetAt)
@@ -17572,6 +17573,13 @@ void MainComponent::startPolyphonyMeasurement()
         if (!alive()) return;
         ++state->second;
         ++state->secondsSinceChange;
+        // The polyphony of the second = the most voices sounding at once in it,
+        // counted by the engine at every change (a stroke's attacks over the
+        // releases of the last one - the real peak, the one the limit is compared
+        // with), not a value sampled at the strokes.
+        state->peakSecond = juce::jmax(state->peakSecond, safeThis->engine.takeMeasuredPeakPolyphony());
+        state->peak = juce::jmax(state->peak, state->peakSecond);
+        if (state->holding) state->holdPeak = juce::jmax(state->holdPeak, state->peakSecond);
         state->lastPeakSecond = state->peakSecond;
         state->peakSecond = 0;
         if (state->draining)
@@ -17906,6 +17914,7 @@ void MainComponent::startPolyphonyMeasurement()
                 + juce::String(juce::roundToInt(idle.asioMaxCallbackShare * 100.0f)) + " % of the period; other devices longest gap "
                 + juce::String(idle.otherMaxGapMs, 1) + " ms");
             safeThis->enableAllStops();
+            safeThis->engine.takeMeasuredPeakPolyphony();   // the counter starts with the first stroke
             // The registration under test - every engaged button of the grid, in grid
             // order: the retreat and the narrowing down by stops take their shares of it.
             state->baseline.clear();

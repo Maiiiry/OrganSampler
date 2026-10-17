@@ -3434,7 +3434,7 @@ struct SamplerEngine::Impl
         keyHeads.fill(-1);
         freeList.clear();
         for (int i = poolSize; --i >= 0;) freeList.push_back((uint32_t)i);
-        owner.currentPolyphony.store(0, std::memory_order_relaxed);
+        owner.storePolyphony(0);
     }
 
     // Blocks render callbacks and waits until none is in flight. Must be paired
@@ -4090,7 +4090,7 @@ struct SamplerEngine::Impl
                 if (stop->pipeStartMs[(size_t)pipe] < 0.0) stop->pipeStartMs[(size_t)pipe] = nowMs();
             }
         }
-        owner.currentPolyphony.store((int)controlActive.size(), std::memory_order_relaxed);
+        owner.storePolyphony((int)controlActive.size());
     }
 
     // The release fade-out of an attack voice and the fade-in of a release sample
@@ -4203,7 +4203,7 @@ struct SamplerEngine::Impl
         for (const auto& target : releaseTargets)
             startReleaseSamples(target.stop, target.pipe, target.keyNote, sourceKey, releaseGains, now, soundingTimeMs);
         for (const auto& target : releaseTargets) target.stop->releasing.reset();
-        owner.currentPolyphony.store((int)controlActive.size(), std::memory_order_relaxed);
+        owner.storePolyphony((int)controlActive.size());
     }
 
     // Release samples of one pipe of a stop (its attack voices were released in
@@ -4451,7 +4451,7 @@ struct SamplerEngine::Impl
             cleanStaleRoutes(now);
             phaseMax(owner.controlPhaseMs[3], phase);
         }
-        owner.currentPolyphony.store((int)controlActive.size(), std::memory_order_relaxed);
+        owner.storePolyphony((int)controlActive.size());
     }
 
     void controlTickIfPossible()

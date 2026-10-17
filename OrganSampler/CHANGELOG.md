@@ -12,6 +12,17 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.115] - 2026-10-18
+
+### Fixed
+- The polyphony measurement counts the real peak: the engine now keeps the
+  most voices sounding at once (every change counted), and the measurement
+  takes that peak for every second instead of a value sampled at the
+  strokes - which missed the moment a stroke's attacks sounded over the
+  releases of the last one, the very peak the limit is compared with (a dry
+  set showed a PEAK about twice the sampled value). The PEAK field of the
+  main window uses the same counter.
+
 ## [0.8.114] - 2026-10-17
 
 ### Fixed

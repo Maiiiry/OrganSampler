@@ -858,6 +858,13 @@ public:
     bool isControlThreadRunning() const noexcept;
 
     int getCurrentPolyphony() const noexcept { return currentPolyphony.load(std::memory_order_relaxed); }
+    // The most voices sounding at once since the last take - kept by the control
+    // thread at every change, so no peak between two readings is missed (a key
+    // struck while the releases of the last stroke still sound is the peak, and
+    // it lasts a few blocks). One counter for the display, one for the polyphony
+    // measurement; a take restarts the counter at the current value.
+    int takeDisplayPeakPolyphony() noexcept { return peakPolyphonyDisplay.exchange(currentPolyphony.load(std::memory_order_relaxed), std::memory_order_relaxed); }
+    int takeMeasuredPeakPolyphony() noexcept { return peakPolyphonyMeasured.exchange(currentPolyphony.load(std::memory_order_relaxed), std::memory_order_relaxed); }
     void setMaxPolyphony(int voices) noexcept { maxPolyphony.store(juce::jlimit(64, maxVoices, voices)); }
     int getMaxPolyphony() const noexcept { return maxPolyphony.load(); }
     // Fraction of the audio period spent rendering (0..1+), smoothed peak.
@@ -1209,6 +1216,16 @@ private:
     juce::OwnedArray<Stop> stops;
 
     std::atomic<int> currentPolyphony{ 0 };
+    std::atomic<int> peakPolyphonyDisplay{ 0 }, peakPolyphonyMeasured{ 0 };
+    void storePolyphony(int voices) noexcept
+    {
+        currentPolyphony.store(voices, std::memory_order_relaxed);
+        for (auto* peak : { &peakPolyphonyDisplay, &peakPolyphonyMeasured })
+        {
+            int known = peak->load(std::memory_order_relaxed);
+            while (voices > known && !peak->compare_exchange_weak(known, voices, std::memory_order_relaxed)) {}
+        }
+    }
     std::atomic<int> maxPolyphony{ 30000 };
     std::atomic<float> renderLoad{ 0.0f };
     std::atomic<float> deviceCallbackLoad{ 0.0f };

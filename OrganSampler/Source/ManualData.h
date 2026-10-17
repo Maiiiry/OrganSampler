@@ -1897,7 +1897,9 @@ static const char* const kManualText_part9 =
     "2. Every stop is engaged and keys are struck again and again on every\n"
     "   division - each over its own compass, the pedal from its lowest key -\n"
     "   slowly at first: one key, twice a second. The voices are watched\n"
-    "   every second. Whenever they stop rising below the current target, the\n"
+    "   every second - the most voices sounding at once in that second, counted\n"
+    "   by the engine at every change (a stroke's attacks over the releases of\n"
+    "   the last one), the same figure the limit is compared with. Whenever they stop rising below the current target, the\n"
     "   stimulus grows at once - more keys spread over the compass (up to every\n"
     "   key of every division), then a faster rate (up to 16 strikes a second).\n"
     "   No coupler is used: every division is struck itself. A wet set with several perspectives and\n"
@@ -2018,10 +2020,10 @@ static const char* const kManualText_part9 =
     "three harmonic filters (swell, wind, tremulant) add up, capped at 12 dB; when\n"
     "all three are 0 dB the filter costs nothing.\n"
     "\n"
-    "### Wind: harmonic filter\n"
-    "\n"
     ;
 static const char* const kManualText_part10 =
+    "### Wind: harmonic filter\n"
+    "\n"
     "The same shelf following the wind sag: this much high-frequency loss at the\n"
     "full sag (default 2 dB). Big chords starve the wind, and a starved pipe is\n"
     "duller as well as flatter.\n"
@@ -2220,10 +2222,10 @@ static const char* const kManualText_part10 =
     "routine housekeeping.\n"
     "\n"
     "### Filled pipes cache folder\n"
-    "\n"
-    "Where the cache files live. By default `FilledPipesCache` in the\n"
     ;
 static const char* const kManualText_part11 =
+    "\n"
+    "Where the cache files live. By default `FilledPipesCache` in the\n"
     "application-data folder, usually on the system drive; the row then says\n"
     "\"(default)\". *Choose...* opens a folder dialog: pick a folder on a big drive\n"
     "(beside the samples, say). The files built so far are moved there at once, so\n"
@@ -2422,10 +2424,10 @@ static const char* const kManualText_part11 =
     "\n"
     "Folder name prefixes that mark a microphone perspective, one line per\n"
     "perspective. Every prefix that belongs to the same perspective must stand on\n"
-    "that one line, separated by semicolons; the perspective takes its name from\n"
-    "the first entry of the line (\"Direct;01-dirMk2H-;dir\" makes folders with any\n"
     ;
 static const char* const kManualText_part12 =
+    "that one line, separated by semicolons; the perspective takes its name from\n"
+    "the first entry of the line (\"Direct;01-dirMk2H-;dir\" makes folders with any\n"
     "of the three prefixes the perspective \"Direct\"). Defaults: Direct, Diffuse and\n"
     "Rear. Prefixes found in a newly loaded set are added here by themselves (a\n"
     "prefix that shares its stem with a known perspective joins its line; an\n"
@@ -2624,10 +2626,10 @@ static const char* const kManualText_part12 =
     "again, signed in, and the form opens filled in. The same link is in the\n"
     "report folder as `Report on GitHub.html` - a double-click opens it, even\n"
     "days later.\n"
-    "\n"
-    "## 8.8 Free software, licences, platforms\n"
     ;
 static const char* const kManualText_part13 =
+    "\n"
+    "## 8.8 Free software, licences, platforms\n"
     "\n"
     "OrganSampler is free software under the GNU GPL v3; the source code is on\n"
     "GitHub and every release is built there from it. *About & licences...* at the\n"

@@ -1875,7 +1875,9 @@ happens:
 2. Every stop is engaged and keys are struck again and again on every
    division - each over its own compass, the pedal from its lowest key -
    slowly at first: one key, twice a second. The voices are watched
-   every second. Whenever they stop rising below the current target, the
+   every second - the most voices sounding at once in that second, counted
+   by the engine at every change (a stroke's attacks over the releases of
+   the last one), the same figure the limit is compared with. Whenever they stop rising below the current target, the
    stimulus grows at once - more keys spread over the compass (up to every
    key of every division), then a faster rate (up to 16 strikes a second).
    No coupler is used: every division is struck itself. A wet set with several perspectives and
