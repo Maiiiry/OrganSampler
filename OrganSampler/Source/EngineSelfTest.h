@@ -870,12 +870,14 @@ namespace EngineSelfTest
         {
             // Swapping divisions: the stops of division 0 move to division 1 (and
             // back); they must sound from their new keyboard and stay silent on the old.
+            // (With two or more real divisions the old keyboard is not silent: it
+            // now carries the stops of division 1 - as many as division 1 had.)
             const int before = engine.getStops().size();
-            int inZeroBefore = 0;
-            for (auto* stop : engine.getStops()) if (stop->primaryManual == 0) ++inZeroBefore;
+            int inZeroBefore = 0, inOneBefore = 0;
+            for (auto* stop : engine.getStops()) { if (stop->primaryManual == 0) ++inZeroBefore; if (stop->primaryManual == 1) ++inOneBefore; }
             engine.swapDivisions(0, 1);
-            int inOne = 0;
-            for (auto* stop : engine.getStops()) if (stop->primaryManual == 1) ++inOne;
+            int inOne = 0, inZeroSwapped = 0;
+            for (auto* stop : engine.getStops()) { if (stop->primaryManual == 1) ++inOne; if (stop->primaryManual == 0) ++inZeroSwapped; }
             for (auto* stop : engine.getStops()) engine.setStopEnabled(stop, true);
             engine.noteOn(60, 127, 1);
             BlockStats s; renderBlocks(40, s);
@@ -892,11 +894,12 @@ namespace EngineSelfTest
             engine.swapDivisions(0, 1);
             int inZeroAfter = 0;
             for (auto* stop : engine.getStops()) if (stop->primaryManual == 0) ++inZeroAfter;
-            report << "Swap divisions 0 <-> 1: " << inZeroBefore << " stops moved to division 1 (" << inOne << "), key 60 on division 1 -> "
-                   << voicesNew << " voices, on division 0 -> " << voicesOld << "; swapped back: " << inZeroAfter
-                   << " in division 0 of " << engine.getStops().size() << " (" << before << ")  -> "
-                   << (inOne == inZeroBefore && voicesNew > 0 && voicesOld == 0 && inZeroAfter == inZeroBefore
-                       && engine.getStops().size() == before ? "OK" : "*** WRONG ***") << "\n";
+            report << "Swap divisions 0 <-> 1: " << inZeroBefore << " stops moved to division 1 (" << inOne << "), " << inOneBefore
+                   << " of division 1 moved to division 0 (" << inZeroSwapped << "), key 60 on division 1 -> "
+                   << voicesNew << " voices, on division 0 -> " << voicesOld << " (expected " << (inOneBefore > 0 ? "some" : "none")
+                   << "); swapped back: " << inZeroAfter << " in division 0 of " << engine.getStops().size() << " (" << before << ")  -> "
+                   << (inOne == inZeroBefore && inZeroSwapped == inOneBefore && voicesNew > 0 && (inOneBefore > 0 ? voicesOld > 0 : voicesOld == 0)
+                       && inZeroAfter == inZeroBefore && engine.getStops().size() == before ? "OK" : "*** WRONG ***") << "\n";
         }
         {
             // Pipe on/off (voicing checkbox): a real pipe switched off stays silent
