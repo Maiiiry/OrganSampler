@@ -12,6 +12,16 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.108] - 2026-10-17
+
+### Fixed
+- The CMake builds (macOS, Linux and the CI's Windows build) of 0.8.106 and
+  0.8.107 failed: the Windows build lacked `bcrypt` for libarchive's random
+  numbers, the Linux build tripped over an explicit `jmax<int64>` that GCC
+  resolved to juce_dsp's SIMD overload. The Rural Organ demo is a RAR
+  archive now (`RuralOrgan.rar`, about 700 MB, with the configuration saved
+  by 0.8.98) - the program unpacks it itself.
+
 ## [0.8.107] - 2026-10-17
 
 ### Fixed

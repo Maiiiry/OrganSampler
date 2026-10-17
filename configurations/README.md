@@ -87,6 +87,6 @@ The one exception to "no samples here": **Rural Organ**, a small village
 organ - three divisions, 24 stops, dry recordings with IR reverb -
 packaged with its sample folders and its portable configuration so that
 OrganSampler can be tried at once. See [`rural-organ/README.md`](rural-organ/README.md);
-the package `RuralOrgan.zip` (about 1 GB) is attached to the release
+the package `RuralOrgan.rar` (about 700 MB; the program unpacks it itself, top bar > *Unpack archive*) is attached to the release
 https://github.com/zurek-jiri/OrganSampler/releases/tag/rural-organ-0.8.
 The samples are provided by Sonus Paradisi free of charge to try the program.

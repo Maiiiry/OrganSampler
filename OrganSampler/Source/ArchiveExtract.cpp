@@ -66,7 +66,7 @@ ArchiveExtractor::Result ArchiveExtractor::extract(const juce::File& archiveFile
         archive_read_free(a);
         return result;
     }
-    const double archiveBytes = (double)juce::jmax<juce::int64>(1, archiveFile.getSize());
+    const double archiveBytes = (double)juce::jmax((juce::int64)1, archiveFile.getSize());   // no explicit template argument: juce_dsp's jmax for SIMDRegister would be instantiated (GCC)
     std::set<juce::String> topLevel;
     juce::HeapBlock<char> copyBuffer;
     for (;;)

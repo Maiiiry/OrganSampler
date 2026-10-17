@@ -22,7 +22,7 @@ configuration. Free software under the GNU GPL v3. Windows, macOS and Linux.
    El Capitan or newer on Intel Macs; Linux x86-64 with glibc 2.38 or newer -
    Ubuntu 24.04, Mint 22, Debian 13, Fedora 39 and newer).
 2. **An organ to play:** download
-   [**RuralOrgan.zip**](https://github.com/zurek-jiri/OrganSampler/releases/download/rural-organ-0.8/RuralOrgan.zip)
+   [**RuralOrgan.rar**](https://github.com/zurek-jiri/OrganSampler/releases/download/rural-organ-0.8/RuralOrgan.rar)
    (about 950 MB) - the **Rural Organ** demo: a small village organ, three
    divisions, 24 stops, **dry recordings with IR reverb**, with its
    sample folders and a portable configuration. Unpack it, start

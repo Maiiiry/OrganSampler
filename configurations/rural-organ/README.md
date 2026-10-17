@@ -14,7 +14,7 @@ downloaded elsewhere (Sonus Paradisi).
 
 ## Download
 
-The package `RuralOrgan.zip` (about 1 GB: 1 600 WAV files) is attached to
+The package `RuralOrgan.rar` (about 700 MB: 1 600 WAV files) is attached to
 the release "Rural Organ" on GitHub:
 https://github.com/zurek-jiri/OrganSampler/releases/tag/rural-organ-0.8
 
@@ -31,8 +31,10 @@ Rural Organ/
 
 ## Using it
 
-1. Unpack the zip anywhere (a fast disk; the samples need about 1 GB of RAM
-   when loaded).
+1. Unpack the archive anywhere (a fast disk; the samples need about 1 GB of
+   RAM when loaded): with OrganSampler itself (top bar > *Unpack archive*, or
+   the same button in Configuration Editor > Console), or with 7-Zip, Keka,
+   The Unarchiver, unrar.
 2. Start OrganSampler, *Load Configuration* in the top bar, choose
    `Rural Organ\Rural Organ.json`. The folders are found beside the file.
 3. The organ plays through the computer's default sound device at once. A
@@ -49,7 +51,7 @@ Rural Organ/
 `Rural-Organ.zip` in this folder holds the same portable configuration as the
 package (`Rural Organ.json`): saved with "Portable configuration (to share
 with others)", so it carries the organ only - no MIDI devices, no audio
-devices, nothing of the computer it was made on. Saved with OrganSampler 0.8.107.
+devices, nothing of the computer it was made on. Saved with OrganSampler 0.8.108.
 
 - Organ: a Czech village organ, three divisions, recorded dry.
 - Samples: Sonus Paradisi, provided free of charge with OrganSampler to try
