@@ -54,6 +54,11 @@ struct HauptwerkOdf
         int id = 0, divisionId = 0;
         juce::String name;
         std::vector<int> rankIds;       // the ranks of its StopRank rows (alternate ranks excluded), in file order
+        // How each StopRank row maps the keys to the rank: the first key mapped,
+        // how many keys, and the semitones from the key to the pipe (12 = a 4'
+        // stop playing an 8' rank an octave up - an extension; 0 = the rank's own).
+        struct RankUse { int rankId = 0, firstNote = 0, count = 0, increment = 0; };
+        std::vector<RankUse> rankUses;
     };
     struct Division { int id = 0; juce::String name; };
     struct Keyboard { int id = 0, divisionId = 0, lowNote = 0, highNote = 0; juce::String name; };
@@ -88,9 +93,17 @@ struct HauptwerkOdf
     // the perspective patterns, and the voicing per pipe.
     struct PlanStop
     {
+        int stopId = 0;                              // the ODF stop
         juce::String name;
         std::vector<juce::File> folders;             // the stop folder(s): one per installation package the stop's ranks lie in
         std::vector<int> rankIds;
+        // An extension or a transmission: the stop plays the ranks of another
+        // stop (its owner, by ODF stop id) shifted by 'shift' semitones (an ODF
+        // stop whose StopRank rows all borrow one other stop's ranks with the
+        // same transposition). It has no folders of its own; OrganSampler makes
+        // a transmission of the owner into this division with that shift.
+        int extensionOfStopId = 0;
+        int shift = 0;
     };
     struct PlanDivision
     {
@@ -107,7 +120,7 @@ struct HauptwerkOdf
         std::vector<juce::File> allTrees;
         juce::File libraryRoot;                      // OrganInstallationPackages
         juce::File configurationFile;                // where the configuration goes: the main package folder
-        int stopsWithoutSamples = 0, skippedTremmedRanks = 0, skippedNoiseRanks = 0;
+        int stopsWithoutSamples = 0, skippedTremmedRanks = 0, skippedNoiseRanks = 0, extensions = 0;
         juce::StringArray notes;                     // what was left out and why (for the log and the message)
         juce::String error;
     };

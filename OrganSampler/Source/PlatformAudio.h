@@ -373,10 +373,29 @@ public:
     juce::Array<double> getAvailableSampleRates() override
     {
         juce::Array<double> rates{ 44100.0, 48000.0, 88200.0, 96000.0, 176400.0, 192000.0 };
-        const double current = inner->getCurrentSampleRate();
+        const double current = getCurrentSampleRate();
         if (current > 0.0 && !rates.contains(current)) { rates.add(current); rates.sort(); }
         return rates;
     }
+    // A client that is not running yet reports no rate and no buffer size
+    // (JUCE's device asks its own client); the device manager would then take
+    // 44.1 kHz and the smallest size of the list when asked for "the driver's
+    // own" values. The server's clock is what a JACK device runs at.
+    double getCurrentSampleRate() override
+    {
+        const double rate = inner->getCurrentSampleRate();
+        if (rate > 0.0) return rate;
+        int serverBuffer = 0, serverRate = 0;
+        return jackServerClock(serverBuffer, serverRate) && serverRate > 0 ? (double)serverRate : 0.0;
+    }
+    int getCurrentBufferSizeSamples() override
+    {
+        const int size = inner->getCurrentBufferSizeSamples();
+        if (size > 0) return size;
+        int serverBuffer = 0, serverRate = 0;
+        return jackServerClock(serverBuffer, serverRate) && serverBuffer > 0 ? serverBuffer : 0;
+    }
+    int getDefaultBufferSize() override { return getCurrentBufferSizeSamples(); }
     juce::String open(const juce::BigInteger& inputChannels, const juce::BigInteger& outputChannels, double sampleRate, int bufferSizeSamples) override
     {
         const int wantBuffer = bufferSizeSamples > 0 ? bufferSizeSamples : 0;

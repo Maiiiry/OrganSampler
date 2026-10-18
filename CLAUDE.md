@@ -101,6 +101,16 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   Dev check without the GUI: `OrganSampler.exe --hauptwerk "<odf>"` prints the parse and the plan (also to
   `%APPDATA%\OrganSampler\hauptwerk.txt`); the in-app path is `ORGAN_LOAD_CONFIGURATION=<odf>` + `ORGAN_DUMP_STOPLIST=`.
   Stralsund (3135+3136) must give trees `00313x/pipe/{PE,HW,OW,UW}`, 13+14+12+12 stops, patterns Direct/Diffuse/Rear.
+  0.8.118: the way is stop > StopRank rows (h/i/j = first key, count, increment) > rank > folder. A rank belongs to the
+  stop that plays it with increment 0; a stop whose rows borrow one other stop's ranks with one increment is an
+  EXTENSION/transmission (`PlanStop.extensionOfStopId`, `shift`; `hauptwerkExtensions` -> `engine.addTransmission`
+  after the load, alias = HW name) - before, the common folder of the two stops was the whole division and the tree
+  the whole package (Stellwagen "III. G. Plockfloett 4": pool full of every folder, stops twice). A stop folder never
+  holds another stop's folder (fallback: rank folders). Noise ranks by whole words ("I. Zimbell" is no bell).
+  Rows: `name` = the folder's automatic name (`scanTreeAssignments`), `customName=false`, `alias` = HW stop name.
+  Ignored patterns on import: `trem`, `*_tr` (the `II_TR` sibling folders). A perspective line may carry several
+  prefixes ("Direct;01-dirc-;03-dif2S-": one label, two spellings in one organ). Stellwagen (2723+2724, non-encrypted
+  ODF in OrganDefinitions) must give 14+14+12+12 stops, 1 extension, trees `00272x/pipes/{PE,I,II,III}` only.
   A polling lambda stored in a shared std::function (`*poll = [...]{...}`) must never do `*poll = nullptr` while it
   runs - that destroys its own captures (a copy `self = *poll` does NOT help: the executing object is the original) -
   it clears itself afterwards: `juce::MessageManager::callAsync([keep = poll] { *keep = nullptr; });`. Two crashes
@@ -138,7 +148,9 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   title; one opening paragraph (what it is, the perspectives - they make the recording unique -, divisions, the
   number of Stop List rows) + "No samples are published here"; "The configuration" bullets Organ, Samples
   (producer, product, link, packages, WAV, perspectives, required OrganSampler version), Expects (trees), Audio
-  layout (routes, unused ones marked), Saved with, Author + date; "Where to put the file" (the packages are now
+  layout (routes, unused ones marked), RAM (measured by the program at the portable save: `measuredRamBytes` +
+  `measuredRamStorage` in the json, `processMemoryBytes()`; INDEX.md shows it as a sortable column - never typed,
+  never estimated), Saved with, Author + date; "Where to put the file" (the packages are now
   known: one sentence + the tree diagram, never a made-up parent folder like `haupwerk`); last the "Stop List"
   table of the row names by division. Never mention what OrganSampler does natively (couplers, voicing,
   crescendo, combinations). No "What you need", no "Using it", no prose about the divisions.

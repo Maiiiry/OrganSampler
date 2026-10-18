@@ -494,12 +494,23 @@ perspective patterns), and the per-pipe level adjustments as the voicing:
 Hauptwerk voices every perspective on its own, OrganSampler every stop, so
 the levels of a pipe are averaged over the perspectives; the median over the
 pipes becomes the stop's volume (most pipes stand at 0 dB, a few voiced ones
-must not pull the whole stop), the rest the per-key voicing. Everything
-else - couplers, combinations, tremulants, wind, displays, noises - is
-ignored: the folder structure decides the organ, as always. Tremmed samples
-(the "tremmed" ranks, the `trem` folders) are left out; OrganSampler has its
-own tremulant. Encrypted sample sets (`.hbw` files) cannot be played and the
-import says so.
+must not pull the whole stop), the rest the per-key voicing. The way from a
+stop to its folders is the definition's own: stop > its StopRank rows > the
+ranks > the folders of their pipe samples; the folders decide what a stop
+is. A stop whose rows play another stop's ranks shifted (a 4' playing the 8'
+rank an octave up, a stop borrowed into another division) is an extension or
+transmission in Hauptwerk's terms as in ours: it is made as a transmission of
+that stop with the same shift, not loaded a second time; a few top pipes of
+its own, if it has them, are left out (filled pipes cover them). The rows of
+the Stop List are named after the folders, as for any organ built from
+folders; the Hauptwerk stop name becomes the alias, the caption on the
+button. Everything else - couplers, combinations, tremulants, wind,
+displays, noises (blower, key and stop action, Zimbelstern...) - is ignored:
+the folder structure decides the organ, as always. Tremmed samples (the
+"tremmed" ranks, the `trem` folders, the `..._TR` sibling folders of the
+divisions) are left out and `*_tr` joins the Ignored Patterns; OrganSampler
+has its own tremulant. Encrypted sample sets (`.hbw` files) cannot be played
+and the import says so.
 
 The samples must lie where Hauptwerk keeps them: the definition in
 `OrganDefinitions`, the packages in `OrganInstallationPackages/<six-digit
@@ -561,9 +572,12 @@ publishing it in the project's `configurations/` folder on GitHub:
 `<name>.zip`, the configuration zipped (a zip is downloaded from GitHub with
 one click, a bare `.json` would open as text), and `<name>.README.md`, the
 README in the published form - the perspectives, the folders the
-configuration expects and where to put the file, the routes, the version,
-and the Stop List as a table in the order of your grid with the buttons'
-captions, transmissions and extensions included. Fill in the three
+configuration expects and where to put the file, the routes, the RAM the
+program used with the whole organ loaded (measured at the moment of saving
+and stored in the configuration as well; `configurations/INDEX.md` shows it
+as a column, the figure readers need most), the version, and the Stop List
+as a table in the order of your grid with the buttons' captions,
+transmissions and extensions included. Fill in the three
 "(fill in: ...)" places - the organ, the producer and product of the
 samples with the link to the page where the sample folders are bought or
 downloaded, your name - and send the two files: open the form
@@ -1061,7 +1075,10 @@ drawing, the coupler and swell learning, and the audio tabs.
 
 - *MIDI keyboard device* and *MIDI channel*. When another division listens to
   the same device and channel a note "Shared with ..." appears (one key then
-  plays all of them).
+  plays all of them). A keyboard plugged in while the program runs is opened
+  at once (the activity log says so) and MIDI learn hears it; open the
+  Divisions dialog again to see it in the device list. One unplugged is let
+  go and comes back when plugged in again.
 - *Ignore MIDI velocity (organ keys)*: every key is sent as full velocity.
 - *Bass octave layout*: Standard, Short octave, "C D D# ...", "C D E ..." for
   historic bass octaves.
@@ -1362,9 +1379,13 @@ program's, and needs the permission above.
   clock, then opens the route, and the other JACK routes follow by
   themselves. (From a terminal the same is `pw-metadata -n settings 0
   clock.force-quantum 512` and `pw-metadata -n settings 0 clock.force-rate
-  48000`.) If the JACK type lists no device at all, the JACK library was not
-  found: install `pipewire-jack` as above, or start the program with
-  `pw-jack ./OrganSampler`.
+  48000`.) *Reopen device* keeps the route's buffer size and rate (a JACK
+  device has no "driver's own" values to fall back to). The status line
+  under the boxes says "output latency not reported by the driver" for
+  JACK: PipeWire tells its clients no port latency, so the real latency is
+  at least one buffer. If the JACK type lists no device at all, the JACK
+  library was not found: install `pipewire-jack` as above, or start the
+  program with `pw-jack ./OrganSampler`.
 - Moving a route from JACK to ALSA on the same card: PipeWire keeps the
   card for a few seconds after the last JACK client left it, so the ALSA
   entry stays listed for that while and the program waits up to seven
@@ -1784,7 +1805,12 @@ on a 16-core processor, 31 threads rendered a tutti slower than 16 (0.95 ms
 against 0.78 ms per block) and with peaks four times as high (up to 4.5 ms
 against 0.9 ms), and such peaks are what breaks the sound up. So the
 "logical" choices lower the reachable polyphony; never use them. Fewer threads
-leave room for other programs. Changing it briefly mutes the engine.
+leave room for other programs. Changing it briefly mutes the engine. The list
+holds only the choices this computer can tell apart: without hyper-threading
+"All logical CPUs" is the same as "All physical cores" and is not shown, a
+single core has no "all - 1". The setting belongs to the computer, never to an
+organ: a portable configuration carries none, and one of an older version that
+does is ignored (this computer's own setting stays).
 
 ### Currently active
 
@@ -1793,7 +1819,7 @@ supports (AVX2 on current processors). Information only.
 
 ### Render threads for Aggregated WASAPI
 
-The threads used by routes on an Aggregated WASAPI device (the virtual
+Windows only. The threads used by routes on an Aggregated WASAPI device (the virtual
 device that joins several Windows Audio endpoints). Every aggregated route
 is a stream with a device thread of its own, so an organ with ten such
 routes already renders on ten threads beside each other; the default of 1
@@ -1979,11 +2005,18 @@ happens:
    the whole computer's. A callback over its period while the program had
    barely one core busy means the audio thread's core was the limit, not the
    computer: a larger buffer, fewer routes on one device, Light IR
-   processing, and a CPU that is not held at a low clock help; on Linux the
-   report names the CPU governor ("performance" keeps the clock up), on
-   Windows the power plan. The measurement is also started from the audio
-   tab of a division's Settings (*Measure polyphony*, beside *Reopen
-   device*).
+   processing (when it is not on already), and a CPU that is not held at a
+   low clock help; on Linux the report names the CPU governor ("performance"
+   keeps the clock up), on Windows the power plan. The CPU figures come on
+   Windows, Linux and macOS alike; when the clocks cannot be read the report
+   says so. A computer with one or two cores is told that the buffer size
+   decides more than anything else there: the audio thread, the render
+   worker, the control thread and the window share the cores, and every
+   block pays its fixed costs (the hand-over between threads, the first
+   partitions of each IR, the note bookkeeping) whatever the polyphony, so
+   each doubling of the buffer gives nearly twice the polyphony. The
+   measurement is also started from the audio tab of a division's Settings
+   (*Measure polyphony*, beside *Reopen device*).
 
 Then save the configuration: the value belongs to this organ. Measure again
 after changing the audio routes, the IRs, the buffer size or the samples.

@@ -78,6 +78,9 @@ def main():
                 used = 'deviceType=' in xml or ('audioOutputDeviceName="' in xml and 'audioOutputDeviceName=""' not in xml)
                 if used and 'auxiliary' not in perspectives:
                     perspectives.append('auxiliary')
+        # The RAM the program used with the organ loaded, measured by the program
+        # when the portable configuration was saved (0.8.118; older files: unknown).
+        ram_bytes = int(cfg.get('measuredRamBytes', 0) or 0)
         title = folder
         readme = os.path.join(path, 'README.md')
         if os.path.exists(readme):
@@ -86,13 +89,19 @@ def main():
                     if line.startswith('# '):
                         title = line[2:].strip()
                         break
-        rows.append((title, folder, divisions, count, ', '.join(perspectives)))
+        rows.append((title, folder, divisions, count, ', '.join(perspectives), ram_bytes))
+
+    def ram_text(ram_bytes):
+        if ram_bytes <= 0:
+            return '-'
+        gb = ram_bytes / float(1 << 30)
+        return ('%.1f GB' % gb) if gb < 10 else ('%d GB' % round(gb))
 
     # A Markdown table cannot be sorted by a click, so the header carries the
     # triangles as links: each opens the same table sorted by that column -
     # INDEX.md by organ ascending, INDEX-<column>-<asc|desc>.md the others.
     columns = [('organ', 'Organ', lambda r: r[0].lower()), ('divisions', 'Divisions', lambda r: r[2]),
-               ('stops', 'Stops', lambda r: r[3]), ('routes', 'Routes', lambda r: r[4].lower())]
+               ('stops', 'Stops', lambda r: r[3]), ('ram', 'RAM', lambda r: r[5]), ('routes', 'Routes', lambda r: r[4].lower())]
     def file_for(key, descending):
         return 'INDEX.md' if (key == 'organ' and not descending) else 'INDEX-%s-%s.md' % (key, 'desc' if descending else 'asc')
     def render(sort_key, descending):
@@ -108,18 +117,20 @@ def main():
             '',
             'One line per organ - the README of each (with the download of its `.json` and where to',
             'put it), the number of divisions, the rows of its Stop List (transmissions and extensions',
-            'included, the rows nested in stop folders not) and the routes - the perspectives as the',
-            'configuration names them (`default` = a single perspective) and `auxiliary` when a',
-            'division uses that route; what each one carries, the README of the organ says. The',
-            'triangles in the header sort the table by that column. Written by the `Configurations',
-            'check` workflow from the configuration files themselves on every change; do not edit by',
-            'hand. How to use and publish one: [README.md](README.md).',
+            'included, the rows nested in stop folders not), the RAM the program used with the whole',
+            'organ loaded (measured by the program when the configuration was saved, 16-bit sample',
+            'storage unless the README says otherwise; `-` = saved by an older version) and the',
+            'routes - the perspectives as the configuration names them (`default` = a single',
+            'perspective) and `auxiliary` when a division uses that route; what each one carries, the',
+            'README of the organ says. The triangles in the header sort the table by that column.',
+            'Written by the `Configurations check` workflow from the configuration files themselves',
+            'on every change; do not edit by hand. How to use and publish one: [README.md](README.md).',
             '',
             '| ' + ' | '.join(header) + ' |',
-            '|---|---:|---:|---|',
+            '|---|---:|---:|---:|---|',
         ]
-        for title, folder, divisions, count, perspectives in ordered:
-            lines.append('| [%s](%s/README.md) | %d | %d | %s |' % (title.replace('|', '\\|'), folder, divisions, count, perspectives))
+        for title, folder, divisions, count, perspectives, ram_bytes in ordered:
+            lines.append('| [%s](%s/README.md) | %d | %d | %s | %s |' % (title.replace('|', '\\|'), folder, divisions, count, ram_text(ram_bytes), perspectives))
         lines.append('')
         lines.append('%d configuration(s).' % len(ordered))
         lines.append('')

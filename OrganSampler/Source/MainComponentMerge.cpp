@@ -11,9 +11,13 @@
 
 #if JUCE_WINDOWS
  #include <windows.h>
+ #define PSAPI_VERSION 2   // GetProcessMemoryInfo from kernel32 (K32...), no psapi.lib
+ #include <psapi.h>
 #elif JUCE_MAC
  #include <mach/mach.h>
  #include <mach/mach_host.h>
+ #include <sys/resource.h>
+ #include <unistd.h>
 #elif JUCE_LINUX
  #include <unistd.h>
 #endif
@@ -61,6 +65,27 @@ juce::int64 MainComponent::availablePhysicalMemoryBytes()
     return (juce::int64)juce::SystemStats::getMemorySizeInMegabytes() * 1024 * 1024 / 2;   // unknown: half of the installed memory
 }
 
+juce::int64 MainComponent::processMemoryBytes()
+{
+   #if JUCE_WINDOWS
+    PROCESS_MEMORY_COUNTERS_EX counters{};
+    counters.cb = sizeof(counters);
+    if (GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&counters, sizeof(counters)))
+        return (juce::int64)juce::jmax(counters.WorkingSetSize, counters.PrivateUsage);
+   #elif JUCE_LINUX
+    const auto text = juce::File("/proc/self/status").loadFileAsString();
+    for (const auto& line : juce::StringArray::fromLines(text))
+        if (line.startsWith("VmRSS:"))
+            return line.fromFirstOccurrenceOf(":", false, false).trim().upToFirstOccurrenceOf(" ", false, false).getLargeIntValue() * 1024;
+   #elif JUCE_MAC
+    mach_task_basic_info_data_t info{};
+    mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
+    if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t)&info, &count) == KERN_SUCCESS)
+        return (juce::int64)info.resident_size;
+   #endif
+    return 0;
+}
+
 bool MainComponent::readCpuClocks(double& processMs, double& systemBusyMs, double& systemTotalMs)
 {
    #if JUCE_WINDOWS
@@ -87,6 +112,21 @@ bool MainComponent::readCpuClocks(double& processMs, double& systemBusyMs, doubl
     const double idle = cpu[4].getDoubleValue() + (cpu.size() > 5 ? cpu[5].getDoubleValue() : 0.0);
     systemTotalMs = total * 1000.0 / ticks;
     systemBusyMs = (total - idle) * 1000.0 / ticks;
+    return true;
+   #elif JUCE_MAC
+    rusage usage{};
+    if (getrusage(RUSAGE_SELF, &usage) != 0) return false;
+    processMs = (double)usage.ru_utime.tv_sec * 1000.0 + (double)usage.ru_utime.tv_usec / 1000.0
+              + (double)usage.ru_stime.tv_sec * 1000.0 + (double)usage.ru_stime.tv_usec / 1000.0;
+    host_cpu_load_info_data_t load{};
+    mach_msg_type_number_t count = HOST_CPU_LOAD_INFO_COUNT;
+    if (host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, (host_info_t)&load, &count) != KERN_SUCCESS) return false;
+    // Ticks of all CPUs together; the share is what matters, the tick length cancels out.
+    const double ticks = (double)sysconf(_SC_CLK_TCK);
+    const double user = (double)load.cpu_ticks[CPU_STATE_USER], system = (double)load.cpu_ticks[CPU_STATE_SYSTEM];
+    const double nice = (double)load.cpu_ticks[CPU_STATE_NICE], idle = (double)load.cpu_ticks[CPU_STATE_IDLE];
+    systemTotalMs = (user + system + nice + idle) * 1000.0 / ticks;
+    systemBusyMs = (user + system + nice) * 1000.0 / ticks;
     return true;
    #else
     juce::ignoreUnused(processMs, systemBusyMs, systemTotalMs);

@@ -1291,6 +1291,10 @@ MainComponent::MainComponent()
     rebuildCouplerCatalog();
     rebuildCouplerRail();
     reopenMidiInputs();
+    // A MIDI keyboard plugged in while the program runs: opened at once (and
+    // one unplugged let go), so MIDI learn and the divisions see it without a
+    // restart. The system tells JUCE; JUCE calls this on the message thread.
+    midiDeviceListConnection = juce::MidiDeviceListConnection::make([this] { midiDevicesChanged(); });
     loadMemories();
     CrashHandler::setStateProvider([this]
     {
@@ -2141,6 +2145,38 @@ void MainComponent::reopenMidiInputs()
             midiInputs.push_back(std::move(input));
         }
     }
+}
+
+void MainComponent::midiDevicesChanged()
+{
+    // The devices that came are opened, the ones that went are let go; the
+    // rest keep playing (nothing is closed and reopened under the player's
+    // hands). Devices are known by their identifiers.
+    const auto devices = juce::MidiInput::getAvailableDevices();
+    juce::StringArray present;
+    for (const auto& device : devices) present.add(device.identifier);
+    juce::StringArray gone, added;
+    for (size_t i = midiInputs.size(); i-- > 0;)
+    {
+        if (present.contains(midiInputIdentifiers[i])) continue;
+        gone.add(midiInputs[i] != nullptr ? midiInputs[i]->getName() : midiInputIdentifiers[i]);
+        midiInputs.erase(midiInputs.begin() + (long)i);
+        midiInputIdentifiers.erase(midiInputIdentifiers.begin() + (long)i);
+    }
+    for (const auto& device : devices)
+    {
+        if (std::find(midiInputIdentifiers.begin(), midiInputIdentifiers.end(), device.identifier) != midiInputIdentifiers.end()) continue;
+        auto input = juce::MidiInput::openDevice(device.identifier, this);
+        if (input == nullptr) continue;
+        input->start();
+        added.add(device.name);
+        midiInputIdentifiers.push_back(device.identifier);
+        midiInputs.push_back(std::move(input));
+    }
+    if (gone.isEmpty() && added.isEmpty()) return;
+    CrashHandler::note("MIDI devices changed: " + juce::String(added.isEmpty() ? "" : "opened " + added.joinIntoString(", "))
+        + (added.isEmpty() || gone.isEmpty() ? "" : "; ") + (gone.isEmpty() ? "" : "gone " + gone.joinIntoString(", "))
+        + " - " + juce::String((int)midiInputs.size()) + " MIDI input(s) open");
 }
 
 void MainComponent::refreshMidiRouting()
@@ -4403,6 +4439,7 @@ juce::File MainComponent::writeProblemReport(const juce::String& what, const juc
                     + juce::String(device->getCurrentBufferSizeSamples()) + " at " + juce::String(device->getCurrentSampleRate(), 0);
             }
         }
+    const juce::String systemBlock = system;   // for the form's "System" field (the description goes to its own fields)
     system << "\nwhat happened:\n" << what << "\n\nsteps:\n" << steps << "\n";
     const auto systemFile = folder.getChildFile("system.txt");
     systemFile.replaceWithText(system);
@@ -4457,6 +4494,7 @@ juce::File MainComponent::writeProblemReport(const juce::String& what, const juc
         .withParameter("samples", currentConfigurationName.isNotEmpty() ? "configuration \"" + currentConfigurationName + "\"" : juce::String())
         .withParameter("what", what)
         .withParameter("steps", steps)
+        .withParameter("system", systemBlock)   // the computer, the routes, the configuration - in the issue even without the zip
         .withParameter("hardware", cpu + ", " + juce::String(ramMb / 1024.0, 0) + " GB RAM");
     // The link to the filled-in form as a file in the folder: a double-click opens
     // it again - after a sign-in, a password reset or a new account, when GitHub
@@ -4912,6 +4950,15 @@ void MainComponent::reopenAudioDeviceFresh(juce::AudioDeviceManager& manager, co
     auto setup = manager.getAudioDeviceSetup();
     setup.bufferSize = 0;
     setup.sampleRate = 0.0;
+    // JACK has no "driver's preferred" size: PipeWire's clock is what the user
+    // set for this route (pw-metadata) - asking for 0 made JUCE take whatever
+    // a fresh, not yet running client reported (512 frames, 44.1 kHz), and
+    // that then became the server's clock. The route keeps its own values.
+    if (device->getTypeName().equalsIgnoreCase("JACK"))
+    {
+        setup.bufferSize = oldBuffer;
+        setup.sampleRate = device->getCurrentSampleRate();
+    }
     // Measured on the RME Fireface USB: with a Windows Audio stream open on the
     // same interface, a new ASIO instance reports the panel's new buffer size but
     // the hardware keeps the old period, so every callback carries the wrong
@@ -6072,7 +6119,11 @@ void MainComponent::showKeyboardsDialog(int onlyManual)
                         const double rate = device->getCurrentSampleRate();
                         running << "Running: " << device->getName() << "  -  buffer " << buffer << " samples";
                         if (rate > 0.0) running << " (" << juce::String(1000.0 * buffer / rate, 1) << " ms) at " << juce::String(rate, 0) << " Hz";
-                        running << ", output latency " << device->getOutputLatencyInSamples() << " samples";
+                        // JACK through PipeWire reports no port latency (0): say so
+                        // rather than print a latency of nothing.
+                        const int latency = device->getOutputLatencyInSamples();
+                        if (latency > 0) running << ", output latency " << latency << " samples";
+                        else running << ", output latency not reported by the driver (at least one buffer)";
                     }
                     else running = "No device open on this route.";
                     if (deviceStatus.getText() != running) deviceStatus.setText(running, juce::dontSendNotification);
@@ -9556,7 +9607,7 @@ namespace
         static const juce::StringArray keys{ "windowX", "windowY", "windowWidth", "windowHeight", "windowMaximised", "twoWindows",
             "divisionScreen", "dialogBounds", "uiScalePercent", "copyCacheFolder", "copyCacheEnabled", "sampleStorageFloat",
             "renderThreads", "renderThreadPreset", "renderThreadsWasapi", "showUnusableAudioDevices", "configEditorCollapsed", "configurationFile",
-            "loadLastConfigurationAtStartup", "maxPolyphony", "irProcessing", "irLightAuto" };
+            "loadLastConfigurationAtStartup", "maxPolyphony", "irProcessing", "irLightAuto", "unpackArchiveShownOnce" };
         return keys;
     }
 }
@@ -9570,6 +9621,18 @@ void MainComponent::savePortableConfiguration(const juce::File& file, bool inclu
     if (portable) includeMidi = false;   // another computer has other keyboards
     root->setProperty("portableConfigurationVersion", 1);
     root->setProperty("containsMidiMappings", includeMidi);
+    // The RAM this program uses now, with the organ loaded: the figure a
+    // reader of the published configuration needs most (the README and
+    // configurations/INDEX.md show it). Only when the organ is really loaded.
+    if (activeFolderLoader == nullptr && !engine.getStops().isEmpty())
+    {
+        const juce::int64 ram = processMemoryBytes();
+        if (ram > 0)
+        {
+            root->setProperty("measuredRamBytes", ram);
+            root->setProperty("measuredRamStorage", sampleStorageFloat ? "32-bit float" : "16-bit");
+        }
+    }
 
     const auto registration = captureCurrentState();
     root->setProperty("registrationMasterDb", registration.masterDb);
@@ -9926,6 +9989,41 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
         rootObject->setProperty("containsMidiMappings", false);
         rootObject->setProperty("configurationName", plan.organName);
         rootObject->setProperty("manualCount", juce::jmax(1, (int)plan.divisions.size() - 1));
+        // The rows' names are the automatic ones the folders give (what the
+        // Stop List would show for these folders: "3Krummhorn"), unique within
+        // the division; the Hauptwerk stop name becomes the alias, the caption
+        // of the button ("III. Krumhoren 8"). Every saved state is keyed by the
+        // folder name, as for any organ built from folders.
+        std::map<juce::String, juce::String> automaticNameOfFolder;   // folder path (lower case) -> the scanned stop name
+        for (const auto& tree : plan.allTrees)
+            for (const auto& assignment : safeThis->engine.scanTreeAssignments(tree, false))
+                automaticNameOfFolder[assignment.folder.getFullPathName().toLowerCase()] = assignment.stopName;
+        std::map<int, std::pair<int, juce::String>> rowOfStop;   // ODF stop id -> division, row name
+        for (size_t d = 0; d < plan.divisions.size(); ++d)
+        {
+            juce::StringArray taken;
+            for (const auto& stop : plan.divisions[d].stops)
+            {
+                if (stop.extensionOfStopId > 0) continue;
+                juce::StringArray names;
+                for (const int rankId : stop.rankIds)
+                {
+                    const auto rankIt = odf->ranks.find(rankId);
+                    if (rankIt == odf->ranks.end() || rankIt->second.folder == juce::File()) continue;
+                    const auto found = automaticNameOfFolder.find(rankIt->second.folder.getFullPathName().toLowerCase());
+                    const auto name = found != automaticNameOfFolder.end() ? found->second : rankIt->second.folder.getFileName();
+                    bool present = false;
+                    for (const auto& existing : names) if (stopBuildKey(existing) == stopBuildKey(name)) present = true;
+                    if (!present) names.add(name);
+                }
+                juce::String name = names.isEmpty() ? (stop.folders.empty() ? stop.name : stop.folders.front().getFileName()) : names.joinIntoString(" / ");
+                const auto base = name;
+                for (int n = 2; taken.contains(stopBuildKey(name)); ++n) name = base + " (" + juce::String(n) + ")";
+                taken.add(stopBuildKey(name));
+                rowOfStop[stop.stopId] = { (int)d, name };
+            }
+        }
+        safeThis->hauptwerkExtensions.clear();
         juce::Array<juce::var> manuals;
         for (int i = 0; i < SamplerEngine::maxManuals; ++i)
         {
@@ -9949,6 +10047,15 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
                 juce::Array<juce::var> entries;
                 for (const auto& stop : division.stops)
                 {
+                    if (stop.extensionOfStopId > 0)
+                    {
+                        // An extension/transmission: made once the owner stop is loaded
+                        // (applyHauptwerkVoicing), as a transmission into this division.
+                        const auto owner = rowOfStop.find(stop.extensionOfStopId);
+                        if (owner != rowOfStop.end())
+                            safeThis->hauptwerkExtensions.push_back({ i, owner->second.first, owner->second.second, stop.shift, stop.name });
+                        continue;
+                    }
                     juce::Array<juce::var> folders;
                     juce::StringArray labelsDone;
                     for (const int rankId : stop.rankIds)
@@ -9971,10 +10078,11 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
                         perspectivesUsed.addIfNotAlreadyThere(label);
                     }
                     if (folders.isEmpty()) continue;
+                    const auto row = rowOfStop.find(stop.stopId);
                     juce::DynamicObject::Ptr entry = new juce::DynamicObject();
-                    entry->setProperty("name", stop.name);
-                    entry->setProperty("alias", juce::String());
-                    entry->setProperty("customName", true);
+                    entry->setProperty("name", row != rowOfStop.end() ? row->second.second : stop.name);
+                    entry->setProperty("alias", stop.name);           // the Hauptwerk stop name on the button
+                    entry->setProperty("customName", false);
                     entry->setProperty("child", false);
                     entry->setProperty("folders", folders);
                     entries.add(juce::var(entry.get()));
@@ -10001,7 +10109,9 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
         juce::Array<juce::var> patterns;
         for (const auto& pattern : plan.perspectivePatterns) patterns.add(pattern);
         rootObject->setProperty("perspectivePatterns", patterns);
-        rootObject->setProperty("ignoredPatterns", juce::Array<juce::var>{ juce::var("trem") });
+        // Tremmed samples: Hauptwerk sets keep them in "trem" folders or in
+        // sibling folders ending in "_TR" (II_TR beside II): never loaded.
+        rootObject->setProperty("ignoredPatterns", juce::Array<juce::var>{ juce::var("trem"), juce::var("*_tr") });
         rootObject->setProperty("sampleLibraryRootName", plan.libraryRoot.getFileName());
         {
             // An empty voicing state: a new organ, nothing of the previous one's
@@ -10047,6 +10157,7 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
         }
         if (plan.skippedTremmedRanks > 0) summary << "\nTremmed ranks left out: " << plan.skippedTremmedRanks << " (OrganSampler has its own tremulant).";
         if (plan.skippedNoiseRanks > 0) summary << "\nNoise ranks left out: " << plan.skippedNoiseRanks << ".";
+        if (plan.extensions > 0) summary << "\nExtensions/transmissions (stops playing another stop's ranks, shifted): " << plan.extensions << " - made as transmissions once the stops are loaded.";
         if (plan.stopsWithoutSamples > 0) summary << "\nStops without playable pipes (couplers, tremulants, toys): " << plan.stopsWithoutSamples << ".";
         for (const auto& note : plan.notes) summary << "\n" << note;
         CrashHandler::note("Hauptwerk import plan: " + summary.replaceCharacters("\n", " ") + "; configuration " + plan.configurationFile.getFullPathName());
@@ -10088,15 +10199,39 @@ void MainComponent::applyHauptwerkVoicing(std::shared_ptr<HauptwerkOdf> odf, con
             ++voicedStops;
         }
     }
+    // The definition's extensions and transmissions: a transmission of the
+    // owner stop into the division, shifted as the definition says, with the
+    // Hauptwerk stop name as its caption.
+    int extensionsMade = 0;
+    juce::StringArray extensionsMissed;
+    for (const auto& extension : hauptwerkExtensions)
+    {
+        Stop* owner = nullptr;
+        for (auto* stop : engine.getStops())
+            if (stop != nullptr && !stop->container && stop->primaryManual == extension.ownerManual && stopBuildKey(stop->name) == stopBuildKey(extension.ownerName)) { owner = stop; break; }
+        if (owner == nullptr) { extensionsMissed.add(extension.alias); continue; }
+        const int index = engine.addTransmission(owner, extension.manual, extension.shift);
+        if (index < 0) { extensionsMissed.add(extension.alias); continue; }
+        std::vector<Stop::Transmission> list = owner->transmissions;
+        list[(size_t)index].alias = extension.alias;
+        engine.replaceTransmissions(owner, list);
+        ++extensionsMade;
+    }
+    hauptwerkExtensions.clear();
     if (voicer != nullptr) { voicer->updateStopStates(); voicer->rebuildUI(stopsContent, stopsViewport); }
-    CrashHandler::note("Hauptwerk import: voicing applied to " + juce::String(voicedStops) + " stop(s), " + juce::String(voicedNotes) + " pipe level(s)" + (saveIntoPackage ? "" : " (merge: not saved)"));
+    CrashHandler::note("Hauptwerk import: voicing applied to " + juce::String(voicedStops) + " stop(s), " + juce::String(voicedNotes) + " pipe level(s), "
+        + juce::String(extensionsMade) + " extension(s)/transmission(s) made" + (extensionsMissed.isEmpty() ? juce::String() : " (not made: " + extensionsMissed.joinIntoString(", ") + ")")
+        + (saveIntoPackage ? "" : " (merge: not saved)"));
     if (!saveIntoPackage) { configurationDirty = true; return; }   // a merge: the report comes from the merge itself
     // The configuration with the voicing, in the installation package (portable:
     // paths relative to OrganInstallationPackages; no zip and README - those are
     // for publishing, Save Configuration makes them when wanted).
     savePortableConfiguration(configurationFile, false, true, false);
     juce::String text = summary;
-    text << "\n\nVoicing: " << voicedStops << " stop(s) with the Hauptwerk pipe levels (averaged over the perspectives; the median as the stop's volume, the rest per key)."
+    text << "\n\nVoicing: " << voicedStops << " stop(s) with the Hauptwerk pipe levels (averaged over the perspectives; the median as the stop's volume, the rest per key).";
+    if (extensionsMade > 0 || !extensionsMissed.isEmpty())
+        text << "\nExtensions/transmissions made: " << extensionsMade << (extensionsMissed.isEmpty() ? juce::String(".") : " (not made: " + extensionsMissed.joinIntoString(", ") + ").");
+    text
          << "\n\nThe configuration is saved as\n" << configurationFile.getFullPathName()
          << "\n\nEverything else of the organ definition (couplers, combinations, displays, tremulants, wind) was ignored: the folder structure decides the organ in OrganSampler. "
             "Check the Stop List, the audio routes of the perspectives and the MIDI keyboards, then Save Configuration.";
@@ -10241,6 +10376,17 @@ juce::String MainComponent::configurationReadme(const juce::var& configuration, 
     else for (size_t m = 0; m < routeLines.size(); ++m)
         text << (m == 0 ? "" : "; ") << (m == 0 ? juce::String("Pedal") : romanNumeral((int)m)) << ": " << routeLines[m];
     text << ".\n";
+    {
+        // The RAM the program used with the whole organ loaded, measured when the
+        // configuration was saved: what a reader needs to know before downloading.
+        const juce::int64 ram = (juce::int64)configuration.getProperty("measuredRamBytes", 0);
+        if (ram > 0)
+        {
+            const double gb = (double)ram / (1024.0 * 1024.0 * 1024.0);
+            text << "- **RAM:** about " << (gb < 10.0 ? juce::String(gb, 1) : juce::String(juce::roundToInt(gb))) << " GB with the whole organ loaded ("
+                 << configuration.getProperty("measuredRamStorage", "16-bit").toString() << " sample storage; measured by the program when this file was saved).\n";
+        }
+    }
     text << "- **Saved with:** OrganSampler " << version << ".\n";
     text << "- **Author:** (fill in: your name or GitHub name), " << date << ".\n\n";
     text << "## Where to put the file\n\n";
@@ -10382,9 +10528,14 @@ void MainComponent::applyPortableConfiguration(juce::var configuration,
     // polyphony limit, and a message says what to set up once the organ is loaded.
     if ((bool)root->getProperty("portable"))
     {
+        // This computer's own settings win over anything the file carries: a
+        // portable file of an older version could hold its maker's render
+        // threads ("All logical CPUs - 1") and window places.
         for (const auto& key : machineSpecificKeys())
-            if (!root->hasProperty(key) && localConfiguration.hasProperty(key))
-                root->setProperty(key, localConfiguration.getProperty(key, juce::var()));
+        {
+            if (localConfiguration.hasProperty(key)) root->setProperty(key, localConfiguration.getProperty(key, juce::var()));
+            else root->removeProperty(key);
+        }
         root->removeProperty("portable");   // the settings of this computer from now on
         portableNoticePending = true;
         CrashHandler::note("Portable configuration loaded: this computer's own settings kept, audio on the default device");
@@ -10829,6 +10980,24 @@ void MainComponent::beginStartupFolderLoading()
             {
                 if (voicer == nullptr) return;
                 if (voicerStateFile.existsAsFile()) voicer->loadState(voicerStateFile);
+                // The aliases of the Stop List table (typed there, or the Hauptwerk
+                // stop names of an import) - the voicing state carries them only
+                // once it was saved with them; a configuration whose state has no
+                // entry for a stop yet (a fresh import) takes them from the table.
+                {
+                    bool aliased = false;
+                    for (int manual = 0; manual < SamplerEngine::maxManuals; ++manual)
+                    {
+                        const auto& build = manualConfigs[(size_t)manual].stopBuild;
+                        if (!build.active) continue;
+                        for (auto* stop : engine.getStops())
+                            if (stop != nullptr && stop->primaryManual == manual)
+                                for (const auto& entry : build.entries)
+                                    if (entry.alias.isNotEmpty() && stopBuildKey(entry.name) == stopBuildKey(stop->name) && stop->alias != entry.alias)
+                                    { stop->alias = entry.alias; aliased = true; break; }
+                    }
+                    if (aliased) voicer->rebuildUI(stopsContent, stopsViewport);
+                }
                 // Ordinary folder loading starts silent. An explicit configuration
                 // load, however, restores its saved live registration after all
                 // stop objects exist (the next phase).
@@ -18412,10 +18581,25 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
         if (oneCoreBound)
             advice << " The sound broke while the program had barely more than one core busy: the audio thread of a device runs on one core, and that core "
                       "ran out of time - the rest of the computer was idle. What helps: a larger buffer (more time per block for the same work), "
-                      "fewer routes on one device (every route of a device renders in its callback), Light IR processing, and a CPU that is not "
-                      "held at a low clock while the average load looks small.";
+                      "fewer routes on one device (every route of a device renders in its callback), "
+                   << (engine.isReverbProcessingLight() ? "" : "Light IR processing, ")
+                   << "and a CPU that is not held at a low clock while the average load looks small.";
         const juce::String power = MainComponent::powerSettingDescription();
         if (power.isNotEmpty()) advice << " " << power;
+    }
+    else advice << "\n\nCPU during the run: not available on this system (the clocks of the process and the system could not be read).";
+    {
+        // Two cores (or one): the audio thread, the render worker, the control
+        // thread and the GUI share them, and every block pays its fixed costs
+        // (thread hand-over, the IR head, the bookkeeping) whatever the
+        // polyphony - the buffer size decides more than anything else here.
+        const int physical = juce::jmax(1, juce::SystemStats::getNumPhysicalCpus());
+        if (physical <= 2 && firstFailingKeys > 0)
+            advice << "\n\nThis computer has " << physical << (physical == 1 ? " core" : " cores") << ": the audio thread, the render worker, the control thread "
+                      "and the window share " << (physical == 1 ? "it" : "them") << ", and every audio block pays its fixed costs (the hand-over between threads, the "
+                      "first partitions of each IR, the note bookkeeping) whatever the polyphony. The buffer size decides more than anything else here: "
+                      "each doubling gives nearly twice the polyphony at twice the latency (2048 samples = 43 ms at 48 kHz, still playable for an organ); "
+                      "no IR and fewer routes take the fixed costs away.";
     }
     {
         // Hyper-threads render slower than the physical cores alone (measured: more
@@ -19670,17 +19854,30 @@ void MainComponent::showConfigurationEditor()
             {
                 // Presets first, then every explicit thread count (1 = the audio
                 // driver thread renders alone, no worker threads).
-                const juce::StringArray presetIds{ "physical", "physicalMinusOne", "all", "allMinusOne" };
+                // The presets this computer can tell apart: without hyper-threading
+                // the logical CPUs are the physical cores, and a single core has no
+                // "all - 1". The default comes first and says so.
+                juce::StringArray presetIds{ "physical" };
                 juce::StringArray items;
-                items.add("All physical cores (" + juce::String(physical) + " threads)  [default]");
-                items.add("All physical cores - 1 (" + juce::String(physical - 1) + " threads)");
-                items.add("All logical CPUs (" + juce::String(logical) + " threads, hyper-threading, not recommended)");
-                items.add("All logical CPUs - 1 (" + juce::String(logical - 1) + " threads, not recommended)");
+                items.add("All physical cores (" + juce::String(physical) + (physical == 1 ? " thread" : " threads") + ")  [default]");
+                if (physical > 1) { presetIds.add("physicalMinusOne"); items.add("All physical cores - 1 (" + juce::String(physical - 1) + (physical == 2 ? " thread" : " threads") + ")"); }
+                if (logical > physical)
+                {
+                    presetIds.add("all"); items.add("All logical CPUs (" + juce::String(logical) + " threads, hyper-threading, not recommended)");
+                    presetIds.add("allMinusOne"); items.add("All logical CPUs - 1 (" + juce::String(logical - 1) + " threads, not recommended)");
+                }
                 const int maxThreads = juce::jlimit(1, 63, logical);
                 for (int threads = 1; threads <= maxThreads; ++threads)
                     items.add(threads == 1 ? juce::String("1 thread (audio driver thread only)")
                                            : juce::String(threads) + " threads");
                 int selected = presetIds.indexOf(o.renderThreadPreset);
+                if (selected < 0 && o.renderThreads == 0 && o.renderThreadPreset != "custom")
+                {
+                    // A preset this computer has no item for (a settings file from
+                    // another one): shown as the default, which is what it renders with.
+                    if (o.renderThreadPreset == "all") selected = presetIds.indexOf("physical");
+                    else if (o.renderThreadPreset == "allMinusOne" || o.renderThreadPreset == "physicalMinusOne") selected = juce::jmax(0, presetIds.indexOf("physicalMinusOne"));
+                }
                 if (o.renderThreads > 0) selected = presetIds.size() + juce::jlimit(1, maxThreads, o.renderThreads) - 1;
                 if (selected < 0) selected = 0;
                 addCombo("Render threads", items, selected, [&o, presetIds](int index)
@@ -19702,6 +19899,7 @@ void MainComponent::showConfigurationEditor()
                 addInfo("Currently active", juce::String(engine.getRenderWorkerCount() + 1) + " render threads, "
                     + (engine.isUsingSimd() ? "AVX2" : "scalar") + " interpolation kernel");
             }
+#if JUCE_WINDOWS
             {
                 juce::StringArray items;
                 const int maxThreads = juce::jlimit(1, 63, logical);
@@ -19717,6 +19915,7 @@ void MainComponent::showConfigurationEditor()
                 }, "Used by divisions/perspectives on Windows Audio or Aggregated WASAPI devices. "
                    "Their large buffers need few threads; more threads only add crackle. ASIO uses the setting above.");
             }
+#endif
             addCombo("Sample storage in RAM", { "32-bit float (less polyphony, full fidelity)",
                 "16-bit integer (more polyphony, more hiss)" },
                 o.sampleStorageFloat ? 0 : 1, [&o](int index)

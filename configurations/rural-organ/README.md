@@ -51,12 +51,14 @@ Rural Organ/
 `Rural-Organ.zip` in this folder holds the same portable configuration as the
 package (`Rural Organ.json`): saved with "Portable configuration (to share
 with others)", so it carries the organ only - no MIDI devices, no audio
-devices, nothing of the computer it was made on. Saved with OrganSampler 0.8.117.
+devices, nothing of the computer it was made on. Saved with OrganSampler 0.8.118.
 
 - Organ: a Czech village organ, three divisions, recorded dry.
 - Samples: Sonus Paradisi, provided free of charge with OrganSampler to try
   the program; they remain the property of their author.
 - Expects: library root `Rural Organ`, tree `Samply`; the IRs in `Samply\IR`.
+- RAM: about 1.2 GB with the whole organ loaded (16-bit sample storage;
+  measured by the program when the configuration was saved).
 - Audio layout: Pedal, I, II, each with the route `default` = the front
   (IR "Rural Church Front", dry/wet 72 %) and the route `auxiliary` = the
   rear (IR "Rural Church Rear", dry/wet 92 %, for a second pair of

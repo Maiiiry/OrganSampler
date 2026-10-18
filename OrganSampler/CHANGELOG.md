@@ -12,6 +12,55 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.118] - 2026-10-18
+
+### Fixed
+- Hauptwerk import: a stop that plays another stop's ranks shifted (a 4'
+  playing the 8' rank an octave up - an extension, or a transmission into
+  another division) is now made as a transmission of that stop, with the
+  Hauptwerk name as its caption; before, the common folder of the two stops
+  came out as the whole division and the division's tree as the whole
+  installation package, so the pool filled with every folder of the package
+  (tremmed copies included) and stops appeared twice. A stop folder is never
+  allowed to hold another stop's folder. "I. Zimbell" was taken for a bell
+  noise and left out: noise ranks are now recognised by whole words of the
+  rank name (noise, blower, calcant, action, tracker, zimbelstern...). The
+  tremmed sibling folders ("II_TR") are ignored by pattern (`*_tr` joins
+  `trem`). The rows are named after the folders, as any organ built from
+  folders, and the Hauptwerk stop name is the alias shown on the button.
+- A portable configuration of an older version could carry its maker's
+  render threads ("All logical CPUs - 1"), window places and other settings
+  of the computer: loading one now always keeps this computer's own (and
+  the "Unpack archive shown once" flag no longer travels in portable files).
+- The aliases of the Stop List table were applied when a division was
+  loaded but not when a whole configuration was: a stop without an alias in
+  the voicing state (a fresh Hauptwerk import) showed its folder name.
+- Render threads in the Configuration Editor: the presets a computer cannot
+  tell apart are no longer listed (without hyper-threading "All logical
+  CPUs" is "All physical cores"); "Render threads for Aggregated WASAPI" is
+  shown on Windows only.
+- JACK (PipeWire): "Reopen device" reopened the route at 512 frames and
+  44.1 kHz instead of the buffer size and rate chosen for it - the fresh,
+  not yet running client reported no values and JUCE took defaults, which
+  then became the server's clock. The route keeps its own values, and a JACK
+  device reports the server's clock until it runs. The audio tab's status
+  line says "output latency not reported by the driver" instead of
+  "0 samples".
+- The polyphony measurement reports the CPU use on macOS as well (process
+  and system clocks of the Mach kernel); when the clocks cannot be read it
+  says so. The advice no longer suggests Light IR processing when it is
+  already on, and tells a computer with one or two cores that the buffer
+  size decides more than anything else there.
+
+### Added
+- A MIDI keyboard plugged in while the program runs is opened at once (and
+  one unplugged let go), so MIDI learn and the divisions see it without a
+  restart.
+- "Report a problem" fills a "System" field of the GitHub form with the
+  computer, the render threads, the configuration and every audio route, so
+  the facts are in the issue even before the zip is dragged in (GitHub takes
+  files only by drag and drop - no program can attach them).
+
 ## [0.8.117] - 2026-10-18
 
 ### Added

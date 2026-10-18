@@ -63,10 +63,16 @@ body:
     validations:
       required: true
   - type: textarea
+    id: system
+    attributes:
+      label: System
+      description: Filled in by "Report a problem" (the program, the computer, the render threads, the configuration and every audio route as they were). Leave it as it is.
+      render: text
+  - type: textarea
     id: logs
     attributes:
       label: Logs
-      description: Drag the zip made by "Report a problem" here (it holds activity.log, crash logs, settings.json, selftest.txt and system.txt - no sample data). Or zip the CrashLogs folder of the application-data folder by hand.
+      description: Drag logs.zip from the report folder on your Desktop here (it holds activity.log, crash logs, settings.json, selftest.txt and system.txt - no sample data). GitHub takes files only this way - no program can attach them for you. Or zip the CrashLogs folder of the application-data folder by hand.
       placeholder: Drag the zip file into this field.
     validations:
       required: true

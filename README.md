@@ -7,6 +7,8 @@ list, perform.
 
 [![Latest build](https://img.shields.io/github/v/tag/zurek-jiri/OrganSampler?sort=semver&label=download%20the%20latest%20build)](https://github.com/zurek-jiri/OrganSampler/releases)
 
+[![The console: one column per division, the stops as buttons, couplers and tremulants in the headers, pistons and the crescendo above](site/assets/main.png)](site/assets/main.png)
+
 OrganSampler plays sampled pipe organs from plain folders of WAV files - one
 folder per stop, its pipes as WAV files - and turns any number of such folders into
 an organ with up to seven manuals and a pedal: massive polyphony, per-key
@@ -16,6 +18,15 @@ temperaments, transmissions with transposition (extensions), velocity layers,
 general crescendo and combinations. No organ definition file is needed: you load
 the folders, the program proposes the organ, you shape it and save it as a
 configuration. Free software under the GNU GPL v3. Windows, macOS and Linux.
+
+**Your own organ, from any sources.** This is what sets OrganSampler apart:
+mix stops from different sample folders and different producers into one
+console, duplicate a stop as a transmission or an extension (a 16' from an
+8', a mutation from a principal), merge two configurations into one organ,
+move stops between divisions, and a Hauptwerk organ definition opens as a
+configuration too. And it runs on very old computers: a two-core laptop from
+2009 plays a village organ, the program measures the polyphony your machine
+reaches and sets its limit itself.
 
 ## Try it in five minutes
 

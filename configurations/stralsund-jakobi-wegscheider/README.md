@@ -15,7 +15,8 @@ the recordings themselves are the property of their producer and are obtained fr
 - **Samples:** Sonus Paradisi, *Stralsund, St. Jakobi, Wegscheider organ* (https://www.sonusparadisi.cz/), two Hauptwerk installation packages; the folders `003135` and `003136`, unpacked as plain WAV files; perspectives Direct (`01-dirMk2H`), Diffuse (`02-difMk2H`) and Rear (`03-rearMk4`). OrganSampler 0.8.92 or later.
 - **Expects:** library root of any name, holding the trees `003135/pipe/HW`, `003135/pipe/OW`, `003135/pipe/PE`, `003135/pipe/UW`, `003136/pipe/HW`, `003136/pipe/OW`, `003136/pipe/PE` and `003136/pipe/UW`.
 - **Audio layout:** every division has the routes direct, diffuse and rear; auxiliary (unused).
-- **Saved with:** OrganSampler 0.8.90.
+- **RAM:** about 36 GB with the whole organ loaded (16-bit sample storage; measured by the program when this file was saved).
+- **Saved with:** OrganSampler 0.8.118.
 - **Author:** zurek-jiri, 15 October 2026.
 
 ## Where to put the file

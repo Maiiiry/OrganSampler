@@ -476,6 +476,8 @@ private:
     int manualCount = 2; // number of manuals in addition to the always-present pedal
     std::vector<std::unique_ptr<juce::MidiInput>> midiInputs;
     std::vector<juce::String> midiInputIdentifiers;
+    juce::MidiDeviceListConnection midiDeviceListConnection;   // MIDI devices plugged in or out while running
+    void midiDevicesChanged();
     std::atomic<int> listeningManual{ -1 };
     std::atomic<int> listeningExpressionManual{ -1 };
     std::atomic<bool> applicationReady{ false };
@@ -727,6 +729,10 @@ private:
     std::unique_ptr<juce::FileChooser> combinationsFileChooser;
     std::unique_ptr<juce::FileChooser> configurationFileChooser;
     std::shared_ptr<HauptwerkOdf> hauptwerkImport;   // the organ definition being imported (until its voicing is applied)
+    // The extensions/transmissions of the definition (stops playing another
+    // stop's ranks shifted): made as transmissions once the owner stops are loaded.
+    struct HauptwerkExtension { int manual = 0, ownerManual = 0; juce::String ownerName; int shift = 0; juce::String alias; };
+    std::vector<HauptwerkExtension> hauptwerkExtensions;
     std::unique_ptr<juce::FileChooser> configurationRootChooser;
     juce::File lastSettingsDirectory;
 
@@ -1032,6 +1038,7 @@ private:
     void mergeConfigurationFile(const juce::File& file);
     void mergeConfiguration(juce::var added, const juce::File& addedFile, const juce::String& addedName, std::function<void()> afterLoad);
     static juce::int64 availablePhysicalMemoryBytes();   // free physical memory now (the samples must fit)
+    static juce::int64 processMemoryBytes();             // the RAM this program holds now (resident), 0 when unknown
     // The CPU clocks for the polyphony measurement: this process's CPU time (ms,
     // all threads) and the system's busy and total times (ms, all CPUs); false
     // where the platform offers none. MainComponentMerge.cpp.

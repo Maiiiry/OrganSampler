@@ -92,15 +92,22 @@ public:
                 const auto& d = plan.divisions[i];
                 report << "  [" << (int)i << "] " << d.name << " keys " << d.lowNote << "-" << d.highNote << ", " << (int)d.stops.size() << " stops\n";
                 for (const auto& t : d.trees) report << "      tree " << t.getFullPathName() << "\n";
-                for (size_t s = 0; s < d.stops.size() && s < 4; ++s)
+                for (const auto& stop : d.stops)
                 {
-                    report << "      stop " << d.stops[s].name << " ->";
-                    for (const auto& f : d.stops[s].folders) report << " " << f.getFullPathName();
+                    report << "      stop " << stop.name << " ->";
+                    for (const auto& f : stop.folders) report << " " << f.getFullPathName();
+                    if (stop.extensionOfStopId > 0)
+                        report << " EXTENSION of stop " << stop.extensionOfStopId << " (" << (odf.stops.count(stop.extensionOfStopId) > 0 ? odf.stops.at(stop.extensionOfStopId).name : juce::String("?"))
+                               << ") shift " << stop.shift;
                     report << "\n";
+                    for (int rankId : stop.rankIds)
+                        if (const auto it = odf.ranks.find(rankId); it != odf.ranks.end())
+                            report << "          rank " << rankId << " [" << it->second.perspective << "] " << it->second.folder.getFullPathName() << "\n";
                 }
             }
             for (const auto& p : plan.perspectivePatterns) report << "  perspective pattern: " << p << "\n";
-            report << "  tremmed ranks skipped " << plan.skippedTremmedRanks << ", noise ranks " << plan.skippedNoiseRanks << ", stops without samples " << plan.stopsWithoutSamples << "\n";
+            report << "  tremmed ranks skipped " << plan.skippedTremmedRanks << ", noise ranks " << plan.skippedNoiseRanks << ", stops without samples " << plan.stopsWithoutSamples
+                   << ", extensions/transmissions " << plan.extensions << "\n";
             for (const auto& n : plan.notes) report << "  note: " << n << "\n";
             report << "  configuration: " << plan.configurationFile.getFullPathName() << "\n";
             juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile("OrganSampler").getChildFile("hauptwerk.txt").replaceWithText(report);
