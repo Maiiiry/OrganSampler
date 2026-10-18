@@ -148,6 +148,7 @@ namespace
   #define ENGINE_AVX2_FN
  #else
   #define ENGINE_AVX2_FN __attribute__((target("avx2")))
+  #include <x86intrin.h>   // __rdtsc (the profiling clock)
  #endif
  // The spin-wait hint: _mm_pause on Windows (the workers hold their cores
  // there, with MMCSS behind them); a thread yield everywhere else, as before
@@ -188,7 +189,47 @@ namespace
     std::atomic<bool> gVoiceProfiling{ false };
     struct VoiceProfile { int64_t header = 0, spans = 0, kernel = 0, post = 0; int64_t voices = 0; };
     thread_local VoiceProfile tlVoiceProfile;
+    // The profiling clock is the CPU's cycle counter (rdtsc, cntvct_el0), a
+    // register read of a few ns: six reads per voice. The system clock of JUCE
+    // (clock_gettime) was a ~1 us call on an old Linux laptop with an HPET clock
+    // source and inflated the bookkeeping and span figures of the Core 2 Duo
+    // threefold (0.8.123, #11). Calibrated once against the system clock when
+    // profiling starts (profileTicksPerSecond); a delta that is negative or
+    // over a second (a thread migrated between cores with unsynchronised
+    // counters, a sleep) is dropped.
+   #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+    inline int64_t profileTicks() noexcept { return (int64_t)__rdtsc(); }
+   #elif (defined(__aarch64__) || defined(__arm64__)) && (defined(__GNUC__) || defined(__clang__))
+    inline int64_t profileTicks() noexcept { uint64_t v; __asm__ volatile("mrs %0, cntvct_el0" : "=r"(v)); return (int64_t)v; }
+   #else
     inline int64_t profileTicks() noexcept { return juce::Time::getHighResolutionTicks(); }
+   #endif
+    std::atomic<int64_t> gProfileTicksPerSecond{ 0 };
+    inline int64_t profileTicksPerSecond() noexcept
+    {
+        const int64_t known = gProfileTicksPerSecond.load(std::memory_order_relaxed);
+        return known > 0 ? known : juce::Time::getHighResolutionTicksPerSecond();
+    }
+    // Measures the counter against the system clock over 100 ms; called from
+    // the message thread when profiling is switched on (once).
+    void calibrateProfileClock() noexcept
+    {
+        if (gProfileTicksPerSecond.load() > 0) return;
+        const int64_t sysPerSecond = juce::Time::getHighResolutionTicksPerSecond();
+        const int64_t sys0 = juce::Time::getHighResolutionTicks();
+        const int64_t prof0 = profileTicks();
+        int64_t sys1 = sys0, prof1 = prof0;
+        while (sys1 - sys0 < sysPerSecond / 10) { juce::Thread::sleep(5); sys1 = juce::Time::getHighResolutionTicks(); prof1 = profileTicks(); }
+        const double seconds = (double)(sys1 - sys0) / (double)sysPerSecond;
+        const int64_t perSecond = seconds > 0.0 && prof1 > prof0 ? (int64_t)((double)(prof1 - prof0) / seconds) : sysPerSecond;
+        gProfileTicksPerSecond.store(perSecond);
+        CrashHandler::note("Profiling clock: " + juce::String((double)perSecond * 1e-6, 1) + " MHz");
+    }
+    inline int64_t profileDelta(int64_t from, int64_t to) noexcept
+    {
+        const int64_t d = to - from;
+        return d >= 0 && d <= profileTicksPerSecond() ? d : 0;
+    }
 
     // One or two physical cores: no spare core for the note bookkeeping, the
     // sound server and the window while every lane renders - smaller chunks
@@ -1127,31 +1168,54 @@ namespace
         return KernelScalar;
        #endif
     }
-    // ORGAN_KERNEL=scalar|sse2|avx2|neon|auto: the kernel to run with, for
-    // measuring one against another on a real organ (the polyphony
-    // measurement with each, same computer, same buffer). A kernel the CPU or
-    // the build does not have falls back to the default. Read once.
-    inline KernelKind bestKernel() noexcept
+    // Whether this build and CPU can run a kernel.
+    inline bool kernelAvailable(int kind) noexcept
     {
-        static const KernelKind chosen = []
+        switch (kind)
         {
-            const KernelKind fallback = defaultKernel();
-            const char* env = std::getenv("ORGAN_KERNEL");
-            if (env == nullptr) return fallback;
-            const juce::String wanted = juce::String(env).trim().toLowerCase();
-            if (wanted == "scalar") return KernelScalar;
+            case KernelScalar: return true;
            #if ENGINE_HAS_AVX2_KERNELS
-            if (wanted == "avx2" && cpuHasAvx2()) return KernelAvx2;
+            case KernelAvx2: return cpuHasAvx2();
            #endif
            #if ENGINE_X86
-            if (wanted == "sse2") return KernelSse2;   // the four-frame kernels exist on every x86-64 build
+            case KernelSse2: return true;   // the four-frame kernels exist on every x86-64 build
            #endif
            #if ENGINE_ARM64
-            if (wanted == "neon") return KernelNeon;
+            case KernelNeon: return true;
            #endif
-            return fallback;
+            default: return false;
+        }
+    }
+    // A kernel by its setting name: -1 for "auto", -2 for a name this computer
+    // cannot run (or an unknown one).
+    inline int kernelKindByName(const juce::String& nameIn) noexcept
+    {
+        const juce::String name = nameIn.trim().toLowerCase();
+        if (name.isEmpty() || name == "auto") return -1;
+        const int kind = name == "scalar" ? (int)KernelScalar : name == "sse2" ? (int)KernelSse2
+                       : name == "avx2" ? (int)KernelAvx2 : name == "neon" ? (int)KernelNeon : -2;
+        return kind >= 0 && kernelAvailable(kind) ? kind : -2;
+    }
+    // The kernel chosen in the Configuration Editor ("Interpolation kernel",
+    // 0.8.124), -1 = automatic; read by every block. ORGAN_KERNEL=scalar|sse2|
+    // avx2|neon|auto sets it at the start (for measuring one against another
+    // on a real organ: the polyphony measurement with each, same computer, same
+    // buffer); the editor's choice then replaces it. A kernel the CPU or the
+    // build does not have falls back to the default.
+    std::atomic<int> gKernelOverride{ -1 };
+    inline KernelKind envKernel() noexcept
+    {
+        static const int chosen = []
+        {
+            const char* env = std::getenv("ORGAN_KERNEL");
+            return env == nullptr ? -1 : kernelKindByName(juce::String(env));
         }();
-        return chosen;
+        return chosen >= 0 ? (KernelKind)chosen : defaultKernel();
+    }
+    inline KernelKind bestKernel() noexcept
+    {
+        const int forced = gKernelOverride.load(std::memory_order_relaxed);
+        return forced >= 0 ? (KernelKind)forced : envKernel();
     }
     inline const char* kernelName(KernelKind kind) noexcept
     {
@@ -1923,7 +1987,7 @@ namespace
                 if (sampleChans == 2) splitShelf(spanTmp1, out1 + produced, wet1 + produced, span, k0, k1);
             }
 
-            if (prof) tlVoiceProfile.kernel += profileTicks() - kernelStart;
+            if (prof) tlVoiceProfile.kernel += profileDelta(kernelStart, profileTicks());
 
             // --- advance envelopes
             produced += span;
@@ -2241,7 +2305,7 @@ namespace
         // lanes as before (no extra cost).
         const int64_t profHeaderEnd = prof ? profileTicks() : 0;
         const int64_t profKernelBefore = prof ? tlVoiceProfile.kernel : 0;
-        if (prof) tlVoiceProfile.header += profHeaderEnd - profStart;
+        if (prof) tlVoiceProfile.header += profileDelta(profStart, profHeaderEnd);
         const int sampleChans = s->numChannels;
         const bool dynamicShelf = shelfStart > 0.002f || shelfEnd > 0.002f;
         // The dynamic shelf alone is folded into the kernels (renderVoiceSpans);
@@ -2266,7 +2330,7 @@ namespace
             else renderVoiceSpans<int16_t>(v, *s, c, lanes, incStartF, incEndF, gainStart, gainEnd, shelf0, shelf1);
             if (prof)
             {
-                tlVoiceProfile.spans += (profileTicks() - profHeaderEnd) - (tlVoiceProfile.kernel - profKernelBefore);
+                tlVoiceProfile.spans += juce::jmax<int64_t>(0, profileDelta(profHeaderEnd, profileTicks()) - (tlVoiceProfile.kernel - profKernelBefore));
                 ++tlVoiceProfile.voices;
             }
             return !v.finished;
@@ -2279,7 +2343,7 @@ namespace
         if (s->storesFloat) renderVoiceSpans<float>(v, *s, c, filtered, incStartF, incEndF, gainStart, gainEnd);
         else renderVoiceSpans<int16_t>(v, *s, c, filtered, incStartF, incEndF, gainStart, gainEnd);
         const int64_t profSpansEnd = prof ? profileTicks() : 0;
-        if (prof) tlVoiceProfile.spans += (profSpansEnd - profHeaderEnd) - (tlVoiceProfile.kernel - profKernelBefore);
+        if (prof) tlVoiceProfile.spans += juce::jmax<int64_t>(0, profileDelta(profHeaderEnd, profSpansEnd) - (tlVoiceProfile.kernel - profKernelBefore));
         if (toneActive)
         {
             if (ch0 >= 0) applyBiquadInPlace(tmp0, n, v.toneCoeff, v.toneState[0]);
@@ -2290,14 +2354,14 @@ namespace
             // Only the per-key tone: add the filtered voice to the lanes.
             if (ch0 >= 0) juce::FloatVectorOperations::add(lanes.out[ch0], tmp0, n);
             if (ch1 >= 0) juce::FloatVectorOperations::add(lanes.out[ch1], tmp1, n);
-            if (prof) { tlVoiceProfile.post += profileTicks() - profSpansEnd; ++tlVoiceProfile.voices; }
+            if (prof) { tlVoiceProfile.post += profileDelta(profSpansEnd, profileTicks()); ++tlVoiceProfile.voices; }
             return !v.finished;
         }
         // The dynamic shelf: the voice only splits its signal; the lane's wet
         // buffers are low-passed once per block by the route (see LaneOutputs).
         if (ch0 >= 0) splitShelf(tmp0, lanes.out[ch0], lanes.wet[ch0] != nullptr ? lanes.wet[ch0] : lanes.sink, n, shelfStart, shelfEnd);
         if (ch1 >= 0) splitShelf(tmp1, lanes.out[ch1], lanes.wet[ch1] != nullptr ? lanes.wet[ch1] : lanes.sink, n, shelfStart, shelfEnd);
-        if (prof) { tlVoiceProfile.post += profileTicks() - profSpansEnd; ++tlVoiceProfile.voices; }
+        if (prof) { tlVoiceProfile.post += profileDelta(profSpansEnd, profileTicks()); ++tlVoiceProfile.voices; }
         return !v.finished;
     }
 
@@ -2742,7 +2806,8 @@ namespace
             const double tickNs = 1.0e9 / (double)juce::Time::getHighResolutionTicksPerSecond();
             jobSeconds = (double)wall * tickNs * 1.0e-9;
             profVoices = statProfVoices.exchange(0, std::memory_order_relaxed);
-            const double per = profVoices > 0 ? tickNs / (double)profVoices : 0.0;
+            const double profTickNs = 1.0e9 / (double)profileTicksPerSecond();   // the profiling clock has its own rate (rdtsc)
+            const double per = profVoices > 0 ? profTickNs / (double)profVoices : 0.0;
             headerNs = (double)statProfHeader.exchange(0, std::memory_order_relaxed) * per;
             spansNs = (double)statProfSpans.exchange(0, std::memory_order_relaxed) * per;
             kernelNs = (double)statProfKernel.exchange(0, std::memory_order_relaxed) * per;
@@ -5688,6 +5753,23 @@ juce::String SamplerEngine::routeLabel(int routeIndex) const
 bool SamplerEngine::isUsingSimd() const noexcept { return bestKernel() != KernelScalar && !simdDisabled.load(); }
 const char* SamplerEngine::simdKernelName() noexcept { return kernelName(bestKernel()); }
 const char* SamplerEngine::currentKernelName() const noexcept { return kernelName(simdDisabled.load() ? KernelScalar : bestKernel()); }
+juce::StringArray SamplerEngine::availableKernelNames()
+{
+    juce::StringArray names;
+    for (const char* name : { "scalar", "sse2", "avx2", "neon" })
+        if (kernelKindByName(name) >= 0) names.add(name);
+    return names;
+}
+int SamplerEngine::kernelKindForName(const juce::String& name) noexcept { return kernelKindByName(name); }
+const char* SamplerEngine::kernelDisplayName(int kind) noexcept { return kernelName((KernelKind)kind); }
+const char* SamplerEngine::automaticKernelName() noexcept { return kernelName(envKernel()); }
+void SamplerEngine::setKernelOverride(int kind) noexcept
+{
+    const int applied = kind >= 0 && kernelAvailable(kind) ? kind : -1;
+    if (gKernelOverride.exchange(applied) != applied)
+        CrashHandler::note(juce::String("Render kernel: ") + (applied < 0 ? juce::String("automatic (") + kernelName(envKernel()) + ")" : juce::String(kernelName((KernelKind)applied))));
+}
+int SamplerEngine::getKernelOverride() noexcept { return gKernelOverride.load(); }
 
 SamplerEngine::RenderPoolStats SamplerEngine::takeRenderPoolStats() noexcept
 {
@@ -5699,7 +5781,11 @@ SamplerEngine::RenderPoolStats SamplerEngine::takeRenderPoolStats() noexcept
     return stats;
 }
 
-void SamplerEngine::setVoiceProfiling(bool enabled) noexcept { gVoiceProfiling.store(enabled, std::memory_order_relaxed); }
+void SamplerEngine::setVoiceProfiling(bool enabled) noexcept
+{
+    if (enabled) calibrateProfileClock();   // 100 ms on the message thread, the first time only
+    gVoiceProfiling.store(enabled, std::memory_order_relaxed);
+}
 
 namespace
 {
@@ -8175,7 +8261,8 @@ void SamplerEngine::buildAntiAliasCopies(Stop* stop, bool background)
     // The activity log keeps the build of every stop (start, and how far it got:
     // an interrupted build ends below its plan and is launched again later).
     if (stop->copiesPlanned.load() > 0)
-        CrashHandler::note("Copy build of " + stop->name + ": " + juce::String(stop->copiesPlanned.load()) + " copies");
+        CrashHandler::note("Copy build of " + stop->name + ": " + juce::String(stop->copiesPlanned.load()) + " copies"
+            + (copyCacheEnabled.load(std::memory_order_acquire) ? juce::String() : juce::String(" (the filled pipes cache is OFF: built again at every load)")));
     struct DoneNote
     {
         Stop* stop; SamplerEngine* engine; int hitsBefore;

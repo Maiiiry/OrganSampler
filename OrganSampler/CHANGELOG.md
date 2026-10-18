@@ -12,6 +12,34 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.124] - 2026-10-18
+
+### Added
+- Configuration Editor > Engine > "Interpolation kernel": Automatic (what
+  the CPU gets: AVX2, NEON, or scalar on x86 without AVX2) or any kernel
+  this computer can run - scalar, SSE2 (every x86-64), AVX2, NEON - by name.
+  Takes effect at once, no reload; the polyphony measurement run with each
+  tells which renders more pipes on this computer, its report names the
+  kernel. A setting of the computer, never of an organ; `ORGAN_KERNEL`
+  only sets the Automatic choice for one start.
+
+### Changed
+- The filled-pipes cache is on by default (it was off: a reload of a big
+  organ computed every filled pipe again, minutes even on a 16-core). The
+  activity log's "Copy build" lines say when it is OFF.
+- The polyphony measurement climbs faster on a strong computer: a level
+  held with the driver callbacks far below the limit goes half the way to
+  where the limit would lie by proportion (at most doubling), so a 16-core
+  reaches 40 000 pipes in five steps instead of twenty.
+
+### Fixed
+- The per-voice profile of the measurement report (bookkeeping, span logic,
+  kernel) is read from the CPU's cycle counter (rdtsc, cntvct) instead of
+  the system clock: on a Linux laptop with an HPET clock source the six
+  clock reads per voice cost about a microsecond each and inflated the
+  bookkeeping and span figures of the Core 2 Duo threefold (0.8.123, #11),
+  and that time went into the measurement itself.
+
 ## [0.8.123] - 2026-10-18
 
 ### Fixed

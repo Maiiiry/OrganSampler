@@ -1757,9 +1757,11 @@ static const char* const kManualText_part8 =
     "minute or more for a big set with many extensions, every time the organ loads.\n"
     "The cache keeps them on disk so that this happens once.\n"
     "\n"
-    "**Switching it on.** *Configuration Editor > Advanced global audio > Filled\n"
-    "pipes: keep the generated copies on disk (cache)*, off by default. From then\n"
-    "on every copy that is built is also written to a file, and at the next load\n"
+    "**The switch.** *Configuration Editor > Advanced global audio > Filled\n"
+    "pipes: keep the generated copies on disk (cache)*, on by default since 0.8.124\n"
+    "(it was off, and a reload of a big organ computed every filled pipe again even\n"
+    "on a 16-core; the activity log's \"Copy build\" lines say when it is OFF). On,\n"
+    "every copy that is built is also written to a file, and at the next load\n"
     "of the same stops with the same settings the copies are read from the files\n"
     "instead of being computed: the build after loading takes seconds instead of\n"
     "minutes. A long build that is interrupted (by an operation in the voicing)\n"
@@ -1816,10 +1818,10 @@ static const char* const kManualText_part8 =
     "The processor, its physical cores and logical CPUs, and the RAM. Information\n"
     "only; it tells what the thread settings below can use.\n"
     "\n"
-    "### Render threads\n"
-    "\n"
     ;
 static const char* const kManualText_part9 =
+    "### Render threads\n"
+    "\n"
     "How many CPU threads render pipes for ASIO routes, the audio driver's own\n"
     "thread included. (The note bookkeeping - MIDI commands, attacks and releases,\n"
     "the return of finished voices - runs on a thread of its own beside them, so\n"
@@ -1848,19 +1850,31 @@ static const char* const kManualText_part9 =
     "core while it waits for a lane and the lanes take small chunks, so the second\n"
     "thread helps instead of holding the block up.\n"
     "\n"
+    "### Interpolation kernel\n"
+    "\n"
+    "The code that renders every pipe (0.8.124). *Automatic* (the default) takes\n"
+    "the kernel this processor is known to run well: AVX2 (eight frames a step,\n"
+    "current x86-64 processors), NEON (four frames, Apple silicon and Linux arm64)\n"
+    "or scalar (x86-64 without AVX2, such as a Core 2 Duo: the scalar kernel\n"
+    "measured more polyphony there than the four-frame SSE2 one in 0.8.119-0.8.122,\n"
+    "so Automatic stays scalar there). The list holds every kernel this computer\n"
+    "can run: *scalar* (one frame a step, every CPU), *SSE2* (four frames, every\n"
+    "x86-64), *AVX2* (eight frames, when the CPU has it), *NEON* (arm64). Pick one\n"
+    "to compare it with another: the change takes effect at once, no reload, and\n"
+    "the polyphony measurement run with each tells which gives more pipes on this\n"
+    "computer at this buffer - the report names the kernel it ran with. The\n"
+    "setting belongs to the computer (a portable configuration carries none); a\n"
+    "name this computer cannot run means Automatic. The environment variable\n"
+    "`ORGAN_KERNEL=scalar`, `sse2`, `avx2` or `neon` sets the Automatic choice for\n"
+    "one start (a script measuring one after another); the editor's choice wins\n"
+    "over it. The self-test (`--kerneltest`) checks every kernel of the CPU against\n"
+    "the scalar code and tells its speed; the activity log says which kernel runs\n"
+    "(\"Render kernel: ...\").\n"
+    "\n"
     "### Currently active\n"
     "\n"
-    "The threads really rendering now and the interpolation kernel the processor\n"
-    "gets: AVX2 (eight frames a step, current x86-64 processors), NEON (four\n"
-    "frames, Apple silicon and Linux arm64) or scalar (x86-64 without AVX2, such\n"
-    "as a Core 2 Duo: the scalar kernel measured more polyphony there than the\n"
-    "four-frame SSE2 one, so it stays). The kernel is chosen at start, on\n"
-    "Windows, Linux and macOS alike; the self-test (`--kerneltest`) checks every\n"
-    "kernel of the CPU against the scalar code and tells its speed. To measure\n"
-    "one kernel against another on a real organ, start the program with the\n"
-    "environment variable `ORGAN_KERNEL=scalar`, `sse2`, `avx2` or `neon` and run\n"
-    "the polyphony measurement with each; the activity log says which kernel\n"
-    "runs (\"Render kernel: ...\"). Information only.\n"
+    "The threads really rendering now and the interpolation kernel in use.\n"
+    "Information only.\n"
     "\n"
     "### Render threads for Aggregated WASAPI\n"
     "\n"
@@ -2006,6 +2020,8 @@ static const char* const kManualText_part9 =
     "   key of every division), then a faster rate (up to 16 strikes a second).\n"
     "   No coupler is used: every division is struck itself. A wet set with several perspectives and\n"
     "   long releases reaches tens of thousands of voices with a handful of keys;\n"
+    ;
+static const char* const kManualText_part10 =
     "   a dry set gives little more than what is being pressed, so it ends up with\n"
     "   every key hammered and the couplers on. The IR reverbs of the routes run\n"
     "   as they are: on a dry set they are the main cost, and the report says so.\n"
@@ -2020,8 +2036,6 @@ static const char* const kManualText_part9 =
     "   failing level still lies more than a tenth above the clean one - letting\n"
     "   the tails die away in between. When the keys cannot be split any further\n"
     "   and the gap is still wide (a weak computer: clean at 474 voices, broken at\n"
-    ;
-static const char* const kManualText_part10 =
     "   742), the run narrows down by stops as well: at the failing number of keys\n"
     "   a share of the registration is engaged - every button of the grid counts,\n"
     "   transmissions and extensions included - halved towards the clean side, up\n"
@@ -2208,6 +2222,8 @@ static const char* const kManualText_part10 =
     "An organ key never plays softer when it is struck gently. Instead, a gentle\n"
     "stroke on a stop without velocity layers starts the note with a short fade-in:\n"
     "this long at the lowest velocity (default 40 ms), shrinking linearly to nothing\n"
+    ;
+static const char* const kManualText_part11 =
     "at velocity 127. Stops with velocity layers pick the layer instead and get no\n"
     "fade-in. With *Ignore MIDI velocity* on for a division there is never any. See\n"
     "\"Velocity layers\".\n"
@@ -2222,8 +2238,6 @@ static const char* const kManualText_part10 =
     "### Key velocity: treble cut opens over\n"
     "\n"
     "How long the treble cut of a gentle key takes to open fully after the key goes\n"
-    ;
-static const char* const kManualText_part11 =
     "down (5 to 1000 ms, default 80).\n"
     "\n"
     "### Tremulant: volume change per cent of pitch\n"
@@ -2330,7 +2344,7 @@ static const char* const kManualText_part11 =
     "\n"
     "### Filled pipes: keep the generated copies on disk (cache)\n"
     "\n"
-    "Off by default. On: the copies of the filled pipes are written to files as\n"
+    "On by default (0.8.124; off before). On: the copies of the filled pipes are written to files as\n"
     "they are built and read back the next time the same stops load with the same\n"
     "settings, so the build after loading takes seconds instead of minutes - the\n"
     "build of a large organ otherwise takes a minute or more at every load. One\n"
@@ -2410,6 +2424,8 @@ static const char* const kManualText_part11 =
     "\n"
     "The number of combination pistons in the combination row (0 to 10). See \"The\n"
     "combination row\".\n"
+    ;
+static const char* const kManualText_part12 =
     "\n"
     "### Program windows\n"
     "\n"
@@ -2424,8 +2440,6 @@ static const char* const kManualText_part11 =
     "### Top bar: Record\n"
     "\n"
     "Shows or hides the Record button (the stereo mix to a WAV file).\n"
-    ;
-static const char* const kManualText_part12 =
     "\n"
     "### Top bar: Stop List\n"
     "\n"
@@ -2612,6 +2626,8 @@ static const char* const kManualText_part12 =
     "\n"
     "### MIDI transposition\n"
     "\n"
+    ;
+static const char* const kManualText_part13 =
     "The keys of this division's MIDI keyboard play this many semitones away from\n"
     "what they send (-24 to +24, default 0): with -12 the key 036 plays the pipe\n"
     "of 024, with +12 the pipe of 048. For a keyboard that sends the wrong octave,\n"
@@ -2626,8 +2642,6 @@ static const char* const kManualText_part12 =
     "### Swell: maximum attenuation when closed\n"
     "\n"
     "How much quieter the division is with the swell box fully closed (0 to 60 dB,\n"
-    ;
-static const char* const kManualText_part13 =
     "default 13). The harmonic filter (*Swell: harmonic filter*) dulls the tone at\n"
     "the same time.\n"
     "\n"

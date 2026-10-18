@@ -9606,7 +9606,8 @@ namespace
         static const juce::StringArray keys{ "windowX", "windowY", "windowWidth", "windowHeight", "windowMaximised", "twoWindows",
             "divisionScreen", "dialogBounds", "uiScalePercent", "copyCacheFolder", "copyCacheEnabled", "sampleStorageFloat",
             "renderThreads", "renderThreadPreset", "renderThreadsWasapi", "showUnusableAudioDevices", "configEditorCollapsed", "configurationFile",
-            "loadLastConfigurationAtStartup", "maxPolyphony", "irProcessing", "irLightAuto", "unpackArchiveShownOnce", "renderThreadPresetChosen" };
+            "loadLastConfigurationAtStartup", "maxPolyphony", "irProcessing", "irLightAuto", "unpackArchiveShownOnce", "renderThreadPresetChosen",
+            "renderKernel" };
         return keys;
     }
 }
@@ -14923,7 +14924,7 @@ void MainComponent::loadSettings()
     // is applied: those setters empty the cache when their value changes, and at
     // start-up every one of them changes from the engine's default.
     copyCacheFolder = parsed.getProperty("copyCacheFolder", "").toString();
-    copyCacheEnabled = parsed.getProperty("copyCacheEnabled", false);
+    copyCacheEnabled = parsed.getProperty("copyCacheEnabled", true);   // on by default (0.8.124): a reload of a big organ computed every filled pipe again
     engine.setCopyCache(copyCacheEnabled, copyCacheDirectory());
     loadLastConfigurationAtStartup = parsed.getProperty("loadLastConfigurationAtStartup", false);
     // Remembered folding of the Configuration Editor sections and the Division dialog groups.
@@ -14994,6 +14995,11 @@ void MainComponent::loadSettings()
         renderThreads = 0;
     }
     applyRenderThreadSetting();
+    // The interpolation kernel: "auto" (what the CPU gets) or one by name;
+    // a name this computer cannot run (another machine's settings) is automatic.
+    renderKernel = parsed.getProperty("renderKernel", "auto").toString().trim().toLowerCase();
+    if (SamplerEngine::kernelKindForName(renderKernel) < 0) renderKernel = "auto";
+    SamplerEngine::setKernelOverride(SamplerEngine::kernelKindForName(renderKernel));
     renderThreadsWasapi = juce::jlimit(1, 63, (int)parsed.getProperty("renderThreadsWasapi", 1));
     showUnusableAudioDevices = (bool)parsed.getProperty("showUnusableAudioDevices", false);
 #if JUCE_LINUX
@@ -15460,6 +15466,7 @@ void MainComponent::saveSettings()
     obj->setProperty("stopListShowTransmissions", stopListShowTransmissions);
     obj->setProperty("renderThreads", renderThreads);
     obj->setProperty("renderThreadPresetChosen", renderThreadPresetChosen);
+    obj->setProperty("renderKernel", renderKernel);
     obj->setProperty("renderThreadPreset", renderThreadPreset);
     obj->setProperty("renderThreadsWasapi", renderThreadsWasapi);
     obj->setProperty("showUnusableAudioDevices", showUnusableAudioDevices);
@@ -18333,9 +18340,16 @@ void MainComponent::startPolyphonyMeasurement()
                 // The next target: a step above what was really reached (more keys
                 // overshoot a target by thousands of voices; the targets in between
                 // would be met without doing anything) - 2 000 voices up to 20 000,
-                // then a tenth.
+                // then a tenth. A strong computer that held the level with the
+                // callbacks far below the limit climbs faster (0.8.124): half the
+                // way to where 85 % would lie by proportion, at most doubling -
+                // a 16-core at 2 000 voices and 5 % took twenty 2 000-steps to
+                // its 40 000 before, now five.
                 const int reached = juce::jmax(state->targetVoices, (state->holdPeak / 100) * 100);
-                state->targetVoices = reached + (reached < 20000 ? 2000 : juce::jmax(2000, (reached / 10 / 100) * 100));
+                int step = reached < 20000 ? 2000 : juce::jmax(2000, (reached / 10 / 100) * 100);
+                if (state->holdShare > 0.0f && state->holdShare < 0.5f)
+                    step = juce::jmax(step, juce::jmin(reached, (int)((double)reached * (0.85 / (double)state->holdShare - 1.0) * 0.5) / 100 * 100));
+                state->targetVoices = reached + step;
                 if (state->targetVoices > SamplerEngine::maxVoices) { safeThis->finishPolyphonyMeasurement(false); return; }
             }
         }
@@ -20008,6 +20022,26 @@ void MainComponent::showConfigurationEditor()
                     o.saveSettings();
                 }, "CPU threads rendering pipes, the audio driver thread included. Hyper-threads share a "
                    "core's memory pipeline and only add crackle. Changing this briefly mutes the engine.");
+            }
+            {
+                // The interpolation kernel: automatic (what this CPU gets) or
+                // one by name, for trying SSE2 against scalar on an old laptop
+                // or the other way round; applied to the next block rendered.
+                const juce::StringArray names = SamplerEngine::availableKernelNames();
+                juce::StringArray items;
+                items.add("Automatic (" + juce::String(SamplerEngine::automaticKernelName()) + ")  [default]");
+                for (const auto& name : names)
+                    items.add(juce::String(SamplerEngine::kernelDisplayName(SamplerEngine::kernelKindForName(name)))
+                        + (name == "scalar" ? " (one frame a step, every CPU)" : name == "avx2" ? " (eight frames a step)" : " (four frames a step)"));
+                const int selected = juce::jmax(0, names.indexOf(o.renderKernel) + 1);
+                addCombo("Interpolation kernel", items, selected, [&o, names](int index)
+                {
+                    o.renderKernel = index <= 0 || index > names.size() ? juce::String("auto") : names[index - 1];
+                    SamplerEngine::setKernelOverride(SamplerEngine::kernelKindForName(o.renderKernel));
+                    o.saveSettings();
+                }, "The code that renders every pipe: Automatic takes the fastest kernel this CPU is known to run well "
+                   "(AVX2 on modern x86, NEON on Apple silicon, scalar on CPUs without AVX2). Pick another to compare: "
+                   "run the polyphony measurement with each. Takes effect at once, no reload.");
                 addInfo("Currently active", juce::String(engine.getRenderWorkerCount() + 1) + " render threads, "
                     + juce::String(engine.currentKernelName()) + " interpolation kernel");
             }

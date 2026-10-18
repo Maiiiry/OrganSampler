@@ -1737,9 +1737,11 @@ The copies of the filled pipes take a while to build for a large organ: a
 minute or more for a big set with many extensions, every time the organ loads.
 The cache keeps them on disk so that this happens once.
 
-**Switching it on.** *Configuration Editor > Advanced global audio > Filled
-pipes: keep the generated copies on disk (cache)*, off by default. From then
-on every copy that is built is also written to a file, and at the next load
+**The switch.** *Configuration Editor > Advanced global audio > Filled
+pipes: keep the generated copies on disk (cache)*, on by default since 0.8.124
+(it was off, and a reload of a big organ computed every filled pipe again even
+on a 16-core; the activity log's "Copy build" lines say when it is OFF). On,
+every copy that is built is also written to a file, and at the next load
 of the same stops with the same settings the copies are read from the files
 instead of being computed: the build after loading takes seconds instead of
 minutes. A long build that is interrupted (by an operation in the voicing)
@@ -1826,19 +1828,31 @@ like CoreAudio's own), and on one or two cores the device thread yields the
 core while it waits for a lane and the lanes take small chunks, so the second
 thread helps instead of holding the block up.
 
+### Interpolation kernel
+
+The code that renders every pipe (0.8.124). *Automatic* (the default) takes
+the kernel this processor is known to run well: AVX2 (eight frames a step,
+current x86-64 processors), NEON (four frames, Apple silicon and Linux arm64)
+or scalar (x86-64 without AVX2, such as a Core 2 Duo: the scalar kernel
+measured more polyphony there than the four-frame SSE2 one in 0.8.119-0.8.122,
+so Automatic stays scalar there). The list holds every kernel this computer
+can run: *scalar* (one frame a step, every CPU), *SSE2* (four frames, every
+x86-64), *AVX2* (eight frames, when the CPU has it), *NEON* (arm64). Pick one
+to compare it with another: the change takes effect at once, no reload, and
+the polyphony measurement run with each tells which gives more pipes on this
+computer at this buffer - the report names the kernel it ran with. The
+setting belongs to the computer (a portable configuration carries none); a
+name this computer cannot run means Automatic. The environment variable
+`ORGAN_KERNEL=scalar`, `sse2`, `avx2` or `neon` sets the Automatic choice for
+one start (a script measuring one after another); the editor's choice wins
+over it. The self-test (`--kerneltest`) checks every kernel of the CPU against
+the scalar code and tells its speed; the activity log says which kernel runs
+("Render kernel: ...").
+
 ### Currently active
 
-The threads really rendering now and the interpolation kernel the processor
-gets: AVX2 (eight frames a step, current x86-64 processors), NEON (four
-frames, Apple silicon and Linux arm64) or scalar (x86-64 without AVX2, such
-as a Core 2 Duo: the scalar kernel measured more polyphony there than the
-four-frame SSE2 one, so it stays). The kernel is chosen at start, on
-Windows, Linux and macOS alike; the self-test (`--kerneltest`) checks every
-kernel of the CPU against the scalar code and tells its speed. To measure
-one kernel against another on a real organ, start the program with the
-environment variable `ORGAN_KERNEL=scalar`, `sse2`, `avx2` or `neon` and run
-the polyphony measurement with each; the activity log says which kernel
-runs ("Render kernel: ..."). Information only.
+The threads really rendering now and the interpolation kernel in use.
+Information only.
 
 ### Render threads for Aggregated WASAPI
 
@@ -2304,7 +2318,7 @@ with its formants moved down loses level).
 
 ### Filled pipes: keep the generated copies on disk (cache)
 
-Off by default. On: the copies of the filled pipes are written to files as
+On by default (0.8.124; off before). On: the copies of the filled pipes are written to files as
 they are built and read back the next time the same stops load with the same
 settings, so the build after loading takes seconds instead of minutes - the
 build of a large organ otherwise takes a minute or more at every load. One

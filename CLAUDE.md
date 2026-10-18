@@ -139,8 +139,20 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   AND the scalar-days behaviour is back where the user measured: x86 without AVX2 renders SCALAR (`bestKernel`; the
   SSE2 kernel exists only for the kernel test's comparison), ENGINE_CPU_PAUSE outside Windows is `std::this_thread::
   yield()` again. Do not re-enable SSE2 or the pause spin for those machines without a measurement from them.
-  `ORGAN_KERNEL=scalar|sse2|avx2|neon` (env, read once in `bestKernel`) runs the engine with that kernel for A/B
-  measurements on a real organ; the log line "Render kernel: X (default Y)" and system.txt ("kernel X") say which runs.
+  The kernel is a VISIBLE switch (0.8.124, the user asked three times where SSE2 is): Config Editor > Engine >
+  "Interpolation kernel" = Automatic / scalar / SSE2 / AVX2 / NEON (only what this build+CPU can run,
+  `SamplerEngine::availableKernelNames()`), setting `renderKernel` (machine-specific key), applied at once through the
+  atomic `gKernelOverride` read by `bestKernel()` every block (`setKernelOverride`, -1 = automatic). `ORGAN_KERNEL`
+  (env, `envKernel()`) only sets the Automatic choice for one start; the editor's choice wins. The log line
+  "Render kernel: X" and system.txt ("kernel X") say which runs; the measurement report names it.
+  Profiling clock (0.8.124): `profileTicks()` = `__rdtsc` / `cntvct_el0`, calibrated once in `setVoiceProfiling(true)`
+  (`calibrateProfileClock`, 100 ms, logged "Profiling clock: N MHz"), deltas through `profileDelta` (negative or > 1 s
+  dropped). Never use `juce::Time::getHighResolutionTicks()` per voice: clock_gettime was ~1 us on the HPET Core 2 Duo
+  Linux laptop and inflated bookkeeping/spans threefold (#11).
+- Filled-pipes cache `copyCacheEnabled` is ON by default (0.8.124; the user's 16-core rebuilt every Stralsund copy at
+  each load with it off); the "Copy build of ..." log line says "(the filled pipes cache is OFF...)" when it is not.
+- Measurement ramp: a level held with `holdShare` < 0.5 steps half the way to the proportional 85 % point, at most
+  doubling (16-core: 40 000 in five steps instead of twenty); below that the old 2 000 / tenth steps.
 - The polyphony report makes NO forecast for other buffer sizes (128/256/512 runs on the Ryzen: 24 900 / 38 600 ->
   no model fits); the small-buffer paragraph is a recommendation (256/512), never "breaks at a few hundred voices".
 - Render threads default = all physical cores, always. `renderThreadPresetChosen` (settings, machine-specific) marks a

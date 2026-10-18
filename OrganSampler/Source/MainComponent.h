@@ -559,6 +559,7 @@ private:
     juce::String irProcessingStatus() const;
     int renderThreads = 0;                          // custom worker count, 0 = use the preset
     bool renderThreadPresetChosen = false;          // set in the Configuration Editor on this computer (a preset that was never chosen goes back to the default)
+    juce::String renderKernel = "auto";             // interpolation kernel: "auto" or "scalar" / "sse2" / "avx2" / "neon" (machine-specific, 0.8.124)
     juce::String renderThreadPreset{ "allMinusOne" }; // all | allMinusOne | physical | physicalMinusOne
     int workersForCurrentPreset() const;
     void applyRenderThreadSetting();
@@ -906,7 +907,7 @@ private:
     float transposeReleaseLengthPct = 100.0f;   // pitch shift: a release copy's duration as % of its source's (both directions)
     float transposeLoopCrossfadePct = 40.0f;    // filled pipes: loop splice as % of the loop length (0 = the ordinary 50 ms)
     bool transposeKeepLoudness = true;          // pitch shift: copies at the loudness of their source
-    bool copyCacheEnabled = false;              // the generated copies kept on disk (FilledPipesCache in the application data)
+    bool copyCacheEnabled = true;               // the generated copies kept on disk (FilledPipesCache in the application data); on by default since 0.8.124
     juce::File copyCacheDirectory() const;      // copyCacheFolder when set and usable, else the default
     bool loadLastConfigurationAtStartup = false;   // re-open the last configuration file when the program starts
     // Remembered UI folding: Configuration Editor sections (title -> collapsed) and

@@ -927,6 +927,17 @@ public:
     bool isUsingSimd() const noexcept;
     static const char* simdKernelName() noexcept;     // the kernel this CPU gets: "AVX2", "SSE2", "NEON" or "scalar"
     const char* currentKernelName() const noexcept;   // ... or "scalar" while SIMD is switched off
+    // The kernel switch of the Configuration Editor (0.8.124): the kernels this
+    // build and CPU can run, by their setting names ("scalar", "sse2", "avx2",
+    // "neon"; "auto" = what the CPU gets by default), and the override applied
+    // to every block rendered from now on (-1 = automatic). kernelKindForName
+    // gives -1 for "auto" and -2 for a name this computer cannot run.
+    static juce::StringArray availableKernelNames();
+    static int kernelKindForName(const juce::String& name) noexcept;
+    static const char* kernelDisplayName(int kind) noexcept;   // "AVX2", "SSE2", "NEON", "scalar"
+    static const char* automaticKernelName() noexcept;         // what "auto" renders with (ORGAN_KERNEL counted)
+    static void setKernelOverride(int kind) noexcept;          // -1 (or any unavailable kind) = automatic
+    static int getKernelOverride() noexcept;
     // Renders a synthetic signal through the scalar and every SIMD kernel of
     // this CPU, reports the largest difference, and benchmarks the kernel;
     // used by --selftest and --kerneltest.
