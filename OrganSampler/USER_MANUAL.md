@@ -2026,6 +2026,10 @@ happens:
      per voice and frame with the sample in the cache and streaming from RAM,
      measured right then (about a second), and the ceiling that gives at this
      buffer with these render cores - the measured limit as a share of it;
+   - what one voice cost a lane per block during the run, in its parts:
+     the bookkeeping (commands, pitch, gains, tone targets), the span logic
+     (loops, splices, envelopes), the interpolation kernel and the per-key
+     tone filtering - timed on the lanes themselves while the run went;
    - the callback time of the run split into a fixed part per block (the
      hand-over, the IR heads, the bookkeeping) and a part per voice, and from
      that what half, twice and four times the buffer would give for this

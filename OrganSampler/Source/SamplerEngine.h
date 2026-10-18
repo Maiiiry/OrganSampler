@@ -946,8 +946,17 @@ public:
     static KernelBenchmark benchmarkKernel(int blockFrames, juce::int64 ramBytes);
     // The render pool since the last query: the route jobs, the lanes' busy time
     // against lanes x job wall time (utilisation), the device thread's own share.
-    struct RenderPoolStats { int jobs = 0, lanes = 1; double laneUtilisation = 0.0, posterShare = 0.0, jobSeconds = 0.0; };
+    struct RenderPoolStats
+    {
+        int jobs = 0, lanes = 1; double laneUtilisation = 0.0, posterShare = 0.0, jobSeconds = 0.0;
+        // The voice profile (while setVoiceProfiling is on): ns per voice and block
+        // in the voice header (bookkeeping), the span logic, the kernels, the tone post-processing.
+        juce::int64 profiledVoices = 0; double voiceHeaderNs = 0.0, voiceSpansNs = 0.0, voiceKernelNs = 0.0, voicePostNs = 0.0;
+    };
     RenderPoolStats takeRenderPoolStats() noexcept;
+    // Times the parts of every voice render (a few clock reads per voice): the
+    // polyphony measurement switches it on for its run, off afterwards.
+    void setVoiceProfiling(bool enabled) noexcept;
 
     void setWindModel(int sourceManual, float depthCents, float frequencyHz,
         float oscillations, float oscillationStrength, float baseSmoothingMs,

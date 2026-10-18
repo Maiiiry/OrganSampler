@@ -12,6 +12,25 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.120] - 2026-10-18
+
+### Changed
+- The dynamic tone shelf (the treble following swell, wind and tremulant) is
+  folded into the interpolation kernels: a voice under it was rendered into
+  a private buffer and split in a second pass that cost as much as the
+  kernel itself (measured: 880 ns of 2 200 ns per voice and block on the
+  Stellwagen tutti - the wind sag of a tutti puts every voice under the
+  shelf). Now the kernel puts (1 - k) of the voice into the output and k
+  into the wet buffer itself - the same mathematics, one multiply-add more
+  per frame, no second pass. Splice and cubic spans and voices with a
+  per-key tone keep the private buffer (rare).
+- The polyphony measurement profiles the voices while it runs (a few clock
+  reads per voice) and the report says what a voice cost a lane per block:
+  bookkeeping, span logic, the kernel, per-key tone filtering - measured on
+  the lanes, so the next optimisation is aimed, not guessed.
+- The measurement waits for a large organ to load as long as it takes (the
+  development hook gave up after two minutes).
+
 ## [0.8.119] - 2026-10-18
 
 ### Changed

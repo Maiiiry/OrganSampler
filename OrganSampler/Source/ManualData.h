@@ -2050,6 +2050,10 @@ static const char* const kManualText_part10 =
     "     per voice and frame with the sample in the cache and streaming from RAM,\n"
     "     measured right then (about a second), and the ceiling that gives at this\n"
     "     buffer with these render cores - the measured limit as a share of it;\n"
+    "   - what one voice cost a lane per block during the run, in its parts:\n"
+    "     the bookkeeping (commands, pitch, gains, tone targets), the span logic\n"
+    "     (loops, splices, envelopes), the interpolation kernel and the per-key\n"
+    "     tone filtering - timed on the lanes themselves while the run went;\n"
     "   - the callback time of the run split into a fixed part per block (the\n"
     "     hand-over, the IR heads, the bookkeeping) and a part per voice, and from\n"
     "     that what half, twice and four times the buffer would give for this\n"
@@ -2218,12 +2222,12 @@ static const char* const kManualText_part10 =
     "\n"
     "Pipes a rank does not have (beyond its compass, in gaps, the extra octave of an\n"
     "extension) are filled from the nearest real pipes: this many adjacent pipes are\n"
+    ;
+static const char* const kManualText_part11 =
     "taken as a group and transposed by the group's width, and the group repeats for\n"
     "further pipes (1 to 12, default 12). With 12 every missing pipe is the octave\n"
     "transposition of a real one, so the rank's chromatic variety is kept; with 1\n"
     "the edge pipe alone serves all missing pipes. Fewer semitones of transposition\n"
-    ;
-static const char* const kManualText_part11 =
     "sound better, so a last group smaller than the setting takes the outermost real\n"
     "pipes with the smallest shift possible. Changing it refills every stop and\n"
     "rebuilds the copies. See \"What a filled pipe is\".\n"
@@ -2420,12 +2424,12 @@ static const char* const kManualText_part11 =
     "### Top bar: Temperaments\n"
     "\n"
     "Shows or hides the Temperaments button (see \"Temperaments\").\n"
+    ;
+static const char* const kManualText_part12 =
     "\n"
     "### Top bar: Hide/Show all voicing\n"
     "\n"
     "Shows or hides the button that folds or unfolds every voicing row.\n"
-    ;
-static const char* const kManualText_part12 =
     "\n"
     "### Top bar: Perspective Patterns\n"
     "\n"
@@ -2622,12 +2626,12 @@ static const char* const kManualText_part12 =
     "\n"
     "The level of the whole division, -60 to +12 dB (default 0), for balancing the\n"
     "divisions against each other.\n"
+    ;
+static const char* const kManualText_part13 =
     "\n"
     "### Audio output channels (default perspective)\n"
     "\n"
     "The channels of the division's audio device that the default perspective\n"
-    ;
-static const char* const kManualText_part13 =
     "plays on, as numbers separated by commas (the same channels the Divisions\n"
     "dialog shows as a list of tick boxes on the audio tab; either place changes\n"
     "the other). Press Enter or click outside to apply. How mono and stereo\n"

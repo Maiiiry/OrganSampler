@@ -123,6 +123,11 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   busy on a 32-thread CPU = 100 %, not 50 %), the lane utilisation, the kernel benchmark with the ceiling it gives, and
   the fixed-per-block / per-voice split of the callback time with what other buffers would give - never a general
   "doubling the buffer doubles the polyphony" claim (false, #8). Measurement level -52 dB.
+  Voice profiling (`gVoiceProfiling`, on during the measurement): ns per voice and block for header / spans / kernel /
+  post, folded from thread-locals into the pool stats; the report prints it. Stellwagen 0.8.119: 135 / 170 / 1050 /
+  880 ns - the 880 was the dynamic tone shelf (private buffer + split pass, on for every voice as soon as the wind sags),
+  folded into the kernels in 0.8.120 (`kernel*Shelf`, `dispatch*Shelf`: out += y(1-k), wet += y k; the route low-passes
+  the wet sum as before). Splice/cubic spans and per-key tone voices still go through a private buffer.
 - Render threads default = all physical cores, always. `renderThreadPresetChosen` (settings, machine-specific) marks a
   choice made in the Configuration Editor; without it a non-default preset is reset at load (the old portable Rural file
   carried `allMinusOne` and left two-core laptops on ONE render thread, issues #6-#8).

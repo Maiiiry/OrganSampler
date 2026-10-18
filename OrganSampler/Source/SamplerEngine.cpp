@@ -166,6 +166,16 @@ namespace
     constexpr int kTremBuckets = 128;
     constexpr double kFixedOne = 4294967296.0;    // 32.32 fixed point
     constexpr int kMaxBlockFrames = 1024;         // longest render block (RenderPool::kFrames)
+
+    // Voice profiling (the polyphony measurement switches it on): where a lane's
+    // time goes per voice and block - the voice header (commands, pitch, gains,
+    // tone targets: the bookkeeping), the span logic (loops, splices, envelopes),
+    // the interpolation kernels, and the tone/shelf post-processing. Thread-local
+    // sums, folded into the pool's statistics after every chunk. Off: one load.
+    std::atomic<bool> gVoiceProfiling{ false };
+    struct VoiceProfile { int64_t header = 0, spans = 0, kernel = 0, post = 0; int64_t voices = 0; };
+    thread_local VoiceProfile tlVoiceProfile;
+    inline int64_t profileTicks() noexcept { return juce::Time::getHighResolutionTicks(); }
     // Dynamic tone: every level reduction by wind, tremulant or swell also dulls
     // the tone with a high shelf whose transition band starts at 1.8 kHz and is
     // about 1.8 kHz wide: out = (1 - k) x + k lowpass(x) with a fourth-order
@@ -840,6 +850,50 @@ namespace
     // sample plays at a different pitch: the images of linear interpolation are
     // ~20 dB lower. Scalar only; few voices use them. The guard frames make
     // s[idx + 2] safe; idx - 1 is clamped at the first frame.
+    // The same kernels with the dynamic tone shelf folded in: the voice's signal
+    // y goes (1 - k) into the output and k into the wet buffer (the route
+    // low-passes the wet sum once per block), k ramping across the span. One
+    // multiply-add more per frame instead of a private buffer and a second pass
+    // (that pass cost as much as the kernel itself).
+    template <typename T>
+    inline void kernelMonoShelf(const T* s, float* out, float* wet, int n, uint64_t& pos, int64_t& inc,
+        int64_t incStep, float g, float gStep, float k, float kStep) noexcept
+    {
+        for (int i = 0; i < n; ++i)
+        {
+            const uint32_t idx = (uint32_t)(pos >> 32);
+            const float frac = fracOf(pos);
+            const float a = (float)s[idx];
+            const float y = (a + ((float)s[idx + 1] - a) * frac) * g;
+            const float w = y * k;
+            out[i] += y - w;
+            wet[i] += w;
+            g += gStep; k += kStep;
+            pos += (uint64_t)inc;
+            inc += incStep;
+        }
+    }
+
+    template <typename T>
+    inline void kernelStereoShelf(const T* s0, const T* s1, float* out0, float* out1, float* wet0, float* wet1, int n,
+        uint64_t& pos, int64_t& inc, int64_t incStep, float g, float gStep, float k, float kStep) noexcept
+    {
+        for (int i = 0; i < n; ++i)
+        {
+            const uint32_t idx = (uint32_t)(pos >> 32);
+            const float frac = fracOf(pos);
+            const float a0 = (float)s0[idx], a1 = (float)s1[idx];
+            const float y0 = (a0 + ((float)s0[idx + 1] - a0) * frac) * g;
+            const float y1 = (a1 + ((float)s1[idx + 1] - a1) * frac) * g;
+            const float w0 = y0 * k, w1 = y1 * k;
+            out0[i] += y0 - w0; wet0[i] += w0;
+            out1[i] += y1 - w1; wet1[i] += w1;
+            g += gStep; k += kStep;
+            pos += (uint64_t)inc;
+            inc += incStep;
+        }
+    }
+
     template <typename T>
     inline float hermiteAt(const T* s, uint32_t idx, float frac) noexcept
     {
@@ -1152,6 +1206,67 @@ namespace
         _mm256_zeroupper();
         if (i < n) kernelStereo<T>(s0, s1, out0 + i, out1 + i, n - i, pos, inc, incStep, g + gStep * (float)i, gStep);
     }
+    // The shelf variants: y = v * gain, (1 - k) y into out, k y into wet.
+    template <typename T>
+    ENGINE_AVX2_FN inline void kernelMonoAvx2Shelf(const T* s, float* out, float* wet, int n, uint64_t& pos, int64_t& inc,
+        int64_t incStep, float g, float gStep, float k, float kStep) noexcept
+    {
+        Avx2State st;
+        avx2Prepare(st, n, inc, incStep, g, gStep);
+        __m256 kv = _mm256_setr_ps(k, k + kStep, k + 2 * kStep, k + 3 * kStep, k + 4 * kStep, k + 5 * kStep, k + 6 * kStep, k + 7 * kStep);
+        const __m256 kStep8 = _mm256_set1_ps(8.0f * kStep);
+        int i = 0;
+        for (int grp = 0; grp < st.groups; ++grp, i += 8)
+        {
+            __m256i idx; __m256 frac;
+            avx2Positions(st, pos, idx, frac);
+            const __m256 y = _mm256_mul_ps(avx2Interpolate(s, idx, frac), st.gain);
+            const __m256 w = _mm256_mul_ps(y, kv);
+            _mm256_storeu_ps(out + i, _mm256_add_ps(_mm256_loadu_ps(out + i), _mm256_sub_ps(y, w)));
+            _mm256_storeu_ps(wet + i, _mm256_add_ps(_mm256_loadu_ps(wet + i), w));
+            st.gain = _mm256_add_ps(st.gain, st.gainStep8);
+            kv = _mm256_add_ps(kv, kStep8);
+            st.offA = _mm256_add_epi64(st.offA, st.stepA);
+            st.offB = _mm256_add_epi64(st.offB, st.stepB);
+            pos += (uint64_t)st.incGroup;
+            st.incGroup += 64 * incStep;
+            inc += 8 * incStep;
+        }
+        _mm256_zeroupper();
+        if (i < n) kernelMonoShelf<T>(s, out + i, wet + i, n - i, pos, inc, incStep, g + gStep * (float)i, gStep, k + kStep * (float)i, kStep);
+    }
+
+    template <typename T>
+    ENGINE_AVX2_FN inline void kernelStereoAvx2Shelf(const T* s0, const T* s1, float* out0, float* out1, float* wet0, float* wet1, int n,
+        uint64_t& pos, int64_t& inc, int64_t incStep, float g, float gStep, float k, float kStep) noexcept
+    {
+        Avx2State st;
+        avx2Prepare(st, n, inc, incStep, g, gStep);
+        __m256 kv = _mm256_setr_ps(k, k + kStep, k + 2 * kStep, k + 3 * kStep, k + 4 * kStep, k + 5 * kStep, k + 6 * kStep, k + 7 * kStep);
+        const __m256 kStep8 = _mm256_set1_ps(8.0f * kStep);
+        int i = 0;
+        for (int grp = 0; grp < st.groups; ++grp, i += 8)
+        {
+            __m256i idx; __m256 frac;
+            avx2Positions(st, pos, idx, frac);
+            const __m256 y0 = _mm256_mul_ps(avx2Interpolate(s0, idx, frac), st.gain);
+            const __m256 y1 = _mm256_mul_ps(avx2Interpolate(s1, idx, frac), st.gain);
+            const __m256 w0 = _mm256_mul_ps(y0, kv), w1 = _mm256_mul_ps(y1, kv);
+            _mm256_storeu_ps(out0 + i, _mm256_add_ps(_mm256_loadu_ps(out0 + i), _mm256_sub_ps(y0, w0)));
+            _mm256_storeu_ps(wet0 + i, _mm256_add_ps(_mm256_loadu_ps(wet0 + i), w0));
+            _mm256_storeu_ps(out1 + i, _mm256_add_ps(_mm256_loadu_ps(out1 + i), _mm256_sub_ps(y1, w1)));
+            _mm256_storeu_ps(wet1 + i, _mm256_add_ps(_mm256_loadu_ps(wet1 + i), w1));
+            st.gain = _mm256_add_ps(st.gain, st.gainStep8);
+            kv = _mm256_add_ps(kv, kStep8);
+            st.offA = _mm256_add_epi64(st.offA, st.stepA);
+            st.offB = _mm256_add_epi64(st.offB, st.stepB);
+            pos += (uint64_t)st.incGroup;
+            st.incGroup += 64 * incStep;
+            inc += 8 * incStep;
+        }
+        _mm256_zeroupper();
+        if (i < n) kernelStereoShelf<T>(s0, s1, out0 + i, out1 + i, wet0 + i, wet1 + i, n - i, pos, inc, incStep, g + gStep * (float)i, gStep, k + kStep * (float)i, kStep);
+    }
    #endif   // ENGINE_X86
 
     //--------------------------------------------------------------------------
@@ -1260,7 +1375,86 @@ namespace
         }
         if (i < n) kernelStereo<T>(s0, s1, out0 + i, out1 + i, n - i, pos, inc, incStep, g + gStep * (float)i, gStep);
     }
+    // The shelf variants: y = v * gain, (1 - k) y into out, k y into wet.
+    template <typename T>
+    inline void kernelMonoLane4Shelf(const T* s, float* out, float* wet, int n, uint64_t& pos, int64_t& inc,
+        int64_t incStep, float g, float gStep, float k, float kStep) noexcept
+    {
+        Lane4::F gain = Lane4::setF(g, g + gStep, g + 2 * gStep, g + 3 * gStep);
+        Lane4::F kv = Lane4::setF(k, k + kStep, k + 2 * kStep, k + 3 * kStep);
+        const Lane4::F gainStep4 = Lane4::splat(4.0f * gStep), kStep4 = Lane4::splat(4.0f * kStep);
+        int i = 0;
+        for (; i + 4 <= n; i += 4)
+        {
+            uint32_t idx[4]; Lane4::F frac;
+            pos = lane4Positions(pos, inc, incStep, idx, frac);
+            inc += 4 * incStep;
+            const Lane4::F y = Lane4::mul(lane4Interpolate(s, idx, frac), gain);
+            const Lane4::F w = Lane4::mul(y, kv);
+            Lane4::storeF(out + i, Lane4::add(Lane4::loadF(out + i), Lane4::sub(y, w)));
+            Lane4::storeF(wet + i, Lane4::add(Lane4::loadF(wet + i), w));
+            gain = Lane4::add(gain, gainStep4);
+            kv = Lane4::add(kv, kStep4);
+        }
+        if (i < n) kernelMonoShelf<T>(s, out + i, wet + i, n - i, pos, inc, incStep, g + gStep * (float)i, gStep, k + kStep * (float)i, kStep);
+    }
+
+    template <typename T>
+    inline void kernelStereoLane4Shelf(const T* s0, const T* s1, float* out0, float* out1, float* wet0, float* wet1, int n,
+        uint64_t& pos, int64_t& inc, int64_t incStep, float g, float gStep, float k, float kStep) noexcept
+    {
+        Lane4::F gain = Lane4::setF(g, g + gStep, g + 2 * gStep, g + 3 * gStep);
+        Lane4::F kv = Lane4::setF(k, k + kStep, k + 2 * kStep, k + 3 * kStep);
+        const Lane4::F gainStep4 = Lane4::splat(4.0f * gStep), kStep4 = Lane4::splat(4.0f * kStep);
+        int i = 0;
+        for (; i + 4 <= n; i += 4)
+        {
+            uint32_t idx[4]; Lane4::F frac;
+            pos = lane4Positions(pos, inc, incStep, idx, frac);
+            inc += 4 * incStep;
+            const Lane4::F y0 = Lane4::mul(lane4Interpolate(s0, idx, frac), gain);
+            const Lane4::F y1 = Lane4::mul(lane4Interpolate(s1, idx, frac), gain);
+            const Lane4::F w0 = Lane4::mul(y0, kv), w1 = Lane4::mul(y1, kv);
+            Lane4::storeF(out0 + i, Lane4::add(Lane4::loadF(out0 + i), Lane4::sub(y0, w0)));
+            Lane4::storeF(wet0 + i, Lane4::add(Lane4::loadF(wet0 + i), w0));
+            Lane4::storeF(out1 + i, Lane4::add(Lane4::loadF(out1 + i), Lane4::sub(y1, w1)));
+            Lane4::storeF(wet1 + i, Lane4::add(Lane4::loadF(wet1 + i), w1));
+            gain = Lane4::add(gain, gainStep4);
+            kv = Lane4::add(kv, kStep4);
+        }
+        if (i < n) kernelStereoShelf<T>(s0, s1, out0 + i, out1 + i, wet0 + i, wet1 + i, n - i, pos, inc, incStep, g + gStep * (float)i, gStep, k + kStep * (float)i, kStep);
+    }
    #endif   // ENGINE_X86 || ENGINE_ARM64
+
+    template <typename T>
+    inline void dispatchMonoShelf(const T* s, float* out, float* wet, int n, uint64_t& pos, int64_t& inc,
+        int64_t incStep, float g, float gStep, float k, float kStep, KernelKind kernel) noexcept
+    {
+        if (n < 16 || kernel == KernelScalar) { kernelMonoShelf<T>(s, out, wet, n, pos, inc, incStep, g, gStep, k, kStep); return; }
+       #if ENGINE_HAS_AVX2_KERNELS
+        if (kernel == KernelAvx2) { kernelMonoAvx2Shelf<T>(s, out, wet, n, pos, inc, incStep, g, gStep, k, kStep); return; }
+       #endif
+       #if ENGINE_HAS_LANE4_KERNELS
+        kernelMonoLane4Shelf<T>(s, out, wet, n, pos, inc, incStep, g, gStep, k, kStep);
+       #else
+        kernelMonoShelf<T>(s, out, wet, n, pos, inc, incStep, g, gStep, k, kStep);
+       #endif
+    }
+
+    template <typename T>
+    inline void dispatchStereoShelf(const T* s0, const T* s1, float* out0, float* out1, float* wet0, float* wet1, int n, uint64_t& pos,
+        int64_t& inc, int64_t incStep, float g, float gStep, float k, float kStep, KernelKind kernel) noexcept
+    {
+        if (n < 16 || kernel == KernelScalar) { kernelStereoShelf<T>(s0, s1, out0, out1, wet0, wet1, n, pos, inc, incStep, g, gStep, k, kStep); return; }
+       #if ENGINE_HAS_AVX2_KERNELS
+        if (kernel == KernelAvx2) { kernelStereoAvx2Shelf<T>(s0, s1, out0, out1, wet0, wet1, n, pos, inc, incStep, g, gStep, k, kStep); return; }
+       #endif
+       #if ENGINE_HAS_LANE4_KERNELS
+        kernelStereoLane4Shelf<T>(s0, s1, out0, out1, wet0, wet1, n, pos, inc, incStep, g, gStep, k, kStep);
+       #else
+        kernelStereoShelf<T>(s0, s1, out0, out1, wet0, wet1, n, pos, inc, incStep, g, gStep, k, kStep);
+       #endif
+    }
 
     template <typename T>
     inline void dispatchMono(const T* s, float* out, int n, uint64_t& pos, int64_t& inc,
@@ -1314,27 +1508,37 @@ namespace
         v.killing = v.killing || kill;
     }
 
+    inline void splitShelf(const float* in, float* out, float* wet, int n, float k0, float k1) noexcept;   // defined below
+
+    // shelf0/shelf1 >= 0: the dynamic tone shelf's mix at the start and the end
+    // of the block - the kernels then put (1 - k) of the voice into the outputs
+    // and k into the lanes' wet buffers themselves (see LaneOutputs); -1 = none.
     template <typename T>
     void renderVoiceSpans(Voice& v, const Sample& s, const BlockContext& c, const LaneOutputs& lanes,
-        int64_t incStartF, int64_t incEndF, float gainStart, float gainEnd)
+        int64_t incStartF, int64_t incEndF, float gainStart, float gainEnd, float shelf0 = -1.0f, float shelf1 = -1.0f)
     {
         const int n = c.numSamples;
         const int sampleChans = s.numChannels;
         // Output routing: notes are spread over the routed channel pairs.
         float* out0 = lanes.sink;
         float* out1 = lanes.sink;
+        float* wet0 = lanes.sink;
+        float* wet1 = lanes.sink;
         int firstSlot = 0;
         if (c.outCount > 0)
         {
             firstSlot = ((int)v.note * sampleChans) % c.outCount;
             const int ch0 = c.outChannels[firstSlot];
-            out0 = (ch0 >= 0 && ch0 < lanes.numOuts) ? lanes.out[ch0] : lanes.sink;
+            if (ch0 >= 0 && ch0 < lanes.numOuts) { out0 = lanes.out[ch0]; if (lanes.wet[ch0] != nullptr) wet0 = lanes.wet[ch0]; }
             if (sampleChans > 1)
             {
                 const int ch1 = c.outChannels[(firstSlot + 1) % c.outCount];
-                out1 = (ch1 >= 0 && ch1 < lanes.numOuts) ? lanes.out[ch1] : lanes.sink;
+                if (ch1 >= 0 && ch1 < lanes.numOuts) { out1 = lanes.out[ch1]; if (lanes.wet[ch1] != nullptr) wet1 = lanes.wet[ch1]; }
             }
         }
+        const bool shelfActive = shelf0 >= 0.0f && sampleChans <= 2;
+        alignas(32) static thread_local float spanTmp0[kMaxBlockFrames];   // a span of a splice or cubic kernel under the shelf
+        alignas(32) static thread_local float spanTmp1[kMaxBlockFrames];
         const T* src0 = s.storesFloat ? (const T*)s.channel32(0) : (const T*)s.channel16(0);
         const T* src1 = sampleChans > 1 ? (s.storesFloat ? (const T*)s.channel32(1) : (const T*)s.channel16(1)) : src0;
         constexpr float scale = SampleScale<T>::value;
@@ -1349,6 +1553,7 @@ namespace
         const uint64_t fadeLenF = wholeFileLoop ? ((uint64_t)juce::jmax(1.0, 0.05 * s.sampleRate) << 32) : 0;
         const uint64_t fadeStartF = endPosF > fadeLenF ? endPosF - fadeLenF : 0;
 
+        const bool prof = gVoiceProfiling.load(std::memory_order_relaxed);
         int produced = 0;
         int guard = 0;
         while (produced < n)
@@ -1544,6 +1749,7 @@ namespace
 
             int64_t inc = inc0;
             const KernelKind kernel = (KernelKind)c.kernel;
+            const int64_t kernelStart = prof ? profileTicks() : 0;
             // The splice kernels: before the loop end they blend towards the head a
             // loop length back (mix 0 -> 1); after a jump they blend from the
             // continuation a loop length ahead into the loop (mix 1 -> 0).
@@ -1551,29 +1757,47 @@ namespace
             const int64_t headOffset = eventKind == 4 ? (int64_t)v.tailLoopLenF : -(int64_t)loopLenF;
             const float bt = eventKind == 4 ? 1.0f - xfT : xfT;
             const float bdt = eventKind == 4 ? -xfDt : xfDt;
+            // The dynamic tone shelf over this span: its mix at the span's start
+            // and end (the block's ramp cut to the span). The plain kernels fold
+            // it in; a splice or cubic kernel renders the span into a private
+            // buffer first and splits it afterwards (rare: filled pipes, loop
+            // splices - a few per cent of the spans).
+            const float k0 = shelfActive ? shelf0 + (shelf1 - shelf0) * blockFrac0 : 0.0f;
+            const float k1 = shelfActive ? shelf0 + (shelf1 - shelf0) * blockFrac1 : 0.0f;
+            const float kStep = shelfActive ? (k1 - k0) / (float)span : 0.0f;
+            const bool viaTmp = shelfActive && (blend || v.cubic);
+            float* o0 = out0 + produced;
+            float* o1 = out1 + produced;
+            if (viaTmp)
+            {
+                juce::FloatVectorOperations::clear(spanTmp0, span); o0 = spanTmp0;
+                if (sampleChans == 2) { juce::FloatVectorOperations::clear(spanTmp1, span); o1 = spanTmp1; }
+            }
             if (v.cubic && sampleChans <= 2)
             {
                 // A filled pipe resampled by semitones: cubic interpolation.
                 if (sampleChans == 1)
                 {
-                    if (blend) kernelMonoXfCubic<T>(src0, out0 + produced, span, v.pos, inc, incStepF, g0, gStep, headOffset, bt, bdt);
-                    else kernelMonoCubic<T>(src0, out0 + produced, span, v.pos, inc, incStepF, g0, gStep);
+                    if (blend) kernelMonoXfCubic<T>(src0, o0, span, v.pos, inc, incStepF, g0, gStep, headOffset, bt, bdt);
+                    else kernelMonoCubic<T>(src0, o0, span, v.pos, inc, incStepF, g0, gStep);
                 }
                 else
                 {
-                    if (blend) kernelStereoXfCubic<T>(src0, src1, out0 + produced, out1 + produced, span, v.pos, inc, incStepF, g0, gStep, headOffset, bt, bdt);
-                    else kernelStereoCubic<T>(src0, src1, out0 + produced, out1 + produced, span, v.pos, inc, incStepF, g0, gStep);
+                    if (blend) kernelStereoXfCubic<T>(src0, src1, o0, o1, span, v.pos, inc, incStepF, g0, gStep, headOffset, bt, bdt);
+                    else kernelStereoCubic<T>(src0, src1, o0, o1, span, v.pos, inc, incStepF, g0, gStep);
                 }
             }
             else if (sampleChans == 1)
             {
-                if (blend) kernelMonoXf<T>(src0, out0 + produced, span, v.pos, inc, incStepF, g0, gStep, headOffset, bt, bdt);
-                else dispatchMono<T>(src0, out0 + produced, span, v.pos, inc, incStepF, g0, gStep, kernel);
+                if (blend) kernelMonoXf<T>(src0, o0, span, v.pos, inc, incStepF, g0, gStep, headOffset, bt, bdt);
+                else if (shelfActive) dispatchMonoShelf<T>(src0, o0, wet0 + produced, span, v.pos, inc, incStepF, g0, gStep, k0, kStep, kernel);
+                else dispatchMono<T>(src0, o0, span, v.pos, inc, incStepF, g0, gStep, kernel);
             }
             else if (sampleChans == 2)
             {
-                if (blend) kernelStereoXf<T>(src0, src1, out0 + produced, out1 + produced, span, v.pos, inc, incStepF, g0, gStep, headOffset, bt, bdt);
-                else dispatchStereo<T>(src0, src1, out0 + produced, out1 + produced, span, v.pos, inc, incStepF, g0, gStep, kernel);
+                if (blend) kernelStereoXf<T>(src0, src1, o0, o1, span, v.pos, inc, incStepF, g0, gStep, headOffset, bt, bdt);
+                else if (shelfActive) dispatchStereoShelf<T>(src0, src1, o0, o1, wet0 + produced, wet1 + produced, span, v.pos, inc, incStepF, g0, gStep, k0, kStep, kernel);
+                else dispatchStereo<T>(src0, src1, o0, o1, span, v.pos, inc, incStepF, g0, gStep, kernel);
             }
             else
             {
@@ -1595,6 +1819,14 @@ namespace
                 }
                 v.pos = finalPos;
             }
+            if (viaTmp)
+            {
+                // The span rendered into the private buffer: split it now (k ramping over the span).
+                splitShelf(spanTmp0, out0 + produced, wet0 + produced, span, k0, k1);
+                if (sampleChans == 2) splitShelf(spanTmp1, out1 + produced, wet1 + produced, span, k0, k1);
+            }
+
+            if (prof) tlVoiceProfile.kernel += profileTicks() - kernelStart;
 
             // --- advance envelopes
             produced += span;
@@ -1688,8 +1920,10 @@ namespace
     // access into gigabytes of samples) is the dominant memory cost.
     inline void prefetchLine(const void* p) noexcept
     {
-       #if JUCE_WINDOWS
+       #if ENGINE_X86
         _mm_prefetch((const char*)p, _MM_HINT_T0);
+       #elif defined(__GNUC__) || defined(__clang__)
+        __builtin_prefetch(p, 0, 3);
        #else
         juce::ignoreUnused(p);
        #endif
@@ -1732,6 +1966,8 @@ namespace
         if (s == nullptr || s->numFrames < 8 || v.stop == nullptr) { v.finished = true; return false; }
         const int n = c.numSamples;
         if (n <= 0) return true;
+        const bool prof = gVoiceProfiling.load(std::memory_order_relaxed);
+        const int64_t profStart = prof ? profileTicks() : 0;
 
         // --- commands from the control thread
         const uint8_t cmd = v.command.exchange(0, std::memory_order_acq_rel);
@@ -1906,10 +2142,15 @@ namespace
         // into private buffers first; the filtered result is then added to the
         // lane outputs. Without one the kernels accumulate straight into the
         // lanes as before (no extra cost).
+        const int64_t profHeaderEnd = prof ? profileTicks() : 0;
+        const int64_t profKernelBefore = prof ? tlVoiceProfile.kernel : 0;
+        if (prof) tlVoiceProfile.header += profHeaderEnd - profStart;
         const int sampleChans = s->numChannels;
         const bool dynamicShelf = shelfStart > 0.002f || shelfEnd > 0.002f;
+        // The dynamic shelf alone is folded into the kernels (renderVoiceSpans);
+        // only the per-key tone biquad still needs the voice in a private buffer.
         int ch0 = -1, ch1 = -1;
-        if ((dynamicShelf || toneActive) && sampleChans <= 2 && c.outCount > 0)
+        if (toneActive && sampleChans <= 2 && c.outCount > 0)
         {
             const int firstSlot = ((int)v.note * sampleChans) % c.outCount;
             ch0 = c.outChannels[firstSlot];
@@ -1922,8 +2163,15 @@ namespace
         }
         if (ch0 < 0 && ch1 < 0)
         {
-            if (s->storesFloat) renderVoiceSpans<float>(v, *s, c, lanes, incStartF, incEndF, gainStart, gainEnd);
-            else renderVoiceSpans<int16_t>(v, *s, c, lanes, incStartF, incEndF, gainStart, gainEnd);
+            const float shelf0 = dynamicShelf && sampleChans <= 2 ? shelfStart : -1.0f;
+            const float shelf1 = dynamicShelf && sampleChans <= 2 ? shelfEnd : -1.0f;
+            if (s->storesFloat) renderVoiceSpans<float>(v, *s, c, lanes, incStartF, incEndF, gainStart, gainEnd, shelf0, shelf1);
+            else renderVoiceSpans<int16_t>(v, *s, c, lanes, incStartF, incEndF, gainStart, gainEnd, shelf0, shelf1);
+            if (prof)
+            {
+                tlVoiceProfile.spans += (profileTicks() - profHeaderEnd) - (tlVoiceProfile.kernel - profKernelBefore);
+                ++tlVoiceProfile.voices;
+            }
             return !v.finished;
         }
         alignas(32) static thread_local float tmp0[kMaxBlockFrames];   // the attribute first: GCC rejects it between decl-specifiers
@@ -1933,6 +2181,8 @@ namespace
         if (ch1 >= 0) { juce::FloatVectorOperations::clear(tmp1, n); filtered.out[ch1] = tmp1; }
         if (s->storesFloat) renderVoiceSpans<float>(v, *s, c, filtered, incStartF, incEndF, gainStart, gainEnd);
         else renderVoiceSpans<int16_t>(v, *s, c, filtered, incStartF, incEndF, gainStart, gainEnd);
+        const int64_t profSpansEnd = prof ? profileTicks() : 0;
+        if (prof) tlVoiceProfile.spans += (profSpansEnd - profHeaderEnd) - (tlVoiceProfile.kernel - profKernelBefore);
         if (toneActive)
         {
             if (ch0 >= 0) applyBiquadInPlace(tmp0, n, v.toneCoeff, v.toneState[0]);
@@ -1943,12 +2193,14 @@ namespace
             // Only the per-key tone: add the filtered voice to the lanes.
             if (ch0 >= 0) juce::FloatVectorOperations::add(lanes.out[ch0], tmp0, n);
             if (ch1 >= 0) juce::FloatVectorOperations::add(lanes.out[ch1], tmp1, n);
+            if (prof) { tlVoiceProfile.post += profileTicks() - profSpansEnd; ++tlVoiceProfile.voices; }
             return !v.finished;
         }
         // The dynamic shelf: the voice only splits its signal; the lane's wet
         // buffers are low-passed once per block by the route (see LaneOutputs).
         if (ch0 >= 0) splitShelf(tmp0, lanes.out[ch0], lanes.wet[ch0] != nullptr ? lanes.wet[ch0] : lanes.sink, n, shelfStart, shelfEnd);
         if (ch1 >= 0) splitShelf(tmp1, lanes.out[ch1], lanes.wet[ch1] != nullptr ? lanes.wet[ch1] : lanes.sink, n, shelfStart, shelfEnd);
+        if (prof) { tlVoiceProfile.post += profileTicks() - profSpansEnd; ++tlVoiceProfile.voices; }
         return !v.finished;
     }
 
@@ -2063,6 +2315,7 @@ namespace
             while ((count = takeChunk(*job, idx)) > 0)
                 renderRange(voiceIndices, idx, idx + count, pool, ctx, mine);
             const int64_t posterBusy = juce::Time::getHighResolutionTicks() - posterStart;
+            foldVoiceProfile();
             // Wait for the other lanes.
             while (job->lanesLeft.load(std::memory_order_acquire) != job->lanesJoined.load(std::memory_order_acquire))
                 ENGINE_CPU_PAUSE();
@@ -2303,6 +2556,7 @@ namespace
                 do renderRange(job.voices, idx, idx + count, job.pool, ctx, lane);
                 while ((count = takeChunk(job, idx)) > 0);
                 job.laneBusyTicks.fetch_add(juce::Time::getHighResolutionTicks() - laneStart, std::memory_order_relaxed);
+                foldVoiceProfile();
                 const int slot = job.completedCount.fetch_add(1, std::memory_order_acq_rel);
                 if (slot < kMaxLanesPerJob) job.completed[(size_t)slot] = scratchIndex;
                 else releaseScratch(scratchIndex);
@@ -2366,8 +2620,22 @@ namespace
         // reads them once a second): jobs, their wall time, the lanes' busy time,
         // lanes x wall ("slots"), the poster's own share.
         std::atomic<int64_t> statJobs{ 0 }, statWallTicks{ 0 }, statBusyTicks{ 0 }, statSlotTicks{ 0 }, statPosterTicks{ 0 };
+        // The voice profile (gVoiceProfiling): the lanes' thread-local sums, folded here after every chunk.
+        std::atomic<int64_t> statProfHeader{ 0 }, statProfSpans{ 0 }, statProfKernel{ 0 }, statProfPost{ 0 }, statProfVoices{ 0 };
+        void foldVoiceProfile() noexcept
+        {
+            auto& p = tlVoiceProfile;
+            if (p.voices == 0) return;
+            statProfHeader.fetch_add(p.header, std::memory_order_relaxed);
+            statProfSpans.fetch_add(p.spans, std::memory_order_relaxed);
+            statProfKernel.fetch_add(p.kernel, std::memory_order_relaxed);
+            statProfPost.fetch_add(p.post, std::memory_order_relaxed);
+            statProfVoices.fetch_add(p.voices, std::memory_order_relaxed);
+            p = VoiceProfile{};
+        }
     public:
-        void takeStats(int& jobs, double& laneUtilisation, double& posterShare, double& jobSeconds) noexcept
+        void takeStats(int& jobs, double& laneUtilisation, double& posterShare, double& jobSeconds,
+            int64_t& profVoices, double& headerNs, double& spansNs, double& kernelNs, double& postNs) noexcept
         {
             jobs = (int)statJobs.exchange(0, std::memory_order_relaxed);
             const int64_t wall = statWallTicks.exchange(0, std::memory_order_relaxed);
@@ -2376,7 +2644,14 @@ namespace
             const int64_t poster = statPosterTicks.exchange(0, std::memory_order_relaxed);
             laneUtilisation = slots > 0 ? (double)busy / (double)slots : 0.0;
             posterShare = wall > 0 ? (double)poster / (double)wall : 0.0;
-            jobSeconds = (double)wall / (double)juce::Time::getHighResolutionTicksPerSecond();
+            const double tickNs = 1.0e9 / (double)juce::Time::getHighResolutionTicksPerSecond();
+            jobSeconds = (double)wall * tickNs * 1.0e-9;
+            profVoices = statProfVoices.exchange(0, std::memory_order_relaxed);
+            const double per = profVoices > 0 ? tickNs / (double)profVoices : 0.0;
+            headerNs = (double)statProfHeader.exchange(0, std::memory_order_relaxed) * per;
+            spansNs = (double)statProfSpans.exchange(0, std::memory_order_relaxed) * per;
+            kernelNs = (double)statProfKernel.exchange(0, std::memory_order_relaxed) * per;
+            postNs = (double)statProfPost.exchange(0, std::memory_order_relaxed) * per;
         }
     private:
 
@@ -5316,10 +5591,13 @@ SamplerEngine::RenderPoolStats SamplerEngine::takeRenderPoolStats() noexcept
 {
     RenderPoolStats stats;
     if (impl != nullptr && impl->pool != nullptr)
-        impl->pool->takeStats(stats.jobs, stats.laneUtilisation, stats.posterShare, stats.jobSeconds);
+        impl->pool->takeStats(stats.jobs, stats.laneUtilisation, stats.posterShare, stats.jobSeconds,
+            stats.profiledVoices, stats.voiceHeaderNs, stats.voiceSpansNs, stats.voiceKernelNs, stats.voicePostNs);
     stats.lanes = getRenderWorkerCount() + 1;
     return stats;
 }
+
+void SamplerEngine::setVoiceProfiling(bool enabled) noexcept { gVoiceProfiling.store(enabled, std::memory_order_relaxed); }
 
 namespace
 {
@@ -5474,10 +5752,22 @@ juce::String SamplerEngine::runKernelSelfCheck()
                 dispatchStereo(c0, c1, b0.data(), b1.data(), n, posB, incB, incStep, g, gStep, kind);
                 kernelMono(c0, m0.data(), n, posC, incC, incStep, g, gStep);
                 dispatchMono(c0, m1.data(), n, posD, incD, incStep, g, gStep, kind);
+                // The shelf kernels: SIMD against scalar, and scalar against the
+                // identity out + wet = the plain kernel's output (k ramping 0.1 -> 0.6).
+                std::vector<float> sa0((size_t)n, 0.25f), sa1((size_t)n, -0.5f), wa0((size_t)n, 0.0f), wa1((size_t)n, 0.0f), sb0(sa0), sb1(sa1), wb0(wa0), wb1(wa1);
+                uint64_t posE = (uint64_t)(17.31 * kFixedOne), posF = posE;
+                int64_t incE = inc, incF = inc;
+                const float k0 = 0.1f, kStep = 0.5f / (float)n;
+                kernelStereoShelf(c0, c1, sa0.data(), sa1.data(), wa0.data(), wa1.data(), n, posE, incE, incStep, g, gStep, k0, kStep);
+                dispatchStereoShelf(c0, c1, sb0.data(), sb1.data(), wb0.data(), wb1.data(), n, posF, incF, incStep, g, gStep, k0, kStep, kind);
+                if (posE != posF || incE != incF) positionsEqual = false;
                 float maxDiff = 0.0f, maxLevel = 1.0e-9f;
                 for (int i = 0; i < n; ++i)
                 {
                     maxDiff = juce::jmax(maxDiff, std::abs(a0[(size_t)i] - b0[(size_t)i]), std::abs(a1[(size_t)i] - b1[(size_t)i]), std::abs(m0[(size_t)i] - m1[(size_t)i]));
+                    maxDiff = juce::jmax(maxDiff, std::abs(sa0[(size_t)i] - sb0[(size_t)i]), std::abs(sa1[(size_t)i] - sb1[(size_t)i]));
+                    maxDiff = juce::jmax(maxDiff, std::abs(wa0[(size_t)i] - wb0[(size_t)i]), std::abs(wa1[(size_t)i] - wb1[(size_t)i]));
+                    maxDiff = juce::jmax(maxDiff, std::abs((sa0[(size_t)i] + wa0[(size_t)i]) - a0[(size_t)i]), std::abs((sa1[(size_t)i] + wa1[(size_t)i]) - a1[(size_t)i]));
                     maxLevel = juce::jmax(maxLevel, std::abs(a0[(size_t)i]), std::abs(a1[(size_t)i]));
                 }
                 const float relative = maxDiff / maxLevel;

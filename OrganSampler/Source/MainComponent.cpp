@@ -17631,6 +17631,8 @@ struct MainComponent::PolyphonyMeasurement
     double lastProcessShare = 0.0;    // the program's share of all logical CPUs in the last second (the progress text)
     // The render pool: the lanes' utilisation inside the route jobs, averaged over the run and of the last second.
     double poolUtilisationSum = 0.0, lastPoolUtilisation = 0.0; int poolSamples = 0, lastPoolJobs = 0;
+    // The voice profile over the run: ns per voice and block, weighted by the voices of every second.
+    double profHeaderSum = 0.0, profSpansSum = 0.0, profKernelSum = 0.0, profPostSum = 0.0; double profVoicesSum = 0.0;
     int renderThreads = 1;            // the render threads (the audio thread included) = the cores the program renders on
     // The kernel benchmark of this computer (ns per voice and frame, cache and RAM), taken for the report once the run is over.
     SamplerEngine::KernelBenchmark kernelBench;
@@ -17796,6 +17798,7 @@ void MainComponent::startPolyphonyMeasurement()
     // Very quiet output (-42 dB, reached within 50 ms - before the first strike); the engine renders as if it were heard.
     engine.noteOffAll();
     outputGainTarget.store(0.0025f);   // -52 dB: a tutti of 30 000 voices at -42 dB was still loud
+    engine.setVoiceProfiling(true);    // where a voice's time goes, for the report (off again at the end)
     audioMuted.store(false);
     engine.takeMaxBlockLoad();
     takeLateCallbacksOfAllRoutes();
@@ -18098,6 +18101,13 @@ void MainComponent::startPolyphonyMeasurement()
             state->poolUtilisationSum += pool.laneUtilisation; ++state->poolSamples;
             state->lastPoolUtilisation = pool.laneUtilisation;
             state->lastPoolJobs = pool.jobs;
+            if (pool.profiledVoices > 0)
+            {
+                const double w = (double)pool.profiledVoices;
+                state->profHeaderSum += pool.voiceHeaderNs * w; state->profSpansSum += pool.voiceSpansNs * w;
+                state->profKernelSum += pool.voiceKernelNs * w; state->profPostSum += pool.voicePostNs * w;
+                state->profVoicesSum += w;
+            }
         }
         int worstRouteIndex = -1;
         const float worst = safeThis->engine.takeMaxBlockLoad(&worstRouteIndex);
@@ -18130,7 +18140,9 @@ void MainComponent::startPolyphonyMeasurement()
             + "), longest driver callback " + juce::String(juce::roundToInt(callbackShare * 100.0f)) + " % of the period, busiest thread render "
             + juce::String(juce::roundToInt(busiestNow * 100.0f)) + " %, worst block " + juce::String(juce::roundToInt(worst * 100.0f))
             + " % (" + safeThis->engine.routeLabel(worstRouteIndex) + "), lanes busy " + juce::String(juce::roundToInt(pool.laneUtilisation * 100.0)) + " % of "
-            + juce::String(pool.jobs) + " route job(s) on " + juce::String(pool.lanes) + " lanes, CPU " + juce::String(juce::roundToInt(state->lastProcessShare * 100.0))
+            + juce::String(pool.jobs) + " route job(s) on " + juce::String(pool.lanes) + " lanes, per voice and block: header " + juce::String(juce::roundToInt(pool.voiceHeaderNs))
+            + " ns, spans " + juce::String(juce::roundToInt(pool.voiceSpansNs)) + " ns, kernel " + juce::String(juce::roundToInt(pool.voiceKernelNs)) + " ns, post " + juce::String(juce::roundToInt(pool.voicePostNs))
+            + " ns (" + juce::String(pool.profiledVoices) + " voice renders), CPU " + juce::String(juce::roundToInt(state->lastProcessShare * 100.0))
             + " % of all logical CPUs, late driver callbacks: ASIO " + juce::String(lateness.asioLate)
             + " (gaps over 1.5 periods " + juce::String(lateness.asioOver15) + ", over 2 " + juce::String(lateness.asioOver2) + ", longest "
             + juce::String(lateness.asioMaxGapMs, 1) + " ms), other devices " + juce::String(lateness.otherLate) + " (longest " + juce::String(lateness.otherMaxGapMs, 1) + " ms)");
@@ -18460,6 +18472,7 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
     if (cancelled || (state->results.empty() && state->firstFailingPeak == 0 && !state->exhausted))
     {
         outputGainTarget.store(1.0f);   // the level glides back over two seconds
+        engine.setVoiceProfiling(false);
         engine.setMaxPolyphony(state->previousLimit);
         refreshConfigurationEditor();
         CrashHandler::note(cancelled ? "Polyphony measurement cancelled: everything restored" : "Polyphony measurement ended without a result");
@@ -18657,6 +18670,17 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
         const juce::int64 ramBytes = juce::jlimit((juce::int64)(64 << 20), (juce::int64)(512 << 20), MainComponent::availablePhysicalMemoryBytes() / 8);
         state->kernelBench = SamplerEngine::benchmarkKernel(blockFrames, ramBytes);
         advice << "\n\n" << state->kernelBench.describe();
+        if (state->profVoicesSum > 0.0)
+        {
+            // The voice profile of the run: what one voice costs a lane per block, in its parts.
+            const double header = state->profHeaderSum / state->profVoicesSum, spans = state->profSpansSum / state->profVoicesSum;
+            const double kernel = state->profKernelSum / state->profVoicesSum, post = state->profPostSum / state->profVoicesSum;
+            const double total = header + spans + kernel + post;
+            advice << " In this run a voice cost a lane " << juce::roundToInt(total) << " ns per block: " << juce::roundToInt(header)
+                   << " ns of bookkeeping (commands, pitch, gains, tone targets), " << juce::roundToInt(spans) << " ns of span logic (loops, splices, envelopes), "
+                   << juce::roundToInt(kernel) << " ns in the interpolation kernel" << (post > 0.5 ? ", " + juce::String(juce::roundToInt(post)) + " ns of per-key tone filtering" : juce::String())
+                   << " - measured on the lanes themselves.";
+        }
         const double nsBest = state->kernelBench.nsBest();
         const double blockMs = 1000.0 * blockFrames / juce::jmax(1000.0, blockRate);
         if (nsBest > 0.0)
@@ -18827,6 +18851,7 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
     options.dialogTitle = "Maximum polyphony measured";
     options.dialogBackgroundColour = juce::Colours::darkgrey;
     // The whole report into the activity log as well: a bug report carries it.
+    engine.setVoiceProfiling(false);
     CrashHandler::note("Polyphony measurement report: " + (text + advice).replace("\n", " | "));
     options.content.setOwned(new Report(text + advice, [safeThis] { if (safeThis != nullptr) safeThis->outputGainTarget.store(1.0f); }));
     options.componentToCentreAround = this;
