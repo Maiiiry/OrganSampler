@@ -18644,18 +18644,15 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
         {
             const double processAvg = state->cpuProcessSum / state->cpuSamples, systemAvg = state->cpuSystemSum / state->cpuSamples;
             const double coreAvg = juce::jlimit(0.0, 1.0, processAvg * cpus / renderCores), corePeak = juce::jlimit(0.0, 1.0, state->cpuProcessPeak * cpus / renderCores);
-            advice << " CPU during the run: this program used " << juce::roundToInt(coreAvg * 100.0) << " % of its " << renderCores << " render "
-                   << (renderCores == 1 ? "core" : "cores") << " on average and " << juce::roundToInt(corePeak * 100.0) << " % at the peak ("
-                   << juce::roundToInt(processAvg * 100.0) << " % and " << juce::roundToInt(state->cpuProcessPeak * 100.0) << " % of all " << cpus
-                   << " logical CPUs); the whole computer " << juce::roundToInt(systemAvg * 100.0) << " % of all logical CPUs on average.";
+            advice << " CPU of the render " << (renderCores == 1 ? "core" : "cores") << ": " << juce::roundToInt(coreAvg * 100.0) << " % on average, "
+                   << juce::roundToInt(corePeak * 100.0) << " % at the peak (" << juce::roundToInt(processAvg * 100.0) << " % / " << juce::roundToInt(state->cpuProcessPeak * 100.0)
+                   << " % of all " << cpus << " logical CPUs); the whole computer " << juce::roundToInt(systemAvg * 100.0) << " %.";
             if (state->firstFailingPeak > 0 && corePeak < 0.6 && renderCores > 1)
-                advice << " The sound broke while the render cores were less than 60 % busy: the time went into one thread - the device callback (its "
-                          "bookkeeping, the hand-over to the lanes, waiting for the slowest lane), not into the rendering itself.";
+                advice << " The sound broke with the render cores under 60 %: the time went into the device thread (bookkeeping, hand-over, waiting for the slowest lane), not into the rendering.";
         }
-        else advice << " CPU during the run: not available on this system (the clocks of the process and the system could not be read).";
+        else advice << " CPU during the run: not readable on this system.";
         if (state->poolSamples > 0)
-            advice << " Render pool: inside the route jobs the lanes were busy " << juce::roundToInt(100.0 * state->poolUtilisationSum / state->poolSamples)
-                   << " % of the time on average (the rest: waiting for the slowest lane of a job, the hand-over between the jobs - one job per route and block).";
+            advice << " Lanes busy inside the route jobs: " << juce::roundToInt(100.0 * state->poolUtilisationSum / state->poolSamples) << " %.";
         const juce::String power = MainComponent::powerSettingDescription();
         if (power.isNotEmpty()) advice << " " << power;
 
@@ -18676,46 +18673,34 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
             const double header = state->profHeaderSum / state->profVoicesSum, spans = state->profSpansSum / state->profVoicesSum;
             const double kernel = state->profKernelSum / state->profVoicesSum, post = state->profPostSum / state->profVoicesSum;
             const double total = header + spans + kernel + post;
-            advice << " In this run a voice cost a lane " << juce::roundToInt(total) << " ns per block: " << juce::roundToInt(header)
-                   << " ns of bookkeeping (commands, pitch, gains, tone targets), " << juce::roundToInt(spans) << " ns of span logic (loops, splices, envelopes), "
-                   << juce::roundToInt(kernel) << " ns in the interpolation kernel" << (post > 0.5 ? ", " + juce::String(juce::roundToInt(post)) + " ns of per-key tone filtering" : juce::String())
-                   << " - measured on the lanes themselves.";
+            advice << " A voice cost a lane " << juce::roundToInt(total) << " ns per block in this run: bookkeeping " << juce::roundToInt(header)
+                   << ", span logic " << juce::roundToInt(spans) << ", kernel " << juce::roundToInt(kernel)
+                   << (post > 0.5 ? ", per-key tone " + juce::String(juce::roundToInt(post)) : juce::String()) << ".";
         }
         const double nsBest = state->kernelBench.nsBest();
         const double blockMs = 1000.0 * blockFrames / juce::jmax(1000.0, blockRate);
-        if (nsBest > 0.0)
+        if (nsBest > 0.0 && state->firstFailingPeak > 0 && newLimit > 0)
         {
             // The ceiling: every render core rendering voices for 85 % of the block, nothing else.
             const double ceiling = (double)renderCores * 0.85 * blockMs * 1.0e6 / ((double)blockFrames * nsBest);
-            advice << " At this buffer (" << blockFrames << " frames = " << juce::String(blockMs, 1) << " ms) and " << renderCores << " render "
-                   << (renderCores == 1 ? "core" : "cores") << " the kernel alone would reach about " << juce::String(juce::roundToInt(ceiling / 100.0) * 100)
-                   << " voices (85 % of every block, streaming from RAM, nothing else to do)";
-            if (state->firstFailingPeak > 0 && newLimit > 0)
-                advice << "; the measured limit of " << newLimit << " is " << juce::roundToInt(100.0 * newLimit / juce::jmax(1.0, ceiling))
-                       << " % of it - the rest is the voices' bookkeeping, the hand-over between the lanes and the device thread's own work";
-            else if (state->firstFailingPeak <= 0)
-                advice << "; this organ ran out of voices long before that, so the run says nothing about this computer's limit";
-            advice << ".";
+            advice << " The kernel alone would reach about " << juce::String(juce::roundToInt(ceiling / 100.0) * 100) << " voices at this buffer; the limit of "
+                   << newLimit << " is " << juce::roundToInt(100.0 * newLimit / juce::jmax(1.0, ceiling)) << " % of that - the rest is bookkeeping, hand-over and the device thread's own work.";
         }
-
         // The callback time of this run as a fixed part per block and a part per
-        // voice, from the lowest clean level and the failing level; from these,
-        // what other buffers would give - this organ, this computer, measured.
+        // voice (from the lowest clean level and the failing level). No forecast
+        // for other buffers: the measured runs at 128, 256 and 512 did not follow
+        // one - the buffer is cheap to try, the measurement tells.
         if (state->firstFailingPeak > 0 && !state->results.empty())
         {
             const auto& low = state->results.front();
             const int highPeak = state->firstFailingPeak;
-            const float highShare = juce::jmax(0.85f, state->cleanSecondShare);   // the failing level ran at the limit
+            const float highShare = juce::jmax(0.85f, state->cleanSecondShare);
             if (highPeak > low.peak * 2 && low.peak > 0 && highShare > low.callbackShare)
             {
-                const double perVoiceMs = (double)(highShare - low.callbackShare) * blockMs / (double)(highPeak - low.peak);   // ms per voice per block
+                const double perVoiceMs = (double)(highShare - low.callbackShare) * blockMs / (double)(highPeak - low.peak);
                 const double fixedMs = juce::jmax(0.0, (double)low.callbackShare * blockMs - perVoiceMs * low.peak);
-                auto voicesAt = [&](double factor) { return juce::roundToInt(juce::jmax(0.0, (0.85 * blockMs * factor - fixedMs) / (perVoiceMs * factor)) / 100.0) * 100; };
-                advice << "\n\nThe callback time of this run: about " << juce::String(fixedMs, 2) << " ms of every block whatever the polyphony (the fixed part: the "
-                          "hand-over, the IR heads, the bookkeeping) plus " << juce::String(perVoiceMs * 1000.0, 2) << " us per voice. From that, with everything else "
-                          "unchanged, a buffer half as long would give about " << voicesAt(0.5) << " voices, twice as long about " << voicesAt(2.0)
-                       << ", four times about " << voicesAt(4.0) << " - the fixed part shrinks in share, the voices cost the same per frame. Every doubling of the "
-                          "buffer doubles the latency (" << juce::String(2.0 * blockMs, 1) << " ms at twice this one).";
+                advice << " Of a " << juce::String(blockMs, 1) << " ms block about " << juce::String(fixedMs, 2) << " ms went to the fixed part (hand-over, IR heads, bookkeeping) and "
+                       << juce::String(perVoiceMs * 1000.0, 2) << " us to every voice.";
             }
         }
     }
@@ -18793,14 +18778,15 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
         }
         if (smallBlock > 0 && firstFailingKeys > 0)
         {
+            // A recommendation, not an order: the Ryzen reached 24 900 voices at 128
+            // samples - the small buffer costs polyphony, it does not forbid playing.
             const double ms = 1000.0 * smallBlock / juce::jmax(1.0, smallRate);
-            advice = juce::String("\n\nThe audio buffer of \"") + smallDevice + "\" is " + juce::String(smallBlock) + " samples ("
-                + juce::String(ms, 1) + " ms): far too small for this work - every block has only that long to render, so the sound "
-                "breaks at a few hundred voices whatever the routes and IRs are. Set the buffer to 512 samples ("
-                + juce::String(1000.0 * 512 / juce::jmax(1.0, smallRate), 1) + " ms of latency, fine for an organ), or 256 at the least, in the "
-                + (smallType.equalsIgnoreCase("ASIO") ? juce::String("driver's control panel") : juce::String("audio tab"))
-                + (smallType.equalsIgnoreCase("JACK") ? juce::String(" (the value goes to PipeWire and holds for every JACK route)") : juce::String())
-                + ", save the configuration and measure again. Nothing else matters until then.";
+            advice << "\n\nThe audio buffer of \"" << smallDevice << "\" is " << smallBlock << " samples (" << juce::String(ms, 1) << " ms): every block pays its fixed "
+                      "costs, and short blocks pay them more often. 256 or 512 samples (" << juce::String(1000.0 * 512 / juce::jmax(1.0, smallRate), 1)
+                   << " ms of latency at 512, still fine for an organ) usually give more polyphony; set in the "
+                   << (smallType.equalsIgnoreCase("ASIO") ? juce::String("driver's control panel") : juce::String("audio tab"))
+                   << (smallType.equalsIgnoreCase("JACK") ? juce::String(" (the value goes to PipeWire and holds for every JACK route)") : juce::String())
+                   << " and measured again, if you want to see.";
         }
     }
     CrashHandler::note("Polyphony measurement done: limit set to " + juce::String(newLimit) + " (highest clean held level "
@@ -19030,6 +19016,12 @@ int MainComponent::workersForCurrentPreset() const
     if (renderThreadPreset == "all") lanes = logical;
     else if (renderThreadPreset == "allMinusOne") lanes = logical - 1;
     else if (renderThreadPreset == "physicalMinusOne") lanes = physical - 1;
+    // One or two cores: the device thread renders alone. A worker on the
+    // second core spins between the blocks and takes it from the note
+    // bookkeeping, the sound server and the window; measured on two Core 2
+    // Duo laptops (issues #9, #10): two render threads gave 1400 voices and
+    // breakups, one thread 1700. "All physical cores" means one thread there.
+    if (physical <= 2 && renderThreadPreset != "all" && renderThreadPreset != "custom") lanes = 1;
     return juce::jlimit(0, 62, lanes - 1);
 }
 
@@ -19980,7 +19972,9 @@ void MainComponent::showConfigurationEditor()
                 // "all - 1". The default comes first and says so.
                 juce::StringArray presetIds{ "physical" };
                 juce::StringArray items;
-                items.add("All physical cores (" + juce::String(physical) + (physical == 1 ? " thread" : " threads") + ")  [default]");
+                items.add(physical <= 2 ? juce::String("All physical cores (1 thread: on ") + juce::String(physical) + (physical == 1 ? " core" : " cores")
+                        + " the second one stays with the note bookkeeping and the system)  [default]"
+                    : "All physical cores (" + juce::String(physical) + " threads)  [default]");
                 if (physical > 1) { presetIds.add("physicalMinusOne"); items.add("All physical cores - 1 (" + juce::String(physical - 1) + (physical == 2 ? " thread" : " threads") + ")"); }
                 if (logical > physical)
                 {

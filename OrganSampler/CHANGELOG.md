@@ -12,6 +12,25 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.122] - 2026-10-18
+
+### Fixed
+- One and two cores: the device thread renders alone again. 0.8.119 gave
+  the two-core laptops a second render thread (the default of "all
+  physical cores"), and a worker spinning between the blocks took the
+  second core from the note bookkeeping, the sound server and the window:
+  the Core 2 Duo laptops fell from 1 700 to 1 400 voices with breakups
+  (#9, #10). The kernel was not the cause - their own benchmark showed the
+  SSE2 kernel faster than the scalar one (4.6-4.9 against 6.7-7.1 ns per
+  voice and frame). On few cores the workers also spin only briefly after
+  work. "All physical cores" means one thread on such a computer; the
+  Configuration Editor says so.
+- The polyphony report: no forecast of what another buffer would give (the
+  measured runs at 128, 256 and 512 samples did not follow one); the small
+  buffer paragraph recommends 256 or 512 instead of claiming the sound
+  breaks at a few hundred voices (the Ryzen reached 24 900 at 128), and
+  the whole report is shorter.
+
 ## [0.8.121] - 2026-10-18
 
 ### Fixed

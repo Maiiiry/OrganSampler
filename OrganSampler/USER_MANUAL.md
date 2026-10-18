@@ -1818,6 +1818,12 @@ physical core on every computer: a setting that is not the default and was
 never chosen in this editor on this computer (older versions let a portable
 file bring it in - the Rural Organ file left two-core laptops rendering on one
 thread) goes back to the default at the next start; a choice made here stays.
+On a computer with one or two cores the default is ONE thread - the device
+thread renders alone: a second render thread spinning between the blocks took
+the other core from the note bookkeeping, the sound server and the window, and
+two Core 2 Duo laptops lost a fifth of their polyphony with breakups (while
+their own kernel benchmark showed the SSE2 kernel faster than the scalar one).
+Two threads can still be chosen by hand from the list.
 
 ### Currently active
 
@@ -2031,11 +2037,12 @@ happens:
      (loops, splices, envelopes), the interpolation kernel and the per-key
      tone filtering - timed on the lanes themselves while the run went;
    - the callback time of the run split into a fixed part per block (the
-     hand-over, the IR heads, the bookkeeping) and a part per voice, and from
-     that what half, twice and four times the buffer would give for this
-     organ. There is no general rule: on a two-core laptop a doubled buffer
-     gave 17 % more voices, on a Ryzen a quarter of the buffer still gave
-     62 % of the voices - the report computes it from the run.
+     hand-over, the IR heads, the bookkeeping) and a part per voice. The
+     report does not forecast other buffer sizes: on a two-core laptop a
+     doubled buffer gave 17 % more voices, on a Ryzen a quarter of the
+     buffer still gave 62 % of the voices - no model fits, the buffer is
+     cheap to try and the measurement tells. A buffer below 256 samples
+     gets a recommendation to try 256 or 512, nothing more.
    On Linux the report names the CPU governor ("performance" keeps the
    clock up), on Windows the power plan; when the CPU clocks cannot be read
    it says so. During the run the progress text shows the CPU of the render

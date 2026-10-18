@@ -128,6 +128,13 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   880 ns - the 880 was the dynamic tone shelf (private buffer + split pass, on for every voice as soon as the wind sags),
   folded into the kernels in 0.8.120 (`kernel*Shelf`, `dispatch*Shelf`: out += y(1-k), wet += y k; the route low-passes
   the wet sum as before). Splice/cubic spans and per-key tone voices still go through a private buffer.
+- One or two physical cores: ONE render thread (the device thread alone; `workersForCurrentPreset`) and the workers'
+  hot spin window is 1 ms only (`RenderPool::fewCores`). 0.8.119-0.8.121 gave the Core 2 Duo laptops two threads: the
+  worker spinning with `_mm_pause` between blocks took the second core from the control thread, PipeWire/CoreAudio and
+  the GUI - 1700 -> 1400 voices with breakups (#9, #10) although their own kernel benchmark showed SSE2 faster than
+  scalar (4.6-4.9 vs 6.7-7.1 ns). Never blame a kernel without the benchmark numbers from the report.
+- The polyphony report makes NO forecast for other buffer sizes (128/256/512 runs on the Ryzen: 24 900 / 38 600 ->
+  no model fits); the small-buffer paragraph is a recommendation (256/512), never "breaks at a few hundred voices".
 - Render threads default = all physical cores, always. `renderThreadPresetChosen` (settings, machine-specific) marks a
   choice made in the Configuration Editor; without it a non-default preset is reset at load (the old portable Rural file
   carried `allMinusOne` and left two-core laptops on ONE render thread, issues #6-#8).

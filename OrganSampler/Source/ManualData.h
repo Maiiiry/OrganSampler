@@ -1840,6 +1840,12 @@ static const char* const kManualText_part9 =
     "never chosen in this editor on this computer (older versions let a portable\n"
     "file bring it in - the Rural Organ file left two-core laptops rendering on one\n"
     "thread) goes back to the default at the next start; a choice made here stays.\n"
+    "On a computer with one or two cores the default is ONE thread - the device\n"
+    "thread renders alone: a second render thread spinning between the blocks took\n"
+    "the other core from the note bookkeeping, the sound server and the window, and\n"
+    "two Core 2 Duo laptops lost a fifth of their polyphony with breakups (while\n"
+    "their own kernel benchmark showed the SSE2 kernel faster than the scalar one).\n"
+    "Two threads can still be chosen by hand from the list.\n"
     "\n"
     "### Currently active\n"
     "\n"
@@ -2014,14 +2020,14 @@ static const char* const kManualText_part9 =
     "   to four times, so that the result is what the computer really renders, not\n"
     "   the last coarse step below it. When the clean and the failing level differ\n"
     "   in the rate (every key was down already), the rate between them is split\n"
+    ;
+static const char* const kManualText_part10 =
     "   first. A level whose callbacks stay between 85 and 100 % of the period for\n"
     "   two seconds is neither clean nor a breakup: it counts as a failure, and the\n"
     "   run narrows down below it. Below 1 000 voices the result is taken as\n"
     "   measured, not rounded. When even all 61 keys struck 16 times a second produce no more\n"
     "   voices and the audio stays clean, the organ itself is the limit, not the\n"
     "   computer. The *DSP* field may read lower than 85 % at the moment the run\n"
-    ;
-static const char* const kManualText_part10 =
     "   ends: it shows a peak that fades within a fraction of a second, while the\n"
     "   judge takes the single longest callback and every late one. Above the\n"
     "   measured value the sound is often still fine - until the first callback\n"
@@ -2055,11 +2061,12 @@ static const char* const kManualText_part10 =
     "     (loops, splices, envelopes), the interpolation kernel and the per-key\n"
     "     tone filtering - timed on the lanes themselves while the run went;\n"
     "   - the callback time of the run split into a fixed part per block (the\n"
-    "     hand-over, the IR heads, the bookkeeping) and a part per voice, and from\n"
-    "     that what half, twice and four times the buffer would give for this\n"
-    "     organ. There is no general rule: on a two-core laptop a doubled buffer\n"
-    "     gave 17 % more voices, on a Ryzen a quarter of the buffer still gave\n"
-    "     62 % of the voices - the report computes it from the run.\n"
+    "     hand-over, the IR heads, the bookkeeping) and a part per voice. The\n"
+    "     report does not forecast other buffer sizes: on a two-core laptop a\n"
+    "     doubled buffer gave 17 % more voices, on a Ryzen a quarter of the\n"
+    "     buffer still gave 62 % of the voices - no model fits, the buffer is\n"
+    "     cheap to try and the measurement tells. A buffer below 256 samples\n"
+    "     gets a recommendation to try 256 or 512, nothing more.\n"
     "   On Linux the report names the CPU governor (\"performance\" keeps the\n"
     "   clock up), on Windows the power plan; when the CPU clocks cannot be read\n"
     "   it says so. During the run the progress text shows the CPU of the render\n"
@@ -2215,6 +2222,8 @@ static const char* const kManualText_part10 =
     "\n"
     "The tremulant modulates pitch (the division's *Tremulant depth*) and level;\n"
     "this is the level modulation per cent of pitch modulation (default 0.187 dB\n"
+    ;
+static const char* const kManualText_part11 =
     "per cent). Higher values give a tremulant that is more heard in the loudness\n"
     "than in the pitch.\n"
     "\n"
@@ -2222,8 +2231,6 @@ static const char* const kManualText_part10 =
     "\n"
     "Pipes a rank does not have (beyond its compass, in gaps, the extra octave of an\n"
     "extension) are filled from the nearest real pipes: this many adjacent pipes are\n"
-    ;
-static const char* const kManualText_part11 =
     "taken as a group and transposed by the group's width, and the group repeats for\n"
     "further pipes (1 to 12, default 12). With 12 every missing pipe is the octave\n"
     "transposition of a real one, so the rank's chromatic variety is kept; with 1\n"
@@ -2417,6 +2424,8 @@ static const char* const kManualText_part11 =
     "Shows or hides the Stop List button (see \"4. The Stop List (building the\n"
     "organ)\").\n"
     "\n"
+    ;
+static const char* const kManualText_part12 =
     "### Top bar: Couplers\n"
     "\n"
     "Shows or hides the Couplers button (see \"Couplers\").\n"
@@ -2424,8 +2433,6 @@ static const char* const kManualText_part11 =
     "### Top bar: Temperaments\n"
     "\n"
     "Shows or hides the Temperaments button (see \"Temperaments\").\n"
-    ;
-static const char* const kManualText_part12 =
     "\n"
     "### Top bar: Hide/Show all voicing\n"
     "\n"
@@ -2619,6 +2626,8 @@ static const char* const kManualText_part12 =
     "### Swell: shutter inertia (settling time)\n"
     "\n"
     "How slowly the shutters follow the pedal (50 to 2000 ms, default 300). Larger\n"
+    ;
+static const char* const kManualText_part13 =
     "= heavier, smoother movement; a sudden pedal stroke then takes this long to\n"
     "arrive.\n"
     "\n"
@@ -2626,8 +2635,6 @@ static const char* const kManualText_part12 =
     "\n"
     "The level of the whole division, -60 to +12 dB (default 0), for balancing the\n"
     "divisions against each other.\n"
-    ;
-static const char* const kManualText_part13 =
     "\n"
     "### Audio output channels (default perspective)\n"
     "\n"

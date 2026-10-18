@@ -2299,7 +2299,10 @@ namespace
                 // always find idle CPUs; the wake-up costs ~0.1 ms of a 10 ms period.
                 // With other device threads around, only the brief spin after work.
                 const int64_t period = periodTicks.load(std::memory_order_relaxed);
-                const int64_t window = otherAudioThreads > 0 ? hotWindowTicks
+                // Few cores (one or two): only the brief spin after work - a worker
+                // spinning across the gap would hold a core the bookkeeping, the
+                // sound server and the window need (the two-core laptops, #9/#10).
+                const int64_t window = (otherAudioThreads > 0 || fewCores) ? hotWindowTicks
                     : juce::jlimit(hotWindowTicks, hotWindowTicks * 5 / 2, period + period / 2);
                 hotUntilTicks.store(now + window, std::memory_order_relaxed);
             }
@@ -2670,6 +2673,7 @@ namespace
         std::atomic<int64_t> lastJobTicks{ 0 };
         std::atomic<int64_t> periodTicks{ 0 };
         const int64_t hotWindowTicks = juce::Time::getHighResolutionTicksPerSecond() / 1000;   // 1 ms
+        const bool fewCores = juce::SystemStats::getNumPhysicalCpus() <= 2;
     };
 }
 
