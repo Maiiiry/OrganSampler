@@ -1840,21 +1840,27 @@ static const char* const kManualText_part9 =
     "never chosen in this editor on this computer (older versions let a portable\n"
     "file bring it in - the Rural Organ file left two-core laptops rendering on one\n"
     "thread) goes back to the default at the next start; a choice made here stays.\n"
-    "On a computer with one or two cores the default is ONE thread - the device\n"
-    "thread renders alone: a second render thread spinning between the blocks took\n"
-    "the other core from the note bookkeeping, the sound server and the window, and\n"
-    "two Core 2 Duo laptops lost a fifth of their polyphony with breakups (while\n"
-    "their own kernel benchmark showed the SSE2 kernel faster than the scalar one).\n"
-    "Two threads can still be chosen by hand from the list.\n"
+    "All physical cores means all of them on a two-core laptop as well. The render\n"
+    "workers and the control thread run at audio priority on every system (Linux:\n"
+    "SCHED_FIFO when the system allows it - the activity log says \"Render worker:\n"
+    "SCHED_FIFO\" or \"REFUSED\" with what to allow; macOS: a time-constraint thread\n"
+    "like CoreAudio's own), and on one or two cores the device thread yields the\n"
+    "core while it waits for a lane and the lanes take small chunks, so the second\n"
+    "thread helps instead of holding the block up.\n"
     "\n"
     "### Currently active\n"
     "\n"
     "The threads really rendering now and the interpolation kernel the processor\n"
-    "gets: AVX2 (eight frames a step, current x86-64 processors), SSE2 (four\n"
-    "frames, older x86-64 such as a Core 2 Duo), NEON (four frames, Apple silicon\n"
-    "and Linux arm64) or scalar. The kernel is chosen at start from what the CPU\n"
-    "reports, on Windows, Linux and macOS alike; the self-test (`--kerneltest`)\n"
-    "checks it against the scalar code and tells its speed. Information only.\n"
+    "gets: AVX2 (eight frames a step, current x86-64 processors), NEON (four\n"
+    "frames, Apple silicon and Linux arm64) or scalar (x86-64 without AVX2, such\n"
+    "as a Core 2 Duo: the scalar kernel measured more polyphony there than the\n"
+    "four-frame SSE2 one, so it stays). The kernel is chosen at start, on\n"
+    "Windows, Linux and macOS alike; the self-test (`--kerneltest`) checks every\n"
+    "kernel of the CPU against the scalar code and tells its speed. To measure\n"
+    "one kernel against another on a real organ, start the program with the\n"
+    "environment variable `ORGAN_KERNEL=scalar`, `sse2`, `avx2` or `neon` and run\n"
+    "the polyphony measurement with each; the activity log says which kernel\n"
+    "runs (\"Render kernel: ...\"). Information only.\n"
     "\n"
     "### Render threads for Aggregated WASAPI\n"
     "\n"
@@ -2014,14 +2020,14 @@ static const char* const kManualText_part9 =
     "   failing level still lies more than a tenth above the clean one - letting\n"
     "   the tails die away in between. When the keys cannot be split any further\n"
     "   and the gap is still wide (a weak computer: clean at 474 voices, broken at\n"
+    ;
+static const char* const kManualText_part10 =
     "   742), the run narrows down by stops as well: at the failing number of keys\n"
     "   a share of the registration is engaged - every button of the grid counts,\n"
     "   transmissions and extensions included - halved towards the clean side, up\n"
     "   to four times, so that the result is what the computer really renders, not\n"
     "   the last coarse step below it. When the clean and the failing level differ\n"
     "   in the rate (every key was down already), the rate between them is split\n"
-    ;
-static const char* const kManualText_part10 =
     "   first. A level whose callbacks stay between 85 and 100 % of the period for\n"
     "   two seconds is neither clean nor a breakup: it counts as a failure, and the\n"
     "   run narrows down below it. Below 1 000 voices the result is taken as\n"
@@ -2216,14 +2222,14 @@ static const char* const kManualText_part10 =
     "### Key velocity: treble cut opens over\n"
     "\n"
     "How long the treble cut of a gentle key takes to open fully after the key goes\n"
+    ;
+static const char* const kManualText_part11 =
     "down (5 to 1000 ms, default 80).\n"
     "\n"
     "### Tremulant: volume change per cent of pitch\n"
     "\n"
     "The tremulant modulates pitch (the division's *Tremulant depth*) and level;\n"
     "this is the level modulation per cent of pitch modulation (default 0.187 dB\n"
-    ;
-static const char* const kManualText_part11 =
     "per cent). Higher values give a tremulant that is more heard in the loudness\n"
     "than in the pitch.\n"
     "\n"
@@ -2418,14 +2424,14 @@ static const char* const kManualText_part11 =
     "### Top bar: Record\n"
     "\n"
     "Shows or hides the Record button (the stereo mix to a WAV file).\n"
+    ;
+static const char* const kManualText_part12 =
     "\n"
     "### Top bar: Stop List\n"
     "\n"
     "Shows or hides the Stop List button (see \"4. The Stop List (building the\n"
     "organ)\").\n"
     "\n"
-    ;
-static const char* const kManualText_part12 =
     "### Top bar: Couplers\n"
     "\n"
     "Shows or hides the Couplers button (see \"Couplers\").\n"
@@ -2620,14 +2626,14 @@ static const char* const kManualText_part12 =
     "### Swell: maximum attenuation when closed\n"
     "\n"
     "How much quieter the division is with the swell box fully closed (0 to 60 dB,\n"
+    ;
+static const char* const kManualText_part13 =
     "default 13). The harmonic filter (*Swell: harmonic filter*) dulls the tone at\n"
     "the same time.\n"
     "\n"
     "### Swell: shutter inertia (settling time)\n"
     "\n"
     "How slowly the shutters follow the pedal (50 to 2000 ms, default 300). Larger\n"
-    ;
-static const char* const kManualText_part13 =
     "= heavier, smoother movement; a sudden pedal stroke then takes this long to\n"
     "arrive.\n"
     "\n"

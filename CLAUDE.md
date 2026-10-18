@@ -128,11 +128,19 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   880 ns - the 880 was the dynamic tone shelf (private buffer + split pass, on for every voice as soon as the wind sags),
   folded into the kernels in 0.8.120 (`kernel*Shelf`, `dispatch*Shelf`: out += y(1-k), wet += y k; the route low-passes
   the wet sum as before). Splice/cubic spans and per-key tone voices still go through a private buffer.
-- One or two physical cores: ONE render thread (the device thread alone; `workersForCurrentPreset`) and the workers'
-  hot spin window is 1 ms only (`RenderPool::fewCores`). 0.8.119-0.8.121 gave the Core 2 Duo laptops two threads: the
-  worker spinning with `_mm_pause` between blocks took the second core from the control thread, PipeWire/CoreAudio and
-  the GUI - 1700 -> 1400 voices with breakups (#9, #10) although their own kernel benchmark showed SSE2 faster than
-  scalar (4.6-4.9 vs 6.7-7.1 ns). Never blame a kernel without the benchmark numbers from the report.
+- "All physical cores" means ALL of them on every computer, two-core laptops included - never silently one (the user
+  refused that: nobody picks threads by hand). What broke the Core 2 Duo laptops in 0.8.119-0.8.122 (1700 -> 1400
+  voices, #9/#10) was not the SSE2 kernel (their own benchmark: 4.6-4.9 vs scalar 6.7-7.1 ns) but that on Linux and
+  macOS the render workers and the control thread had NO priority (Windows had THREAD_PRIORITY_HIGHEST + MMCSS from
+  the start): a worker preempted by PipeWire/CoreAudio/the GUI held every block up, and the poster waited with
+  `_mm_pause` instead of yielding. 0.8.123: `raiseAudioThreadPriority()` (Linux SCHED_FIFO/SCHED_RR, logged when
+  refused; macOS time-constraint thread), `gFewCores` (<= 2 physical): poster waits with `std::this_thread::yield()`,
+  chunks <= 12 voices, hot spin window 1 ms. Never blame a kernel without the benchmark numbers from the report.
+  AND the scalar-days behaviour is back where the user measured: x86 without AVX2 renders SCALAR (`bestKernel`; the
+  SSE2 kernel exists only for the kernel test's comparison), ENGINE_CPU_PAUSE outside Windows is `std::this_thread::
+  yield()` again. Do not re-enable SSE2 or the pause spin for those machines without a measurement from them.
+  `ORGAN_KERNEL=scalar|sse2|avx2|neon` (env, read once in `bestKernel`) runs the engine with that kernel for A/B
+  measurements on a real organ; the log line "Render kernel: X (default Y)" and system.txt ("kernel X") say which runs.
 - The polyphony report makes NO forecast for other buffer sizes (128/256/512 runs on the Ryzen: 24 900 / 38 600 ->
   no model fits); the small-buffer paragraph is a recommendation (256/512), never "breaks at a few hundred voices".
 - Render threads default = all physical cores, always. `renderThreadPresetChosen` (settings, machine-specific) marks a

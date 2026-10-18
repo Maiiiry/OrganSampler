@@ -24,6 +24,15 @@
 #else
 #include <dirent.h>
 #include <sys/stat.h>
+#include <pthread.h>
+#include <sched.h>
+#include <cerrno>
+#endif
+#if JUCE_MAC
+#include <mach/mach.h>
+#include <mach/thread_policy.h>
+#include <mach/thread_act.h>
+#include <mach/mach_time.h>
 #endif
 
 namespace
@@ -140,15 +149,19 @@ namespace
  #else
   #define ENGINE_AVX2_FN __attribute__((target("avx2")))
  #endif
- #define ENGINE_CPU_PAUSE() _mm_pause()
+ // The spin-wait hint: _mm_pause on Windows (the workers hold their cores
+ // there, with MMCSS behind them); a thread yield everywhere else, as before
+ // 0.8.119 - on a two-core laptop a spinning worker took the core the sound
+ // server and the note bookkeeping needed (#9, #10).
+ #if JUCE_WINDOWS
+  #define ENGINE_CPU_PAUSE() _mm_pause()
+ #else
+  #define ENGINE_CPU_PAUSE() std::this_thread::yield()
+ #endif
 #elif defined(__aarch64__) || defined(_M_ARM64)
  #define ENGINE_ARM64 1
  #include <arm_neon.h>
- #if defined(_MSC_VER)
-  #define ENGINE_CPU_PAUSE() __yield()
- #else
-  #define ENGINE_CPU_PAUSE() __asm__ __volatile__("yield" ::: "memory")
- #endif
+ #define ENGINE_CPU_PAUSE() std::this_thread::yield()
 #else
  #define ENGINE_CPU_PAUSE() std::this_thread::yield()
 #endif
@@ -176,6 +189,58 @@ namespace
     struct VoiceProfile { int64_t header = 0, spans = 0, kernel = 0, post = 0; int64_t voices = 0; };
     thread_local VoiceProfile tlVoiceProfile;
     inline int64_t profileTicks() noexcept { return juce::Time::getHighResolutionTicks(); }
+
+    // One or two physical cores: no spare core for the note bookkeeping, the
+    // sound server and the window while every lane renders - smaller chunks
+    // (a lane preempted in the middle of a chunk holds the whole job up), the
+    // waits yield the core instead of spinning on it.
+    const bool gFewCores = juce::SystemStats::getNumPhysicalCpus() <= 2;
+
+    // The render workers and the control thread run beside the audio callbacks
+    // at audio priority on every system (Windows had it from the start; on
+    // Linux and macOS they ran at the priority of the window - on a two-core
+    // laptop a worker preempted by the sound server or the window held every
+    // block up, #9/#10). Returns what was granted, for the log.
+    juce::String raiseAudioThreadPriority(const char* what)
+    {
+       #if JUCE_WINDOWS
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+        if (HMODULE avrt = LoadLibraryW(L"avrt.dll"))
+        {
+            typedef HANDLE (WINAPI *AvSetFn)(LPCWSTR, LPDWORD);
+            if (auto fn = (AvSetFn)GetProcAddress(avrt, "AvSetMmThreadCharacteristicsW"))
+            {
+                DWORD taskIndex = 0;
+                fn(L"Pro Audio", &taskIndex);
+            }
+        }
+        return juce::String(what) + ": highest priority, MMCSS Pro Audio";
+       #elif JUCE_MAC
+        // A time-constraint (real-time) thread like CoreAudio's own: a 10 ms
+        // period with up to 8 ms of computation, preemptible.
+        mach_timebase_info_data_t timebase{};
+        mach_timebase_info(&timebase);
+        auto toAbsolute = [&timebase](double ms) { return (uint32_t)(ms * 1.0e6 * (double)timebase.denom / (double)juce::jmax(1u, timebase.numer)); };
+        thread_time_constraint_policy_data_t policy{};
+        policy.period = toAbsolute(10.0);
+        policy.computation = toAbsolute(8.0);
+        policy.constraint = toAbsolute(10.0);
+        policy.preemptible = 1;
+        const auto result = thread_policy_set(pthread_mach_thread_np(pthread_self()), THREAD_TIME_CONSTRAINT_POLICY,
+            (thread_policy_t)&policy, THREAD_TIME_CONSTRAINT_POLICY_COUNT);
+        return juce::String(what) + (result == KERN_SUCCESS ? ": real-time (time constraint) thread" : ": real-time priority REFUSED (" + juce::String((int)result) + ")");
+       #else
+        // SCHED_FIFO when the limits allow it (PipeWire's own threads run that
+        // way; most desktop setups grant it to the audio group or through
+        // rtkit), SCHED_RR as the second try, else the ordinary scheduler.
+        sched_param param{};
+        const int maxFifo = sched_get_priority_max(SCHED_FIFO);
+        param.sched_priority = juce::jlimit(1, juce::jmax(1, maxFifo), maxFifo * 6 / 10);
+        if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &param) == 0) return juce::String(what) + ": SCHED_FIFO " + juce::String(param.sched_priority);
+        if (pthread_setschedparam(pthread_self(), SCHED_RR, &param) == 0) return juce::String(what) + ": SCHED_RR " + juce::String(param.sched_priority);
+        return juce::String(what) + ": real-time priority REFUSED (" + juce::String(errno) + ") - the ordinary scheduler; allow it in /etc/security/limits.d (rtprio) or run under PipeWire's rtkit";
+       #endif
+    }
     // Dynamic tone: every level reduction by wind, tremulant or swell also dulls
     // the tone with a high shelf whose transition band starts at 1.8 kHz and is
     // about 1.8 kHz wide: out = (1 - k) x + k lowpass(x) with a fourth-order
@@ -1046,15 +1111,47 @@ namespace
         return false;
        #endif
     }
-    inline KernelKind bestKernel() noexcept
+    inline KernelKind defaultKernel() noexcept
     {
        #if ENGINE_X86
-        return cpuHasAvx2() ? KernelAvx2 : KernelSse2;
+        // x86 without AVX2 (Core 2 Duo and the like): the scalar kernel, as
+        // before 0.8.119. The SSE2 kernel benchmarks faster in isolation, but
+        // the two-core laptops measured less polyphony with 0.8.119-0.8.122
+        // and the user wants the behaviour of the scalar days back (#9, #10);
+        // the kernel test still reports SSE2 beside scalar for comparison, and
+        // ORGAN_KERNEL=sse2 tries it in the real engine (below).
+        return cpuHasAvx2() ? KernelAvx2 : KernelScalar;
        #elif ENGINE_ARM64
         return KernelNeon;
        #else
         return KernelScalar;
        #endif
+    }
+    // ORGAN_KERNEL=scalar|sse2|avx2|neon|auto: the kernel to run with, for
+    // measuring one against another on a real organ (the polyphony
+    // measurement with each, same computer, same buffer). A kernel the CPU or
+    // the build does not have falls back to the default. Read once.
+    inline KernelKind bestKernel() noexcept
+    {
+        static const KernelKind chosen = []
+        {
+            const KernelKind fallback = defaultKernel();
+            const char* env = std::getenv("ORGAN_KERNEL");
+            if (env == nullptr) return fallback;
+            const juce::String wanted = juce::String(env).trim().toLowerCase();
+            if (wanted == "scalar") return KernelScalar;
+           #if ENGINE_HAS_AVX2_KERNELS
+            if (wanted == "avx2" && cpuHasAvx2()) return KernelAvx2;
+           #endif
+           #if ENGINE_X86
+            if (wanted == "sse2") return KernelSse2;   // the four-frame kernels exist on every x86-64 build
+           #endif
+           #if ENGINE_ARM64
+            if (wanted == "neon") return KernelNeon;
+           #endif
+            return fallback;
+        }();
+        return chosen;
     }
     inline const char* kernelName(KernelKind kind) noexcept
     {
@@ -2302,7 +2399,7 @@ namespace
                 // Few cores (one or two): only the brief spin after work - a worker
                 // spinning across the gap would hold a core the bookkeeping, the
                 // sound server and the window need (the two-core laptops, #9/#10).
-                const int64_t window = (otherAudioThreads > 0 || fewCores) ? hotWindowTicks
+                const int64_t window = (otherAudioThreads > 0 || gFewCores) ? hotWindowTicks
                     : juce::jlimit(hotWindowTicks, hotWindowTicks * 5 / 2, period + period / 2);
                 hotUntilTicks.store(now + window, std::memory_order_relaxed);
             }
@@ -2319,9 +2416,14 @@ namespace
                 renderRange(voiceIndices, idx, idx + count, pool, ctx, mine);
             const int64_t posterBusy = juce::Time::getHighResolutionTicks() - posterStart;
             foldVoiceProfile();
-            // Wait for the other lanes.
+            // Wait for the other lanes. On few cores the wait yields the core: a
+            // lane that was preempted (the sound server, the window) gets it back
+            // at once instead of this thread spinning on it.
             while (job->lanesLeft.load(std::memory_order_acquire) != job->lanesJoined.load(std::memory_order_acquire))
-                ENGINE_CPU_PAUSE();
+            {
+                if (gFewCores) std::this_thread::yield();
+                else ENGINE_CPU_PAUSE();
+            }
             job->open.store(false, std::memory_order_release);
             {
                 // Utilisation of this job: the lanes' rendering time against the
@@ -2459,7 +2561,7 @@ namespace
                 int current = job.nextVoice.load(std::memory_order_relaxed);
                 const int remaining = job.numVoices - current;
                 if (remaining <= 0) return 0;
-                const int chunk = juce::jlimit(2, 48, remaining / juce::jmax(1, job.lanesHint * 3));
+                const int chunk = juce::jlimit(2, gFewCores ? 12 : 48, remaining / juce::jmax(1, job.lanesHint * 3));   // small chunks on few cores: a preempted lane holds up less
                 if (job.nextVoice.compare_exchange_weak(current, current + chunk, std::memory_order_acq_rel))
                 {
                     idxOut = current;
@@ -2581,18 +2683,8 @@ namespace
         void workerLoop(int index)
         {
             juce::Thread::setCurrentThreadName("Organ Render " + juce::String(index));
-           #if JUCE_WINDOWS
-            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
-            if (HMODULE avrt = LoadLibraryW(L"avrt.dll"))
-            {
-                typedef HANDLE (WINAPI *AvSetFn)(LPCWSTR, LPDWORD);
-                if (auto fn = (AvSetFn)GetProcAddress(avrt, "AvSetMmThreadCharacteristicsW"))
-                {
-                    DWORD taskIndex = 0;
-                    fn(L"Pro Audio", &taskIndex);
-                }
-            }
-           #endif
+            const auto granted = raiseAudioThreadPriority("Render worker");
+            if (index == 0) CrashHandler::note(granted);   // once: every worker gets the same
             juce::ScopedNoDenormals noDenormals;
             int64_t lastWorkTicks = 0;
             while (!shutdown.load(std::memory_order_relaxed))
@@ -2673,7 +2765,6 @@ namespace
         std::atomic<int64_t> lastJobTicks{ 0 };
         std::atomic<int64_t> periodTicks{ 0 };
         const int64_t hotWindowTicks = juce::Time::getHighResolutionTicksPerSecond() / 1000;   // 1 ms
-        const bool fewCores = juce::SystemStats::getNumPhysicalCpus() <= 2;
     };
 }
 
@@ -2764,8 +2855,8 @@ struct SamplerEngine::Impl
     void controlLoop()
     {
         juce::Thread::setCurrentThreadName("Organ Control");
+        CrashHandler::note(raiseAudioThreadPriority("Control thread"));
        #if JUCE_WINDOWS
-        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
         timeBeginPeriod(1);   // 1 ms waits really take 1 ms
        #endif
         juce::ScopedNoDenormals noDenormals;
@@ -5382,6 +5473,13 @@ struct SamplerEngine::Impl
 //==============================================================================
 SamplerEngine::SamplerEngine()
 {
+    {
+        juce::String note;
+        note << "Render kernel: " << kernelName(bestKernel()) << " (default " << kernelName(defaultKernel());
+        if (const char* env = std::getenv("ORGAN_KERNEL")) note << ", ORGAN_KERNEL=" << env;
+        note << ")";
+        CrashHandler::note(note);
+    }
     for (auto& c : compassLow) c.store(0);
     for (auto& c : compassHigh) c.store(127);
     impl = std::make_unique<Impl>(*this);

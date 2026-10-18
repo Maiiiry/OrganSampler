@@ -1818,21 +1818,27 @@ physical core on every computer: a setting that is not the default and was
 never chosen in this editor on this computer (older versions let a portable
 file bring it in - the Rural Organ file left two-core laptops rendering on one
 thread) goes back to the default at the next start; a choice made here stays.
-On a computer with one or two cores the default is ONE thread - the device
-thread renders alone: a second render thread spinning between the blocks took
-the other core from the note bookkeeping, the sound server and the window, and
-two Core 2 Duo laptops lost a fifth of their polyphony with breakups (while
-their own kernel benchmark showed the SSE2 kernel faster than the scalar one).
-Two threads can still be chosen by hand from the list.
+All physical cores means all of them on a two-core laptop as well. The render
+workers and the control thread run at audio priority on every system (Linux:
+SCHED_FIFO when the system allows it - the activity log says "Render worker:
+SCHED_FIFO" or "REFUSED" with what to allow; macOS: a time-constraint thread
+like CoreAudio's own), and on one or two cores the device thread yields the
+core while it waits for a lane and the lanes take small chunks, so the second
+thread helps instead of holding the block up.
 
 ### Currently active
 
 The threads really rendering now and the interpolation kernel the processor
-gets: AVX2 (eight frames a step, current x86-64 processors), SSE2 (four
-frames, older x86-64 such as a Core 2 Duo), NEON (four frames, Apple silicon
-and Linux arm64) or scalar. The kernel is chosen at start from what the CPU
-reports, on Windows, Linux and macOS alike; the self-test (`--kerneltest`)
-checks it against the scalar code and tells its speed. Information only.
+gets: AVX2 (eight frames a step, current x86-64 processors), NEON (four
+frames, Apple silicon and Linux arm64) or scalar (x86-64 without AVX2, such
+as a Core 2 Duo: the scalar kernel measured more polyphony there than the
+four-frame SSE2 one, so it stays). The kernel is chosen at start, on
+Windows, Linux and macOS alike; the self-test (`--kerneltest`) checks every
+kernel of the CPU against the scalar code and tells its speed. To measure
+one kernel against another on a real organ, start the program with the
+environment variable `ORGAN_KERNEL=scalar`, `sse2`, `avx2` or `neon` and run
+the polyphony measurement with each; the activity log says which kernel
+runs ("Render kernel: ..."). Information only.
 
 ### Render threads for Aggregated WASAPI
 

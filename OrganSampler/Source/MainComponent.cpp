@@ -4414,7 +4414,7 @@ juce::File MainComponent::writeProblemReport(const juce::String& what, const juc
            << "ram: " << juce::String(ramMb / 1024.0, 1) << " GB\n";
     if (auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
         system << "display: " << display->totalArea.getWidth() << "x" << display->totalArea.getHeight() << " at " << juce::roundToInt(display->scale * 100.0) << " %\n";
-    system << "render threads: " << (engine.getRenderWorkerCount() + 1) << "  (preset " << renderThreadPreset << ")\n"
+    system << "render threads: " << (engine.getRenderWorkerCount() + 1) << "  (preset " << renderThreadPreset << "), kernel " << engine.currentKernelName() << "\n"
            << "polyphony limit: " << engine.getMaxPolyphony() << "\n"
            << "configuration: " << (currentConfigurationName.isNotEmpty() ? currentConfigurationName : juce::String("(none)")) << "\n"
            << "divisions: " << (manualCount + 1) << ", stops: " << engine.getStops().size() << ", folder trees: " << (int)sampleTrees.size() << "\n";
@@ -19016,12 +19016,10 @@ int MainComponent::workersForCurrentPreset() const
     if (renderThreadPreset == "all") lanes = logical;
     else if (renderThreadPreset == "allMinusOne") lanes = logical - 1;
     else if (renderThreadPreset == "physicalMinusOne") lanes = physical - 1;
-    // One or two cores: the device thread renders alone. A worker on the
-    // second core spins between the blocks and takes it from the note
-    // bookkeeping, the sound server and the window; measured on two Core 2
-    // Duo laptops (issues #9, #10): two render threads gave 1400 voices and
-    // breakups, one thread 1700. "All physical cores" means one thread there.
-    if (physical <= 2 && renderThreadPreset != "all" && renderThreadPreset != "custom") lanes = 1;
+    // "All physical cores" means all of them on every computer, two cores
+    // included: the workers run at audio priority, spin only briefly and take
+    // small chunks there (SamplerEngine), so the second lane helps instead of
+    // holding the block up (#9, #10).
     return juce::jlimit(0, 62, lanes - 1);
 }
 
@@ -19972,9 +19970,7 @@ void MainComponent::showConfigurationEditor()
                 // "all - 1". The default comes first and says so.
                 juce::StringArray presetIds{ "physical" };
                 juce::StringArray items;
-                items.add(physical <= 2 ? juce::String("All physical cores (1 thread: on ") + juce::String(physical) + (physical == 1 ? " core" : " cores")
-                        + " the second one stays with the note bookkeeping and the system)  [default]"
-                    : "All physical cores (" + juce::String(physical) + " threads)  [default]");
+                items.add("All physical cores (" + juce::String(physical) + (physical == 1 ? " thread" : " threads") + ")  [default]");
                 if (physical > 1) { presetIds.add("physicalMinusOne"); items.add("All physical cores - 1 (" + juce::String(physical - 1) + (physical == 2 ? " thread" : " threads") + ")"); }
                 if (logical > physical)
                 {

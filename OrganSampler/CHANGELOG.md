@@ -12,6 +12,30 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.123] - 2026-10-18
+
+### Fixed
+- Two cores render on two threads again - "All physical cores" means all of
+  them on every computer (0.8.122 had made it one thread on two-core
+  machines; nobody is going to pick threads by hand). The real defect is
+  fixed instead: on Linux and macOS the render workers and the control
+  thread ran at the priority of the window (Windows had audio priority
+  from the start), so on a two-core laptop a worker preempted by the sound
+  server or the window held every block up. They now run at audio priority
+  (Linux SCHED_FIFO, SCHED_RR as the second try, with a note in the log
+  when the system refuses it; macOS a time-constraint thread like
+  CoreAudio's). On one or two cores the device thread yields the core
+  while it waits for a lane instead of spinning on it, the lanes take
+  chunks of at most 12 voices, and the workers spin only briefly after
+  work.
+- The behaviour of the scalar days is back for processors without AVX2
+  (Core 2 Duo and the like): the scalar interpolation kernel instead of the
+  four-frame SSE2 one, and outside Windows the render workers wait with a
+  thread yield again instead of a pause spin. The SSE2 kernel benchmarks
+  faster in isolation (the kernel test still shows it beside the scalar
+  one), but the two-core laptops measured less polyphony with 0.8.119 to
+  0.8.122, and what counts is the measured organ.
+
 ## [0.8.122] - 2026-10-18
 
 ### Fixed
