@@ -9499,7 +9499,7 @@ void MainComponent::launchConfigurationLoadChooser()
         }
     }
     configurationFileChooser = std::make_unique<juce::FileChooser>(
-        "Load portable organ configuration", start, "*.json");
+        "Load organ configuration (OrganSampler .json, or a Hauptwerk organ definition)", start, "*.json;*.Organ_Hauptwerk_xml;*.xml");
     configurationFileChooser->launchAsync(juce::FileBrowserComponent::openMode
         | juce::FileBrowserComponent::canSelectFiles,
         [safeThis](const juce::FileChooser& chooser)
@@ -9513,6 +9513,7 @@ void MainComponent::loadConfigurationFile(const juce::File& file)
 {
     // The chosen configuration file (Load Configuration): parsed, checked, applied.
     if (!file.existsAsFile()) return;
+    if (HauptwerkOdf::looksLikeOdf(file)) { importHauptwerkOdf(file); return; }
     auto configuration = juce::JSON::parse(file.loadFileAsString());
     if (!configuration.isObject()
         || !configuration.getProperty("manualKeyboards", juce::var()).isArray())
@@ -9538,7 +9539,7 @@ namespace
     }
 }
 
-void MainComponent::savePortableConfiguration(const juce::File& file, bool includeMidi, bool portable)
+void MainComponent::savePortableConfiguration(const juce::File& file, bool includeMidi, bool portable, bool publishFiles)
 {
     saveSettings();
     auto configuration = juce::JSON::parse(settingsFile.loadFileAsString());
@@ -9820,7 +9821,7 @@ void MainComponent::savePortableConfiguration(const juce::File& file, bool inclu
             "Save Configuration", "The configuration file could not be written.");
     else
     {
-        if (portable)
+        if (portable && publishFiles)
         {
             // For publishing in the project's configurations folder: the .json
             // zipped (a zip is downloaded from GitHub, a .json opens as text) and
@@ -9850,6 +9851,221 @@ void MainComponent::savePortableConfiguration(const juce::File& file, bool inclu
     }
 }
 
+//==============================================================================
+// Hauptwerk organ definitions: the ODF is read on a thread (a large one takes
+// seconds), turned into a plan - divisions in keyboard order, their folder
+// trees, the perspective patterns - and into a configuration that is written
+// into the organ's installation package and loaded like any other. The voicing
+// (per-pipe levels, averaged over the perspectives) follows once the folders
+// are loaded, and the configuration is saved again with it.
+void MainComponent::importHauptwerkOdf(const juce::File& odfFile)
+{
+    struct ParseJob final : public juce::ThreadWithProgressWindow
+    {
+        ParseJob(const juce::File& f, juce::Component* over)
+            : juce::ThreadWithProgressWindow("Reading " + f.getFileName(), true, true, 10000, "Cancel", over), file(f) {}
+        void run() override
+        {
+            setStatusMessage("Reading the Hauptwerk organ definition...");
+            odf = std::make_shared<HauptwerkOdf>(HauptwerkOdf::parse(file, [this](double share) { setProgress(share); return !threadShouldExit(); }));
+        }
+        juce::File file;
+        std::shared_ptr<HauptwerkOdf> odf;
+    };
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    auto job = std::make_shared<ParseJob>(odfFile, this);
+    job->launchThread();
+    auto poll = std::make_shared<std::function<void()>>();
+    *poll = [safeThis, job, poll, odfFile]
+    {
+        if (job->isThreadRunning()) { juce::Timer::callAfterDelay(200, [poll] { (*poll)(); }); return; }
+        // This lambda lives in *poll: it is cleared only after this call has
+        // returned (clearing it here destroyed the captures while in use).
+        juce::MessageManager::callAsync([keep = poll] { *keep = nullptr; });
+        if (safeThis == nullptr || job->odf == nullptr) return;
+        auto odf = job->odf;
+        const auto root = HauptwerkOdf::hauptwerkRootFor(odfFile);
+        auto plan = odf->plan(root);
+        CrashHandler::note("Hauptwerk import: " + odfFile.getFullPathName() + " - " + (odf->compacted ? "compacted, " : "") + juce::String((int)odf->stops.size())
+            + " stops, " + juce::String((int)odf->ranks.size()) + " ranks, " + juce::String((int)odf->keyboards.size()) + " keyboards, " + juce::String(odf->sampleCount)
+            + " pipe samples (" + juce::String(odf->encryptedSamples) + " encrypted), packages " + [&] { juce::StringArray p; for (int id : odf->packageIds) p.add(juce::String(id)); return p.joinIntoString(", "); }()
+            + ", root " + root.getFullPathName() + (plan.error.isNotEmpty() ? "  ERROR " + plan.error : juce::String()));
+        if (plan.error.isNotEmpty())
+        {
+            juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Hauptwerk organ definition", plan.error, "OK", safeThis.getComponent());
+            return;
+        }
+        // The configuration: the divisions' trees, the perspectives, the names;
+        // everything else at its defaults (this computer's own settings are kept,
+        // as for any portable configuration). The voicing comes after the load.
+        juce::DynamicObject::Ptr rootObject = new juce::DynamicObject();
+        rootObject->setProperty("portable", true);
+        rootObject->setProperty("portableConfigurationVersion", 1);
+        rootObject->setProperty("containsMidiMappings", false);
+        rootObject->setProperty("configurationName", plan.organName);
+        rootObject->setProperty("manualCount", juce::jmax(1, (int)plan.divisions.size() - 1));
+        juce::Array<juce::var> manuals;
+        for (int i = 0; i < SamplerEngine::maxManuals; ++i)
+        {
+            juce::DynamicObject::Ptr item = new juce::DynamicObject();
+            if (i < (int)plan.divisions.size())
+            {
+                const auto& division = plan.divisions[(size_t)i];
+                item->setProperty("folderPath", division.trees.empty() ? juce::String() : division.trees.front().getFullPathName());
+                juce::Array<juce::var> extras;
+                for (size_t t = 1; t < division.trees.size(); ++t) extras.add(division.trees[t].getFullPathName());
+                item->setProperty("extraFolderPaths", extras);
+                item->setProperty("compassLow", division.lowNote);
+                item->setProperty("compassHigh", division.highNote);
+                // The Stop List table of the division (stop building): every ODF stop
+                // as a row with one folder per perspective - rank folders from several
+                // packages become the perspectives of ONE stop (without the table the
+                // automatic rules would make a second stop "(2)" of the same name).
+                juce::DynamicObject::Ptr build = new juce::DynamicObject();
+                build->setProperty("active", true);
+                juce::StringArray perspectivesUsed;
+                juce::Array<juce::var> entries;
+                for (const auto& stop : division.stops)
+                {
+                    juce::Array<juce::var> folders;
+                    juce::StringArray labelsDone;
+                    for (const int rankId : stop.rankIds)
+                    {
+                        const auto rankIt = odf->ranks.find(rankId);
+                        if (rankIt == odf->ranks.end() || rankIt->second.folder == juce::File()) continue;
+                        const auto& rank = rankIt->second;
+                        const juce::String label = rank.perspective.isNotEmpty() ? rank.perspective : juce::String("default");
+                        if (labelsDone.contains(label)) continue;   // a second rank of the same perspective (a split): the first stands
+                        int treeIndex = -1;
+                        for (size_t t = 0; t < plan.allTrees.size(); ++t)
+                            if (rank.folder == plan.allTrees[t] || rank.folder.isAChildOf(plan.allTrees[t])) { treeIndex = (int)t; break; }
+                        if (treeIndex < 0) continue;
+                        juce::DynamicObject::Ptr folder = new juce::DynamicObject();
+                        folder->setProperty("perspective", label);
+                        folder->setProperty("tree", treeIndex);
+                        folder->setProperty("path", slashes(rank.folder.getRelativePathFrom(plan.allTrees[(size_t)treeIndex])));
+                        folders.add(juce::var(folder.get()));
+                        labelsDone.add(label);
+                        perspectivesUsed.addIfNotAlreadyThere(label);
+                    }
+                    if (folders.isEmpty()) continue;
+                    juce::DynamicObject::Ptr entry = new juce::DynamicObject();
+                    entry->setProperty("name", stop.name);
+                    entry->setProperty("alias", juce::String());
+                    entry->setProperty("customName", true);
+                    entry->setProperty("child", false);
+                    entry->setProperty("folders", folders);
+                    entries.add(juce::var(entry.get()));
+                }
+                // The perspectives in the order of the patterns (Direct, Diffuse, Rear ...), "default" last.
+                juce::Array<juce::var> perspectiveList;
+                for (const auto& pattern : plan.perspectivePatterns)
+                {
+                    const auto label = pattern.upToFirstOccurrenceOf(";", false, false);
+                    if (perspectivesUsed.contains(label)) perspectiveList.add(label);
+                }
+                for (const auto& label : perspectivesUsed)
+                    if (!perspectiveList.contains(juce::var(label))) perspectiveList.add(label);
+                build->setProperty("perspectives", perspectiveList);
+                build->setProperty("entries", entries);
+                item->setProperty("stopBuild", juce::var(build.get()));
+            }
+            manuals.add(juce::var(item.get()));
+        }
+        rootObject->setProperty("manualKeyboards", manuals);
+        juce::Array<juce::var> trees;
+        for (const auto& tree : plan.allTrees) trees.add(tree.getFullPathName());
+        rootObject->setProperty("sampleTrees", trees);
+        juce::Array<juce::var> patterns;
+        for (const auto& pattern : plan.perspectivePatterns) patterns.add(pattern);
+        rootObject->setProperty("perspectivePatterns", patterns);
+        rootObject->setProperty("ignoredPatterns", juce::Array<juce::var>{ juce::var("trem") });
+        rootObject->setProperty("sampleLibraryRootName", plan.libraryRoot.getFileName());
+        {
+            // An empty voicing state: a new organ, nothing of the previous one's
+            // stops is kept (the voicing of unloaded stops is retained on purpose
+            // between loads of the SAME organ - not across organs).
+            juce::DynamicObject::Ptr voicing = new juce::DynamicObject();
+            voicing->setProperty("stops", juce::Array<juce::var>());
+            rootObject->setProperty("voicingSettings", juce::var(voicing.get()));
+        }
+        juce::var configuration(rootObject.get());
+        // Written where it belongs - the organ's installation package, beside the
+        // samples - and loaded from there; the Hauptwerk folders stay untouched.
+        if (!plan.configurationFile.replaceWithText(juce::JSON::toString(configuration, true)))
+        {
+            juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Hauptwerk organ definition",
+                "The configuration could not be written into the installation package:\n" + plan.configurationFile.getFullPathName(), "OK", safeThis.getComponent());
+            return;
+        }
+        juce::String summary;
+        summary << plan.organName << " - " << (int)plan.divisions.size() << " division(s):";
+        for (size_t i = 0; i < plan.divisions.size(); ++i)
+        {
+            const auto& d = plan.divisions[i];
+            summary << "\n  " << (i == 0 ? juce::String("P.") : romanNumeral((int)i) + ".") << " " << d.name << ": " << (int)d.stops.size() << " stop(s), keys "
+                    << d.lowNote << "-" << d.highNote << ", " << (int)d.trees.size() << " folder tree(s)";
+        }
+        if (!plan.perspectivePatterns.empty())
+        {
+            juce::StringArray names;
+            for (const auto& p : plan.perspectivePatterns) names.add(p.upToFirstOccurrenceOf(";", false, false));
+            summary << "\nPerspectives: " << names.joinIntoString(", ");
+        }
+        if (plan.skippedTremmedRanks > 0) summary << "\nTremmed ranks left out: " << plan.skippedTremmedRanks << " (OrganSampler has its own tremulant).";
+        if (plan.skippedNoiseRanks > 0) summary << "\nNoise ranks left out: " << plan.skippedNoiseRanks << ".";
+        if (plan.stopsWithoutSamples > 0) summary << "\nStops without playable pipes (couplers, tremulants, toys): " << plan.stopsWithoutSamples << ".";
+        for (const auto& note : plan.notes) summary << "\n" << note;
+        CrashHandler::note("Hauptwerk import plan: " + summary.replaceCharacters("\n", " ") + "; configuration " + plan.configurationFile.getFullPathName());
+        safeThis->hauptwerkImport = odf;
+        safeThis->runWhenLoaded([safeThis, odf, file = plan.configurationFile, summary] { if (safeThis != nullptr) safeThis->applyHauptwerkVoicing(odf, file, summary); });
+        safeThis->resolveAndApplyPortableConfiguration(configuration, plan.configurationFile);
+    };
+    juce::Timer::callAfterDelay(300, [poll] { if (*poll) (*poll)(); });
+}
+
+void MainComponent::applyHauptwerkVoicing(std::shared_ptr<HauptwerkOdf> odf, const juce::File& configurationFile, const juce::String& summary)
+{
+    if (odf == nullptr || hauptwerkImport != odf) return;
+    hauptwerkImport = nullptr;
+    // Every loaded stop: the mean of the Hauptwerk levels of its pipes over the
+    // perspectives (Hauptwerk voices per perspective, OrganSampler per stop) -
+    // the mean over the notes is the stop's volume, the rest its per-key voicing.
+    int voicedStops = 0, voicedNotes = 0;
+    {
+        const juce::ScopedLock lock(engine.getLock());
+        for (auto* stop : engine.getStops())
+        {
+            if (stop->container) continue;
+            std::vector<juce::File> folders;
+            if (stop->folder != juce::File()) folders.push_back(stop->folder);
+            for (const auto& rank : stop->ranks) if (rank->folder != juce::File()) folders.push_back(rank->folder);
+            const auto levels = odf->levelsForFolders(folders);
+            if (levels.empty()) continue;
+            double sum = 0.0; int n = 0;
+            for (const auto& [note, db] : levels) if (stop->hasNoteInAnyRank(note)) { sum += db; ++n; }
+            if (n == 0) continue;
+            const float mean = (float)(sum / n);
+            stop->setDb(juce::jlimit(-24.0f, 12.0f, mean));
+            for (const auto& [note, db] : levels)
+                if (stop->hasNoteInAnyRank(note)) { stop->setNoteDb(note, juce::jlimit(-12.0f, 12.0f, db - mean)); ++voicedNotes; }
+            ++voicedStops;
+        }
+    }
+    if (voicer != nullptr) { voicer->updateStopStates(); voicer->rebuildUI(stopsContent, stopsViewport); }
+    CrashHandler::note("Hauptwerk import: voicing applied to " + juce::String(voicedStops) + " stop(s), " + juce::String(voicedNotes) + " pipe level(s)");
+    // The configuration with the voicing, in the installation package (portable:
+    // paths relative to OrganInstallationPackages; no zip and README - those are
+    // for publishing, Save Configuration makes them when wanted).
+    savePortableConfiguration(configurationFile, false, true, false);
+    juce::String text = summary;
+    text << "\n\nVoicing: " << voicedStops << " stop(s) with the Hauptwerk pipe levels (averaged over the perspectives; the mean as the stop's volume, the rest per key)."
+         << "\n\nThe configuration is saved as\n" << configurationFile.getFullPathName()
+         << "\n\nEverything else of the organ definition (couplers, combinations, displays, tremulants, wind) was ignored: the folder structure decides the organ in OrganSampler. "
+            "Check the Stop List, the audio routes of the perspectives and the MIDI keyboards, then Save Configuration.";
+    juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, "Hauptwerk organ definition imported", text, "OK", this);
+}
+
 void MainComponent::runWhenLoaded(std::function<void()> action)
 {
     juce::Component::SafePointer<MainComponent> safeThis(this);
@@ -9859,7 +10075,7 @@ void MainComponent::runWhenLoaded(std::function<void()> action)
     {
         if (safeThis == nullptr) return;
         const bool loading = safeThis->activeFolderLoader != nullptr || safeThis->engine.getStops().isEmpty();
-        if (!loading && quiet >= 1) { (*shared)(); *poll = nullptr; return; }
+        if (!loading && quiet >= 1) { juce::MessageManager::callAsync([keep = poll] { *keep = nullptr; }); (*shared)(); return; }   // cleared after this call, not while it runs
         juce::Timer::callAfterDelay(5000, [poll, next = loading ? 0 : quiet + 1] { if (*poll) (*poll)(next); });
     };
     juce::Timer::callAfterDelay(5000, [poll] { if (*poll) (*poll)(0); });
@@ -11014,6 +11230,7 @@ void MainComponent::startUnpack(const juce::Array<juce::File>& archives, const j
     *poll = [safeThis, job, poll]
     {
         if (job->isThreadRunning()) { juce::Timer::callAfterDelay(200, [poll] { (*poll)(); }); return; }
+        juce::MessageManager::callAsync([keep = poll] { *keep = nullptr; });   // cleared after this call returns, never while it runs
         if (safeThis == nullptr) return;
         safeThis->lastSettingsDirectory = job->destination;
         safeThis->saveLastDirectory();
@@ -11040,7 +11257,6 @@ void MainComponent::startUnpack(const juce::Array<juce::File>& archives, const j
                 "stops' folders, or the division folders), or Load Configuration when a configuration came with the samples.";
         juce::AlertWindow::showMessageBoxAsync(failed ? juce::MessageBoxIconType::WarningIcon : juce::MessageBoxIconType::InfoIcon,
             "Unpack archive", text, "OK", safeThis.getComponent());
-        *poll = nullptr;
     };
     juce::Timer::callAfterDelay(300, [poll] { if (*poll) (*poll)(); });
 }

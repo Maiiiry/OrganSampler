@@ -12,6 +12,26 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.116] - 2026-10-18
+
+### Added
+- Load Configuration opens Hauptwerk organ definitions
+  (`<organ>.Organ_Hauptwerk_xml`): the divisions in keyboard order with
+  their key ranges, the stops' sample folders as the divisions' trees, the
+  perspectives from the rank names as perspective patterns, and the
+  per-pipe level adjustments as the voicing (averaged over the perspectives;
+  the mean as the stop's volume, the rest per key). Couplers, combinations,
+  tremulants, wind and displays are ignored; tremmed samples are left out;
+  encrypted sets (`.hbw`) are refused. The configuration is written into
+  the organ's installation package beside the samples and saved again with
+  the voicing once the folders are loaded. Every stop of the definition
+  becomes a row of the Stop List with its own name and one folder per
+  perspective - ranks spread over several installation packages (the rear
+  perspective in its own) are the perspectives of one stop. A pedal without
+  stops (a demo) keeps division P.; an organ without a pedal leaves it
+  empty. Compacted and plain ODFs alike; a development check of a file
+  without the GUI: `OrganSampler --hauptwerk "<file>"`.
+
 ## [0.8.115] - 2026-10-18
 
 ### Fixed

@@ -65,6 +65,49 @@ public:
             quit();
             return;
         }
+        if (commandLine.contains("--hauptwerk"))
+        {
+            // Development aid: OrganSampler.exe --hauptwerk "<file>.Organ_Hauptwerk_xml" parses the
+            // organ definition and prints what the import would make of it (hauptwerk.txt as well).
+            const juce::File odfFile(commandLine.fromFirstOccurrenceOf("--hauptwerk", false, false).trim().unquoted().trim());
+            juce::String report;
+            const auto odf = HauptwerkOdf::parse(odfFile);
+            report << "Hauptwerk ODF: " << odfFile.getFullPathName() << "\n" << (odf.error.isNotEmpty() ? "ERROR " + odf.error + "\n" : juce::String())
+                   << "organ \"" << odf.organName << "\" by " << odf.builder << ", " << odf.location << "; supplier " << odf.supplier
+                   << "; " << (odf.compacted ? "compacted" : "plain") << "; main package " << odf.mainPackageId << ", packages:";
+            for (int id : odf.packageIds) report << " " << id;
+            report << "\ndivisions " << (int)odf.divisions.size() << ", keyboards " << (int)odf.keyboards.size() << ", stops " << (int)odf.stops.size()
+                   << ", ranks " << (int)odf.ranks.size() << ", pipe samples " << odf.sampleCount << " (encrypted " << odf.encryptedSamples << ")\n";
+            for (const auto& [id, d] : odf.divisions) report << "  division " << id << ": " << d.name << "\n";
+            for (const auto& k : odf.keyboards) report << "  keyboard " << k.id << ": " << k.name << " -> division " << k.divisionId << ", keys " << k.lowNote << "-" << k.highNote << "\n";
+            int shown = 0;
+            for (const auto& [id, r] : odf.ranks)
+                if (shown++ < 12) report << "  rank " << id << ": " << r.name << " [" << r.perspective << (r.tremmed ? ", tremmed" : "") << (r.noise ? ", noise" : "")
+                    << "] " << (int)r.pipes.size() << " pipes, folder " << r.folder.getFullPathName() << "\n";
+            const auto root = HauptwerkOdf::hauptwerkRootFor(odfFile);
+            const auto plan = odf.plan(root);
+            report << "root " << root.getFullPathName() << "\nplan: " << (plan.error.isNotEmpty() ? "ERROR " + plan.error : juce::String("ok")) << "\n";
+            for (size_t i = 0; i < plan.divisions.size(); ++i)
+            {
+                const auto& d = plan.divisions[i];
+                report << "  [" << (int)i << "] " << d.name << " keys " << d.lowNote << "-" << d.highNote << ", " << (int)d.stops.size() << " stops\n";
+                for (const auto& t : d.trees) report << "      tree " << t.getFullPathName() << "\n";
+                for (size_t s = 0; s < d.stops.size() && s < 4; ++s)
+                {
+                    report << "      stop " << d.stops[s].name << " ->";
+                    for (const auto& f : d.stops[s].folders) report << " " << f.getFullPathName();
+                    report << "\n";
+                }
+            }
+            for (const auto& p : plan.perspectivePatterns) report << "  perspective pattern: " << p << "\n";
+            report << "  tremmed ranks skipped " << plan.skippedTremmedRanks << ", noise ranks " << plan.skippedNoiseRanks << ", stops without samples " << plan.stopsWithoutSamples << "\n";
+            for (const auto& n : plan.notes) report << "  note: " << n << "\n";
+            report << "  configuration: " << plan.configurationFile.getFullPathName() << "\n";
+            juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile("OrganSampler").getChildFile("hauptwerk.txt").replaceWithText(report);
+            std::fputs(report.toRawUTF8(), stdout);
+            quit();
+            return;
+        }
         if (commandLine.contains("--selftest"))
         {
             // Offline engine stress test: OrganSampler.exe --selftest "<sample folder>"

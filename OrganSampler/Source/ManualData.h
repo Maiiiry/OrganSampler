@@ -489,6 +489,36 @@ static const char* const kManualText_part2 =
     "with an empty instrument; nothing stops you from loading folders and playing\n"
     "without any configuration at all.\n"
     "\n"
+    "### Loading a Hauptwerk organ definition (ODF)\n"
+    "\n"
+    "*Load Configuration* also opens a Hauptwerk organ definition\n"
+    "(`<organ>.Organ_Hauptwerk_xml`, the files in Hauptwerk's `OrganDefinitions`\n"
+    "folder) and makes an OrganSampler configuration of it - the quick way to a\n"
+    "sample set that came with a Hauptwerk definition. What is taken from the\n"
+    "definition: the divisions in the order of their keyboards (the pedal first)\n"
+    "with their key ranges, the stops with their sample folders, the perspectives\n"
+    "(front, direct, diffuse, rear ... as the ranks are named, turned into the\n"
+    "perspective patterns), and the per-pipe level adjustments as the voicing:\n"
+    "Hauptwerk voices every perspective on its own, OrganSampler every stop, so\n"
+    "the levels of a pipe are averaged over the perspectives; the mean over the\n"
+    "pipes becomes the stop's volume, the rest the per-key voicing. Everything\n"
+    "else - couplers, combinations, tremulants, wind, displays, noises - is\n"
+    "ignored: the folder structure decides the organ, as always. Tremmed samples\n"
+    "(the \"tremmed\" ranks, the `trem` folders) are left out; OrganSampler has its\n"
+    "own tremulant. Encrypted sample sets (`.hbw` files) cannot be played and the\n"
+    "import says so.\n"
+    "\n"
+    "The samples must lie where Hauptwerk keeps them: the definition in\n"
+    "`OrganDefinitions`, the packages in `OrganInstallationPackages/<six-digit\n"
+    "id>` beside it (`D:\\Hauptwerk\\HauptwerkSampleSetsAndComponents\\...` on a\n"
+    "usual installation). The configuration is written into the organ's main\n"
+    "installation package, beside the samples (`<organ name>.json`; the\n"
+    "`OrganInstallationPackages` folder is its library root), loaded at once,\n"
+    "and saved again with the voicing once the folders are loaded. Then check\n"
+    "the Stop List, give the perspectives their audio routes and the divisions\n"
+    "their MIDI keyboards, and *Save Configuration* - as a portable one to\n"
+    "publish it.\n"
+    "\n"
     "### Portable configuration (to share with others)\n"
     "\n"
     "A configuration saved as it is carries the sound cards, the output channels\n"
@@ -576,6 +606,8 @@ static const char* const kManualText_part2 =
     "From top to bottom: the top bar of buttons, the combination row, the row of\n"
     "global sound sliders with the polyphony display, and the stop workspace - one\n"
     "column per division with its header and its stop grid.\n"
+    ;
+static const char* const kManualText_part3 =
     "\n"
     "## 2.1 Top bar buttons\n"
     "\n"
@@ -606,8 +638,6 @@ static const char* const kManualText_part2 =
     "  consoles (a MIDI piston on a console without a screen), where nobody could\n"
     "  react. An instrument without an open configuration file is kept as\n"
     "  \"Shutdown rescue configuration.json\" beside the settings.\n"
-    ;
-static const char* const kManualText_part3 =
     "- **GLOBAL RESET**: see \"GLOBAL RESET\".\n"
     "- **Configuration Editor**: every program setting in one scrolling dialog:\n"
     "  see \"8. Configuration Editor reference\".\n"
@@ -778,6 +808,8 @@ static const char* const kManualText_part3 =
     "- **Attack Gain** (-6 to +6 dB) - the start of every note is raised or\n"
     "  lowered by this much: more chiff, or a softer speaking, without touching the\n"
     "  held tone.\n"
+    ;
+static const char* const kManualText_part4 =
     "- **Attack Time** (0-500 ms, default 150) - how long the attack gain acts at\n"
     "  the start of the note: it holds for the first half of this time and fades\n"
     "  back to the normal level over the second half.\n"
@@ -808,8 +840,6 @@ static const char* const kManualText_part3 =
     "  any stop that must not have the full compass gets no extension. The stop's\n"
     "  transmissions are not affected (each transmission has its own boxes).\n"
     "- **Treble per key** (-9 to +9 dB) - a high shelf per pipe, above the\n"
-    ;
-static const char* const kManualText_part4 =
     "  frequency set in *Treble per key: shelf start frequency* (default 1800 Hz).\n"
     "- A *Reset to 0 dB* button sits beside each header; dragging with the right\n"
     "  mouse button paints one value across a row of sliders.\n"
@@ -980,6 +1010,8 @@ static const char* const kManualText_part4 =
     "- **Swap divisions...** exchanges the whole stop lists of two divisions, as if\n"
     "  their folders had been swapped (combinations and MIDI bindings follow).\n"
     "  **Reset division...** forgets one division's table.\n"
+    ;
+static const char* const kManualText_part5 =
     "- **Name:** derived from the folders; a typed name is kept until the field is\n"
     "  cleared. The name is the stop's identity in voicing, combinations and\n"
     "  configurations; the alias is only what is shown.\n"
@@ -1010,8 +1042,6 @@ static const char* const kManualText_part4 =
     "\n"
     "# 5. The Divisions dialog\n"
     "\n"
-    ;
-static const char* const kManualText_part5 =
     "*Settings* in a division header opens the dialog at that division; the\n"
     "division is chosen at the top. The settings of a division are the same as in\n"
     "its section of the Configuration Editor (\"Division sections (Pedal, Manual I\n"
@@ -1182,6 +1212,8 @@ static const char* const kManualText_part5 =
     "\n"
     "ASIO devices, Windows Audio (WASAPI) devices and the Aggregated WASAPI\n"
     "device can all be open at once. No other organ sampler on Windows does this.\n"
+    ;
+static const char* const kManualText_part6 =
     "\n"
     "The kinds of driver:\n"
     "\n"
@@ -1212,8 +1244,6 @@ static const char* const kManualText_part5 =
     "  packet into shorter deadlines - an IR's tail FFT alone can exceed a block\n"
     "  of 256 - without lowering the latency at all.\n"
     "\n"
-    ;
-static const char* const kManualText_part6 =
     "The price of mixing drivers (ASIO beside WASAPI in one organ) - read this\n"
     "before you do it:\n"
     "\n"
@@ -1384,6 +1414,8 @@ static const char* const kManualText_part6 =
     "\n"
     "So the polyphony a computer reaches is not a property of the computer alone:\n"
     "it depends on the whole configuration of the organ - the number of audio\n"
+    ;
+static const char* const kManualText_part7 =
     "routes (every perspective of every division, every auxiliary route with a\n"
     "device), the IR reverbs on them, the drivers and their buffer sizes, and the\n"
     "samples themselves (their number of perspectives, the length of their releases).\n"
@@ -1414,8 +1446,6 @@ static const char* const kManualText_part6 =
     "  cores. This is the layout with the highest polyphony. The buffer size sets\n"
     "  how much time each block of audio may take: a buffer of 512 samples allows\n"
     "  twice the work of 256, at twice the latency.\n"
-    ;
-static const char* const kManualText_part7 =
     "- **The buffer size: do not chase the smallest one.** A small buffer\n"
     "  (64 or 128 samples) cuts the reachable polyphony dramatically, because\n"
     "  every block must be rendered in a fraction of the time. An organ does not\n"
@@ -1586,6 +1616,8 @@ static const char* const kManualText_part7 =
     "\n"
     "The three other methods build a copy of every filled pipe in the background\n"
     "(when the stop loads, when its compass or a transmission changes, when a\n"
+    ;
+static const char* const kManualText_part8 =
     "setting changes). Until a pipe's copy is ready the pipe plays by plain\n"
     "resampling, so the organ is playable from the first moment; the stop buttons\n"
     "show the build going on (a dark track along the bottom, filling orange), and\n"
@@ -1616,8 +1648,6 @@ static const char* const kManualText_part7 =
     "Excellent within an octave either way. Weaknesses: upwards the vocoder\n"
     "slightly wobbles the pitch (a gentle unsteadiness of the tone); two octaves\n"
     "away the copy loses level and body; the attack's transient is smeared over the\n"
-    ;
-static const char* const kManualText_part8 =
     "analysis block (half a second for a 32' pipe) and inharmonic content can\n"
     "tremulate. And it often breaks the loops: the loop points are kept, but the\n"
     "vocoder's output at the loop end no longer matches the loop start exactly, so\n"
@@ -1788,6 +1818,8 @@ static const char* const kManualText_part8 =
     "plays exactly like a 48 kHz one and a 96 kHz set needs half the RAM it would\n"
     "otherwise. Loading takes longer. *Keep each file's own rate* loads faster and\n"
     "plays the files by interpolation. Takes effect at the next load.\n"
+    ;
+static const char* const kManualText_part9 =
     "\n"
     "### IR processing\n"
     "\n"
@@ -1818,8 +1850,6 @@ static const char* const kManualText_part8 =
     "Routes that share everything the reverb depends on share one convolution\n"
     "(since 0.8.109): rendered by the same audio device to the same output\n"
     "channels, with the same impulse response, dry/wet, wet volume, high and low\n"
-    ;
-static const char* const kManualText_part9 =
     "cut, pre-delay, decay and fade-out. Convolution is linear - the reverb of the\n"
     "summed dry signal of such routes is the sum of their reverbs - so the sound is\n"
     "the same and the work is paid once per group: Rural Organ's three divisions on\n"
@@ -1990,6 +2020,8 @@ static const char* const kManualText_part9 =
     "\n"
     "### Release cutting\n"
     "\n"
+    ;
+static const char* const kManualText_part10 =
     "Release samples are faded out over this share of their length and end there\n"
     "(5 to 100 %, default 100 = the full release). Shorter releases free polyphony\n"
     "sooner on a weak computer and dry a wet set.\n"
@@ -2020,8 +2052,6 @@ static const char* const kManualText_part9 =
     "three harmonic filters (swell, wind, tremulant) add up, capped at 12 dB; when\n"
     "all three are 0 dB the filter costs nothing.\n"
     "\n"
-    ;
-static const char* const kManualText_part10 =
     "### Wind: harmonic filter\n"
     "\n"
     "The same shelf following the wind sag: this much high-frequency loss at the\n"
@@ -2192,6 +2222,8 @@ static const char* const kManualText_part10 =
     "loudness of its source sample, so a filled pipe is as strong as the pipe it was\n"
     "made from. Off: the copy keeps whatever level the shift left it with (a copy\n"
     "with its formants moved down loses level).\n"
+    ;
+static const char* const kManualText_part11 =
     "\n"
     "### Filled pipes: keep the generated copies on disk (cache)\n"
     "\n"
@@ -2222,8 +2254,6 @@ static const char* const kManualText_part10 =
     "routine housekeeping.\n"
     "\n"
     "### Filled pipes cache folder\n"
-    ;
-static const char* const kManualText_part11 =
     "\n"
     "Where the cache files live. By default `FilledPipesCache` in the\n"
     "application-data folder, usually on the system drive; the row then says\n"
@@ -2338,7 +2368,8 @@ static const char* const kManualText_part11 =
     "\n"
     "### Top bar: Load Configuration\n"
     "\n"
-    "Shows or hides the Load Configuration button.\n"
+    "Shows or hides the Load Configuration button (an OrganSampler `.json`, or a\n"
+    "Hauptwerk organ definition - see \"Loading a Hauptwerk organ definition\").\n"
     "\n"
     "### Top bar: Save Configuration\n"
     "\n"
@@ -2393,6 +2424,8 @@ static const char* const kManualText_part11 =
     "### Target temperament\n"
     "\n"
     "The temperament the organ *plays* in (see \"Temperaments\"). Every pipe is retuned by the\n"
+    ;
+static const char* const kManualText_part12 =
     "difference between the target and the samples' base temperament, per pitch\n"
     "class. Choosing the base temperament itself plays the samples as recorded.\n"
     "The Temperaments dialog of the top bar does the same with one click, and\n"
@@ -2424,8 +2457,6 @@ static const char* const kManualText_part11 =
     "\n"
     "Folder name prefixes that mark a microphone perspective, one line per\n"
     "perspective. Every prefix that belongs to the same perspective must stand on\n"
-    ;
-static const char* const kManualText_part12 =
     "that one line, separated by semicolons; the perspective takes its name from\n"
     "the first entry of the line (\"Direct;01-dirMk2H-;dir\" makes folders with any\n"
     "of the three prefixes the perspective \"Direct\"). Defaults: Direct, Diffuse and\n"
@@ -2595,6 +2626,8 @@ static const char* const kManualText_part12 =
     "---\n"
     "\n"
     "## 8.7 Keeping track: the activity log\n"
+    ;
+static const char* const kManualText_part13 =
     "\n"
     "Everything the program does at a coarse level - devices opened, divisions\n"
     "loaded, builds of the filled pipes' copies - is noted in `CrashLogs\\activity.log`\n"
@@ -2626,8 +2659,6 @@ static const char* const kManualText_part12 =
     "again, signed in, and the form opens filled in. The same link is in the\n"
     "report folder as `Report on GitHub.html` - a double-click opens it, even\n"
     "days later.\n"
-    ;
-static const char* const kManualText_part13 =
     "\n"
     "## 8.8 Free software, licences, platforms\n"
     "\n"

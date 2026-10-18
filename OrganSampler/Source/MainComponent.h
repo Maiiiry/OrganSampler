@@ -3,6 +3,7 @@
 #include <JuceHeader.h>
 #include "SamplerEngine.h"
 #include "voicer.h"
+#include "HauptwerkOdf.h"
 #include "UIControls.h"
 #include <array>
 #include <atomic>
@@ -725,6 +726,7 @@ private:
     std::unique_ptr<juce::FileChooser> folderChooser;
     std::unique_ptr<juce::FileChooser> combinationsFileChooser;
     std::unique_ptr<juce::FileChooser> configurationFileChooser;
+    std::shared_ptr<HauptwerkOdf> hauptwerkImport;   // the organ definition being imported (until its voicing is applied)
     std::unique_ptr<juce::FileChooser> configurationRootChooser;
     juce::File lastSettingsDirectory;
 
@@ -1016,7 +1018,14 @@ private:
     // portable: for another computer - no MIDI, no audio devices or channels,
     // no machine settings, no unused trees (see the manual, "Portable
     // configuration (to share with others)").
-    void savePortableConfiguration(const juce::File& file, bool includeMidi, bool portable = false);
+    void savePortableConfiguration(const juce::File& file, bool includeMidi, bool portable = false, bool publishFiles = true);
+    // A Hauptwerk organ definition (ODF) chosen in Load Configuration: read for
+    // its divisions, stops, sample folders, perspectives and per-pipe levels, a
+    // configuration made of them (written beside the samples, in the organ's
+    // installation package) and loaded; the voicing is applied once the folders
+    // are loaded. See HauptwerkOdf.h.
+    void importHauptwerkOdf(const juce::File& odf);
+    void applyHauptwerkVoicing(std::shared_ptr<HauptwerkOdf> odf, const juce::File& configurationFile, const juce::String& summary);
     // The README of a configuration for the configurations folder on GitHub, in
     // the published form: written beside every portable configuration as
     // "<name>.README.md" (the user fills in the organ, the samples and the author).

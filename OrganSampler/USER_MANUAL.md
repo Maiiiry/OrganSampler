@@ -481,6 +481,36 @@ Starting the program without *Load the last configuration at startup* begins
 with an empty instrument; nothing stops you from loading folders and playing
 without any configuration at all.
 
+### Loading a Hauptwerk organ definition (ODF)
+
+*Load Configuration* also opens a Hauptwerk organ definition
+(`<organ>.Organ_Hauptwerk_xml`, the files in Hauptwerk's `OrganDefinitions`
+folder) and makes an OrganSampler configuration of it - the quick way to a
+sample set that came with a Hauptwerk definition. What is taken from the
+definition: the divisions in the order of their keyboards (the pedal first)
+with their key ranges, the stops with their sample folders, the perspectives
+(front, direct, diffuse, rear ... as the ranks are named, turned into the
+perspective patterns), and the per-pipe level adjustments as the voicing:
+Hauptwerk voices every perspective on its own, OrganSampler every stop, so
+the levels of a pipe are averaged over the perspectives; the mean over the
+pipes becomes the stop's volume, the rest the per-key voicing. Everything
+else - couplers, combinations, tremulants, wind, displays, noises - is
+ignored: the folder structure decides the organ, as always. Tremmed samples
+(the "tremmed" ranks, the `trem` folders) are left out; OrganSampler has its
+own tremulant. Encrypted sample sets (`.hbw` files) cannot be played and the
+import says so.
+
+The samples must lie where Hauptwerk keeps them: the definition in
+`OrganDefinitions`, the packages in `OrganInstallationPackages/<six-digit
+id>` beside it (`D:\Hauptwerk\HauptwerkSampleSetsAndComponents\...` on a
+usual installation). The configuration is written into the organ's main
+installation package, beside the samples (`<organ name>.json`; the
+`OrganInstallationPackages` folder is its library root), loaded at once,
+and saved again with the voicing once the folders are loaded. Then check
+the Stop List, give the perspectives their audio routes and the divisions
+their MIDI keyboards, and *Save Configuration* - as a portable one to
+publish it.
+
 ### Portable configuration (to share with others)
 
 A configuration saved as it is carries the sound cards, the output channels
@@ -2312,7 +2342,8 @@ Shows or hides the Save Voicing button. Hidden by default.
 
 ### Top bar: Load Configuration
 
-Shows or hides the Load Configuration button.
+Shows or hides the Load Configuration button (an OrganSampler `.json`, or a
+Hauptwerk organ definition - see "Loading a Hauptwerk organ definition").
 
 ### Top bar: Save Configuration
 

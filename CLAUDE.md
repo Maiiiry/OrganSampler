@@ -82,6 +82,25 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   or registration sets on/off states and must never replace, add to or remove from the list (0.8.92).
 - The voicing state keeps entries of stops the engine could not build (missing folders) and writes them back;
   never let a save drop voicing of a stop that merely failed to load.
+- Hauptwerk ODF import (0.8.116, `Source/HauptwerkOdf.{h,cpp}`, `MainComponent::importHauptwerkOdf`): Load Configuration
+  takes `*.Organ_Hauptwerk_xml` too. Only divisions (keyboard order, pedal first, compass from KeyboardKey), stop folders
+  (the common ancestor of a stop's rank folders; their parents are the division trees), perspectives (rank names
+  "Front A (direct): ..." -> patterns "Direct;01-dirMk2H-") and per-pipe levels (`Pipe_SoundEngine01_Layer`
+  AmpLvl_LevelAdjustDecibels, first layer only, averaged over perspectives -> stop volume + per-key dB) are taken.
+  Never couplers/combinations/tremulants/wind/displays. Tremmed ranks (AlternateRankID, "(tremmed)", `trem` folders) and
+  noise ranks are skipped; `.hbw`/`.hbx` (encrypted) refuse the import. Hauptwerk layout:
+  `<root>/OrganDefinitions/<odf>` + `<root>/OrganInstallationPackages/<6-digit id>/...`; the configuration is written
+  into the main package folder (`<organ>.json`, library root = OrganInstallationPackages), no zip/README
+  (`savePortableConfiguration(..., publishFiles=false)`). Compacted ODFs use letter tags (Stop a/b/c, StopRank a/d/p,
+  Rank a/b, Pipe a/b/d, Layer a/b/h, AttackSample b/c, Sample a/b/c, Keyboard a/b/x, KeyboardKey a/c, Division a/b).
+  Dev check without the GUI: `OrganSampler.exe --hauptwerk "<odf>"` prints the parse and the plan (also to
+  `%APPDATA%\OrganSampler\hauptwerk.txt`); the in-app path is `ORGAN_LOAD_CONFIGURATION=<odf>` + `ORGAN_DUMP_STOPLIST=`.
+  Stralsund (3135+3136) must give trees `00313x/pipe/{PE,HW,OW,UW}`, 13+14+12+12 stops, patterns Direct/Diffuse/Rear.
+  A polling lambda stored in a shared std::function (`*poll = [...]{...}`) must never do `*poll = nullptr` while it
+  runs - that destroys its own captures (a copy `self = *poll` does NOT help: the executing object is the original) -
+  it clears itself afterwards: `juce::MessageManager::callAsync([keep = poll] { *keep = nullptr; });`. Two crashes
+  of 0.8.116 (read of 0x24/0x28 in a SafePointer); a crashed process is then held by WerFault.exe, which keeps the
+  exe locked for the linker - `taskkill /F /PID <WerFault>` frees it.
 - "A stop" is every button of the grid: a stop with samples, every transmission, every extension, and a stop
   folder that has at least one sound under it (its own or a child's); rows nested in a stop folder are not
   stops (the folder is). NEVER count or switch only the stops with samples of their own (`engine.getStops()`
