@@ -565,6 +565,14 @@ void MainComponent::mergeConfiguration(juce::var added, const juce::File& addedF
     ignored.add("couplers, combinations, crescendo, temperament, the global sound settings and the MIDI buttons of the added configuration (the loaded ones stay)");
     baseRoot->removeProperty("portable");   // this computer's settings, as they are
     baseRoot->setProperty("containsMidiMappings", true);
+    // Two organs rarely stand at one pitch (a1 = 440, 415, 465 Hz ...): every
+    // stop of the merged organ is tuned to equal temperament at 440 Hz
+    // (Temperaments > "Equal at 440 Hz"), so they play together in tune.
+    if (!(bool)baseRoot->getProperty("equalAt440"))
+    {
+        baseRoot->setProperty("equalAt440", true);
+        done.add("every stop tuned to a1 = 440 Hz (Temperaments > Equal at 440 Hz switched on: two organs rarely stand at one pitch)");
+    }
 
     const juce::String summary = "Merged \"" + addedName + "\" into " + (currentConfigurationName.isNotEmpty() ? "\"" + currentConfigurationName + "\"" : juce::String("the loaded organ"))
         + ": " + juce::String(stopsAdded) + " stop(s) added" + (stopsShared > 0 ? ", " + juce::String(stopsShared) + " shared (not added)" : juce::String())

@@ -65,6 +65,20 @@ public:
             quit();
             return;
         }
+        if (commandLine.contains("--kerneltest"))
+        {
+            // The interpolation kernels of this CPU against the scalar one, and
+            // their speed (also kerneltest.txt beside the settings): the CI runs
+            // it on every platform - Apple silicon included, where the NEON kernel
+            // cannot be tried by hand here.
+            const auto report = SamplerEngine::runKernelSelfCheck();
+            juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile("OrganSampler").getChildFile("kerneltest.txt").replaceWithText(report);
+            std::fputs(report.toRawUTF8(), stdout);
+            std::fflush(stdout);
+            setApplicationReturnValue(report.contains("MISMATCH") ? 2 : 0);
+            quit();
+            return;
+        }
         if (commandLine.contains("--hauptwerk"))
         {
             // Development aid: OrganSampler.exe --hauptwerk "<file>.Organ_Hauptwerk_xml" parses the

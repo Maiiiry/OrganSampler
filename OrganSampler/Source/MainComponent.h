@@ -558,6 +558,7 @@ private:
     void applyIrProcessing(bool fromLoad);
     juce::String irProcessingStatus() const;
     int renderThreads = 0;                          // custom worker count, 0 = use the preset
+    bool renderThreadPresetChosen = false;          // set in the Configuration Editor on this computer (a preset that was never chosen goes back to the default)
     juce::String renderThreadPreset{ "allMinusOne" }; // all | allMinusOne | physical | physicalMinusOne
     int workersForCurrentPreset() const;
     void applyRenderThreadSetting();

@@ -124,7 +124,31 @@ namespace
  #include <timeapi.h>   // timeBeginPeriod (the control thread's 1 ms waits)
  #include <intrin.h>
  #pragma comment(lib, "winmm.lib")
+#endif
+
+// The SIMD kernels per processor family: AVX2 (eight frames a step) and SSE2
+// (four) on x86-64 - MSVC, GCC and clang alike, the AVX2 functions carrying
+// their own target attribute so the rest of the binary stays SSE2 - and NEON
+// (four) on arm64 (Apple silicon, Linux arm64). The kernel is chosen at run
+// time from what the CPU reports. ENGINE_CPU_PAUSE is the spin-wait hint of
+// the architecture (a thread yield is a system call - too slow for a spin).
+#if defined(_M_X64) || defined(_M_IX86) || defined(__x86_64__) || defined(__i386__)
+ #define ENGINE_X86 1
+ #include <immintrin.h>
+ #if defined(_MSC_VER)
+  #define ENGINE_AVX2_FN
+ #else
+  #define ENGINE_AVX2_FN __attribute__((target("avx2")))
+ #endif
  #define ENGINE_CPU_PAUSE() _mm_pause()
+#elif defined(__aarch64__) || defined(_M_ARM64)
+ #define ENGINE_ARM64 1
+ #include <arm_neon.h>
+ #if defined(_MSC_VER)
+  #define ENGINE_CPU_PAUSE() __yield()
+ #else
+  #define ENGINE_CPU_PAUSE() __asm__ __volatile__("yield" ::: "memory")
+ #endif
 #else
  #define ENGINE_CPU_PAUSE() std::this_thread::yield()
 #endif
@@ -490,7 +514,7 @@ namespace
         float pitchClassCents[12]{};      // global pitch + (selected - base) temperament
         float selectedCents[12]{};        // global pitch + selected temperament (absolute)
         bool randomAllowed = true, couplingAllowed = true;
-        bool useAvx2 = false;
+        int kernel = 0;             // KernelKind: the interpolation kernel of this block (scalar, SSE2, NEON, AVX2)
         // Dynamic tone shelf: fractions of each modulator's deepest attenuation
         // (0 = none, 1 = full depth); the voice sums them and clamps to 1.
         bool shelfEnabled = true;
@@ -766,13 +790,15 @@ namespace
     template <typename T>
     inline void prefetchSample(const T* s, uint32_t idx) noexcept
     {
-       #if JUCE_WINDOWS
         // Eight cache lines: the first 128 (float) or 256 (int16) source frames of
         // this block, enough for the hardware prefetcher to pick up the stream.
         const char* p = (const char*)(s + idx);
+       #if ENGINE_X86
         for (int line = 0; line < 8; ++line) _mm_prefetch(p + line * 64, _MM_HINT_T0);
+       #elif defined(__GNUC__) || defined(__clang__)
+        for (int line = 0; line < 8; ++line) __builtin_prefetch(p + line * 64, 0, 3);
        #else
-        juce::ignoreUnused(s, idx);
+        juce::ignoreUnused(p);
        #endif
     }
 
@@ -954,17 +980,39 @@ namespace
     }
 
     //--------------------------------------------------------------------------
-    // AVX2 kernels for 16-bit samples: eight output frames per iteration. The
-    // 32-bit gather at byte offset 2*idx fetches s[idx] and s[idx+1] together.
-    // Only called when the CPU reports AVX2; MSVC compiles the intrinsics
-    // without /arch:AVX2, so the rest of the binary stays SSE2-compatible.
-   #if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
-    #define ENGINE_HAS_AVX2_KERNELS 1
+    // The kernel the CPU gets: AVX2 (eight frames a step), SSE2 or NEON (four
+    // frames a step), scalar when nothing else is there or SIMD is switched off.
+    enum KernelKind : int { KernelScalar = 0, KernelSse2 = 1, KernelNeon = 2, KernelAvx2 = 3 };
     inline bool cpuHasAvx2() noexcept
     {
+       #if ENGINE_X86
         static const bool has = juce::SystemStats::hasAVX2();
         return has;
+       #else
+        return false;
+       #endif
     }
+    inline KernelKind bestKernel() noexcept
+    {
+       #if ENGINE_X86
+        return cpuHasAvx2() ? KernelAvx2 : KernelSse2;
+       #elif ENGINE_ARM64
+        return KernelNeon;
+       #else
+        return KernelScalar;
+       #endif
+    }
+    inline const char* kernelName(KernelKind kind) noexcept
+    {
+        switch (kind) { case KernelAvx2: return "AVX2"; case KernelSse2: return "SSE2"; case KernelNeon: return "NEON"; default: return "scalar"; }
+    }
+
+    //--------------------------------------------------------------------------
+    // AVX2 kernels: eight output frames per iteration. Only called when the CPU
+    // reports AVX2; the functions carry the target attribute (GCC, clang) or
+    // compile as plain intrinsics (MSVC), so the rest of the binary stays SSE2.
+   #if ENGINE_X86
+    #define ENGINE_HAS_AVX2_KERNELS 1
 
     struct Avx2State
     {
@@ -974,7 +1022,7 @@ namespace
         int groups;
     };
 
-    inline void avx2Prepare(Avx2State& st, int n, int64_t inc, int64_t incStep, float g, float gStep) noexcept
+    ENGINE_AVX2_FN inline void avx2Prepare(Avx2State& st, int n, int64_t inc, int64_t incStep, float g, float gStep) noexcept
     {
         st.groups = n / 8;
         // 64-bit lane order: A = frames {0,1,4,5}, B = frames {2,3,6,7}; the
@@ -991,7 +1039,7 @@ namespace
         st.incGroup = 8 * inc + 28 * incStep;
     }
 
-    inline void avx2Positions(const Avx2State& st, uint64_t pos, __m256i& idx, __m256& frac) noexcept
+    ENGINE_AVX2_FN inline void avx2Positions(const Avx2State& st, uint64_t pos, __m256i& idx, __m256& frac) noexcept
     {
         const __m256i base = _mm256_set1_epi64x((long long)pos);
         const __m256 pA = _mm256_castsi256_ps(_mm256_add_epi64(base, st.offA));
@@ -1001,15 +1049,35 @@ namespace
         frac = _mm256_mul_ps(_mm256_cvtepi32_ps(_mm256_srli_epi32(lo, 8)), st.fracScale);
     }
 
-    inline __m256 avx2Interpolate(const int16_t* s, __m256i idx, __m256 frac) noexcept
+    ENGINE_AVX2_FN inline __m256 avx2Interpolate(const int16_t* s, __m256i idx, __m256 frac) noexcept
     {
-        const __m256i pair = _mm256_i32gather_epi32((const int*)s, idx, 2);
+        // Eight consecutive output frames read source frames idx0 .. idx7+1: for
+        // pitch ratios up to 2:1 at most 16 int16 = one 256-bit load, widened to
+        // two eight-lane int32 vectors and picked per lane - a gather (microcoded,
+        // 12-20 cycles on AMD) only for larger ratios. The 24 guard frames of
+        // every sample make the 16-frame window safe at the end of the file.
+        const int i0 = _mm_cvtsi128_si32(_mm256_castsi256_si128(idx));
+        const int i7 = _mm256_extract_epi32(idx, 7);
+        if ((unsigned)(i7 - i0) <= 14u)
+        {
+            const __m256i raw = _mm256_loadu_si256((const __m256i*)(s + i0));
+            const __m256i lo = _mm256_cvtepi16_epi32(_mm256_castsi256_si128(raw));        // frames i0 .. i0+7
+            const __m256i hi = _mm256_cvtepi16_epi32(_mm256_extracti128_si256(raw, 1));   // frames i0+8 .. i0+15
+            const __m256i d = _mm256_sub_epi32(idx, _mm256_set1_epi32(i0));
+            const __m256i d1 = _mm256_add_epi32(d, _mm256_set1_epi32(1));
+            const __m256i seven = _mm256_set1_epi32(7);
+            const __m256i ai = _mm256_blendv_epi8(_mm256_permutevar8x32_epi32(lo, d), _mm256_permutevar8x32_epi32(hi, d), _mm256_cmpgt_epi32(d, seven));
+            const __m256i bi = _mm256_blendv_epi8(_mm256_permutevar8x32_epi32(lo, d1), _mm256_permutevar8x32_epi32(hi, d1), _mm256_cmpgt_epi32(d1, seven));
+            const __m256 a = _mm256_cvtepi32_ps(ai), b = _mm256_cvtepi32_ps(bi);
+            return _mm256_add_ps(a, _mm256_mul_ps(_mm256_sub_ps(b, a), frac));
+        }
+        const __m256i pair = _mm256_i32gather_epi32((const int*)s, idx, 2);   // s[idx] and s[idx+1] in one 32-bit lane
         const __m256 a = _mm256_cvtepi32_ps(_mm256_srai_epi32(_mm256_slli_epi32(pair, 16), 16));
         const __m256 b = _mm256_cvtepi32_ps(_mm256_srai_epi32(pair, 16));
         return _mm256_add_ps(a, _mm256_mul_ps(_mm256_sub_ps(b, a), frac));
     }
 
-    inline __m256 avx2Interpolate(const float* s, __m256i idx, __m256 frac) noexcept
+    ENGINE_AVX2_FN inline __m256 avx2Interpolate(const float* s, __m256i idx, __m256 frac) noexcept
     {
         // Eight consecutive output frames read source frames idx0 .. idx7+1. For
         // pitch ratios up to 2:1 that is at most 16 floats, so two contiguous
@@ -1036,7 +1104,7 @@ namespace
     }
 
     template <typename T>
-    inline void kernelMonoAvx2(const T* s, float* out, int n, uint64_t& pos, int64_t& inc,
+    ENGINE_AVX2_FN inline void kernelMonoAvx2(const T* s, float* out, int n, uint64_t& pos, int64_t& inc,
         int64_t incStep, float g, float gStep) noexcept
     {
         Avx2State st;
@@ -1060,7 +1128,7 @@ namespace
     }
 
     template <typename T>
-    inline void kernelStereoAvx2(const T* s0, const T* s1, float* out0, float* out1, int n,
+    ENGINE_AVX2_FN inline void kernelStereoAvx2(const T* s0, const T* s1, float* out0, float* out1, int n,
         uint64_t& pos, int64_t& inc, int64_t incStep, float g, float gStep) noexcept
     {
         Avx2State st;
@@ -1084,31 +1152,144 @@ namespace
         _mm256_zeroupper();
         if (i < n) kernelStereo<T>(s0, s1, out0 + i, out1 + i, n - i, pos, inc, incStep, g + gStep * (float)i, gStep);
     }
-   #else
-    inline bool cpuHasAvx2() noexcept { return false; }
+   #endif   // ENGINE_X86
+
+    //--------------------------------------------------------------------------
+    // Four-frame kernels: SSE2 (every x86-64 CPU) and NEON (arm64: Apple
+    // silicon, Linux arm64). The positions are 64-bit scalars; the two source
+    // frames of a lane come by scalar loads (one 32-bit load for an int16
+    // pair), the arithmetic runs in four lanes. The same code for both: the
+    // handful of operations it needs are wrapped once per instruction set.
+   #if ENGINE_X86 || ENGINE_ARM64
+    #define ENGINE_HAS_LANE4_KERNELS 1
+    struct Lane4
+    {
+       #if ENGINE_X86
+        using F = __m128; using I = __m128i;
+        static F loadF(const float* p) noexcept { return _mm_loadu_ps(p); }
+        static void storeF(float* p, F v) noexcept { _mm_storeu_ps(p, v); }
+        static F setF(float a, float b, float c, float d) noexcept { return _mm_setr_ps(a, b, c, d); }
+        static F splat(float a) noexcept { return _mm_set1_ps(a); }
+        static I setI(int32_t a, int32_t b, int32_t c, int32_t d) noexcept { return _mm_setr_epi32(a, b, c, d); }
+        static F lowHalfToF(I pairs) noexcept { return _mm_cvtepi32_ps(_mm_srai_epi32(_mm_slli_epi32(pairs, 16), 16)); }
+        static F highHalfToF(I pairs) noexcept { return _mm_cvtepi32_ps(_mm_srai_epi32(pairs, 16)); }
+        static F add(F a, F b) noexcept { return _mm_add_ps(a, b); }
+        static F sub(F a, F b) noexcept { return _mm_sub_ps(a, b); }
+        static F mul(F a, F b) noexcept { return _mm_mul_ps(a, b); }
+       #else
+        using F = float32x4_t; using I = int32x4_t;
+        static F loadF(const float* p) noexcept { return vld1q_f32(p); }
+        static void storeF(float* p, F v) noexcept { vst1q_f32(p, v); }
+        static F setF(float a, float b, float c, float d) noexcept { const float t[4]{ a, b, c, d }; return vld1q_f32(t); }
+        static F splat(float a) noexcept { return vdupq_n_f32(a); }
+        static I setI(int32_t a, int32_t b, int32_t c, int32_t d) noexcept { const int32_t t[4]{ a, b, c, d }; return vld1q_s32(t); }
+        static F lowHalfToF(I pairs) noexcept { return vcvtq_f32_s32(vshrq_n_s32(vshlq_n_s32(pairs, 16), 16)); }
+        static F highHalfToF(I pairs) noexcept { return vcvtq_f32_s32(vshrq_n_s32(pairs, 16)); }
+        static F add(F a, F b) noexcept { return vaddq_f32(a, b); }
+        static F sub(F a, F b) noexcept { return vsubq_f32(a, b); }
+        static F mul(F a, F b) noexcept { return vmulq_f32(a, b); }
+       #endif
+    };
+
+    inline int32_t int16PairAt(const int16_t* s, uint32_t idx) noexcept { int32_t v; std::memcpy(&v, s + idx, 4); return v; }   // s[idx] low, s[idx+1] high (little-endian)
+
+    // The two source frames of four lanes, interpolated.
+    inline Lane4::F lane4Interpolate(const int16_t* s, const uint32_t* idx, Lane4::F frac) noexcept
+    {
+        const Lane4::I pairs = Lane4::setI(int16PairAt(s, idx[0]), int16PairAt(s, idx[1]), int16PairAt(s, idx[2]), int16PairAt(s, idx[3]));
+        const Lane4::F a = Lane4::lowHalfToF(pairs), b = Lane4::highHalfToF(pairs);
+        return Lane4::add(a, Lane4::mul(Lane4::sub(b, a), frac));
+    }
+    inline Lane4::F lane4Interpolate(const float* s, const uint32_t* idx, Lane4::F frac) noexcept
+    {
+        const Lane4::F a = Lane4::setF(s[idx[0]], s[idx[1]], s[idx[2]], s[idx[3]]);
+        const Lane4::F b = Lane4::setF(s[idx[0] + 1], s[idx[1] + 1], s[idx[2] + 1], s[idx[3] + 1]);
+        return Lane4::add(a, Lane4::mul(Lane4::sub(b, a), frac));
+    }
+
+    // The positions of four consecutive frames, stepped as the scalar kernel
+    // steps them (pos += inc; inc += incStep per frame); returns the position
+    // after the four.
+    inline uint64_t lane4Positions(uint64_t pos, int64_t inc, int64_t incStep, uint32_t* idx, Lane4::F& frac) noexcept
+    {
+        const uint64_t p0 = pos;
+        const uint64_t p1 = p0 + (uint64_t)inc;
+        const uint64_t p2 = p1 + (uint64_t)(inc + incStep);
+        const uint64_t p3 = p2 + (uint64_t)(inc + 2 * incStep);
+        idx[0] = (uint32_t)(p0 >> 32); idx[1] = (uint32_t)(p1 >> 32); idx[2] = (uint32_t)(p2 >> 32); idx[3] = (uint32_t)(p3 >> 32);
+        frac = Lane4::setF(fracOf(p0), fracOf(p1), fracOf(p2), fracOf(p3));
+        return p3 + (uint64_t)(inc + 3 * incStep);
+    }
+
     template <typename T>
-    inline void kernelMonoAvx2(const T* s, float* out, int n, uint64_t& pos, int64_t& inc,
-        int64_t incStep, float g, float gStep) noexcept { kernelMono<T>(s, out, n, pos, inc, incStep, g, gStep); }
+    inline void kernelMonoLane4(const T* s, float* out, int n, uint64_t& pos, int64_t& inc,
+        int64_t incStep, float g, float gStep) noexcept
+    {
+        Lane4::F gain = Lane4::setF(g, g + gStep, g + 2 * gStep, g + 3 * gStep);
+        const Lane4::F gainStep4 = Lane4::splat(4.0f * gStep);
+        int i = 0;
+        for (; i + 4 <= n; i += 4)
+        {
+            uint32_t idx[4]; Lane4::F frac;
+            pos = lane4Positions(pos, inc, incStep, idx, frac);
+            inc += 4 * incStep;
+            const Lane4::F v = lane4Interpolate(s, idx, frac);
+            Lane4::storeF(out + i, Lane4::add(Lane4::loadF(out + i), Lane4::mul(v, gain)));
+            gain = Lane4::add(gain, gainStep4);
+        }
+        if (i < n) kernelMono<T>(s, out + i, n - i, pos, inc, incStep, g + gStep * (float)i, gStep);
+    }
+
     template <typename T>
-    inline void kernelStereoAvx2(const T* s0, const T* s1, float* out0, float* out1, int n,
+    inline void kernelStereoLane4(const T* s0, const T* s1, float* out0, float* out1, int n,
         uint64_t& pos, int64_t& inc, int64_t incStep, float g, float gStep) noexcept
-    { kernelStereo<T>(s0, s1, out0, out1, n, pos, inc, incStep, g, gStep); }
-   #endif
+    {
+        Lane4::F gain = Lane4::setF(g, g + gStep, g + 2 * gStep, g + 3 * gStep);
+        const Lane4::F gainStep4 = Lane4::splat(4.0f * gStep);
+        int i = 0;
+        for (; i + 4 <= n; i += 4)
+        {
+            uint32_t idx[4]; Lane4::F frac;
+            pos = lane4Positions(pos, inc, incStep, idx, frac);
+            inc += 4 * incStep;
+            const Lane4::F v0 = lane4Interpolate(s0, idx, frac);
+            const Lane4::F v1 = lane4Interpolate(s1, idx, frac);
+            Lane4::storeF(out0 + i, Lane4::add(Lane4::loadF(out0 + i), Lane4::mul(v0, gain)));
+            Lane4::storeF(out1 + i, Lane4::add(Lane4::loadF(out1 + i), Lane4::mul(v1, gain)));
+            gain = Lane4::add(gain, gainStep4);
+        }
+        if (i < n) kernelStereo<T>(s0, s1, out0 + i, out1 + i, n - i, pos, inc, incStep, g + gStep * (float)i, gStep);
+    }
+   #endif   // ENGINE_X86 || ENGINE_ARM64
 
     template <typename T>
     inline void dispatchMono(const T* s, float* out, int n, uint64_t& pos, int64_t& inc,
-        int64_t incStep, float g, float gStep, bool avx2) noexcept
+        int64_t incStep, float g, float gStep, KernelKind kernel) noexcept
     {
-        if (avx2 && n >= 16) kernelMonoAvx2<T>(s, out, n, pos, inc, incStep, g, gStep);
-        else kernelMono<T>(s, out, n, pos, inc, incStep, g, gStep);
+        if (n < 16 || kernel == KernelScalar) { kernelMono<T>(s, out, n, pos, inc, incStep, g, gStep); return; }
+       #if ENGINE_HAS_AVX2_KERNELS
+        if (kernel == KernelAvx2) { kernelMonoAvx2<T>(s, out, n, pos, inc, incStep, g, gStep); return; }
+       #endif
+       #if ENGINE_HAS_LANE4_KERNELS
+        kernelMonoLane4<T>(s, out, n, pos, inc, incStep, g, gStep);
+       #else
+        kernelMono<T>(s, out, n, pos, inc, incStep, g, gStep);
+       #endif
     }
 
     template <typename T>
     inline void dispatchStereo(const T* s0, const T* s1, float* out0, float* out1, int n, uint64_t& pos,
-        int64_t& inc, int64_t incStep, float g, float gStep, bool avx2) noexcept
+        int64_t& inc, int64_t incStep, float g, float gStep, KernelKind kernel) noexcept
     {
-        if (avx2 && n >= 16) kernelStereoAvx2<T>(s0, s1, out0, out1, n, pos, inc, incStep, g, gStep);
-        else kernelStereo<T>(s0, s1, out0, out1, n, pos, inc, incStep, g, gStep);
+        if (n < 16 || kernel == KernelScalar) { kernelStereo<T>(s0, s1, out0, out1, n, pos, inc, incStep, g, gStep); return; }
+       #if ENGINE_HAS_AVX2_KERNELS
+        if (kernel == KernelAvx2) { kernelStereoAvx2<T>(s0, s1, out0, out1, n, pos, inc, incStep, g, gStep); return; }
+       #endif
+       #if ENGINE_HAS_LANE4_KERNELS
+        kernelStereoLane4<T>(s0, s1, out0, out1, n, pos, inc, incStep, g, gStep);
+       #else
+        kernelStereo<T>(s0, s1, out0, out1, n, pos, inc, incStep, g, gStep);
+       #endif
     }
 
     inline void startFade(Voice& v, float ms, double rate, bool kill) noexcept
@@ -1362,7 +1543,7 @@ namespace
             const float gStep = (g1 - g0) / (float)span;
 
             int64_t inc = inc0;
-            const bool avx2 = c.useAvx2;
+            const KernelKind kernel = (KernelKind)c.kernel;
             // The splice kernels: before the loop end they blend towards the head a
             // loop length back (mix 0 -> 1); after a jump they blend from the
             // continuation a loop length ahead into the loop (mix 1 -> 0).
@@ -1387,12 +1568,12 @@ namespace
             else if (sampleChans == 1)
             {
                 if (blend) kernelMonoXf<T>(src0, out0 + produced, span, v.pos, inc, incStepF, g0, gStep, headOffset, bt, bdt);
-                else dispatchMono<T>(src0, out0 + produced, span, v.pos, inc, incStepF, g0, gStep, avx2);
+                else dispatchMono<T>(src0, out0 + produced, span, v.pos, inc, incStepF, g0, gStep, kernel);
             }
             else if (sampleChans == 2)
             {
                 if (blend) kernelStereoXf<T>(src0, src1, out0 + produced, out1 + produced, span, v.pos, inc, incStepF, g0, gStep, headOffset, bt, bdt);
-                else dispatchStereo<T>(src0, src1, out0 + produced, out1 + produced, span, v.pos, inc, incStepF, g0, gStep, avx2);
+                else dispatchStereo<T>(src0, src1, out0 + produced, out1 + produced, span, v.pos, inc, incStepF, g0, gStep, kernel);
             }
             else
             {
@@ -1409,7 +1590,7 @@ namespace
                         out = (och >= 0 && och < lanes.numOuts) ? lanes.out[och] : lanes.sink;
                     }
                     if (blend) kernelMonoXf<T>(src, out + produced, span, p, ic, incStepF, g0, gStep, headOffset, bt, bdt);
-                    else dispatchMono<T>(src, out + produced, span, p, ic, incStepF, g0, gStep, avx2);
+                    else dispatchMono<T>(src, out + produced, span, p, ic, incStepF, g0, gStep, kernel);
                     finalPos = p;
                 }
                 v.pos = finalPos;
@@ -1841,6 +2022,8 @@ namespace
             job->lanesJoined.store(0, std::memory_order_relaxed);
             job->lanesLeft.store(0, std::memory_order_relaxed);
             job->completedCount.store(0, std::memory_order_relaxed);
+            job->laneBusyTicks.store(0, std::memory_order_relaxed);
+            const int64_t jobStart = juce::Time::getHighResolutionTicks();
             job->open.store(true, std::memory_order_release);
             // Keep the workers spinning across the gap to the next audio period.
             // The period is learned from the job cadence, so small ASIO buffers
@@ -1876,12 +2059,26 @@ namespace
 
             // This thread is a lane as well.
             int idx, count;
+            const int64_t posterStart = juce::Time::getHighResolutionTicks();
             while ((count = takeChunk(*job, idx)) > 0)
                 renderRange(voiceIndices, idx, idx + count, pool, ctx, mine);
+            const int64_t posterBusy = juce::Time::getHighResolutionTicks() - posterStart;
             // Wait for the other lanes.
             while (job->lanesLeft.load(std::memory_order_acquire) != job->lanesJoined.load(std::memory_order_acquire))
                 ENGINE_CPU_PAUSE();
             job->open.store(false, std::memory_order_release);
+            {
+                // Utilisation of this job: the lanes' rendering time against the
+                // lanes x the job's wall time (the rest: waiting for the slowest
+                // lane, the chunk hand-over, lanes arriving late).
+                const int64_t wall = juce::jmax<int64_t>(1, juce::Time::getHighResolutionTicks() - jobStart);
+                const int lanesUsed = juce::jmax(1, job->lanesJoined.load(std::memory_order_relaxed) + 1);
+                statJobs.fetch_add(1, std::memory_order_relaxed);
+                statWallTicks.fetch_add(wall, std::memory_order_relaxed);
+                statBusyTicks.fetch_add(job->laneBusyTicks.load(std::memory_order_relaxed) + posterBusy, std::memory_order_relaxed);
+                statSlotTicks.fetch_add(wall * lanesUsed, std::memory_order_relaxed);
+                statPosterTicks.fetch_add(posterBusy, std::memory_order_relaxed);
+            }
 
             const int completed = job->completedCount.load(std::memory_order_acquire);
             for (int k = 0; k < completed; ++k)
@@ -1989,6 +2186,7 @@ namespace
             std::atomic<bool> inUse{ false };
             std::atomic<bool> open{ false };
             std::atomic<int> nextVoice{ 0 }, lanesJoined{ 0 }, lanesLeft{ 0 }, completedCount{ 0 };
+            std::atomic<int64_t> laneBusyTicks{ 0 };   // the lanes' rendering time of this job, summed (utilisation statistics)
             const uint32_t* voices = nullptr;
             int numVoices = 0, lanesHint = 1, maxWorkers = 0;
             Voice* pool = nullptr;
@@ -2101,8 +2299,10 @@ namespace
                         juce::FloatVectorOperations::clear(lane.wet[ch], ctx.numSamples);
                     }
                 }
+                const int64_t laneStart = juce::Time::getHighResolutionTicks();
                 do renderRange(job.voices, idx, idx + count, job.pool, ctx, lane);
                 while ((count = takeChunk(job, idx)) > 0);
+                job.laneBusyTicks.fetch_add(juce::Time::getHighResolutionTicks() - laneStart, std::memory_order_relaxed);
                 const int slot = job.completedCount.fetch_add(1, std::memory_order_acq_rel);
                 if (slot < kMaxLanesPerJob) job.completed[(size_t)slot] = scratchIndex;
                 else releaseScratch(scratchIndex);
@@ -2161,6 +2361,24 @@ namespace
                 sleepers.fetch_sub(1, std::memory_order_acq_rel);
             }
         }
+
+        // Utilisation statistics since the last query (the polyphony measurement
+        // reads them once a second): jobs, their wall time, the lanes' busy time,
+        // lanes x wall ("slots"), the poster's own share.
+        std::atomic<int64_t> statJobs{ 0 }, statWallTicks{ 0 }, statBusyTicks{ 0 }, statSlotTicks{ 0 }, statPosterTicks{ 0 };
+    public:
+        void takeStats(int& jobs, double& laneUtilisation, double& posterShare, double& jobSeconds) noexcept
+        {
+            jobs = (int)statJobs.exchange(0, std::memory_order_relaxed);
+            const int64_t wall = statWallTicks.exchange(0, std::memory_order_relaxed);
+            const int64_t busy = statBusyTicks.exchange(0, std::memory_order_relaxed);
+            const int64_t slots = statSlotTicks.exchange(0, std::memory_order_relaxed);
+            const int64_t poster = statPosterTicks.exchange(0, std::memory_order_relaxed);
+            laneUtilisation = slots > 0 ? (double)busy / (double)slots : 0.0;
+            posterShare = wall > 0 ? (double)poster / (double)wall : 0.0;
+            jobSeconds = (double)wall / (double)juce::Time::getHighResolutionTicksPerSecond();
+        }
+    private:
 
         int numWorkers = 0;
         std::vector<std::thread> threads;
@@ -4550,7 +4768,7 @@ struct SamplerEngine::Impl
         }
         ctx.randomAllowed = randomAllowed[(size_t)manual].load(std::memory_order_relaxed);
         ctx.couplingAllowed = couplingAllowed[(size_t)manual].load(std::memory_order_relaxed);
-        ctx.useAvx2 = cpuHasAvx2() && !owner.simdDisabled.load(std::memory_order_relaxed);
+        ctx.kernel = owner.simdDisabled.load(std::memory_order_relaxed) ? (int)KernelScalar : (int)bestKernel();
 
         // wind
         const float windLevelDbPerCent = owner.windLevelDbPerCentValue.load(std::memory_order_relaxed);
@@ -5090,47 +5308,191 @@ juce::String SamplerEngine::routeLabel(int routeIndex) const
     return "manual " + juce::String(r.manual) + " " + r.perspective;
 }
 
-bool SamplerEngine::isUsingSimd() const noexcept { return cpuHasAvx2() && !simdDisabled.load(); }
+bool SamplerEngine::isUsingSimd() const noexcept { return bestKernel() != KernelScalar && !simdDisabled.load(); }
+const char* SamplerEngine::simdKernelName() noexcept { return kernelName(bestKernel()); }
+const char* SamplerEngine::currentKernelName() const noexcept { return kernelName(simdDisabled.load() ? KernelScalar : bestKernel()); }
+
+SamplerEngine::RenderPoolStats SamplerEngine::takeRenderPoolStats() noexcept
+{
+    RenderPoolStats stats;
+    if (impl != nullptr && impl->pool != nullptr)
+        impl->pool->takeStats(stats.jobs, stats.laneUtilisation, stats.posterShare, stats.jobSeconds);
+    stats.lanes = getRenderWorkerCount() + 1;
+    return stats;
+}
+
+namespace
+{
+    // The SIMD kernels this build has for this CPU, besides the scalar one.
+    std::vector<KernelKind> simdKernelsAvailable()
+    {
+        std::vector<KernelKind> kinds;
+       #if ENGINE_ARM64
+        kinds.push_back(KernelNeon);
+       #elif ENGINE_HAS_LANE4_KERNELS
+        kinds.push_back(KernelSse2);
+       #endif
+       #if ENGINE_HAS_AVX2_KERNELS
+        if (cpuHasAvx2()) kinds.push_back(KernelAvx2);
+       #endif
+        return kinds;
+    }
+
+    // A buffer of int16 or float frames with the engine's guard frames, filled
+    // with a deterministic signal (sines of a few frequencies plus a little noise).
+    template <typename T>
+    std::vector<T> testSignal(size_t frames, uint32_t seed, float scale)
+    {
+        std::vector<T> s(frames + 32);
+        uint32_t state = seed | 1u;
+        for (size_t i = 0; i < frames; ++i)
+        {
+            state = state * 1664525u + 1013904223u;
+            const double noise = ((double)(state >> 8) / 16777216.0 - 0.5) * 0.05;
+            const double v = 0.6 * std::sin((double)i * 0.037 + seed) + 0.3 * std::cos((double)i * 0.011) * std::sin((double)i * 0.29) + noise;
+            if constexpr (std::is_same<T, int16_t>::value) s[i] = (int16_t)std::lrint(juce::jlimit(-32767.0, 32767.0, v * 32000.0 * scale));
+            else s[i] = (float)(v * scale);
+        }
+        return s;
+    }
+}
+
+juce::String SamplerEngine::KernelBenchmark::describe() const
+{
+    if (blockFrames <= 0) return "Render kernel: not measured.";
+    juce::String text;
+    text << "Render kernel " << (kernel.isEmpty() ? juce::String("scalar") : kernel) << ": " << juce::String(kernel.isEmpty() ? nsCacheScalar : nsCacheSimd, 2)
+         << " ns per voice and frame with the sample in the cache";
+    if (kernel.isNotEmpty()) text << " (scalar " << juce::String(nsCacheScalar, 2) << ")";
+    if (ramBytes > 0)
+    {
+        text << ", " << juce::String(kernel.isEmpty() ? nsRamScalar : nsRamSimd, 2) << " ns streaming from RAM";
+        if (kernel.isNotEmpty()) text << " (scalar " << juce::String(nsRamScalar, 2) << ")";
+    }
+    text << "; stereo 16-bit, blocks of " << blockFrames << " frames, one thread.";
+    return text;
+}
+
+SamplerEngine::KernelBenchmark SamplerEngine::benchmarkKernel(int blockFrames, juce::int64 ramBytes)
+{
+    // What one thread renders: ns per voice and frame of the interpolation
+    // kernel alone, (1) with the sample in the cache - the pure compute speed
+    // of the kernel on this CPU - and (2) streaming from RAM, every voice from
+    // a fresh place of a large buffer - what an organ of many GB really costs
+    // (the memory system, not the arithmetic, is then the larger part). The
+    // ceiling of the polyphony follows: threads x (85 % of the block) / (frames
+    // x ns); the rest of a callback (bookkeeping, hand-over, waiting for the
+    // slowest lane) is the measured difference to it.
+    KernelBenchmark b;
+    b.blockFrames = juce::jlimit(64, kMaxBlockFrames, blockFrames);
+    const int n = b.blockFrames;
+    const KernelKind kind = bestKernel();
+    if (kind != KernelScalar) b.kernel = kernelName(kind);
+    std::vector<float> o0((size_t)n), o1((size_t)n);
+    auto nsPerVoiceFrame = [&](KernelKind k, const int16_t* c0, const int16_t* c1, size_t framesAvail, int voices, double seconds)
+    {
+        uint32_t rnd = 12345u;
+        auto next = [&rnd] { rnd = rnd * 1664525u + 1013904223u; return (double)(rnd >> 8) / 16777216.0; };
+        const double maxStart = juce::jmax(1.0, (double)framesAvail - (double)n * 1.1 - 40.0);
+        const double tickSeconds = 1.0 / (double)juce::Time::getHighResolutionTicksPerSecond();
+        const int64_t start = juce::Time::getHighResolutionTicks();
+        const int64_t until = start + (int64_t)(seconds / tickSeconds);
+        int64_t rendered = 0;
+        int64_t last = start;
+        do
+        {
+            for (int v = 0; v < voices; ++v)
+            {
+                uint64_t pos = (uint64_t)(next() * maxStart * kFixedOne);
+                int64_t inc = (int64_t)((0.94 + 0.12 * next()) * kFixedOne);
+                dispatchStereo(c0, c1, o0.data(), o1.data(), n, pos, inc, 0, 0.5f, 0.0f, k);
+            }
+            rendered += voices;
+            last = juce::Time::getHighResolutionTicks();
+        } while (last < until);
+        return (double)(last - start) * tickSeconds * 1.0e9 / ((double)rendered * (double)n);
+    };
+    {
+        const auto s0 = testSignal<int16_t>(16384, 3, 1.0f), s1 = testSignal<int16_t>(16384, 5, 0.9f);
+        b.nsCacheScalar = nsPerVoiceFrame(KernelScalar, s0.data(), s1.data(), 16384, 64, 0.15);
+        if (kind != KernelScalar) b.nsCacheSimd = nsPerVoiceFrame(kind, s0.data(), s1.data(), 16384, 64, 0.15);
+    }
+    const size_t ramFrames = (size_t)juce::jlimit((juce::int64)(8 << 20), (juce::int64)(1 << 30), ramBytes) / 4;   // two int16 channels
+    try
+    {
+        std::vector<int16_t> r0(ramFrames + 32), r1(ramFrames + 32);
+        // Filled fast with a 32-bit generator per pair of frames: real data, not
+        // the zero pages a fresh allocation would hand out (those are never read).
+        uint32_t rnd = 77u;
+        for (size_t i = 0; i + 1 < ramFrames; i += 2)
+        {
+            rnd = rnd * 1664525u + 1013904223u;
+            r0[i] = (int16_t)(rnd & 0x7fff); r0[i + 1] = (int16_t)((rnd >> 16) & 0x7fff);
+            r1[i] = (int16_t)((rnd >> 3) & 0x7fff); r1[i + 1] = (int16_t)((rnd >> 19) & 0x7fff);
+        }
+        b.ramBytes = (juce::int64)ramFrames * 4;
+        b.nsRamScalar = nsPerVoiceFrame(KernelScalar, r0.data(), r1.data(), ramFrames, 2048, 0.2);
+        if (kind != KernelScalar) b.nsRamSimd = nsPerVoiceFrame(kind, r0.data(), r1.data(), ramFrames, 2048, 0.2);
+    }
+    catch (const std::bad_alloc&) { b.ramBytes = 0; }
+    return b;
+}
 
 juce::String SamplerEngine::runKernelSelfCheck()
 {
-    if (!cpuHasAvx2()) return "Kernel check: CPU has no AVX2, scalar kernel only.";
-    constexpr int frames = 4096, n = 1000;
-    std::vector<int16_t> s0((size_t)frames + 16), s1((size_t)frames + 16);
-    for (int i = 0; i < frames; ++i)
-    {
-        s0[(size_t)i] = (int16_t)std::lrint(30000.0 * std::sin(i * 0.037));
-        s1[(size_t)i] = (int16_t)std::lrint(25000.0 * std::cos(i * 0.011) * std::sin(i * 0.29));
-    }
-    std::vector<float> f0((size_t)frames + 16), f1((size_t)frames + 16);
-    for (int i = 0; i < frames; ++i) { f0[(size_t)i] = s0[(size_t)i] / 32768.0f; f1[(size_t)i] = s1[(size_t)i] / 32768.0f; }
-    const int64_t inc = (int64_t)(1.0873 * kFixedOne), incStep = (int64_t)(0.0000021 * kFixedOne);
+    // Every SIMD kernel of this CPU against the scalar one: several pitch ratios
+    // (below 1, 1, between 1 and 2, above 2 - the AVX2 kernels change their
+    // load strategy at 2:1), a rising and a falling increment, a gain ramp;
+    // int16 and float, mono and stereo. The end position must be identical
+    // (integer arithmetic), the samples equal within a rounding difference.
     juce::String result;
-    auto check = [&](auto* c0, auto* c1, float scale, const char* name)
+    const auto kinds = simdKernelsAvailable();
+    result << "Kernels: scalar";
+    for (const auto kind : kinds) result << ", " << kernelName(kind);
+    result << " - this CPU renders with " << kernelName(bestKernel()) << ".\n";
+    if (kinds.empty()) return result;
+    constexpr int frames = 16384, n = 960;
+    const auto s0 = testSignal<int16_t>(frames, 11, 1.0f), s1 = testSignal<int16_t>(frames, 29, 0.8f);
+    const auto f0 = testSignal<float>(frames, 11, 1.0f), f1 = testSignal<float>(frames, 29, 0.8f);
+    struct Case { double ratio, step; };
+    const Case cases[]{ { 0.5, 0.0 }, { 0.9997, 0.0 }, { 1.0, 0.0 }, { 1.0873, 2.1e-6 }, { 1.9, -1.0e-6 }, { 2.6, 0.0 }, { 3.7, 4.0e-6 } };
+    for (const auto kind : kinds)
     {
-        std::vector<float> a0((size_t)n, 0.25f), a1((size_t)n, -0.5f), b0(a0), b1(a1), m0(a0), m1(a0);
-        const float g = 0.7f * scale, gStep = -0.0002f * scale;
-        uint64_t posA = (uint64_t)(17.31 * kFixedOne), posB = posA, posC = posA, posD = posA;
-        int64_t incA = inc, incB = inc, incC = inc, incD = inc;
-        kernelStereo(c0, c1, a0.data(), a1.data(), n, posA, incA, incStep, g, gStep);
-        kernelStereoAvx2(c0, c1, b0.data(), b1.data(), n, posB, incB, incStep, g, gStep);
-        kernelMono(c0, m0.data(), n, posC, incC, incStep, g, gStep);
-        kernelMonoAvx2(c0, m1.data(), n, posD, incD, incStep, g, gStep);
-        float maxDiff = 0.0f, maxLevel = 0.0f;
-        for (int i = 0; i < n; ++i)
+        float worst = 0.0f;
+        bool positionsEqual = true;
+        juce::String worstCase;
+        auto run = [&](auto* c0, auto* c1, float scale, const char* name)
         {
-            maxDiff = juce::jmax(maxDiff, std::abs(a0[(size_t)i] - b0[(size_t)i]), std::abs(a1[(size_t)i] - b1[(size_t)i]),
-                std::abs(m0[(size_t)i] - m1[(size_t)i]));
-            maxLevel = juce::jmax(maxLevel, std::abs(a0[(size_t)i]), std::abs(a1[(size_t)i]));
-        }
-        const double posDiff = std::abs((double)(int64_t)(posA - posB)) / kFixedOne;
-        result << "Kernel check (" << name << "): AVX2 vs scalar max difference " << juce::String(maxDiff, 7)
-               << " (signal peak " << juce::String(maxLevel, 3) << "), end position difference "
-               << juce::String(posDiff, 6) << " frames -> "
-               << (maxDiff < 2.0e-3f && posDiff < 1.0e-3 ? "OK" : "*** MISMATCH ***") << "\n";
-    };
-    check(s0.data(), s1.data(), 1.0f / 32768.0f, "16-bit");
-    check(f0.data(), f1.data(), 1.0f, "32-bit float");
+            for (const auto& cs : cases)
+            {
+                const int64_t inc = (int64_t)(cs.ratio * kFixedOne), incStep = (int64_t)(cs.step * kFixedOne);
+                const float g = 0.7f * scale, gStep = -0.0002f * scale;
+                std::vector<float> a0((size_t)n, 0.25f), a1((size_t)n, -0.5f), b0(a0), b1(a1), m0(a0), m1(a0);
+                uint64_t posA = (uint64_t)(17.31 * kFixedOne), posB = posA, posC = posA, posD = posA;
+                int64_t incA = inc, incB = inc, incC = inc, incD = inc;
+                kernelStereo(c0, c1, a0.data(), a1.data(), n, posA, incA, incStep, g, gStep);
+                dispatchStereo(c0, c1, b0.data(), b1.data(), n, posB, incB, incStep, g, gStep, kind);
+                kernelMono(c0, m0.data(), n, posC, incC, incStep, g, gStep);
+                dispatchMono(c0, m1.data(), n, posD, incD, incStep, g, gStep, kind);
+                float maxDiff = 0.0f, maxLevel = 1.0e-9f;
+                for (int i = 0; i < n; ++i)
+                {
+                    maxDiff = juce::jmax(maxDiff, std::abs(a0[(size_t)i] - b0[(size_t)i]), std::abs(a1[(size_t)i] - b1[(size_t)i]), std::abs(m0[(size_t)i] - m1[(size_t)i]));
+                    maxLevel = juce::jmax(maxLevel, std::abs(a0[(size_t)i]), std::abs(a1[(size_t)i]));
+                }
+                const float relative = maxDiff / maxLevel;
+                if (relative > worst) { worst = relative; worstCase = juce::String(name) + " ratio " + juce::String(cs.ratio, 4); }
+                if (posA != posB || posC != posD || incA != incB || incC != incD) positionsEqual = false;
+            }
+        };
+        run(s0.data(), s1.data(), 1.0f / 32768.0f, "16-bit");
+        run(f0.data(), f1.data(), 1.0f, "float");
+        result << "Kernel check " << kernelName(kind) << " vs scalar: largest difference " << juce::String(worst * 100.0f, 5) << " % of the peak ("
+               << worstCase << "), end positions " << (positionsEqual ? "identical" : "DIFFERENT") << " -> "
+               << (worst < 1.0e-4f && positionsEqual ? "OK" : "*** MISMATCH ***") << "\n";
+    }
+    const auto bench = benchmarkKernel(n, 256 << 20);
+    result << bench.describe() << "\n";
     {
         // Dynamic tone shelf: the lowpass behind it must start at 1.8 kHz (about
         // -1 dB) and be down about 10 dB an octave higher (transition ~1.8 kHz wide).
@@ -8255,7 +8617,8 @@ juce::String romanNumeral(int n)
 
 juce::String Stop::displayName() const
 {
-    const juce::String base = alias.isNotEmpty() ? alias : footageDisplayName(name);
+    // An alias gets its foot mark like a name ("I. Quintadeen 8" reads "I. Quintadeen 8'").
+    const juce::String base = footageDisplayName(alias.isNotEmpty() ? alias : name);
     int written = 0;
     if (SamplerEngine::footageFromName(base, written)) return base;   // the name (or alias) says the footage itself
     // No footage in the caption: the one measured from the lowest pipe's smpl pitch.
@@ -10126,10 +10489,28 @@ juce::String SamplerEngine::footageName(int semitones)
         { -8, "12 4/5' (third)" }, { 4, "6 2/5' (third)" }, { 16, "3 1/5' (third)" }, { 28, "1 3/5' (third)" },
         { 40, "4/5' (third)" }, { 52, "2/5' (third)" },
         { -2, "9 1/7' (seventh)" }, { 10, "4 4/7' (seventh)" }, { 22, "2 2/7' (seventh)" }, { 34, "1 1/7' (seventh)" },
-        { 2, "7 1/9' (ninth)" }, { 14, "3 5/9' (ninth)" }, { 26, "1 7/9' (ninth)" }, { 38, "8/9' (ninth)" } };
+        { 2, "7 1/9' (ninth)" }, { 14, "3 5/9' (ninth)" }, { 26, "1 7/9' (ninth)" }, { 38, "8/9' (ninth)" },
+        // The small ones of mixtures, Zimbeln and the top ranks of a Scharff: fractions, never "0.12'".
+        { 60, "1/4'" }, { 72, "1/8'" }, { 84, "1/16'" }, { 67, "1/6' (fifth)" }, { 79, "1/12' (fifth)" },
+        { 64, "1/5' (third)" }, { 76, "1/10' (third)" }, { 46, "4/7' (seventh)" }, { 58, "2/7' (seventh)" }, { 70, "1/7' (seventh)" },
+        { 50, "4/9' (ninth)" }, { 62, "2/9' (ninth)" }, { 74, "1/9' (ninth)" } };
     const auto it = names.find(semitones);
     if (it != names.end()) return it->second;
-    return juce::String(8.0 * std::pow(2.0, -semitones / 12.0), 2) + "' (" + juce::String(semitones) + " st)";
+    const double feet = 8.0 * std::pow(2.0, -semitones / 12.0);
+    if (feet < 1.0)
+    {
+        // Below one foot a footage reads as a fraction: the nearest 1/N (N up to 64)
+        // when it is within three per cent, else the nearest small fraction M/N.
+        const int n = juce::jlimit(1, 64, juce::roundToInt(1.0 / feet));
+        if (std::abs(1.0 / (double)n - feet) <= 0.03 * feet) return "1/" + juce::String(n) + "' (" + juce::String(semitones) + " st)";
+        for (int denominator = 2; denominator <= 16; ++denominator)
+        {
+            const int numerator = juce::roundToInt(feet * denominator);
+            if (numerator >= 1 && std::abs((double)numerator / denominator - feet) <= 0.03 * feet)
+                return juce::String(numerator) + "/" + juce::String(denominator) + "' (" + juce::String(semitones) + " st)";
+        }
+    }
+    return juce::String(feet, 2) + "' (" + juce::String(semitones) + " st)";
 }
 
 void SamplerEngine::setUndulationBeatRatio(float ratio)

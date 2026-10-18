@@ -90,6 +90,19 @@ jobs:
           Get-Content $report | Select-String -Pattern 'WRONG|FAIL|COMPLETED'
           if (-not (Select-String -Path $report -Pattern 'COMPLETED WITHOUT CRASH' -Quiet)) { throw "self-test did not complete" }
 
+      # The interpolation kernels of the platform against the scalar one (AVX2 and
+      # SSE2 on x86-64, NEON on Apple silicon) and their speed. Runs everywhere, the
+      # macOS runners included; a mismatch fails the step, not the artifacts.
+      - name: Kernel test (SIMD kernels vs scalar, speed)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          if ($IsWindows) { $exe = "build/OrganSampler_artefacts/Release/OrganSampler.exe" }
+          elseif ($IsMacOS) { $exe = "build/OrganSampler_artefacts/Release/OrganSampler.app/Contents/MacOS/OrganSampler" }
+          else { $exe = "build/OrganSampler_artefacts/Release/OrganSampler" }
+          if ($IsLinux) { xvfb-run -a $exe --kerneltest } else { & $exe --kerneltest }
+          if ($LASTEXITCODE -ne 0) { throw "kernel test failed with exit code $LASTEXITCODE" }
+
       - name: Package (macOS - zip of the app bundle)
         if: runner.os == 'macOS'
         run: ditto -c -k --keepParent "${{ matrix.path }}" "${{ matrix.package }}"

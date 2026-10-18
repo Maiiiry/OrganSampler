@@ -547,7 +547,10 @@ static const char* const kManualText_part2 =
     "keeps its MIDI keyboard, an empty one takes the added configuration's keys,\n"
     "wind, tremulant and (when included) MIDI; couplers, combinations, crescendo,\n"
     "temperament, the global sound settings and the MIDI buttons stay yours. Two\n"
-    "stops of one name in one division: the added one gets \"(2)\". Before anything\n"
+    "stops of one name in one division: the added one gets \"(2)\". Two organs\n"
+    "rarely stand at one pitch (a1 = 440, 415, 465 Hz ...), so the merge switches\n"
+    "Temperaments > *Equal at 440 Hz* on: every stop of the merged organ is tuned\n"
+    "to 440 Hz and they play together in tune. Before anything\n"
     "is loaded the program sizes the added sample folders against the memory that\n"
     "is free now and refuses the merge when they would not fit (nothing is\n"
     "changed then). The merged organ is loaded but not saved: *Save Configuration*\n"
@@ -603,11 +606,11 @@ static const char* const kManualText_part2 =
     "this computer loads all the same, with the trees that are here: every\n"
     "division that uses a missing tree shows an orange notice under its header,\n"
     "\"Sample folder not found\", with the folder's name (the full paths are in its\n"
+    ;
+static const char* const kManualText_part3 =
     "tooltip). Click it: a menu offers *Replace \"...\" with a folder on this\n"
     "computer...* for every missing tree - choose the folder where that tree is\n"
     "now, whatever its name, and the stops come alive at once, their rows keep\n"
-    ;
-static const char* const kManualText_part3 =
     "their folders - or *Open the Stop List*, where *Unload folder...* also\n"
     "offers *Replace \"...\" with another folder...* for every tree and removes a\n"
     "tree you no longer have. The notice goes when no tree of the division is\n"
@@ -805,11 +808,11 @@ static const char* const kManualText_part3 =
     "  new transmission of the stop appears where the copy lands (also in the\n"
     "  stop's own division, as an extension). A copied transmission keeps its\n"
     "  transposition.\n"
+    ;
+static const char* const kManualText_part4 =
     "- Every button carries a red x in its top-left corner: it removes the stop (a\n"
     "  warning lists its transmissions first; they go with it) or the transmission.\n"
     "  A stop folder with stops still indented under it is not removed; take them\n"
-    ;
-static const char* const kManualText_part4 =
     "  out first.\n"
     "- **Making a stop folder:** let the dragged item rest over another stop's\n"
     "  button until a dim orange bar appears under that button, then pull it a\n"
@@ -1007,11 +1010,11 @@ static const char* const kManualText_part4 =
     "- The info line at the bottom counts the sample folders found in all trees,\n"
     "  how many the table uses and how many are free.\n"
     "\n"
+    ;
+static const char* const kManualText_part5 =
     "## 4.2 Editing the table\n"
     "\n"
     "- **Order:** drag a stop name up or down. The order is the load order and the\n"
-    ;
-static const char* const kManualText_part5 =
     "  default order on the grid. When rows were dragged, *Apply* asks whether the\n"
     "  grid should follow the new order; otherwise every stop keeps its cell.\n"
     "- **Division:** drag a row into another division's block, or choose the\n"
@@ -1209,11 +1212,11 @@ static const char* const kManualText_part5 =
     "single perspective and are light to render anyway.\n"
     "\n"
     "*Set for the auxiliary routes of all divisions* on the auxiliary tab copies\n"
+    ;
+static const char* const kManualText_part6 =
     "its device to the auxiliary routes of every division; with *none* it switches\n"
     "them all off at once.\n"
     "\n"
-    ;
-static const char* const kManualText_part6 =
     "## 5.6 Audio drivers: many sound cards at once\n"
     "\n"
     "OrganSampler can play through **several sound cards at the same time** - every\n"
@@ -1411,11 +1414,11 @@ static const char* const kManualText_part6 =
     "- **ALSA** - the plain Linux driver, for a quick start or a card that\n"
     "  PipeWire does not use. \"PipeWire Sound Server\" and \"Default ALSA Output\"\n"
     "  are the desktop's stereo output: two channels, the system mix. A card's\n"
+    ;
+static const char* const kManualText_part7 =
     "  own entries (\"Direct hardware device without any conversions\", its S/PDIF\n"
     "  or HDMI entry) open only while nothing else holds the card; ALSA's\n"
     "  template entries (surround 4.0 ... 7.1, front, rear, dmix) are never\n"
-    ;
-static const char* const kManualText_part7 =
     "  shown. When the list is made every device is tried, and one that cannot be\n"
     "  opened at that moment (held by PipeWire or another program) is left out,\n"
     "  with the reason in the activity log; a card PipeWire holds for one of this\n"
@@ -1613,11 +1616,11 @@ static const char* const kManualText_part7 =
     "\n"
     "---\n"
     "\n"
+    ;
+static const char* const kManualText_part8 =
     "# 7. Filled pipes, extensions and the transposition methods\n"
     "\n"
     "## 7.1 What a filled pipe is\n"
-    ;
-static const char* const kManualText_part8 =
     "\n"
     "Every rank is completed to the full keyboard: pipes it does not have are\n"
     "played from neighbouring real pipes, transposed. This covers the extra octave\n"
@@ -1815,11 +1818,11 @@ static const char* const kManualText_part8 =
     "\n"
     "### Render threads\n"
     "\n"
+    ;
+static const char* const kManualText_part9 =
     "How many CPU threads render pipes for ASIO routes, the audio driver's own\n"
     "thread included. (The note bookkeeping - MIDI commands, attacks and releases,\n"
     "the return of finished voices - runs on a thread of its own beside them, so\n"
-    ;
-static const char* const kManualText_part9 =
     "the audio callback only renders; before 0.8.45 it took up to a third of every\n"
     "period inside the callback.) Default: all physical cores - keep it there. Hyper-threads\n"
     "(the logical CPUs) share a core's execution units and memory pipeline: measured\n"
@@ -1832,12 +1835,20 @@ static const char* const kManualText_part9 =
     "\"All logical CPUs\" is the same as \"All physical cores\" and is not shown, a\n"
     "single core has no \"all - 1\". The setting belongs to the computer, never to an\n"
     "organ: a portable configuration carries none, and one of an older version that\n"
-    "does is ignored (this computer's own setting stays).\n"
+    "does is ignored (this computer's own setting stays). The default is every\n"
+    "physical core on every computer: a setting that is not the default and was\n"
+    "never chosen in this editor on this computer (older versions let a portable\n"
+    "file bring it in - the Rural Organ file left two-core laptops rendering on one\n"
+    "thread) goes back to the default at the next start; a choice made here stays.\n"
     "\n"
     "### Currently active\n"
     "\n"
     "The threads really rendering now and the interpolation kernel the processor\n"
-    "supports (AVX2 on current processors). Information only.\n"
+    "gets: AVX2 (eight frames a step, current x86-64 processors), SSE2 (four\n"
+    "frames, older x86-64 such as a Core 2 Duo), NEON (four frames, Apple silicon\n"
+    "and Linux arm64) or scalar. The kernel is chosen at start from what the CPU\n"
+    "reports, on Windows, Linux and macOS alike; the self-test (`--kerneltest`)\n"
+    "checks it against the scalar code and tells its speed. Information only.\n"
     "\n"
     "### Render threads for Aggregated WASAPI\n"
     "\n"
@@ -1964,7 +1975,7 @@ static const char* const kManualText_part9 =
     "measurement without the organ would not say anything about it. What\n"
     "happens:\n"
     "\n"
-    "1. The sound is turned down to -42 dB at once (everything is rendered as\n"
+    "1. The sound is turned down to -52 dB at once (everything is rendered as\n"
     "   usual; you hear the storm very quietly). The polyphony limit is out of the\n"
     "   way (300 000) for the run, and so are *Attack minimum time* and *Attack\n"
     "   minimum delay*, which would hold the fast strikes back. The idle audio\n"
@@ -2009,6 +2020,8 @@ static const char* const kManualText_part9 =
     "   measured, not rounded. When even all 61 keys struck 16 times a second produce no more\n"
     "   voices and the audio stays clean, the organ itself is the limit, not the\n"
     "   computer. The *DSP* field may read lower than 85 % at the moment the run\n"
+    ;
+static const char* const kManualText_part10 =
     "   ends: it shows a peak that fades within a fraction of a second, while the\n"
     "   judge takes the single longest callback and every late one. Above the\n"
     "   measured value the sound is often still fine - until the first callback\n"
@@ -2020,27 +2033,35 @@ static const char* const kManualText_part9 =
     "   back over two seconds after the report's OK.\n"
     "5. The report names the result and gives advice: every route on a Windows\n"
     "   Audio device (rendered by its own thread alone) and every auxiliary route\n"
-    ;
-static const char* const kManualText_part10 =
     "   with a device (every pipe once more), with the share of its period it\n"
     "   needed, and a larger ASIO buffer (set in the driver's control panel) when\n"
-    "   the computer is the limit. It also says what the CPU did during the run -\n"
-    "   this program's share of all logical CPUs on average and at the peak, and\n"
-    "   the whole computer's. A callback over its period while the program had\n"
-    "   barely one core busy means the audio thread's core was the limit, not the\n"
-    "   computer: a larger buffer, fewer routes on one device, Light IR\n"
-    "   processing (when it is not on already), and a CPU that is not held at a\n"
-    "   low clock help; on Linux the report names the CPU governor (\"performance\"\n"
-    "   keeps the clock up), on Windows the power plan. The CPU figures come on\n"
-    "   Windows, Linux and macOS alike; when the clocks cannot be read the report\n"
-    "   says so. A computer with one or two cores is told that the buffer size\n"
-    "   decides more than anything else there: the audio thread, the render\n"
-    "   worker, the control thread and the window share the cores, and every\n"
-    "   block pays its fixed costs (the hand-over between threads, the first\n"
-    "   partitions of each IR, the note bookkeeping) whatever the polyphony, so\n"
-    "   each doubling of the buffer gives nearly twice the polyphony. The\n"
-    "   measurement is also started from the audio tab of a division's Settings\n"
-    "   (*Measure polyphony*, beside *Reopen device*).\n"
+    "   the computer is the limit. Then it says where the time went - measured\n"
+    "   on this computer during this run, not guessed:\n"
+    "   - the CPU of the cores the program renders on (the render threads: 16\n"
+    "     threads busy on a 32-thread processor are 100 % here and 50 % in a task\n"
+    "     manager), on average and at the peak, and the whole computer's share;\n"
+    "     when the sound broke while the render cores were less than 60 % busy,\n"
+    "     the time went into one thread - the device callback - not into the\n"
+    "     rendering;\n"
+    "   - the render pool: how busy its lanes were inside the route jobs (the rest\n"
+    "     is waiting for the slowest lane and the hand-over between the jobs, one\n"
+    "     job per route and block);\n"
+    "   - the kernel of this processor (AVX2, SSE2, NEON or scalar): nanoseconds\n"
+    "     per voice and frame with the sample in the cache and streaming from RAM,\n"
+    "     measured right then (about a second), and the ceiling that gives at this\n"
+    "     buffer with these render cores - the measured limit as a share of it;\n"
+    "   - the callback time of the run split into a fixed part per block (the\n"
+    "     hand-over, the IR heads, the bookkeeping) and a part per voice, and from\n"
+    "     that what half, twice and four times the buffer would give for this\n"
+    "     organ. There is no general rule: on a two-core laptop a doubled buffer\n"
+    "     gave 17 % more voices, on a Ryzen a quarter of the buffer still gave\n"
+    "     62 % of the voices - the report computes it from the run.\n"
+    "   On Linux the report names the CPU governor (\"performance\" keeps the\n"
+    "   clock up), on Windows the power plan; when the CPU clocks cannot be read\n"
+    "   it says so. During the run the progress text shows the CPU of the render\n"
+    "   cores and the lane utilisation every second. The measurement is also\n"
+    "   started from the audio tab of a division's Settings (*Measure polyphony*,\n"
+    "   beside *Reopen device*).\n"
     "\n"
     "Then save the configuration: the value belongs to this organ. Measure again\n"
     "after changing the audio routes, the IRs, the buffer size or the samples.\n"
@@ -2201,6 +2222,8 @@ static const char* const kManualText_part10 =
     "further pipes (1 to 12, default 12). With 12 every missing pipe is the octave\n"
     "transposition of a real one, so the rank's chromatic variety is kept; with 1\n"
     "the edge pipe alone serves all missing pipes. Fewer semitones of transposition\n"
+    ;
+static const char* const kManualText_part11 =
     "sound better, so a last group smaller than the setting takes the outermost real\n"
     "pipes with the smallest shift possible. Changing it refills every stop and\n"
     "rebuilds the copies. See \"What a filled pipe is\".\n"
@@ -2222,8 +2245,6 @@ static const char* const kManualText_part10 =
     "as a share of its source's duration (25 to 200 %, default 100). Resampling\n"
     "alone would make a release shifted two octaves down four times as long and one\n"
     "shifted two octaves up a quarter, but the room does not grow or shrink with the\n"
-    ;
-static const char* const kManualText_part11 =
     "pipe, so the decay is laid out again to this length in both directions (100 % =\n"
     "exactly the source's duration). Longer than 100 % gives a bigger room to the\n"
     "extension than to the stop; shorter dries it. Changing it rebuilds the release\n"
@@ -2403,6 +2424,8 @@ static const char* const kManualText_part11 =
     "### Top bar: Hide/Show all voicing\n"
     "\n"
     "Shows or hides the button that folds or unfolds every voicing row.\n"
+    ;
+static const char* const kManualText_part12 =
     "\n"
     "### Top bar: Perspective Patterns\n"
     "\n"
@@ -2424,8 +2447,6 @@ static const char* const kManualText_part11 =
     "\n"
     "### Top bar: Load Voicing\n"
     "\n"
-    ;
-static const char* const kManualText_part12 =
     "Shows or hides the Load Voicing button (the voicing from a file). Hidden by\n"
     "default.\n"
     "\n"
@@ -2605,6 +2626,8 @@ static const char* const kManualText_part12 =
     "### Audio output channels (default perspective)\n"
     "\n"
     "The channels of the division's audio device that the default perspective\n"
+    ;
+static const char* const kManualText_part13 =
     "plays on, as numbers separated by commas (the same channels the Divisions\n"
     "dialog shows as a list of tick boxes on the audio tab; either place changes\n"
     "the other). Press Enter or click outside to apply. How mono and stereo\n"
@@ -2626,8 +2649,6 @@ static const char* const kManualText_part12 =
     "\n"
     "### Perspective channel separation\n"
     "\n"
-    ;
-static const char* const kManualText_part13 =
     "At 100 % (default) every pipe sounds only on its own channel pair of the\n"
     "perspective; less lets the other channels carry that share of it too; 0 % = all\n"
     "channels carry the same sum.\n"

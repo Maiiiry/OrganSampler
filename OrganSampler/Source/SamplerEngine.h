@@ -922,12 +922,32 @@ public:
         return maxBlockMs.exchange(0.0f);
     }
     double getLastBlockMs() const noexcept;   // the duration of the device block rendered last (the budget)
-    // Diagnostics: force the scalar interpolation kernel even on AVX2 CPUs.
+    // Diagnostics: force the scalar interpolation kernel even on SIMD CPUs.
     void setSimdDisabled(bool disabled) noexcept { simdDisabled.store(disabled); }
     bool isUsingSimd() const noexcept;
-    // Renders a synthetic signal through the scalar and the SIMD kernels and
-    // reports the largest difference; used by the --selftest mode.
+    static const char* simdKernelName() noexcept;     // the kernel this CPU gets: "AVX2", "SSE2", "NEON" or "scalar"
+    const char* currentKernelName() const noexcept;   // ... or "scalar" while SIMD is switched off
+    // Renders a synthetic signal through the scalar and every SIMD kernel of
+    // this CPU, reports the largest difference, and benchmarks the kernel;
+    // used by --selftest and --kerneltest.
     static juce::String runKernelSelfCheck();
+    // What one thread renders: ns per voice and frame of the kernel alone, with
+    // the sample in the cache and streaming from RAM (a buffer of ramBytes).
+    struct KernelBenchmark
+    {
+        juce::String kernel;                          // the SIMD kernel measured (empty: scalar only)
+        int blockFrames = 0;
+        double nsCacheScalar = 0.0, nsCacheSimd = 0.0;
+        double nsRamScalar = 0.0, nsRamSimd = 0.0;
+        juce::int64 ramBytes = 0;                     // the buffer the RAM figures were taken on (0: not measured)
+        double nsBest() const noexcept { return kernel.isEmpty() ? nsRamScalar : nsRamSimd; }
+        juce::String describe() const;
+    };
+    static KernelBenchmark benchmarkKernel(int blockFrames, juce::int64 ramBytes);
+    // The render pool since the last query: the route jobs, the lanes' busy time
+    // against lanes x job wall time (utilisation), the device thread's own share.
+    struct RenderPoolStats { int jobs = 0, lanes = 1; double laneUtilisation = 0.0, posterShare = 0.0, jobSeconds = 0.0; };
+    RenderPoolStats takeRenderPoolStats() noexcept;
 
     void setWindModel(int sourceManual, float depthCents, float frequencyHz,
         float oscillations, float oscillationStrength, float baseSmoothingMs,

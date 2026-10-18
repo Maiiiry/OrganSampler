@@ -3310,7 +3310,7 @@ juce::String Voicer::transmissionLabel(const Stop* stop, int index)
         // An alias without a footage gets the transmission's footage, like every
         // other caption; the mark follows the alias as it follows the automatic name.
         int written = 0;
-        if (SamplerEngine::footageFromName(t.alias, written)) return t.alias + suffix;
+        if (SamplerEngine::footageFromName(t.alias, written)) return footageDisplayName(t.alias) + suffix;   // the foot mark on a bare number ("Plockfloett 4" -> "4'")
         return t.alias + " " + SamplerEngine::footageLabel(SamplerEngine::displayedFootageSemitones(stop) + t.shift) + suffix;
     }
     return SamplerEngine::transmissionCaption(stop, t);

@@ -12,6 +12,47 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.119] - 2026-10-18
+
+### Changed
+- The interpolation kernels for every processor: the AVX2 kernels were built
+  by MSVC only, so Linux, Intel Macs and Apple silicon rendered with the
+  scalar code; they now compile with GCC and clang as well (x86-64), a
+  four-frame SSE2 kernel serves x86-64 processors without AVX2 (the Core 2
+  Duo laptops) and a four-frame NEON kernel Apple silicon and Linux arm64;
+  the 16-bit AVX2 kernel reads a 16-frame window with one load instead of
+  a gather (slow on AMD). The spin-wait hint of the render workers was a
+  thread yield (a system call) outside Windows. The self-test checks every
+  kernel of the CPU against the scalar one and benchmarks it; the CI runs
+  `--kerneltest` on every platform, Apple silicon included. The Configuration
+  Editor names the kernel in use (AVX2, SSE2, NEON, scalar).
+- The polyphony report measures where the time went instead of guessing:
+  the CPU of the render cores (16 render threads busy on a 32-thread
+  processor are 100 % there, 50 % in a task manager), how busy the lanes
+  were inside the route jobs, the kernel's speed on this computer from the
+  cache and from RAM with the ceiling that gives at this buffer, and the
+  callback time of the run split into a fixed part per block and a part per
+  voice - from which it says what half, twice and four times the buffer
+  would give for this organ. The claim that a doubled buffer nearly doubles
+  the polyphony is gone (it did not hold: #8). The progress text shows the
+  CPU of the render cores and the lane utilisation every second.
+- The measurement plays at -52 dB (was -42: a tutti of 30 000 voices was
+  still loud).
+- Render threads: the default is every physical core on every computer. A
+  setting that is not the default and was never chosen in the Configuration
+  Editor of this computer (it came in with a portable configuration of an
+  older version - "All logical CPUs - 1" on every machine the Rural Organ
+  file was opened on, which left the two-core laptops rendering on ONE
+  thread) goes back to the default; a choice made in the editor from now on
+  carries a flag and stays.
+- Footages below one foot read as fractions ("1/8'", "1/6'", never
+  "0.12'"); an alias with a bare number at the end gets the foot mark
+  ("I. Quintadeen 8" reads "I. Quintadeen 8'"), transmissions included.
+- Merging a second organ switches Temperaments > "Equal at 440 Hz" on: two
+  organs rarely stand at one pitch.
+- The bug report form's operating system is a text field (GitHub did not
+  take the dropdown value from the link).
+
 ## [0.8.118] - 2026-10-18
 
 ### Fixed

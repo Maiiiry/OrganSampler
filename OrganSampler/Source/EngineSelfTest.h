@@ -295,7 +295,7 @@ namespace EngineSelfTest
         // (measures the cost of the per-route convolution reverb).
         const juce::File selfTestIr(std::getenv("ORGAN_SELFTEST_IR") != nullptr ? juce::String(std::getenv("ORGAN_SELFTEST_IR")) : juce::String());
         report << "Render threads: " << engine.getRenderWorkerCount() + 1 << " (incl. audio thread)"
-               << "   SIMD kernel: " << (engine.isUsingSimd() ? "AVX2" : "scalar")
+               << "   SIMD kernel: " << engine.currentKernelName()
                << "   harmonic filter swell/wind/tremulant: " << juce::String(engine.getHarmonicFilterSwellDb(), 1) << "/"
                << juce::String(engine.getHarmonicFilterWindDb(), 1) << "/" << juce::String(engine.getHarmonicFilterTremulantDb(), 1) << " dB"
                << "   sample storage: " << (engine.getSampleStorageFloat() ? "32-bit float" : "16-bit") << "\n";

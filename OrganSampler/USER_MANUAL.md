@@ -539,7 +539,10 @@ perspective brings the added configuration's; a division that has stops
 keeps its MIDI keyboard, an empty one takes the added configuration's keys,
 wind, tremulant and (when included) MIDI; couplers, combinations, crescendo,
 temperament, the global sound settings and the MIDI buttons stay yours. Two
-stops of one name in one division: the added one gets "(2)". Before anything
+stops of one name in one division: the added one gets "(2)". Two organs
+rarely stand at one pitch (a1 = 440, 415, 465 Hz ...), so the merge switches
+Temperaments > *Equal at 440 Hz* on: every stop of the merged organ is tuned
+to 440 Hz and they play together in tune. Before anything
 is loaded the program sizes the added sample folders against the memory that
 is free now and refuses the merge when they would not fit (nothing is
 changed then). The merged organ is loaded but not saved: *Save Configuration*
@@ -1810,12 +1813,20 @@ holds only the choices this computer can tell apart: without hyper-threading
 "All logical CPUs" is the same as "All physical cores" and is not shown, a
 single core has no "all - 1". The setting belongs to the computer, never to an
 organ: a portable configuration carries none, and one of an older version that
-does is ignored (this computer's own setting stays).
+does is ignored (this computer's own setting stays). The default is every
+physical core on every computer: a setting that is not the default and was
+never chosen in this editor on this computer (older versions let a portable
+file bring it in - the Rural Organ file left two-core laptops rendering on one
+thread) goes back to the default at the next start; a choice made here stays.
 
 ### Currently active
 
 The threads really rendering now and the interpolation kernel the processor
-supports (AVX2 on current processors). Information only.
+gets: AVX2 (eight frames a step, current x86-64 processors), SSE2 (four
+frames, older x86-64 such as a Core 2 Duo), NEON (four frames, Apple silicon
+and Linux arm64) or scalar. The kernel is chosen at start from what the CPU
+reports, on Windows, Linux and macOS alike; the self-test (`--kerneltest`)
+checks it against the scalar code and tells its speed. Information only.
 
 ### Render threads for Aggregated WASAPI
 
@@ -1942,7 +1953,7 @@ driver as it is. The button is greyed out until samples are loaded: a
 measurement without the organ would not say anything about it. What
 happens:
 
-1. The sound is turned down to -42 dB at once (everything is rendered as
+1. The sound is turned down to -52 dB at once (everything is rendered as
    usual; you hear the storm very quietly). The polyphony limit is out of the
    way (300 000) for the run, and so are *Attack minimum time* and *Attack
    minimum delay*, which would hold the fast strikes back. The idle audio
@@ -2000,23 +2011,33 @@ happens:
    Audio device (rendered by its own thread alone) and every auxiliary route
    with a device (every pipe once more), with the share of its period it
    needed, and a larger ASIO buffer (set in the driver's control panel) when
-   the computer is the limit. It also says what the CPU did during the run -
-   this program's share of all logical CPUs on average and at the peak, and
-   the whole computer's. A callback over its period while the program had
-   barely one core busy means the audio thread's core was the limit, not the
-   computer: a larger buffer, fewer routes on one device, Light IR
-   processing (when it is not on already), and a CPU that is not held at a
-   low clock help; on Linux the report names the CPU governor ("performance"
-   keeps the clock up), on Windows the power plan. The CPU figures come on
-   Windows, Linux and macOS alike; when the clocks cannot be read the report
-   says so. A computer with one or two cores is told that the buffer size
-   decides more than anything else there: the audio thread, the render
-   worker, the control thread and the window share the cores, and every
-   block pays its fixed costs (the hand-over between threads, the first
-   partitions of each IR, the note bookkeeping) whatever the polyphony, so
-   each doubling of the buffer gives nearly twice the polyphony. The
-   measurement is also started from the audio tab of a division's Settings
-   (*Measure polyphony*, beside *Reopen device*).
+   the computer is the limit. Then it says where the time went - measured
+   on this computer during this run, not guessed:
+   - the CPU of the cores the program renders on (the render threads: 16
+     threads busy on a 32-thread processor are 100 % here and 50 % in a task
+     manager), on average and at the peak, and the whole computer's share;
+     when the sound broke while the render cores were less than 60 % busy,
+     the time went into one thread - the device callback - not into the
+     rendering;
+   - the render pool: how busy its lanes were inside the route jobs (the rest
+     is waiting for the slowest lane and the hand-over between the jobs, one
+     job per route and block);
+   - the kernel of this processor (AVX2, SSE2, NEON or scalar): nanoseconds
+     per voice and frame with the sample in the cache and streaming from RAM,
+     measured right then (about a second), and the ceiling that gives at this
+     buffer with these render cores - the measured limit as a share of it;
+   - the callback time of the run split into a fixed part per block (the
+     hand-over, the IR heads, the bookkeeping) and a part per voice, and from
+     that what half, twice and four times the buffer would give for this
+     organ. There is no general rule: on a two-core laptop a doubled buffer
+     gave 17 % more voices, on a Ryzen a quarter of the buffer still gave
+     62 % of the voices - the report computes it from the run.
+   On Linux the report names the CPU governor ("performance" keeps the
+   clock up), on Windows the power plan; when the CPU clocks cannot be read
+   it says so. During the run the progress text shows the CPU of the render
+   cores and the lane utilisation every second. The measurement is also
+   started from the audio tab of a division's Settings (*Measure polyphony*,
+   beside *Reopen device*).
 
 Then save the configuration: the value belongs to this organ. Measure again
 after changing the audio routes, the IRs, the buffer size or the samples.

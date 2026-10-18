@@ -19,15 +19,12 @@ body:
       placeholder: "0.8.50"
     validations:
       required: true
-  - type: dropdown
+  - type: input
     id: os
     attributes:
       label: Operating system
-      options:
-        - Windows 11
-        - Windows 10
-        - macOS
-        - Linux
+      description: Filled in by "Report a problem" (GitHub does not take a dropdown value from the link, a text field it does). Windows 10/11, macOS with its version, or the Linux distribution.
+      placeholder: "Windows 11 / macOS 14.5 / Linux Mint 22"
     validations:
       required: true
   - type: input

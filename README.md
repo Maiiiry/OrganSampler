@@ -7,7 +7,7 @@ list, perform.
 
 [![Latest build](https://img.shields.io/github/v/tag/zurek-jiri/OrganSampler?sort=semver&label=download%20the%20latest%20build)](https://github.com/zurek-jiri/OrganSampler/releases)
 
-[![The console: one column per division, the stops as buttons, couplers and tremulants in the headers, pistons and the crescendo above](site/assets/main.png)](site/assets/main.png)
+[![The console with the Stralsund, St. Jakobi organ: four divisions with their stop buttons, couplers and tremulants in the headers, pistons and the crescendo above](site/assets/console-stralsund.png)](site/assets/console-stralsund.png)
 
 OrganSampler plays sampled pipe organs from plain folders of WAV files - one
 folder per stop, its pipes as WAV files - and turns any number of such folders into

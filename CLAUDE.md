@@ -108,9 +108,24 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   the whole package (Stellwagen "III. G. Plockfloett 4": pool full of every folder, stops twice). A stop folder never
   holds another stop's folder (fallback: rank folders). Noise ranks by whole words ("I. Zimbell" is no bell).
   Rows: `name` = the folder's automatic name (`scanTreeAssignments`), `customName=false`, `alias` = HW stop name.
-  Ignored patterns on import: `trem`, `*_tr` (the `II_TR` sibling folders). A perspective line may carry several
-  prefixes ("Direct;01-dirc-;03-dif2S-": one label, two spellings in one organ). Stellwagen (2723+2724, non-encrypted
-  ODF in OrganDefinitions) must give 14+14+12+12 stops, 1 extension, trees `00272x/pipes/{PE,I,II,III}` only.
+  Ignored patterns on import: `trem`, `*_tr` (the `II_TR` sibling folders). The import writes several prefixes into
+  one perspective line when one organ spells a perspective two ways ("Direct;01-dirc-;03-dif2S-") - the engine has
+  read `Label;prefix;prefix2` lines since the first commit (0.8.50, `stripPerspectivePrefix`); never call that new.
+  Stellwagen (2723+2724, non-encrypted ODF in OrganDefinitions) must give 14+14+12+12 stops, 1 extension, trees
+  `00272x/pipes/{PE,I,II,III}` only.
+- Engine kernels (0.8.119): AVX2 (8 frames; `ENGINE_AVX2_FN` = `__attribute__((target("avx2")))` on GCC/clang, plain on
+  MSVC - before 0.8.119 the AVX2 code was `#if _MSC_VER` only, so Linux and both Macs rendered scalar), SSE2 and NEON
+  four-frame kernels (`Lane4`, one code for both), scalar. `bestKernel()` picks at run time; `--kerneltest` (CI on every
+  platform, Apple silicon included) compares each kernel with the scalar one (end positions identical, samples within
+  1e-4 of the peak) and prints ns per voice and frame from cache and from RAM (`benchmarkKernel`). ENGINE_CPU_PAUSE is
+  `_mm_pause`/`yield`, never `std::this_thread::yield()` (a system call in a spin). The render pool keeps lane
+  utilisation statistics (`takeRenderPoolStats`); the polyphony report shows the CPU of the RENDER CORES (16 threads
+  busy on a 32-thread CPU = 100 %, not 50 %), the lane utilisation, the kernel benchmark with the ceiling it gives, and
+  the fixed-per-block / per-voice split of the callback time with what other buffers would give - never a general
+  "doubling the buffer doubles the polyphony" claim (false, #8). Measurement level -52 dB.
+- Render threads default = all physical cores, always. `renderThreadPresetChosen` (settings, machine-specific) marks a
+  choice made in the Configuration Editor; without it a non-default preset is reset at load (the old portable Rural file
+  carried `allMinusOne` and left two-core laptops on ONE render thread, issues #6-#8).
   A polling lambda stored in a shared std::function (`*poll = [...]{...}`) must never do `*poll = nullptr` while it
   runs - that destroys its own captures (a copy `self = *poll` does NOT help: the executing object is the original) -
   it clears itself afterwards: `juce::MessageManager::callAsync([keep = poll] { *keep = nullptr; });`. Two crashes
