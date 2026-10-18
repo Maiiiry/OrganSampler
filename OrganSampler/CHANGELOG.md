@@ -12,6 +12,31 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.117] - 2026-10-18
+
+### Added
+- Merge another configuration into the loaded organ (right-click Load
+  Configuration): an OrganSampler `.json` or a Hauptwerk organ definition,
+  division by division - its stops as further Stop List rows under the
+  existing ones, its trees and voicing with them, new perspectives with their
+  routes; shared sample folders, perspectives already set up, the MIDI of
+  divisions with stops, couplers, combinations, crescendo, temperament and
+  the global settings are left as they are and the message at the end lists
+  it all. The added sample folders are sized against the free memory first
+  and the merge is refused when they would not fit.
+- The polyphony measurement reports the CPU use of the program and of the
+  whole computer during the run and says what to do when one core is the
+  limit (a larger buffer, fewer routes per device, Light IR, the CPU clock);
+  on Linux it names the CPU governor, on Windows the power plan. The
+  measurement is also started from the audio tab of a division's Settings
+  (Measure polyphony, beside Reopen device; the three buttons are narrower
+  and taller).
+
+### Changed
+- The Hauptwerk import takes the median of a stop's pipe levels as its
+  volume, not the mean: most pipes stand at 0 dB, a few voiced ones must not
+  pull the whole stop.
+
 ## [0.8.116] - 2026-10-18
 
 ### Added

@@ -500,8 +500,9 @@ static const char* const kManualText_part2 =
     "(front, direct, diffuse, rear ... as the ranks are named, turned into the\n"
     "perspective patterns), and the per-pipe level adjustments as the voicing:\n"
     "Hauptwerk voices every perspective on its own, OrganSampler every stop, so\n"
-    "the levels of a pipe are averaged over the perspectives; the mean over the\n"
-    "pipes becomes the stop's volume, the rest the per-key voicing. Everything\n"
+    "the levels of a pipe are averaged over the perspectives; the median over the\n"
+    "pipes becomes the stop's volume (most pipes stand at 0 dB, a few voiced ones\n"
+    "must not pull the whole stop), the rest the per-key voicing. Everything\n"
     "else - couplers, combinations, tremulants, wind, displays, noises - is\n"
     "ignored: the folder structure decides the organ, as always. Tremmed samples\n"
     "(the \"tremmed\" ranks, the `trem` folders) are left out; OrganSampler has its\n"
@@ -518,6 +519,28 @@ static const char* const kManualText_part2 =
     "the Stop List, give the perspectives their audio routes and the divisions\n"
     "their MIDI keyboards, and *Save Configuration* - as a portable one to\n"
     "publish it.\n"
+    "\n"
+    "### Merging another configuration into the loaded organ\n"
+    "\n"
+    "Right-click *Load Configuration* > *Merge another configuration into this\n"
+    "organ* adds a second configuration (an OrganSampler `.json`, or a Hauptwerk\n"
+    "organ definition) to the one that is loaded, division by division: the added\n"
+    "pedal joins your pedal, its first manual your first manual, and so on; a\n"
+    "division you do not have yet is created. The added stops become further rows\n"
+    "of the Stop List under the existing rows of their division (drag them where\n"
+    "they belong), their folder trees join yours, and their voicing comes with\n"
+    "them. What would collide is left as it is and listed in the message at the\n"
+    "end: a stop whose sample folder is already loaded is shared and not added; a\n"
+    "perspective your organ already has keeps its audio route and settings, a new\n"
+    "perspective brings the added configuration's; a division that has stops\n"
+    "keeps its MIDI keyboard, an empty one takes the added configuration's keys,\n"
+    "wind, tremulant and (when included) MIDI; couplers, combinations, crescendo,\n"
+    "temperament, the global sound settings and the MIDI buttons stay yours. Two\n"
+    "stops of one name in one division: the added one gets \"(2)\". Before anything\n"
+    "is loaded the program sizes the added sample folders against the memory that\n"
+    "is free now and refuses the merge when they would not fit (nothing is\n"
+    "changed then). The merged organ is loaded but not saved: *Save Configuration*\n"
+    "keeps it.\n"
     "\n"
     "### Portable configuration (to share with others)\n"
     "\n"
@@ -583,6 +606,8 @@ static const char* const kManualText_part2 =
     "\n"
     "A configuration holds only what the instrument uses now: the divisions in\n"
     "use, the audio routes that exist (the audio tabs of the Divisions dialog)\n"
+    ;
+static const char* const kManualText_part3 =
     "and their settings. Nothing is kept for later. A division's own audio route\n"
     "that no stop plays through - every stop of the division has a perspective of\n"
     "its own - has no tab, and so it has no device either: the program closes it\n"
@@ -606,8 +631,6 @@ static const char* const kManualText_part2 =
     "From top to bottom: the top bar of buttons, the combination row, the row of\n"
     "global sound sliders with the polyphony display, and the stop workspace - one\n"
     "column per division with its header and its stop grid.\n"
-    ;
-static const char* const kManualText_part3 =
     "\n"
     "## 2.1 Top bar buttons\n"
     "\n"
@@ -785,6 +808,8 @@ static const char* const kManualText_part3 =
     "  the loaded folders that no division of the instrument uses yet, and the\n"
     "  division's pooled stops and transmissions, which return to the grid in that\n"
     "  cell. A stop already in use anywhere is not offered: it is moved on the\n"
+    ;
+static const char* const kManualText_part4 =
     "  grid (arrange mode) or given a transmission instead.\n"
     "\n"
     "None of this loads anything again: stops keep their samples and the copies of\n"
@@ -808,8 +833,6 @@ static const char* const kManualText_part3 =
     "- **Attack Gain** (-6 to +6 dB) - the start of every note is raised or\n"
     "  lowered by this much: more chiff, or a softer speaking, without touching the\n"
     "  held tone.\n"
-    ;
-static const char* const kManualText_part4 =
     "- **Attack Time** (0-500 ms, default 150) - how long the attack gain acts at\n"
     "  the start of the note: it holds for the first half of this time and fades\n"
     "  back to the normal level over the second half.\n"
@@ -987,6 +1010,8 @@ static const char* const kManualText_part4 =
     "  the folder; occupied: swaps). The whole path appears in a tip while the\n"
     "  mouse rests on the cell.\n"
     "- **Transmissions:** the cell shows where the stop's transmissions go\n"
+    ;
+static const char* const kManualText_part5 =
     "  (division and transposition); click it to add one into any division (its\n"
     "  own included, as often as wanted) or to remove one. Transmissions act at\n"
     "  once; they need no Apply. With **Show Trsm.** (bottom bar) every\n"
@@ -1010,8 +1035,6 @@ static const char* const kManualText_part4 =
     "- **Swap divisions...** exchanges the whole stop lists of two divisions, as if\n"
     "  their folders had been swapped (combinations and MIDI bindings follow).\n"
     "  **Reset division...** forgets one division's table.\n"
-    ;
-static const char* const kManualText_part5 =
     "- **Name:** derived from the folders; a typed name is kept until the field is\n"
     "  cleared. The name is the stop's identity in voicing, combinations and\n"
     "  configurations; the alias is only what is shown.\n"
@@ -1189,6 +1212,8 @@ static const char* const kManualText_part5 =
     "IRs are set; at 512 samples (10.7 ms, unnoticeable on an organ) the same\n"
     "computer renders tens of thousands. 512 is the default for a device opened\n"
     "for the first time (ASIO keeps its control panel's size, JACK the server's\n"
+    ;
+static const char* const kManualText_part6 =
     "shared clock), and the value to measure the polyphony with. A measurement\n"
     "that finds a buffer below 256 samples on any route says so first and asks\n"
     "for 512, or 256 at the least, before anything else.\n"
@@ -1212,8 +1237,6 @@ static const char* const kManualText_part5 =
     "\n"
     "ASIO devices, Windows Audio (WASAPI) devices and the Aggregated WASAPI\n"
     "device can all be open at once. No other organ sampler on Windows does this.\n"
-    ;
-static const char* const kManualText_part6 =
     "\n"
     "The kinds of driver:\n"
     "\n"
@@ -1391,6 +1414,8 @@ static const char* const kManualText_part6 =
     "reports are welcome. Two builds: `OrganSampler-macos.zip` for Apple silicon\n"
     "Macs on **macOS 11 Big Sur or newer**, and `OrganSampler-macos-10.11-intel.zip`\n"
     "for Intel Macs on **macOS 10.11 El Capitan or newer** (10.11 is the oldest\n"
+    ;
+static const char* const kManualText_part7 =
     "system the framework allows; a Mac on 10.10 needs the free upgrade to the\n"
     "newest system Apple offers for it, 10.13 High Sierra for the 2010 models).\n"
     "\n"
@@ -1414,8 +1439,6 @@ static const char* const kManualText_part6 =
     "\n"
     "So the polyphony a computer reaches is not a property of the computer alone:\n"
     "it depends on the whole configuration of the organ - the number of audio\n"
-    ;
-static const char* const kManualText_part7 =
     "routes (every perspective of every division, every auxiliary route with a\n"
     "device), the IR reverbs on them, the drivers and their buffer sizes, and the\n"
     "samples themselves (their number of perspectives, the length of their releases).\n"
@@ -1593,6 +1616,8 @@ static const char* const kManualText_part7 =
     "## 7.2 The transposition methods\n"
     "\n"
     "How the neighbour's sample gets its new pitch is *Filled pipes: transposition\n"
+    ;
+static const char* const kManualText_part8 =
     "method* (Configuration Editor > Advanced global audio). The default is *Pitch\n"
     "shift + time stretch*, which gives the best results for most stops; the phase\n"
     "vocoder is an optional alternative for those who want it. Every method has\n"
@@ -1616,8 +1641,6 @@ static const char* const kManualText_part7 =
     "\n"
     "The three other methods build a copy of every filled pipe in the background\n"
     "(when the stop loads, when its compass or a transmission changes, when a\n"
-    ;
-static const char* const kManualText_part8 =
     "setting changes). Until a pipe's copy is ready the pipe plays by plain\n"
     "resampling, so the organ is playable from the first moment; the stop buttons\n"
     "show the build going on (a dark track along the bottom, filling orange), and\n"
@@ -1795,6 +1818,8 @@ static const char* const kManualText_part8 =
     "is a stream with a device thread of its own, so an organ with ten such\n"
     "routes already renders on ten threads beside each other; the default of 1\n"
     "(the device thread alone, no workers) is right for that layout, and more\n"
+    ;
+static const char* const kManualText_part9 =
     "threads per route only fight each other there. Raise it when one or two\n"
     "aggregated routes carry the whole organ (a big division on a single route is\n"
     "otherwise bound to one core): the route then shares its pipes out over the\n"
@@ -1818,8 +1843,6 @@ static const char* const kManualText_part8 =
     "plays exactly like a 48 kHz one and a 96 kHz set needs half the RAM it would\n"
     "otherwise. Loading takes longer. *Keep each file's own rate* loads faster and\n"
     "plays the files by interpolation. Takes effect at the next load.\n"
-    ;
-static const char* const kManualText_part9 =
     "\n"
     "### IR processing\n"
     "\n"
@@ -1973,7 +1996,16 @@ static const char* const kManualText_part9 =
     "   Audio device (rendered by its own thread alone) and every auxiliary route\n"
     "   with a device (every pipe once more), with the share of its period it\n"
     "   needed, and a larger ASIO buffer (set in the driver's control panel) when\n"
-    "   the computer is the limit.\n"
+    "   the computer is the limit. It also says what the CPU did during the run -\n"
+    "   this program's share of all logical CPUs on average and at the peak, and\n"
+    "   the whole computer's. A callback over its period while the program had\n"
+    "   barely one core busy means the audio thread's core was the limit, not the\n"
+    "   computer: a larger buffer, fewer routes on one device, Light IR\n"
+    "   processing, and a CPU that is not held at a low clock help; on Linux the\n"
+    "   report names the CPU governor (\"performance\" keeps the clock up), on\n"
+    "   Windows the power plan. The measurement is also started from the audio\n"
+    "   tab of a division's Settings (*Measure polyphony*, beside *Reopen\n"
+    "   device*).\n"
     "\n"
     "Then save the configuration: the value belongs to this organ. Measure again\n"
     "after changing the audio routes, the IRs, the buffer size or the samples.\n"
@@ -1988,6 +2020,8 @@ static const char* const kManualText_part9 =
     "### Master volume\n"
     "\n"
     "The level of the whole organ, -60 to +12 dB (default -20 dB). Lower it when the\n"
+    ;
+static const char* const kManualText_part10 =
     "output clips with full registration; the perspective and division volumes set\n"
     "the balance below it.\n"
     "\n"
@@ -2020,8 +2054,6 @@ static const char* const kManualText_part9 =
     "\n"
     "### Release cutting\n"
     "\n"
-    ;
-static const char* const kManualText_part10 =
     "Release samples are faded out over this share of their length and end there\n"
     "(5 to 100 %, default 100 = the full release). Shorter releases free polyphony\n"
     "sooner on a weak computer and dry a wet set.\n"
@@ -2190,6 +2222,8 @@ static const char* const kManualText_part10 =
     "\n"
     "Every pitch-shift method. A filled pipe's release copy is played from this\n"
     "many milliseconds in (0 to 300, default 140), skipping its start, where the\n"
+    ;
+static const char* const kManualText_part11 =
     "methods leave their worst: a stop transient that no longer belongs, a level\n"
     "that does not follow the sustain. Applied when the key is released: nothing is\n"
     "rebuilt, the change is heard at once. Lower it if the releases of an extension\n"
@@ -2222,8 +2256,6 @@ static const char* const kManualText_part10 =
     "loudness of its source sample, so a filled pipe is as strong as the pipe it was\n"
     "made from. Off: the copy keeps whatever level the shift left it with (a copy\n"
     "with its formants moved down loses level).\n"
-    ;
-static const char* const kManualText_part11 =
     "\n"
     "### Filled pipes: keep the generated copies on disk (cache)\n"
     "\n"
@@ -2370,6 +2402,7 @@ static const char* const kManualText_part11 =
     "\n"
     "Shows or hides the Load Configuration button (an OrganSampler `.json`, or a\n"
     "Hauptwerk organ definition - see \"Loading a Hauptwerk organ definition\").\n"
+    "Right-click: merge another configuration into the loaded organ.\n"
     "\n"
     "### Top bar: Save Configuration\n"
     "\n"
@@ -2391,6 +2424,8 @@ static const char* const kManualText_part11 =
     "### Top bar: GLOBAL RESET\n"
     "\n"
     "Shows or hides the GLOBAL RESET button (see \"GLOBAL RESET\").\n"
+    ;
+static const char* const kManualText_part12 =
     "\n"
     "### Melody/bass couplers: new extreme key only\n"
     "\n"
@@ -2424,8 +2459,6 @@ static const char* const kManualText_part11 =
     "### Target temperament\n"
     "\n"
     "The temperament the organ *plays* in (see \"Temperaments\"). Every pipe is retuned by the\n"
-    ;
-static const char* const kManualText_part12 =
     "difference between the target and the samples' base temperament, per pitch\n"
     "class. Choosing the base temperament itself plays the samples as recorded.\n"
     "The Temperaments dialog of the top bar does the same with one click, and\n"
@@ -2593,6 +2626,8 @@ static const char* const kManualText_part12 =
     "large value the stops of a full registration shimmer rather than pulse.\n"
     "\n"
     "### Wind: depth (maximum pitch sag)\n"
+    ;
+static const char* const kManualText_part13 =
     "\n"
     "How far the pitch sags with the wind at its lowest (0 to 50 cents, default 8).\n"
     "The sag is reached with many stops engaged and many keys held, the shares being\n"
@@ -2626,8 +2661,6 @@ static const char* const kManualText_part12 =
     "---\n"
     "\n"
     "## 8.7 Keeping track: the activity log\n"
-    ;
-static const char* const kManualText_part13 =
     "\n"
     "Everything the program does at a coarse level - devices opened, divisions\n"
     "loaded, builds of the filled pipes' copies - is noted in `CrashLogs\\activity.log`\n"

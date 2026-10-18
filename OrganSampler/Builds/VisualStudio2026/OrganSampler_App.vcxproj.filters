@@ -970,6 +970,9 @@
     <ClCompile Include="..\..\Source\HauptwerkOdf.cpp">
       <Filter>OrganSampler\Source</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\Source\MainComponentMerge.cpp">
+      <Filter>OrganSampler\Source</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\Source\Main.cpp">
       <Filter>OrganSampler\Source</Filter>
     </ClCompile>

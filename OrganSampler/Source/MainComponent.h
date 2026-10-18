@@ -1024,8 +1024,21 @@ private:
     // configuration made of them (written beside the samples, in the organ's
     // installation package) and loaded; the voicing is applied once the folders
     // are loaded. See HauptwerkOdf.h.
-    void importHauptwerkOdf(const juce::File& odf);
-    void applyHauptwerkVoicing(std::shared_ptr<HauptwerkOdf> odf, const juce::File& configurationFile, const juce::String& summary);
+    void importHauptwerkOdf(const juce::File& odf, bool mergeIntoLoaded = false);
+    void applyHauptwerkVoicing(std::shared_ptr<HauptwerkOdf> odf, const juce::File& configurationFile, const juce::String& summary, bool saveIntoPackage = true);
+    // Merging another configuration (or a Hauptwerk organ definition) into the
+    // loaded organ: right-click Load Configuration. MainComponentMerge.cpp.
+    void mergeConfigurationDialog();
+    void mergeConfigurationFile(const juce::File& file);
+    void mergeConfiguration(juce::var added, const juce::File& addedFile, const juce::String& addedName, std::function<void()> afterLoad);
+    static juce::int64 availablePhysicalMemoryBytes();   // free physical memory now (the samples must fit)
+    // The CPU clocks for the polyphony measurement: this process's CPU time (ms,
+    // all threads) and the system's busy and total times (ms, all CPUs); false
+    // where the platform offers none. MainComponentMerge.cpp.
+    static bool readCpuClocks(double& processMs, double& systemBusyMs, double& systemTotalMs);
+    // The power setting worth a word in the measurement's report: the Linux CPU
+    // governor, the Windows power plan; empty when unknown.
+    static juce::String powerSettingDescription();
     // The README of a configuration for the configurations folder on GitHub, in
     // the published form: written beside every portable configuration as
     // "<name>.README.md" (the user fills in the organ, the samples and the author).

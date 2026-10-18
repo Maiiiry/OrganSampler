@@ -492,8 +492,9 @@ with their key ranges, the stops with their sample folders, the perspectives
 (front, direct, diffuse, rear ... as the ranks are named, turned into the
 perspective patterns), and the per-pipe level adjustments as the voicing:
 Hauptwerk voices every perspective on its own, OrganSampler every stop, so
-the levels of a pipe are averaged over the perspectives; the mean over the
-pipes becomes the stop's volume, the rest the per-key voicing. Everything
+the levels of a pipe are averaged over the perspectives; the median over the
+pipes becomes the stop's volume (most pipes stand at 0 dB, a few voiced ones
+must not pull the whole stop), the rest the per-key voicing. Everything
 else - couplers, combinations, tremulants, wind, displays, noises - is
 ignored: the folder structure decides the organ, as always. Tremmed samples
 (the "tremmed" ranks, the `trem` folders) are left out; OrganSampler has its
@@ -510,6 +511,28 @@ and saved again with the voicing once the folders are loaded. Then check
 the Stop List, give the perspectives their audio routes and the divisions
 their MIDI keyboards, and *Save Configuration* - as a portable one to
 publish it.
+
+### Merging another configuration into the loaded organ
+
+Right-click *Load Configuration* > *Merge another configuration into this
+organ* adds a second configuration (an OrganSampler `.json`, or a Hauptwerk
+organ definition) to the one that is loaded, division by division: the added
+pedal joins your pedal, its first manual your first manual, and so on; a
+division you do not have yet is created. The added stops become further rows
+of the Stop List under the existing rows of their division (drag them where
+they belong), their folder trees join yours, and their voicing comes with
+them. What would collide is left as it is and listed in the message at the
+end: a stop whose sample folder is already loaded is shared and not added; a
+perspective your organ already has keeps its audio route and settings, a new
+perspective brings the added configuration's; a division that has stops
+keeps its MIDI keyboard, an empty one takes the added configuration's keys,
+wind, tremulant and (when included) MIDI; couplers, combinations, crescendo,
+temperament, the global sound settings and the MIDI buttons stay yours. Two
+stops of one name in one division: the added one gets "(2)". Before anything
+is loaded the program sizes the added sample folders against the memory that
+is free now and refuses the merge when they would not fit (nothing is
+changed then). The merged organ is loaded but not saved: *Save Configuration*
+keeps it.
 
 ### Portable configuration (to share with others)
 
@@ -1951,7 +1974,16 @@ happens:
    Audio device (rendered by its own thread alone) and every auxiliary route
    with a device (every pipe once more), with the share of its period it
    needed, and a larger ASIO buffer (set in the driver's control panel) when
-   the computer is the limit.
+   the computer is the limit. It also says what the CPU did during the run -
+   this program's share of all logical CPUs on average and at the peak, and
+   the whole computer's. A callback over its period while the program had
+   barely one core busy means the audio thread's core was the limit, not the
+   computer: a larger buffer, fewer routes on one device, Light IR
+   processing, and a CPU that is not held at a low clock help; on Linux the
+   report names the CPU governor ("performance" keeps the clock up), on
+   Windows the power plan. The measurement is also started from the audio
+   tab of a division's Settings (*Measure polyphony*, beside *Reopen
+   device*).
 
 Then save the configuration: the value belongs to this organ. Measure again
 after changing the audio routes, the IRs, the buffer size or the samples.
@@ -2344,6 +2376,7 @@ Shows or hides the Save Voicing button. Hidden by default.
 
 Shows or hides the Load Configuration button (an OrganSampler `.json`, or a
 Hauptwerk organ definition - see "Loading a Hauptwerk organ definition").
+Right-click: merge another configuration into the loaded organ.
 
 ### Top bar: Save Configuration
 

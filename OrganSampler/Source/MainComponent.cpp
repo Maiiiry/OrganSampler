@@ -1567,6 +1567,13 @@ MainComponent::MainComponent()
             juce::Component::SafePointer<MainComponent> safeThis(this);
             juce::MessageManager::callAsync([safeThis] { if (safeThis != nullptr) safeThis->showConfigurationEditor(); });
         }
+    // ORGAN_MERGE_CONFIGURATION=<file> (tests): merged into the organ once it is loaded (a .json or an ODF).
+    if (const char* env = std::getenv("ORGAN_MERGE_CONFIGURATION"))
+    {
+        const juce::File added(juce::String::fromUTF8(env));
+        juce::Component::SafePointer<MainComponent> safeThis(this);
+        runWhenLoaded([safeThis, added] { if (safeThis != nullptr && added.existsAsFile()) { CrashHandler::note("ORGAN_MERGE_CONFIGURATION: " + added.getFullPathName()); safeThis->mergeConfigurationFile(added); } });
+    }
     // ORGAN_OPEN_UNPACK=1 opens the Unpack archive window 2 s after the start (screenshots).
     if (const char* env = std::getenv("ORGAN_OPEN_UNPACK"))
         if (juce::String(env).getIntValue() != 0)
@@ -5651,6 +5658,17 @@ void MainComponent::showKeyboardsDialog(int onlyManual)
                     juce::MessageManager::callAsync([target, manager] { target->reopenAudioDeviceFresh(*manager, "Reopen button"); });
                 };
                 addAndMakeVisible(reopenButton);
+                // The polyphony measurement, right where the buffer and the device are
+                // set (the same as Configuration Editor > Measure the maximum polyphony).
+                measureButton.setButtonText("Measure polyphony");
+                measureButton.setTooltip("Measures the most voices this organ renders cleanly with the devices and buffers as set now, "
+                    "and sets the maximum polyphony accordingly (the same as Configuration Editor > Measure the maximum polyphony).");
+                measureButton.onClick = [this]
+                {
+                    MainComponent* target = &this->owner;
+                    juce::MessageManager::callAsync([target] { if (target->canMeasurePolyphony()) target->startPolyphonyMeasurement(); });
+                };
+                addAndMakeVisible(measureButton);
                 // IR reverb of this perspective: impulse response file and dry/wet.
                 irLoadButton.setButtonText("Load IR...");
                 irLoadButton.setTooltip("Impulse response WAV for this perspective's reverb: mono, stereo, or true stereo "
@@ -5845,12 +5863,16 @@ void MainComponent::showKeyboardsDialog(int onlyManual)
                 auto selectorArea = area.removeFromTop(selectorHeight() + 8);
                 selectorViewport.setBounds(selectorArea.reduced(4));
                 lastSelectorHeight = selectorHeight();
-                auto buttons = juce::Rectangle<int>(area.getX() + labelColumnWidth, area.getY() + 2, controlsWidth, 22);
-                panelButton.setBounds(buttons.removeFromLeft(buttons.getWidth() / 2).reduced(2, 0));
-                reopenButton.setBounds(buttons.reduced(2, 0));
-                applyAll.setBounds(area.getX() + labelColumnWidth + 2, area.getY() + 28, controlsWidth - 4, 22);
+                // Three buttons on one row, narrower but taller so their captions fit.
+                auto buttons = juce::Rectangle<int>(area.getX() + labelColumnWidth, area.getY() + 2, controlsWidth, 30);
+                const int third = buttons.getWidth() / 3;
+                panelButton.setBounds(buttons.removeFromLeft(third).reduced(2, 0));
+                reopenButton.setBounds(buttons.removeFromLeft(third).reduced(2, 0));
+                measureButton.setBounds(buttons.reduced(2, 0));
+                measureButton.setEnabled(this->owner.canMeasurePolyphony());
+                applyAll.setBounds(area.getX() + labelColumnWidth + 2, area.getY() + 36, controlsWidth - 4, 22);
                 // What the driver really runs: device, buffer, rate, latency (the boxes above show the request).
-                deviceStatus.setBounds(area.getX() + 4, area.getY() + 54, area.getWidth() - 8, 22);
+                deviceStatus.setBounds(area.getX() + 4, area.getY() + 62, area.getWidth() - 8, 22);
                 for (int index = 0; index < channelButtons.size(); ++index)
                 {
                     auto* button = channelButtons[index];
@@ -5949,7 +5971,7 @@ void MainComponent::showKeyboardsDialog(int onlyManual)
             juce::Component channelContent;
             juce::OwnedArray<juce::ToggleButton> channelButtons;
             juce::ToggleButton applyAll;
-            juce::TextButton panelButton, reopenButton;
+            juce::TextButton panelButton, reopenButton, measureButton;
             juce::Label deviceStatus;
             double knownRate = 0.0;                         // the rate this route ran at (kept across a device change)
             juce::TextButton irLoadButton, irClearButton;
@@ -6715,7 +6737,7 @@ void MainComponent::showKeyboardsDialog(int onlyManual)
         void resized() override
         {
             auto area = getLocalBounds().reduced(12);
-            auto audioArea = area.removeFromBottom(480);
+            auto audioArea = area.removeFromBottom(492);   // the audio tab: three device buttons on a taller row, the running-device line below
             closeButton.setBounds(audioArea.removeFromBottom(38).removeFromRight(110).reduced(4));
             audioTabs.setBounds(audioArea.reduced(4));
             // No banner line: the division label sits above the MIDI column, the
@@ -9858,7 +9880,7 @@ void MainComponent::savePortableConfiguration(const juce::File& file, bool inclu
 // into the organ's installation package and loaded like any other. The voicing
 // (per-pipe levels, averaged over the perspectives) follows once the folders
 // are loaded, and the configuration is saved again with it.
-void MainComponent::importHauptwerkOdf(const juce::File& odfFile)
+void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeIntoLoaded)
 {
     struct ParseJob final : public juce::ThreadWithProgressWindow
     {
@@ -9876,7 +9898,7 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile)
     auto job = std::make_shared<ParseJob>(odfFile, this);
     job->launchThread();
     auto poll = std::make_shared<std::function<void()>>();
-    *poll = [safeThis, job, poll, odfFile]
+    *poll = [safeThis, job, poll, odfFile, mergeIntoLoaded]
     {
         if (job->isThreadRunning()) { juce::Timer::callAfterDelay(200, [poll] { (*poll)(); }); return; }
         // This lambda lives in *poll: it is cleared only after this call has
@@ -9990,6 +10012,17 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile)
             rootObject->setProperty("voicingSettings", juce::var(voicing.get()));
         }
         juce::var configuration(rootObject.get());
+        if (mergeIntoLoaded)
+        {
+            // Into the loaded organ: the plan's divisions, trees, stops and
+            // perspectives join it (MainComponentMerge.cpp); the voicing of the
+            // added stops follows once the folders are loaded, nothing is written
+            // into the installation package.
+            safeThis->hauptwerkImport = odf;
+            safeThis->mergeConfiguration(configuration, plan.configurationFile, plan.organName + " (Hauptwerk)",
+                [safeThis, odf] { if (safeThis != nullptr) safeThis->applyHauptwerkVoicing(odf, {}, {}, false); });
+            return;
+        }
         // Written where it belongs - the organ's installation package, beside the
         // samples - and loaded from there; the Hauptwerk folders stay untouched.
         if (!plan.configurationFile.replaceWithText(juce::JSON::toString(configuration, true)))
@@ -10024,13 +10057,15 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile)
     juce::Timer::callAfterDelay(300, [poll] { if (*poll) (*poll)(); });
 }
 
-void MainComponent::applyHauptwerkVoicing(std::shared_ptr<HauptwerkOdf> odf, const juce::File& configurationFile, const juce::String& summary)
+void MainComponent::applyHauptwerkVoicing(std::shared_ptr<HauptwerkOdf> odf, const juce::File& configurationFile, const juce::String& summary, bool saveIntoPackage)
 {
     if (odf == nullptr || hauptwerkImport != odf) return;
     hauptwerkImport = nullptr;
-    // Every loaded stop: the mean of the Hauptwerk levels of its pipes over the
-    // perspectives (Hauptwerk voices per perspective, OrganSampler per stop) -
-    // the mean over the notes is the stop's volume, the rest its per-key voicing.
+    // Every loaded stop whose folders the definition knows: the Hauptwerk level
+    // of each pipe averaged over the perspectives (Hauptwerk voices per
+    // perspective, OrganSampler per stop); the MEDIAN over the notes is the
+    // stop's volume (most pipes are at 0 dB - a few voiced ones must not pull
+    // the whole stop), the rest is its per-key voicing.
     int voicedStops = 0, voicedNotes = 0;
     {
         const juce::ScopedLock lock(engine.getLock());
@@ -10042,24 +10077,26 @@ void MainComponent::applyHauptwerkVoicing(std::shared_ptr<HauptwerkOdf> odf, con
             for (const auto& rank : stop->ranks) if (rank->folder != juce::File()) folders.push_back(rank->folder);
             const auto levels = odf->levelsForFolders(folders);
             if (levels.empty()) continue;
-            double sum = 0.0; int n = 0;
-            for (const auto& [note, db] : levels) if (stop->hasNoteInAnyRank(note)) { sum += db; ++n; }
-            if (n == 0) continue;
-            const float mean = (float)(sum / n);
-            stop->setDb(juce::jlimit(-24.0f, 12.0f, mean));
+            std::vector<float> values;
+            for (const auto& [note, db] : levels) if (stop->hasNoteInAnyRank(note)) values.push_back(db);
+            if (values.empty()) continue;
+            std::sort(values.begin(), values.end());
+            const float median = values.size() % 2 == 1 ? values[values.size() / 2] : 0.5f * (values[values.size() / 2 - 1] + values[values.size() / 2]);
+            stop->setDb(juce::jlimit(-24.0f, 12.0f, median));
             for (const auto& [note, db] : levels)
-                if (stop->hasNoteInAnyRank(note)) { stop->setNoteDb(note, juce::jlimit(-12.0f, 12.0f, db - mean)); ++voicedNotes; }
+                if (stop->hasNoteInAnyRank(note)) { stop->setNoteDb(note, juce::jlimit(-12.0f, 12.0f, db - median)); ++voicedNotes; }
             ++voicedStops;
         }
     }
     if (voicer != nullptr) { voicer->updateStopStates(); voicer->rebuildUI(stopsContent, stopsViewport); }
-    CrashHandler::note("Hauptwerk import: voicing applied to " + juce::String(voicedStops) + " stop(s), " + juce::String(voicedNotes) + " pipe level(s)");
+    CrashHandler::note("Hauptwerk import: voicing applied to " + juce::String(voicedStops) + " stop(s), " + juce::String(voicedNotes) + " pipe level(s)" + (saveIntoPackage ? "" : " (merge: not saved)"));
+    if (!saveIntoPackage) { configurationDirty = true; return; }   // a merge: the report comes from the merge itself
     // The configuration with the voicing, in the installation package (portable:
     // paths relative to OrganInstallationPackages; no zip and README - those are
     // for publishing, Save Configuration makes them when wanted).
     savePortableConfiguration(configurationFile, false, true, false);
     juce::String text = summary;
-    text << "\n\nVoicing: " << voicedStops << " stop(s) with the Hauptwerk pipe levels (averaged over the perspectives; the mean as the stop's volume, the rest per key)."
+    text << "\n\nVoicing: " << voicedStops << " stop(s) with the Hauptwerk pipe levels (averaged over the perspectives; the median as the stop's volume, the rest per key)."
          << "\n\nThe configuration is saved as\n" << configurationFile.getFullPathName()
          << "\n\nEverything else of the organ definition (couplers, combinations, displays, tremulants, wind) was ignored: the folder structure decides the organ in OrganSampler. "
             "Check the Stop List, the audio routes of the perspectives and the MIDI keyboards, then Save Configuration.";
@@ -16282,11 +16319,17 @@ void MainComponent::showMidiLearnMenu(const juce::String& target)
         menu.addItem(4, feature == "swell" ? "Swell settings (attenuation, shutter inertia, harmonic filter)..."
                                            : "Tremulant settings (rate, depth, drift, harmonic filter)...");
     }
+    if (target == "header:loadConfiguration")
+    {
+        menu.addSeparator();
+        menu.addItem(5, "Merge another configuration into this organ (OrganSampler .json, or a Hauptwerk organ definition)...");
+    }
     menu.showMenuAsync(menuOptionsAtMouse(this),[this, target, continuousTarget, feature, featureManual](int result)
     {
         if (result == 1 || result == 2) beginMidiLearn(target, !continuousTarget && result == 2, continuousTarget);
         else if (result == 3) clearMidiBinding(target);
         else if (result == 4) showFeatureSettings(featureManual, feature);
+        else if (result == 5) mergeConfigurationDialog();
     });
 }
 
@@ -17397,6 +17440,11 @@ struct MainComponent::PolyphonyMeasurement
     void rememberPeakSecond() noexcept { peakHistory[0] = peakHistory[1]; peakHistory[1] = lastPeakSecond; }
     int idleAsioOver15 = 0;           // the driver's own jitter at rest (reference)
     double idleAsioMaxGapMs = 0.0;
+    // The CPU, sampled every second: this program's share of all logical CPUs
+    // and the whole system's (a one-core limit shows as a low program share
+    // beside a callback over its period). The reference clocks of the last tick.
+    double cpuProcessPeak = 0.0, cpuProcessSum = 0.0, cpuSystemPeak = 0.0, cpuSystemSum = 0.0; int cpuSamples = 0;
+    double lastProcessCpuMs = -1.0, lastSystemBusyMs = -1.0, lastSystemTotalMs = -1.0, lastWallMs = 0.0;
     // Of the current step (the warm-up second excluded)
     float worstBlock = 0.0f;
     juce::String worstRoute;
@@ -17819,6 +17867,24 @@ void MainComponent::startPolyphonyMeasurement()
             showProgress();
             juce::Timer::callAfterDelay(1000, [tick] { (*tick)(); });
             return;
+        }
+        // The CPU this second: the program over all logical CPUs, and the system.
+        {
+            double processMs = 0.0, busyMs = 0.0, totalMs = 0.0;
+            if (MainComponent::readCpuClocks(processMs, busyMs, totalMs))
+            {
+                const double wall = juce::Time::getMillisecondCounterHiRes();
+                if (state->lastProcessCpuMs >= 0.0 && wall > state->lastWallMs)
+                {
+                    const double cpus = (double)juce::jmax(1, juce::SystemStats::getNumCpus());
+                    const double processShare = (processMs - state->lastProcessCpuMs) / ((wall - state->lastWallMs) * cpus);
+                    const double systemShare = totalMs > state->lastSystemTotalMs ? (busyMs - state->lastSystemBusyMs) / (totalMs - state->lastSystemTotalMs) : processShare;
+                    state->cpuProcessPeak = juce::jmax(state->cpuProcessPeak, processShare);
+                    state->cpuSystemPeak = juce::jmax(state->cpuSystemPeak, systemShare);
+                    state->cpuProcessSum += processShare; state->cpuSystemSum += systemShare; ++state->cpuSamples;
+                }
+                state->lastProcessCpuMs = processMs; state->lastSystemBusyMs = busyMs; state->lastSystemTotalMs = totalMs; state->lastWallMs = wall;
+            }
         }
         int worstRouteIndex = -1;
         const float worst = safeThis->engine.takeMaxBlockLoad(&worstRouteIndex);
@@ -18330,6 +18396,26 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
             advice << ", carrying the IR \"" << irName << "\". A convolution costs this at every period whatever the polyphony: a shorter "
                       "Decay, a stereo instead of a true-stereo IR, or fewer routes with an IR lower it.";
         else advice << ".";
+    }
+    if (state->cpuSamples > 0)
+    {
+        // The CPU: what the program and the system used while the voices climbed,
+        // against the callbacks' share of their period. A callback over its period
+        // while the program uses one core or less means the audio thread's core is
+        // the limit, not the computer; the advice follows from that.
+        const int cpus = juce::jmax(1, juce::SystemStats::getNumCpus());
+        const double processAvg = state->cpuProcessSum / state->cpuSamples, systemAvg = state->cpuSystemSum / state->cpuSamples;
+        advice << "\n\nCPU during the run: this program used " << juce::roundToInt(processAvg * 100.0) << " % of all " << cpus << " logical CPUs on average, "
+               << juce::roundToInt(state->cpuProcessPeak * 100.0) << " % at the peak (one core = " << juce::roundToInt(100.0 / cpus) << " %); the whole computer "
+               << juce::roundToInt(systemAvg * 100.0) << " % on average.";
+        const bool oneCoreBound = state->firstFailingPeak > 0 && state->cpuProcessPeak * cpus < 1.6;
+        if (oneCoreBound)
+            advice << " The sound broke while the program had barely more than one core busy: the audio thread of a device runs on one core, and that core "
+                      "ran out of time - the rest of the computer was idle. What helps: a larger buffer (more time per block for the same work), "
+                      "fewer routes on one device (every route of a device renders in its callback), Light IR processing, and a CPU that is not "
+                      "held at a low clock while the average load looks small.";
+        const juce::String power = MainComponent::powerSettingDescription();
+        if (power.isNotEmpty()) advice << " " << power;
     }
     {
         // Hyper-threads render slower than the physical cores alone (measured: more
