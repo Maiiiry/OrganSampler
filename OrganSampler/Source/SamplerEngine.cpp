@@ -2635,7 +2635,7 @@ namespace
         }
     public:
         void takeStats(int& jobs, double& laneUtilisation, double& posterShare, double& jobSeconds,
-            int64_t& profVoices, double& headerNs, double& spansNs, double& kernelNs, double& postNs) noexcept
+            juce::int64& profVoices, double& headerNs, double& spansNs, double& kernelNs, double& postNs) noexcept   // juce::int64: long long on Linux too
         {
             jobs = (int)statJobs.exchange(0, std::memory_order_relaxed);
             const int64_t wall = statWallTicks.exchange(0, std::memory_order_relaxed);

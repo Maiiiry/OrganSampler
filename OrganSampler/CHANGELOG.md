@@ -12,6 +12,12 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.121] - 2026-10-18
+
+### Fixed
+- The Linux build of 0.8.120 (an int64 type mismatch in the render pool
+  statistics under GCC); no other change. 0.8.120 was never released.
+
 ## [0.8.120] - 2026-10-18
 
 ### Changed
