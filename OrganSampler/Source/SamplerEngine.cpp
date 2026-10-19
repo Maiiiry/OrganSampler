@@ -4757,7 +4757,7 @@ struct SamplerEngine::Impl
                         const float pitchFactor = 0.65f + 0.7f * juce::jlimit(0.0f, 1.0f, (float)(pipe - 24) / 72.0f);   // 0.65 .. 1.35
                         v.windKeyScale = randomFactor * pitchFactor;
                     }
-                    const int degrees = juce::roundToInt((stop->tremulantOrdinal % 2) * 7.0f + rankOrdinal * rankDrift);   // stops differ by at most 7 degrees
+                    const int degrees = juce::roundToInt((stop->tremulantOrdinal % 2) * 7.0f + (rankOrdinal + stop->groupChildOrdinal) * rankDrift);   // stops differ by at most 7 degrees; a stop folder's children drift apart like ranks (0.8.128)
                     v.tremBucket = (uint8_t)((((degrees % 360) + 360) % 360) * kTremBuckets / 360);
                     v.startFrozen = false;
                     duplicateVoiceToAux(v, expressionManual, rate, nowMs());   // the division's downmix route
@@ -5003,7 +5003,7 @@ struct SamplerEngine::Impl
             v.attackActive = (v.attackHold > 0 || v.attackFade > 0) && std::abs(v.attackBoost - 1.0f) > 1.0e-6f;
             v.releaseFadeMsRequested.store(releaseFadeOut, std::memory_order_relaxed);
             v.windPitchVar = v.windGainVar = 0;
-            const int degrees = juce::roundToInt((stop->tremulantOrdinal % 2) * 7.0f + rankOrdinal * rankDrift);   // stops differ by at most 7 degrees
+            const int degrees = juce::roundToInt((stop->tremulantOrdinal % 2) * 7.0f + (rankOrdinal + stop->groupChildOrdinal) * rankDrift);   // stops differ by at most 7 degrees; a stop folder's children drift apart like ranks (0.8.128)
             v.tremBucket = (uint8_t)((((degrees % 360) + 360) % 360) * kTremBuckets / 360);
             v.startFrozen = true;
             v.initialFrozenExpr = releaseGains[(size_t)expressionManual];

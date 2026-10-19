@@ -516,7 +516,15 @@ two folders for the same perspective) becomes a stop folder: its own row
 carries the Hauptwerk name and no folders, its children - one per rank, the
 ranks matched across the perspectives by their names - carry the folders,
 so the button plays them all. Ranks of different perspectives stay one
-stop with one folder per perspective, as ever. The rows of
+stop with one folder per perspective, as ever. The compass of every stop
+comes from the definition too (0.8.128): the keys its StopRank rows give it
+- a Cornet from c1 up, a stop of several pieces as their union - and the
+keys of the division outside them are switched off in the stop's voicing,
+so they stay silent and no filled pipes are made for them (switch them on
+again in the voicing dialog if you want them filled). The speed of the
+definition's tremulant (the middle of the range it wanders in) becomes the
+tremulant rate of every division whose pipes it modulates; the tremulant
+itself stays off until you draw it. The rows of
 the Stop List are named after the folders, as for any organ built from
 folders; the Hauptwerk stop name becomes the alias, the caption on the
 button. Everything else - couplers, combinations, tremulants, wind,
@@ -729,9 +737,13 @@ main panel (the checkbox beside them in the editor). Master volume, pitch,
 sustain fade-out, release fade-in, release volume, release cutting, attack
 minimum time and delay: all are described in "Global sound". Every one of
 them is MIDI-learnable (right-click). The polyphony display shows the voices
-sounding now and the *DSP* load: the time the busiest audio thread needed for
-its last block as a share of the block's duration. Above 100 % that thread
-could not deliver in time (crackle); see "Getting the most polyphony".
+sounding now (*NOW*), the most at once over the last seconds (*PEAK*), the
+*DSP* load - the time the busiest audio thread needed for its last block as a
+share of the block's duration; above 100 % that thread could not deliver in
+time (crackle), see "Getting the most polyphony" -, the *RAM* the program
+holds (0.8.128; orange when less than a tenth of the installed memory is
+free: the system then pages samples out and a block stalls on reading them
+back), and the polyphony *LIMIT* (editable).
 
 ## 2.5 Division headers
 

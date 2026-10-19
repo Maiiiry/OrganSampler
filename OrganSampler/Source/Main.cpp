@@ -109,7 +109,9 @@ public:
             for (size_t i = 0; i < plan.divisions.size(); ++i)
             {
                 const auto& d = plan.divisions[i];
-                report << "  [" << (int)i << "] " << d.name << " keys " << d.lowNote << "-" << d.highNote << ", " << (int)d.stops.size() << " stops\n";
+                report << "  [" << (int)i << "] " << d.name << " keys " << d.lowNote << "-" << d.highNote << ", " << (int)d.stops.size() << " stops";
+                if (d.tremulantRateHz > 0.0f) report << ", tremulant " << juce::String(d.tremulantRateHz, 2) << " Hz";
+                report << "\n";
                 for (const auto& t : d.trees) report << "      tree " << t.getFullPathName() << "\n";
                 for (const auto& stop : d.stops)
                 {

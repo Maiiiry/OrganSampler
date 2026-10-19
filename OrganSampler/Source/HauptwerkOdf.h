@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 #include <map>
+#include <set>
 #include <vector>
 #include <functional>
 
@@ -70,6 +71,13 @@ struct HauptwerkOdf
     // primary first.
     struct Keyboard { int id = 0, divisionId = 0, lowNote = 0, highNote = 0; juce::String name; std::vector<int> divisionIds; };
 
+    // A tremulant of the definition: its speed (Hauptwerk gives a range the
+    // speed wanders in; the middle is taken) and the divisions whose pipes it
+    // modulates (Tremulant > TremulantWaveform > TremulantWaveformPipe > pipe >
+    // rank > the stop playing it > its division).
+    struct Tremulant { int id = 0; juce::String name; float rateHz = 0.0f; std::set<int> divisionIds; };
+    std::vector<Tremulant> tremulants;
+
     juce::String organName, builder, location, supplier;
     int mainPackageId = 0;
     std::vector<int> packageIds;                    // RequiredInstallationPackage, the main one included
@@ -125,6 +133,7 @@ struct HauptwerkOdf
         juce::String name;                           // the ODF's division name
         int divisionId = 0, lowNote = 36, highNote = 96;
         std::vector<int> divisionIds;                // every ODF division the keyboard plays (the primary first)
+        float tremulantRateHz = 0.0f;                // the speed of the definition's tremulant on this division (0: none)
         std::vector<juce::File> trees;               // the folders holding the stop folders, the main one first
         std::vector<PlanStop> stops;
     };
@@ -147,4 +156,9 @@ struct HauptwerkOdf
     // Returns the notes found and their dB; the caller takes the mean as the
     // stop's volume and the rest as per-key voicing.
     std::map<int, float> levelsForFolders(const std::vector<juce::File>& rankFolders) const;
+    // The keys the definition lets a stop play, from the StopRank rows of the
+    // stop(s) playing these rank folders straight (a Cornet from c1 up:
+    // first key 60, 37 keys; a stop built of several pieces is the union of
+    // them). false when the definition says nothing (the whole compass).
+    bool compassForFolders(const std::vector<juce::File>& rankFolders, int divisionLow, int divisionHigh, int& low, int& high) const;
 };

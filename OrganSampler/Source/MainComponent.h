@@ -107,6 +107,7 @@ private:
     struct HeaderButtonInfo { juce::Button* button; int weight; const char* key; const char* label; bool defaultShown; };
     std::vector<HeaderButtonInfo> headerButtons();
 
+    static constexpr double kDefaultMasterDb = -18.0;   // the master level a fresh start, a reset and a configuration without one get (0.8.128; -20 before)
     LearnableSlider masterVolumeSlider;
     juce::Label masterLabel{ "Master: -20.0 dB" };
     LearnableSlider pitchSlider;
@@ -1039,6 +1040,7 @@ private:
     void mergeConfigurationDialog();
     void mergeConfigurationFile(const juce::File& file);
     void mergeConfiguration(juce::var added, const juce::File& addedFile, const juce::String& addedName, std::function<void()> afterLoad);
+    friend class PolyphonyDisplay;   // the RAM column reads the two memory figures below
     static juce::int64 availablePhysicalMemoryBytes();   // free physical memory now (the samples must fit)
     static juce::int64 processMemoryBytes();             // the RAM this program holds now (resident), 0 when unknown
     // The CPU clocks for the polyphony measurement: this process's CPU time (ms,

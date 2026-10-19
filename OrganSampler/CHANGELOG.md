@@ -12,6 +12,28 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.128] - 2026-10-19
+
+### Added
+- The polyphony display has a RAM column: the memory the program holds,
+  orange when less than a tenth of the installed memory is free.
+- Hauptwerk import: the compass of every stop from the definition (its
+  StopRank rows, a stop of several pieces as their union): the keys of the
+  division outside it are switched off in the stop's voicing - a Cornet from
+  c1 up gets no filled pipes below c1.
+- Hauptwerk import: the definition's tremulant speed (the middle of its
+  range) becomes the tremulant rate of every division whose pipes it
+  modulates.
+
+### Changed
+- The default master level is -18 dB (it was -20), and a configuration
+  without a saved master level (a Hauptwerk import, a hand-made file) keeps
+  the default: an absent value read as 0 dB was recalled as the master, far
+  too loud.
+- A stop folder's children get their own tremulant phase, like the ranks of
+  a stop (the rank drift of the division), instead of all of them beating
+  together.
+
 ## [0.8.127] - 2026-10-19
 
 ### Fixed

@@ -327,6 +327,11 @@ HauptwerkOdf HauptwerkOdf::parse(const juce::File& file, const std::function<boo
     std::map<int, std::vector<int>> keyboardKeySwitches;             // KeyboardID -> the switches of its keys
     std::map<int, int> divisionOfInputSwitch;                        // DivisionInput switch -> DivisionID
     std::map<int, std::vector<std::pair<int, int>>> switchLinks;     // source switch -> (destination switch, condition switch or 0)
+    // The tremulants: Tremulant (speed range) > TremulantWaveform (waveform ->
+    // tremulant) > TremulantWaveformPipe (pipe -> waveform) - which pipes, so
+    // which ranks, stops and divisions a tremulant works on.
+    std::map<int, int> tremulantOfWaveform;                          // TremulantWaveformID -> TremulantID
+    std::vector<std::pair<int, int>> tremulantPipes;                 // (PipeID, TremulantWaveformID)
     int rows = 0;
     while (true)
     {
@@ -399,6 +404,35 @@ HauptwerkOdf HauptwerkOdf::parse(const juce::File& file, const std::function<boo
             {
                 const int source = row.integer("SourceSwitchID", "a"), dest = row.integer("DestSwitchID", "b"), condition = row.integer("ConditionSwitchID", "c");
                 if (source > 0 && dest > 0) switchLinks[source].push_back({ dest, condition });
+            }
+        }
+        else if (lower == "tremulant")
+        {
+            while (scanner.nextRow(row))
+            {
+                Tremulant t;
+                t.id = row.integer("TremulantID", "a");
+                t.name = row.text("Name", "b");
+                // The speed wanders between a minimum and a maximum (Hz): the middle is the rate.
+                const float lowHz = row.number("ModRateHz_Min", "d", 0.0f), highHz = row.number("ModRateHz_Max", "e", 0.0f);
+                t.rateHz = lowHz > 0.0f && highHz > 0.0f ? 0.5f * (lowHz + highHz) : juce::jmax(lowHz, highHz);
+                if (t.id > 0) odf.tremulants.push_back(t);
+            }
+        }
+        else if (lower == "tremulantwaveform")
+        {
+            while (scanner.nextRow(row))
+            {
+                const int waveform = row.integer("TremulantWaveformID", "a"), tremulant = row.integer("TremulantID", "c");
+                if (waveform > 0 && tremulant > 0) tremulantOfWaveform[waveform] = tremulant;
+            }
+        }
+        else if (lower == "tremulantwaveformpipe")
+        {
+            while (scanner.nextRow(row))
+            {
+                const int pipe = row.integer("PipeID", "a"), waveform = row.integer("TremulantWaveformID", "b");
+                if (pipe > 0 && waveform > 0) tremulantPipes.push_back({ pipe, waveform });
             }
         }
         else if (lower == "stop")
@@ -659,6 +693,24 @@ HauptwerkOdf HauptwerkOdf::parse(const juce::File& file, const std::function<boo
         rank.folderRelative = dir;
         rank.folder = packageFolder(root, packageId).getChildFile(dir.isEmpty() ? juce::String(".") : dir);
     }
+    // Which divisions every tremulant works on: its waveforms' pipes -> their
+    // ranks -> the stop playing the rank straight -> that stop's division.
+    {
+        std::map<int, int> ownerOfRank;
+        for (const auto& sr : stopRanks) if (sr.increment == 0 && ownerOfRank.count(sr.rankId) == 0) ownerOfRank[sr.rankId] = sr.stopId;
+        for (const auto& sr : stopRanks) if (ownerOfRank.count(sr.rankId) == 0) ownerOfRank[sr.rankId] = sr.stopId;
+        for (const auto& [pipeId, waveformId] : tremulantPipes)
+        {
+            const auto tremulant = tremulantOfWaveform.find(waveformId);
+            const auto pipe = pipes.find(pipeId);
+            if (tremulant == tremulantOfWaveform.end() || pipe == pipes.end()) continue;
+            const auto owner = ownerOfRank.find(pipe->second.rankId);
+            if (owner == ownerOfRank.end()) continue;
+            const auto stop = odf.stops.find(owner->second);
+            if (stop == odf.stops.end()) continue;
+            for (auto& t : odf.tremulants) if (t.id == tremulant->second) t.divisionIds.insert(stop->second.divisionId);
+        }
+    }
     if (progress != nullptr)
         CrashHandler::note("Hauptwerk ODF parsed: divisions " + juce::String((int)odf.divisions.size()) + ", keyboards " + juce::String((int)odf.keyboards.size())
             + ", keyboard keys " + juce::String((int)keyboardNotes.size()) + ", stops " + juce::String((int)odf.stops.size()) + ", stop ranks " + juce::String((int)stopRanks.size())
@@ -836,6 +888,11 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
         division.divisionId = k.divisionId;
         division.divisionIds = divisionsOf(k);
         division.name = divisions.count(k.divisionId) > 0 ? divisions.at(k.divisionId).name : k.name;
+        // The definition's tremulant on this division (one modulating any of its
+        // ODF divisions): its speed becomes the division's tremulant rate.
+        for (const auto& t : tremulants)
+            for (const int divisionId : division.divisionIds)
+                if (division.tremulantRateHz <= 0.0f && t.rateHz > 0.0f && t.divisionIds.count(divisionId) > 0) division.tremulantRateHz = t.rateHz;
         division.lowNote = k.lowNote; division.highNote = k.highNote;
         // The stops of every ODF division the keyboard plays, the primary
         // division's first (Caen: "GrandOrgue" then "GrandOrgueAnches").
@@ -1093,4 +1150,32 @@ std::map<int, float> HauptwerkOdf::levelsForFolders(const std::vector<juce::File
     std::map<int, float> result;
     for (const auto& [note, total] : sum) result[note] = total / (float)juce::jmax(1, count[note]);
     return result;
+}
+
+bool HauptwerkOdf::compassForFolders(const std::vector<juce::File>& rankFolders, int divisionLow, int divisionHigh, int& low, int& high) const
+{
+    // Every StopRank row that plays one of these rank folders without a
+    // transposition: its keys are [first, first + count - 1]; a row without a
+    // first key starts at the division's first key, one without a count runs
+    // to the division's last. The union over the rows (a stop of several
+    // pieces) is the compass. Nothing found: the whole compass.
+    low = 128; high = -1;
+    bool any = false;
+    for (const auto& [id, stop] : stops)
+        for (const auto& use : stop.rankUses)
+        {
+            if (use.increment != 0) continue;
+            const auto rankIt = ranks.find(use.rankId);
+            if (rankIt == ranks.end() || rankIt->second.folder == juce::File()) continue;
+            bool matches = false;
+            for (const auto& folder : rankFolders) if (folder == rankIt->second.folder) matches = true;
+            if (!matches) continue;
+            const int first = use.firstNote > 0 ? use.firstNote : divisionLow;
+            const int last = use.count > 0 ? first + use.count - 1 : divisionHigh;
+            low = juce::jmin(low, first); high = juce::jmax(high, last);
+            any = true;
+        }
+    if (!any || high < low) return false;
+    low = juce::jlimit(0, 127, low); high = juce::jlimit(0, 127, high);
+    return true;
 }

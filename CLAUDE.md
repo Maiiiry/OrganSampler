@@ -132,6 +132,17 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   in three: median of all pipe levels of (division, perspective) -> route volume (`perspectiveAudio[key].volumeDb` +
   `setPerspectiveVolumeDb`, clamped -31..6), median of the residual (averaged over the stop's perspectives) -> stop dB,
   the rest -> per-key dB. Never put a perspective's offset into the stops or pipes again.
+  0.8.128: stop compass from StopRank rows (h = first key, default the division's first; i = count, default to the
+  division's last; union over the rows with increment 0; `HauptwerkOdf::compassForFolders`) -> keys outside switched
+  off with `engine.setPipeEnabled(stop, pipe, false)` (voicing `disabledKeys`, no fills) in `applyHauptwerkVoicing`.
+  Tremulant: `Tremulant` (a id, b name, d/e = speed min/max Hz, the middle taken) > `TremulantWaveform` (a id, c
+  TremulantID) > `TremulantWaveformPipe` (a PipeID, b waveform) -> pipe -> rank -> owner stop -> division
+  (`HauptwerkOdf::tremulants[].divisionIds`); `PlanDivision.tremulantRateHz` -> manualKeyboards "tremulantRateHz"
+  (Caen: Recit 5.61 Hz; Stellwagen: Recit + Positif 4.79 Hz). Master level: `MainComponent::kDefaultMasterDb` = -18
+  (slider, settings default, reset, MIDI-learn default); `registrationMasterDb` absent -> the default, never 0 dB.
+  A stop folder's children: `Stop::groupChildOrdinal` (set in `applyStopGroups`) adds `childOrdinal * rankDrift`
+  to the tremulant phase. Polyphony display: fifth column RAM (`processMemoryBytes`, once a second; orange when free
+  < 10 % of installed).
 - A route without a device ("none") gets NO voices (0.8.126, `Route::hasDevice` set by `setPerspectiveDeviceKey`,
   checked in `publishVoice`: the voice is finished at once). Before, every pipe was published to its perspective's
   route whatever the device and sat there unrendered until `cleanStaleRoutes` flushed it after ~1 s, counted as

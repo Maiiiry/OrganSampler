@@ -99,13 +99,13 @@ public:
     }
     void resized() override
     {
-        // Columns NOW, PEAK, DSP (peak hold), LIMIT (editable, wider for typing).
+        // Columns NOW, PEAK, DSP (peak hold), RAM (the program's memory), LIMIT (editable, wider for typing).
         const int column = columnWidth();
-        const int limitWidth = getWidth() - 3 * column;
+        const int limitWidth = getWidth() - 4 * column;
         limitEditor.setFont(juce::FontOptions(limitWidth < 90 ? 14.0f : 17.0f, juce::Font::bold));
-        limitEditor.setBounds(3 * column + 4, getHeight() - 27, limitWidth - 8, 24);
+        limitEditor.setBounds(4 * column + 4, getHeight() - 27, limitWidth - 8, 24);
     }
-    int columnWidth() const noexcept { return juce::jmax(1, getWidth() * 22 / 100); }   // LIMIT gets the rest (34 %)
+    int columnWidth() const noexcept { return juce::jmax(1, getWidth() * 18 / 100); }   // LIMIT gets the rest (28 %)
     void paint(juce::Graphics& g) override
     {
         // Same look as the combination display: black, lime digits.
@@ -115,19 +115,20 @@ public:
         g.setColour(juce::Colours::darkgrey);
         g.drawRoundedRectangle(r, 3.0f, 1.0f);
         const int column = columnWidth();
-        const juce::String labels[4]{ "NOW", "PEAK", "DSP", "LIMIT" };
-        const juce::String values[3]{ juce::String(current), juce::String(maximum),
-            juce::String(juce::roundToInt(loadPeak * 100.0f)) + " %" };
+        const juce::String labels[5]{ "NOW", "PEAK", "DSP", "RAM", "LIMIT" };
+        const juce::String values[4]{ juce::String(current), juce::String(maximum),
+            juce::String(juce::roundToInt(loadPeak * 100.0f)) + " %", ramText };
         const float valueFont = juce::jlimit(13.0f, 22.0f, (float)getHeight() * 0.32f);
-        for (int i = 0; i < 4; ++i)
+        for (int i = 0; i < 5; ++i)
         {
-            const juce::Rectangle<int> cell(i * column, 0, i < 3 ? column : getWidth() - 3 * column, getHeight());
+            const juce::Rectangle<int> cell(i * column, 0, i < 4 ? column : getWidth() - 4 * column, getHeight());
             g.setColour(juce::Colours::lightgrey);
             g.setFont(juce::FontOptions(12.0f, juce::Font::bold));
             g.drawText(labels[i], cell.withHeight(20).translated(0, 3), juce::Justification::centred);
-            if (i < 3)
+            if (i < 4)
             {
-                g.setColour(i == 2 && loadPeak > 0.85f ? juce::Colours::orange : juce::Colours::lime);
+                const bool warn = (i == 2 && loadPeak > 0.85f) || (i == 3 && ramTight);
+                g.setColour(warn ? juce::Colours::orange : juce::Colours::lime);
                 g.setFont(juce::FontOptions(valueFont, juce::Font::bold));
                 // Digits must always fit the column: shrink rather than clip.
                 g.drawFittedText(values[i], cell.withTrimmedTop(21).reduced(2, 0), juce::Justification::centred, 1, 0.5f);
@@ -140,8 +141,22 @@ public:
         }
     }
 private:
+    juce::String ramText{ "-" };   // the RAM the program holds, read once a second (0.8.128)
+    bool ramTight = false;         // orange: less than a tenth of the installed memory is free
+    int ramTick = 0;
     void timerCallback() override
     {
+        if (ramTick++ % 25 == 0)
+        {
+            const juce::int64 used = MainComponent::processMemoryBytes(), free = MainComponent::availablePhysicalMemoryBytes();
+            const juce::int64 installed = (juce::int64)juce::SystemStats::getMemorySizeInMegabytes() * 1024 * 1024;
+            if (used > 0)
+            {
+                const double gb = (double)used / 1073741824.0;
+                ramText = gb >= 10.0 ? juce::String(juce::roundToInt(gb)) + " GB" : gb >= 1.0 ? juce::String(gb, 1) + " GB" : juce::String(juce::roundToInt(gb * 1024.0)) + " MB";
+                ramTight = installed > 0 && free >= 0 && free < installed / 10;
+            }
+        }
         current = engine.getCurrentPolyphony();
         const int recentPeak = engine.takeDisplayPeakPolyphony();   // the most voices at once since the last tick (every change counted, nothing between ticks missed)
         load = engine.getDisplayLoad();   // the whole driver callback, not the render alone
@@ -917,7 +932,7 @@ MainComponent::MainComponent()
 
     addAndMakeVisible(masterVolumeSlider);
     masterVolumeSlider.setRange(-60.0, 12.0, 0.1);
-    masterVolumeSlider.setValue(-20.0, juce::dontSendNotification);
+    masterVolumeSlider.setValue(kDefaultMasterDb, juce::dontSendNotification);
     masterVolumeSlider.setTextValueSuffix(" dB");
     masterVolumeSlider.onValueChange = [this] {
         masterGainLinear.store(juce::Decibels::decibelsToGain((float)masterVolumeSlider.getValue()));
@@ -1057,7 +1072,7 @@ MainComponent::MainComponent()
         slider.getProperties().set("midiTarget", "slider:global:" + name);
         slider.addMouseListener(this, false);
     };
-    makeGlobalSliderLearnable(masterVolumeSlider, "master", -20.0);
+    makeGlobalSliderLearnable(masterVolumeSlider, "master", kDefaultMasterDb);
     makeGlobalSliderLearnable(pitchSlider, "pitch", 0.0);
     makeGlobalSliderLearnable(releaseFadeOutSlider, "sustainFade", 70.0);
     makeGlobalSliderLearnable(releaseFadeInSlider, "releaseFade", 70.0);
@@ -10049,6 +10064,9 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
                 item->setProperty("extraFolderPaths", extras);
                 item->setProperty("compassLow", division.lowNote);
                 item->setProperty("compassHigh", division.highNote);
+                // The definition's tremulant speed on this division (its switch
+                // stays off: the tremulant is played as ever, at that rate).
+                if (division.tremulantRateHz > 0.0f) item->setProperty("tremulantRateHz", juce::jlimit(0.5f, 12.0f, division.tremulantRateHz));
                 // The Stop List table of the division (stop building): every ODF stop
                 // as a row with one folder per perspective - rank folders from several
                 // packages become the perspectives of ONE stop (without the table the
@@ -10300,6 +10318,35 @@ void MainComponent::applyHauptwerkVoicing(std::shared_ptr<HauptwerkOdf> odf, con
             routeVolumesSet.add((manual == 0 ? juce::String("P.") : romanNumeral(manual) + ".") + " / " + perspective + " " + juce::String(db, 1) + " dB");
         }
     }
+    // The compass of every stop (0.8.128): the keys the definition's StopRank
+    // rows give it (a Cornet from c1 up) - the keys of the division outside
+    // them are switched off in the stop's voicing, so they stay silent and no
+    // filled pipes are made for them. A stop of several pieces is the union.
+    int compassStops = 0, compassKeys = 0;
+    {
+        std::vector<std::pair<Stop*, std::pair<int, int>>> limits;
+        {
+            const juce::ScopedLock lock(engine.getLock());
+            for (auto* stop : engine.getStops())
+            {
+                if (stop->container) continue;
+                std::vector<juce::File> folders;
+                if (stop->folder != juce::File()) folders.push_back(stop->folder);
+                for (const auto& rank : stop->ranks) if (rank->folder != juce::File()) folders.push_back(rank->folder);
+                const auto& config = manualConfigs[(size_t)juce::jlimit(0, SamplerEngine::maxManuals - 1, stop->primaryManual)];
+                int low = 0, high = 127;
+                if (odf->compassForFolders(folders, config.compassLow, config.compassHigh, low, high)) limits.push_back({ stop, { low, high } });
+            }
+        }
+        for (const auto& [stop, range] : limits)
+        {
+            const auto& config = manualConfigs[(size_t)juce::jlimit(0, SamplerEngine::maxManuals - 1, stop->primaryManual)];
+            bool any = false;
+            for (int pipe = config.compassLow; pipe <= config.compassHigh; ++pipe)
+                if ((pipe < range.first || pipe > range.second) && !stop->isPipeDisabled(pipe)) { engine.setPipeEnabled(stop, pipe, false); ++compassKeys; any = true; }
+            if (any) ++compassStops;
+        }
+    }
     // The definition's extensions and transmissions: a transmission of the
     // owner stop into the division, shifted as the definition says, with the
     // Hauptwerk stop name as its caption.
@@ -10321,7 +10368,7 @@ void MainComponent::applyHauptwerkVoicing(std::shared_ptr<HauptwerkOdf> odf, con
     hauptwerkExtensions.clear();
     if (voicer != nullptr) { voicer->updateStopStates(); voicer->rebuildUI(stopsContent, stopsViewport); }
     CrashHandler::note("Hauptwerk import: voicing applied to " + juce::String(voicedStops) + " stop(s), " + juce::String(voicedNotes) + " pipe level(s), route volumes "
-        + routeVolumesSet.joinIntoString(", ") + "; "
+        + routeVolumesSet.joinIntoString(", ") + "; compass limited on " + juce::String(compassStops) + " stop(s), " + juce::String(compassKeys) + " key(s) switched off; "
         + juce::String(extensionsMade) + " extension(s)/transmission(s) made" + (extensionsMissed.isEmpty() ? juce::String() : " (not made: " + extensionsMissed.joinIntoString(", ") + ")")
         + (saveIntoPackage ? "" : " (merge: not saved)"));
     if (!saveIntoPackage) { configurationDirty = true; return; }   // a merge: the report comes from the merge itself
@@ -10332,6 +10379,9 @@ void MainComponent::applyHauptwerkVoicing(std::shared_ptr<HauptwerkOdf> odf, con
     juce::String text = summary;
     text << "\n\nVoicing: " << voicedStops << " stop(s) with the Hauptwerk pipe levels in three steps - the median of a division's perspective as that route's volume ("
          << routeVolumesSet.joinIntoString(", ") << "), the median of the rest as the stop's volume, the remainder per pipe.";
+    if (compassStops > 0)
+        text << "\nCompass: " << compassStops << " stop(s) play fewer keys than their division in the definition (a Cornet from c1 up): "
+             << compassKeys << " key(s) switched off in their voicing, no filled pipes for them.";
     if (extensionsMade > 0 || !extensionsMissed.isEmpty())
         text << "\nExtensions/transmissions made: " << extensionsMade << (extensionsMissed.isEmpty() ? juce::String(".") : " (not made: " + extensionsMissed.joinIntoString(", ") + ").");
     text
@@ -10755,7 +10805,10 @@ void MainComponent::applyPortableConfiguration(juce::var configuration,
     }
 
     auto registration = std::make_unique<MemorySlot>();
-    registration->masterDb = root->getProperty("registrationMasterDb");
+    // A configuration without a saved master level (a Hauptwerk import, a hand-
+    // made file) keeps the default: an absent key read as 0 dB was recalled as
+    // the master - full level, far too loud (0.8.128).
+    registration->masterDb = root->hasProperty("registrationMasterDb") ? (double)root->getProperty("registrationMasterDb") : kDefaultMasterDb;
     const auto stops = root->getProperty("registrationStops");
     if (stops.isArray()) for (const auto& item : *stops.getArray()) registration->stopData.add(item);
     const auto couplerStates = root->getProperty("registrationCouplers");
@@ -12617,16 +12670,18 @@ void MainComponent::applyStopGroups()
     // above it in the same division. The engine routes a child through its
     // master's transmissions, so the pointer is set under the control lock.
     const juce::ScopedLock lock(engine.getLock());
-    for (auto* stop : engine.getStops()) { stop->groupMaster = {}; stop->groupMasterPtr = nullptr; }
+    for (auto* stop : engine.getStops()) { stop->groupMaster = {}; stop->groupMasterPtr = nullptr; stop->groupChildOrdinal = 0; }
     for (int manual = 0; manual < SamplerEngine::maxManuals; ++manual)
     {
         const auto& build = manualConfigs[(size_t)manual].stopBuild;
         if (!build.active) continue;
         juce::String master;
+        int childOrdinal = 0;   // the children of one folder count 1, 2 ...: each gets its own tremulant phase, like the ranks of a stop
         for (const auto& entry : build.entries)
         {
-            if (!entry.child) { master = entry.name; continue; }
+            if (!entry.child) { master = entry.name; childOrdinal = 0; continue; }
             if (master.isEmpty()) continue;
+            ++childOrdinal;
             Stop* masterStop = nullptr;
             for (auto* stop : engine.getStops())
                 if (stop->primaryManual == manual && stopBuildKey(stop->name) == stopBuildKey(master)) masterStop = stop;
@@ -12635,6 +12690,7 @@ void MainComponent::applyStopGroups()
                 {
                     stop->groupMaster = master;
                     stop->groupMasterPtr = masterStop;
+                    stop->groupChildOrdinal = childOrdinal;
                 }
         }
     }
@@ -15175,7 +15231,7 @@ void MainComponent::loadSettings()
         voicerStateFile.replaceWithText(juce::JSON::toString(embeddedVoicing, true));
 
     // Master volume
-    double masterDb = parsed.getProperty("masterVolumeDb", -20.0);
+    double masterDb = parsed.getProperty("masterVolumeDb", kDefaultMasterDb);
     masterVolumeSlider.setValue(masterDb, juce::dontSendNotification);
     masterGainLinear.store(juce::Decibels::decibelsToGain((float)masterDb));
     masterLabel.setText("Master: " + juce::String(masterDb, 1) + " dB", juce::dontSendNotification);
@@ -17401,8 +17457,8 @@ void MainComponent::executeGlobalReset(bool clearMidiLearn, bool resetAudioOutpu
     if (resetCouplers) couplerOrder.clear();   // the coupler grid belongs to the couplers option
 
     // Global sound controls.
-    masterVolumeSlider.setValue(-20.0, juce::dontSendNotification);
-    masterGainLinear.store(juce::Decibels::decibelsToGain(-20.0f));
+    masterVolumeSlider.setValue(kDefaultMasterDb, juce::dontSendNotification);
+    masterGainLinear.store(juce::Decibels::decibelsToGain((float)kDefaultMasterDb));
     masterLabel.setText("Master: -20.0 dB", juce::dontSendNotification);
     pitchSlider.setValue(0.0, juce::dontSendNotification);
     pitchLabel.setText("Pitch: 0 cents", juce::dontSendNotification);
@@ -20289,7 +20345,7 @@ void MainComponent::showConfigurationEditor()
                     + ", default " + juce::String(defaultValue) + suffix + ", with a \"show on the main panel\" box", text, target.getTooltip());
                 addRow(text, std::move(row), 30, "The checkbox shows the slider on the main panel");
             };
-            bindSlider("Master volume", o.masterVolumeSlider, " dB", -20.0, MainComponent::gsMaster);
+            bindSlider("Master volume", o.masterVolumeSlider, " dB", kDefaultMasterDb, MainComponent::gsMaster);
             bindSlider("Global pitch", o.pitchSlider, " cents", 0.0, MainComponent::gsPitch);
             bindSlider("Sustain fade-out on key release", o.releaseFadeOutSlider, " ms", 70.0, MainComponent::gsReleaseFadeOut);
             bindSlider("Release sample fade-in", o.releaseFadeInSlider, " ms", 70.0, MainComponent::gsReleaseFadeIn);

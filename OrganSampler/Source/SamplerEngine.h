@@ -116,6 +116,7 @@ struct Stop
     // through every transmission of its master, so a stop folder is transmitted
     // as a whole. A master may be an empty "container" stop without samples.
     Stop* groupMasterPtr = nullptr;
+    int groupChildOrdinal = 0;  // a stop folder's child: its number among the children (1, 2 ...), for the tremulant phase drift; 0 otherwise
     bool container = false;     // a stop folder's master without samples of its own (only its children sound)
     juce::File folder;
     juce::File tree;   // the folder tree this stop was loaded from
