@@ -10272,6 +10272,7 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
         CrashHandler::note("Hauptwerk import plan: " + summary.replaceCharacters("\n", " ") + "; configuration " + plan.configurationFile.getFullPathName());
         safeThis->hauptwerkImport = odf;
         safeThis->runWhenLoaded([safeThis, odf, file = plan.configurationFile, summary] { if (safeThis != nullptr) safeThis->applyHauptwerkVoicing(odf, file, summary); });
+        safeThis->suppressPortableNotice = true;   // made here and now: no "from another computer" notice, the import's own report follows
         safeThis->resolveAndApplyPortableConfiguration(configuration, plan.configurationFile);
     };
     juce::Timer::callAfterDelay(300, [poll] { if (*poll) (*poll)(); });
@@ -10731,7 +10732,10 @@ void MainComponent::applyPortableConfiguration(juce::var configuration,
             else root->removeProperty(key);
         }
         root->removeProperty("portable");   // the settings of this computer from now on
-        portableNoticePending = true;
+        // The "from another computer" notice: not for a configuration made here
+        // and now (a Hauptwerk import), whose own report follows the load.
+        portableNoticePending = !suppressPortableNotice;
+        suppressPortableNotice = false;
         CrashHandler::note("Portable configuration loaded: this computer's own settings kept, audio on the default device");
     }
     auto manuals = root->getProperty("manualKeyboards");

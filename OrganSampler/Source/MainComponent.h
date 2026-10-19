@@ -1065,6 +1065,7 @@ private:
     // A portable configuration was loaded: once the organ is up, a message says
     // what to set on this computer (MIDI, audio tabs, measure, save).
     bool portableNoticePending = false;
+    bool suppressPortableNotice = false;   // set by the Hauptwerk import: its configuration is made here, no "from another computer" notice
     void showPortableNoticeIfDue();
     void resolveAndApplyPortableConfiguration(juce::var configuration,
         const juce::File& configurationFile, const juce::File& selectedLibraryRoot = {});

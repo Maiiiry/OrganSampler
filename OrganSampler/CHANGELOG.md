@@ -12,6 +12,22 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.131] - 2026-10-19
+
+### Changed
+- Loading stops when the memory is full instead of letting the system page:
+  before every stop (and every 32 files of a big one) the free physical
+  memory is checked against a reserve (768 MB, or a sixteenth of the
+  installed memory on a big machine); below it the loading stops there, the
+  instrument is built from the stops loaded so far, and a message names the
+  stops left out (they stay in the Stop List without samples). Before, the
+  whole organ was loaded whatever the memory, and on an 8 GB Mac with a 7 GB
+  organ every stroke and every window update stalled for seconds (#17).
+- A Hauptwerk import no longer shows the "Configuration from another
+  computer" notice (the configuration is made here and now; the import's
+  own report follows the load), so two messages no longer land on top of
+  each other.
+
 ## [0.8.130] - 2026-10-19
 
 ### Added

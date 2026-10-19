@@ -1320,6 +1320,8 @@ private:
     std::array<std::atomic<int>, maxManuals> compassLow{}, compassHigh{};   // set in the constructor (0..127)
     std::atomic<bool> recordingActive{ false };
     std::atomic<bool> loadOutOfMemory{ false };
+    std::atomic<bool> loadStoppedForMemory{ false };   // the memory reserve was reached (not a failed allocation): the load stopped on purpose
+    juce::StringArray loadMemorySkipped;               // the stops left out since the stop, over every tree of one load (cleared by takeLastLoadError)
     std::atomic<float> undulationBeatRatio{ 12.0f };
     juce::String lastLoadError;
     std::atomic<double> defaultSampleRate{ 48000.0 };

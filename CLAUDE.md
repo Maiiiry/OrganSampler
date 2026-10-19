@@ -151,6 +151,13 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   memory measured before the load; counted on a juce::Thread::launch, verdict by callAsync: log "Memory for ..." and
   an AlertWindow when needed > free - 512 MB. The load is never refused (#17: a 7 GB organ on the 8 GB Mac thrashed,
   the window thread stalled 10-16 s at a time, "the application cannot be closed").
+  0.8.131 (the user's rule): the loading STOPS when the memory reserve is reached - `freePhysicalMemoryBytes()` /
+  `memoryReserveBytes()` (768 MB or installed/16) in SamplerEngine.cpp, checked in `loadDivisionTree` before every
+  non-container stop and every 32 files inside `loadStopFolder`'s parallelFor; `loadStoppedForMemory` + `loadOutOfMemory`
+  set, the remaining stops of the load go to `loadMemorySkipped` (cleared by `takeLastLoadError`), the instrument is
+  built from the stops loaded so far, `lastLoadError` names the stops left out (first 12). Never let the system page
+  samples: a stalled window thread looks like a hang. The Hauptwerk import sets `suppressPortableNotice` so the
+  "Configuration from another computer" notice is not shown (two message boxes over each other, the user refused).
   0.8.129 crescendo: `Combination` (a id, b name) named "cresc..." = one stage each, the stage = the number at the end
   of the name (`getTrailingIntValue`); `CombinationElement` (b CombinationID, c ControlledSwitchID, e Y = on); the
   switches reach the stops' `Stop.switchId` (d, ControllingSwitchID) through `SwitchLinkage` both ways within 8 hops
