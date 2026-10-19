@@ -93,7 +93,12 @@ public:
             report << "\ndivisions " << (int)odf.divisions.size() << ", keyboards " << (int)odf.keyboards.size() << ", stops " << (int)odf.stops.size()
                    << ", ranks " << (int)odf.ranks.size() << ", pipe samples " << odf.sampleCount << " (encrypted " << odf.encryptedSamples << ")\n";
             for (const auto& [id, d] : odf.divisions) report << "  division " << id << ": " << d.name << "\n";
-            for (const auto& k : odf.keyboards) report << "  keyboard " << k.id << ": " << k.name << " -> division " << k.divisionId << ", keys " << k.lowNote << "-" << k.highNote << "\n";
+            for (const auto& k : odf.keyboards)
+            {
+                report << "  keyboard " << k.id << ": " << k.name << " -> division " << k.divisionId;
+                if (k.divisionIds.size() > 1) { report << " (all:"; for (int id : k.divisionIds) report << " " << id; report << ")"; }
+                report << ", keys " << k.lowNote << "-" << k.highNote << "\n";
+            }
             int shown = 0;
             for (const auto& [id, r] : odf.ranks)
                 if (shown++ < 12) report << "  rank " << id << ": " << r.name << " [" << r.perspective << (r.tremmed ? ", tremmed" : "") << (r.noise ? ", noise" : "")
@@ -113,7 +118,18 @@ public:
                     if (stop.extensionOfStopId > 0)
                         report << " EXTENSION of stop " << stop.extensionOfStopId << " (" << (odf.stops.count(stop.extensionOfStopId) > 0 ? odf.stops.at(stop.extensionOfStopId).name : juce::String("?"))
                                << ") shift " << stop.shift;
+                    if (!stop.children.empty()) report << " STOP FOLDER with " << (int)stop.children.size() << " children";
                     report << "\n";
+                    for (const auto& child : stop.children)
+                    {
+                        report << "          child " << child.name << " ->";
+                        for (const auto& f : child.folders) report << " " << f.getFullPathName();
+                        report << "\n";
+                        for (int rankId : child.rankIds)
+                            if (const auto it = odf.ranks.find(rankId); it != odf.ranks.end())
+                                report << "              rank " << rankId << " [" << it->second.perspective << "] " << it->second.folder.getFullPathName() << "\n";
+                    }
+                    if (!stop.children.empty()) continue;
                     for (int rankId : stop.rankIds)
                         if (const auto it = odf.ranks.find(rankId); it != odf.ranks.end())
                             report << "          rank " << rankId << " [" << it->second.perspective << "] " << it->second.folder.getFullPathName() << "\n";

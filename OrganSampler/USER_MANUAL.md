@@ -488,7 +488,12 @@ without any configuration at all.
 folder) and makes an OrganSampler configuration of it - the quick way to a
 sample set that came with a Hauptwerk definition. What is taken from the
 definition: the divisions in the order of their keyboards (the pedal first)
-with their key ranges, the stops with their sample folders, the perspectives
+with their key ranges - a division of ours is a keyboard, so every Hauptwerk
+division a keyboard plays joins it, the ones it plays only with a ventil
+drawn included (Caen: "Pedal" and "PedalAnches" are one division of ours,
+the reeds after the flues; the definition links keys to divisions through
+its switches, and the import follows those links) -, the stops with their
+sample folders, the perspectives
 (front, direct, diffuse, rear ... as the ranks are named, turned into the
 perspective patterns), and the per-pipe level adjustments as the voicing:
 Hauptwerk voices every perspective on its own, OrganSampler every stop, so
@@ -501,7 +506,14 @@ is. A stop whose rows play another stop's ranks shifted (a 4' playing the 8'
 rank an octave up, a stop borrowed into another division) is an extension or
 transmission in Hauptwerk's terms as in ours: it is made as a transmission of
 that stop with the same shift, not loaded a second time; a few top pipes of
-its own, if it has them, are left out (filled pipes cover them). The rows of
+its own, if it has them, are left out (filled pipes cover them). A stop
+with several ranks in ONE perspective (Caen: a stereo stop recorded as a
+left and a right rank, "Quintaton 16 (L component)" and "(R component)",
+two folders for the same perspective) becomes a stop folder: its own row
+carries the Hauptwerk name and no folders, its children - one per rank, the
+ranks matched across the perspectives by their names - carry the folders,
+so the button plays them all. Ranks of different perspectives stay one
+stop with one folder per perspective, as ever. The rows of
 the Stop List are named after the folders, as for any organ built from
 folders; the Hauptwerk stop name becomes the alias, the caption on the
 button. Everything else - couplers, combinations, tremulants, wind,
@@ -515,10 +527,15 @@ and the import says so.
 The samples must lie where Hauptwerk keeps them: the definition in
 `OrganDefinitions`, the packages in `OrganInstallationPackages/<six-digit
 id>` beside it (`D:\Hauptwerk\HauptwerkSampleSetsAndComponents\...` on a
-usual installation). The configuration is written into the organ's main
-installation package, beside the samples (`<organ name>.json`; the
-`OrganInstallationPackages` folder is its library root), loaded at once,
-and saved again with the voicing once the folders are loaded. Then check
+usual installation). The configuration is written as `<organ name>.json`
+into an `OrganConfigurations` folder beside `OrganDefinitions` and
+`OrganInstallationPackages` (made when it is not there; 0.8.125 - before,
+it went into the organ's numbered installation package, where nobody looks
+for it), so all your Hauptwerk organs are found in one place; the
+`OrganInstallationPackages` folder is its library root, reached from there
+by a relative path, so the file works from that folder and from any other
+place the root is known. It is loaded at once and saved again with the
+voicing once the folders are loaded. Then check
 the Stop List, give the perspectives their audio routes and the divisions
 their MIDI keyboards, and *Save Configuration* - as a portable one to
 publish it.

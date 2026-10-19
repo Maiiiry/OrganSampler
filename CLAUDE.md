@@ -113,6 +113,21 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   read `Label;prefix;prefix2` lines since the first commit (0.8.50, `stripPerspectivePrefix`); never call that new.
   Stellwagen (2723+2724, non-encrypted ODF in OrganDefinitions) must give 14+14+12+12 stops, 1 extension, trees
   `00272x/pipes/{PE,I,II,III}` only.
+  0.8.125: a division of OURS is a keyboard. `Keyboard::divisionIds` = every ODF division the key switches reach
+  through `SwitchLinkage` (KeyboardKey.SwitchID -> source/dest chains, condition switch = a ventil: still the
+  keyboard's division) to `DivisionInput.SwitchID`; a division reached from several keyboards goes to the one with
+  the most unconditional keys; the ODF hint (`Hint_PrimaryAssociatedDivisionID`) stays primary when among them;
+  no linkage at all -> the hint. The plan takes the stops of ALL those divisions (primary first). Caen Surround
+  (ODF by the user, packages 1318-1320, 1691-1695, 45 GB) must give 11+15+13+16 = 55 stops from 8 ODF divisions
+  (Pedal+PedalAnches ...), never 4 divisions / 32 stops. Several ranks in ONE perspective ("(L component)" /
+  "(R component)" ranks, folders `quintaton16` + `quintaton16l`) -> `PlanStop.children` (grouped by the rank name
+  without its perspective head, else by folder name; sorted by name): the import writes a container row (HW name,
+  customName, no folders) + child rows (`child: true`, automatic names, alias = rank name) - the 16 Recit stops of
+  Caen are stop folders "[II]". Before, those stops took `pipe/rec` (the whole division) and dropped the second
+  rank. The configuration goes to `<root>/OrganConfigurations/<organ>.json` (folder created by the import; library
+  root OrganInstallationPackages via `sampleLibraryRootRelative` "../OrganInstallationPackages"), no longer into
+  the numbered package. Dev: `--hauptwerk` prints "keyboard N: ... -> division X (all: X Y)" and "STOP FOLDER with
+  N children".
 - Engine kernels (0.8.119): AVX2 (8 frames; `ENGINE_AVX2_FN` = `__attribute__((target("avx2")))` on GCC/clang, plain on
   MSVC - before 0.8.119 the AVX2 code was `#if _MSC_VER` only, so Linux and both Macs rendered scalar), SSE2 and NEON
   four-frame kernels (`Lane4`, one code for both), scalar. `bestKernel()` picks at run time; `--kerneltest` (CI on every

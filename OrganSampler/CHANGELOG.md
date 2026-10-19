@@ -12,6 +12,29 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.125] - 2026-10-19
+
+### Changed
+- Hauptwerk import: a division of ours is a keyboard, so every Hauptwerk
+  division a keyboard plays joins it - the ones it plays only with a ventil
+  drawn included (Caen St. Etienne: "Pedal" + "PedalAnches", "GrandOrgue" +
+  "GrandOrgueAnches" ...; the import follows the definition's switch
+  linkages from the keys to the division inputs). Before, only the
+  keyboard's primary division came in: Caen lost its four reed divisions,
+  23 of 55 stops.
+- Hauptwerk import: a stop with several ranks in ONE perspective (Caen: a
+  stereo stop recorded as a left and a right rank, two folders for the same
+  perspective) becomes a stop folder whose children carry the folders (one
+  per rank, matched across the perspectives by name); before, such a stop
+  took the whole division folder and its second rank was dropped. Ranks of
+  different perspectives stay one stop with one folder per perspective.
+- Hauptwerk import: the configuration is written into an
+  `OrganConfigurations` folder beside `OrganDefinitions` and
+  `OrganInstallationPackages` (made when needed), where all the imported
+  organs are found in one place; before, into the organ's numbered package
+  folder. The library root stays `OrganInstallationPackages`, reached by a
+  relative path.
+
 ## [0.8.124] - 2026-10-18
 
 ### Added

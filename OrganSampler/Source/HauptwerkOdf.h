@@ -61,7 +61,14 @@ struct HauptwerkOdf
         std::vector<RankUse> rankUses;
     };
     struct Division { int id = 0; juce::String name; };
-    struct Keyboard { int id = 0, divisionId = 0, lowNote = 0, highNote = 0; juce::String name; };
+    // A keyboard and the divisions its keys play: every division whose inputs
+    // the key switches reach through the switch linkages, with or without a
+    // condition switch (Caen: the Pedal keyboard plays "Pedal" always and
+    // "PedalAnches" when the reeds ventil is drawn - both are its divisions,
+    // for OrganSampler a division IS a keyboard). divisionId is the primary one
+    // (the ODF's hint when it is among them), divisionIds all of them, the
+    // primary first.
+    struct Keyboard { int id = 0, divisionId = 0, lowNote = 0, highNote = 0; juce::String name; std::vector<int> divisionIds; };
 
     juce::String organName, builder, location, supplier;
     int mainPackageId = 0;
@@ -104,11 +111,20 @@ struct HauptwerkOdf
         // a transmission of the owner into this division with that shift.
         int extensionOfStopId = 0;
         int shift = 0;
+        // A stop with several ranks in ONE perspective (Caen: "Quintaton 16 (L
+        // component)" and "(R component)", two folders side by side for the
+        // same perspective) becomes a stop folder: this row has no folders of
+        // its own, its children (one per rank group, the groups matched across
+        // the perspectives by the rank name without its perspective head) carry
+        // them. Ranks of different perspectives stay ONE stop with one folder
+        // per perspective, as ever.
+        std::vector<PlanStop> children;
     };
     struct PlanDivision
     {
         juce::String name;                           // the ODF's division name
         int divisionId = 0, lowNote = 36, highNote = 96;
+        std::vector<int> divisionIds;                // every ODF division the keyboard plays (the primary first)
         std::vector<juce::File> trees;               // the folders holding the stop folders, the main one first
         std::vector<PlanStop> stops;
     };

@@ -9999,12 +9999,19 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
             for (const auto& assignment : safeThis->engine.scanTreeAssignments(tree, false))
                 automaticNameOfFolder[assignment.folder.getFullPathName().toLowerCase()] = assignment.stopName;
         std::map<int, std::pair<int, juce::String>> rowOfStop;   // ODF stop id -> division, row name
+        std::map<int, juce::StringArray> childRowsOfStop;        // ODF stop id -> the row names of its children (a stop folder)
         for (size_t d = 0; d < plan.divisions.size(); ++d)
         {
             juce::StringArray taken;
-            for (const auto& stop : plan.divisions[d].stops)
+            auto uniqueName = [&taken](juce::String name)
             {
-                if (stop.extensionOfStopId > 0) continue;
+                const auto base = name;
+                for (int n = 2; taken.contains(stopBuildKey(name)); ++n) name = base + " (" + juce::String(n) + ")";
+                taken.add(stopBuildKey(name));
+                return name;
+            };
+            auto automaticName = [&](const HauptwerkOdf::PlanStop& stop)
+            {
                 juce::StringArray names;
                 for (const int rankId : stop.rankIds)
                 {
@@ -10016,11 +10023,16 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
                     for (const auto& existing : names) if (stopBuildKey(existing) == stopBuildKey(name)) present = true;
                     if (!present) names.add(name);
                 }
-                juce::String name = names.isEmpty() ? (stop.folders.empty() ? stop.name : stop.folders.front().getFileName()) : names.joinIntoString(" / ");
-                const auto base = name;
-                for (int n = 2; taken.contains(stopBuildKey(name)); ++n) name = base + " (" + juce::String(n) + ")";
-                taken.add(stopBuildKey(name));
-                rowOfStop[stop.stopId] = { (int)d, name };
+                return names.isEmpty() ? (stop.folders.empty() ? stop.name : stop.folders.front().getFileName()) : names.joinIntoString(" / ");
+            };
+            for (const auto& stop : plan.divisions[d].stops)
+            {
+                if (stop.extensionOfStopId > 0) continue;
+                if (stop.children.empty()) { rowOfStop[stop.stopId] = { (int)d, uniqueName(automaticName(stop)) }; continue; }
+                // A stop folder: its own row carries the Hauptwerk name (no folders
+                // of its own), the children the automatic names of their folders.
+                rowOfStop[stop.stopId] = { (int)d, uniqueName(stop.name) };
+                for (const auto& child : stop.children) childRowsOfStop[stop.stopId].add(uniqueName(automaticName(child)));
             }
         }
         safeThis->hauptwerkExtensions.clear();
@@ -10056,29 +10068,65 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
                             safeThis->hauptwerkExtensions.push_back({ i, owner->second.first, owner->second.second, stop.shift, stop.name });
                         continue;
                     }
-                    juce::Array<juce::var> folders;
-                    juce::StringArray labelsDone;
-                    for (const int rankId : stop.rankIds)
+                    // The folders of a row: one per perspective, from the ranks.
+                    auto foldersOf = [&](const HauptwerkOdf::PlanStop& row)
                     {
-                        const auto rankIt = odf->ranks.find(rankId);
-                        if (rankIt == odf->ranks.end() || rankIt->second.folder == juce::File()) continue;
-                        const auto& rank = rankIt->second;
-                        const juce::String label = rank.perspective.isNotEmpty() ? rank.perspective : juce::String("default");
-                        if (labelsDone.contains(label)) continue;   // a second rank of the same perspective (a split): the first stands
-                        int treeIndex = -1;
-                        for (size_t t = 0; t < plan.allTrees.size(); ++t)
-                            if (rank.folder == plan.allTrees[t] || rank.folder.isAChildOf(plan.allTrees[t])) { treeIndex = (int)t; break; }
-                        if (treeIndex < 0) continue;
-                        juce::DynamicObject::Ptr folder = new juce::DynamicObject();
-                        folder->setProperty("perspective", label);
-                        folder->setProperty("tree", treeIndex);
-                        folder->setProperty("path", slashes(rank.folder.getRelativePathFrom(plan.allTrees[(size_t)treeIndex])));
-                        folders.add(juce::var(folder.get()));
-                        labelsDone.add(label);
-                        perspectivesUsed.addIfNotAlreadyThere(label);
-                    }
-                    if (folders.isEmpty()) continue;
+                        juce::Array<juce::var> folders;
+                        juce::StringArray labelsDone;
+                        for (const int rankId : row.rankIds)
+                        {
+                            const auto rankIt = odf->ranks.find(rankId);
+                            if (rankIt == odf->ranks.end() || rankIt->second.folder == juce::File()) continue;
+                            const auto& rank = rankIt->second;
+                            const juce::String label = rank.perspective.isNotEmpty() ? rank.perspective : juce::String("default");
+                            if (labelsDone.contains(label)) continue;   // a second rank of the same perspective: the plan made children of those, the first stands here
+                            int treeIndex = -1;
+                            for (size_t t = 0; t < plan.allTrees.size(); ++t)
+                                if (rank.folder == plan.allTrees[t] || rank.folder.isAChildOf(plan.allTrees[t])) { treeIndex = (int)t; break; }
+                            if (treeIndex < 0) continue;
+                            juce::DynamicObject::Ptr folder = new juce::DynamicObject();
+                            folder->setProperty("perspective", label);
+                            folder->setProperty("tree", treeIndex);
+                            folder->setProperty("path", slashes(rank.folder.getRelativePathFrom(plan.allTrees[(size_t)treeIndex])));
+                            folders.add(juce::var(folder.get()));
+                            labelsDone.add(label);
+                            perspectivesUsed.addIfNotAlreadyThere(label);
+                        }
+                        return folders;
+                    };
                     const auto row = rowOfStop.find(stop.stopId);
+                    if (!stop.children.empty())
+                    {
+                        // A stop folder: the Hauptwerk stop as the folder row (no folders
+                        // of its own, its name is the caption), then its children indented.
+                        juce::Array<juce::var> childEntries;
+                        const auto childNames = childRowsOfStop.find(stop.stopId);
+                        for (size_t c = 0; c < stop.children.size(); ++c)
+                        {
+                            const auto& child = stop.children[c];
+                            const auto folders = foldersOf(child);
+                            if (folders.isEmpty()) continue;
+                            juce::DynamicObject::Ptr entry = new juce::DynamicObject();
+                            entry->setProperty("name", childNames != childRowsOfStop.end() && (int)c < childNames->second.size() ? childNames->second[(int)c] : child.name);
+                            entry->setProperty("alias", child.name);      // the rank name without its perspective ("Rec: Quintaton 16 (L component)")
+                            entry->setProperty("customName", false);
+                            entry->setProperty("child", true);
+                            entry->setProperty("folders", folders);
+                            childEntries.add(juce::var(entry.get()));
+                        }
+                        if (childEntries.isEmpty()) continue;
+                        juce::DynamicObject::Ptr master = new juce::DynamicObject();
+                        master->setProperty("name", row != rowOfStop.end() ? row->second.second : stop.name);
+                        master->setProperty("alias", juce::String());
+                        master->setProperty("customName", true);
+                        master->setProperty("child", false);
+                        master->setProperty("folders", juce::Array<juce::var>());
+                        entries.add(juce::var(master.get()));
+                        for (const auto& child : childEntries) entries.add(child);
+                        continue;
+                    }
+                    const auto folders = foldersOf(stop);
+                    if (folders.isEmpty()) continue;
                     juce::DynamicObject::Ptr entry = new juce::DynamicObject();
                     entry->setProperty("name", row != rowOfStop.end() ? row->second.second : stop.name);
                     entry->setProperty("alias", stop.name);           // the Hauptwerk stop name on the button
@@ -10133,12 +10181,14 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
                 [safeThis, odf] { if (safeThis != nullptr) safeThis->applyHauptwerkVoicing(odf, {}, {}, false); });
             return;
         }
-        // Written where it belongs - the organ's installation package, beside the
-        // samples - and loaded from there; the Hauptwerk folders stay untouched.
+        // Written into OrganConfigurations beside the Hauptwerk folders (0.8.125;
+        // the installation package before - nobody finds a numbered folder) and
+        // loaded from there; the Hauptwerk folders stay untouched.
+        plan.configurationFile.getParentDirectory().createDirectory();
         if (!plan.configurationFile.replaceWithText(juce::JSON::toString(configuration, true)))
         {
             juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Hauptwerk organ definition",
-                "The configuration could not be written into the installation package:\n" + plan.configurationFile.getFullPathName(), "OK", safeThis.getComponent());
+                "The configuration could not be written beside the Hauptwerk folders:\n" + plan.configurationFile.getFullPathName(), "OK", safeThis.getComponent());
             return;
         }
         juce::String summary;

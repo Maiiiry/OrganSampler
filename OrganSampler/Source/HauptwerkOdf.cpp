@@ -321,6 +321,12 @@ HauptwerkOdf HauptwerkOdf::parse(const juce::File& file, const std::function<boo
     struct StopRankRow { int stopId = 0, rankId = 0, alternateRankId = 0, firstNote = 0, count = 0, increment = 0; };
     std::vector<StopRankRow> stopRanks;
     std::map<int, std::vector<int>> keyboardNotes;    // KeyboardID -> notes of its KeyboardKey rows
+    // The way from a key to a division: KeyboardKey.SwitchID -> SwitchLinkage
+    // rows (source -> destination, possibly in several hops and under a
+    // condition switch: a ventil, "Cp: Anches Pedal") -> DivisionInput.SwitchID.
+    std::map<int, std::vector<int>> keyboardKeySwitches;             // KeyboardID -> the switches of its keys
+    std::map<int, int> divisionOfInputSwitch;                        // DivisionInput switch -> DivisionID
+    std::map<int, std::vector<std::pair<int, int>>> switchLinks;     // source switch -> (destination switch, condition switch or 0)
     int rows = 0;
     while (true)
     {
@@ -375,6 +381,24 @@ HauptwerkOdf HauptwerkOdf::parse(const juce::File& file, const std::function<boo
             {
                 const int keyboard = row.integer("KeyboardID", "a"), note = row.integer("NormalMIDINoteNumber", "c", -1);
                 if (keyboard > 0 && note >= 0) keyboardNotes[keyboard].push_back(note);
+                const int keySwitch = row.integer("SwitchID", "b");
+                if (keyboard > 0 && keySwitch > 0) keyboardKeySwitches[keyboard].push_back(keySwitch);
+            }
+        }
+        else if (lower == "divisioninput")
+        {
+            while (scanner.nextRow(row))
+            {
+                const int division = row.integer("DivisionID", "a"), inputSwitch = row.integer("SwitchID", "b");
+                if (division > 0 && inputSwitch > 0) divisionOfInputSwitch[inputSwitch] = division;
+            }
+        }
+        else if (lower == "switchlinkage")
+        {
+            while (scanner.nextRow(row))
+            {
+                const int source = row.integer("SourceSwitchID", "a"), dest = row.integer("DestSwitchID", "b"), condition = row.integer("ConditionSwitchID", "c");
+                if (source > 0 && dest > 0) switchLinks[source].push_back({ dest, condition });
             }
         }
         else if (lower == "stop")
@@ -464,6 +488,95 @@ HauptwerkOdf HauptwerkOdf::parse(const juce::File& file, const std::function<boo
             k.highNote = *std::max_element(notes->second.begin(), notes->second.end());
         }
         if (k.lowNote <= 0 || k.highNote < k.lowNote) { k.lowNote = 36; k.highNote = k.name.containsIgnoreCase("ped") ? 67 : 96; }
+    }
+
+    // The divisions every keyboard plays: from each key switch along the switch
+    // linkages (any number of hops; a condition switch - a ventil, "Cp: Anches
+    // Recit" - makes the link optional but it is the keyboard's division all the
+    // same) to the division inputs. Caen: four keyboards, eight divisions
+    // ("Pedal" + "PedalAnches" and so on): a reed division reached only with its
+    // ventil drawn is still that keyboard's. A division reached from several
+    // keyboards (a coupler built as a linkage) goes to the keyboard reaching it
+    // with the most keys without a condition, then with the most keys at all;
+    // the ODF's own hint stays the primary one when it is among them. A keyboard
+    // without any linkage (an old or hand-written definition) keeps the hint.
+    {
+        struct Reach { int unconditional = 0, total = 0; };
+        std::map<int, std::map<int, Reach>> reachOfKeyboard;   // keyboard -> division -> keys reaching it
+        for (const auto& k : odf.keyboards)
+        {
+            const auto keys = keyboardKeySwitches.find(k.id);
+            if (keys == keyboardKeySwitches.end()) continue;
+            for (const int keySwitch : keys->second)
+            {
+                // Depth first from the key: every division input reached, and whether
+                // some link on the way was conditional.
+                std::set<int> seen;
+                std::map<int, bool> conditionalArrival;   // division -> arrived only through a condition
+                std::vector<std::pair<int, bool>> stack{ { keySwitch, false } };
+                while (!stack.empty())
+                {
+                    const auto [sw, conditional] = stack.back(); stack.pop_back();
+                    if (!seen.insert(sw).second) continue;
+                    if (sw != keySwitch)
+                    {
+                        const auto input = divisionOfInputSwitch.find(sw);
+                        if (input != divisionOfInputSwitch.end())
+                        {
+                            auto arrived = conditionalArrival.find(input->second);
+                            if (arrived == conditionalArrival.end()) conditionalArrival[input->second] = conditional;
+                            else arrived->second = arrived->second && conditional;
+                        }
+                    }
+                    const auto links = switchLinks.find(sw);
+                    if (links == switchLinks.end() || seen.size() > 4096) continue;
+                    for (const auto& [dest, condition] : links->second) stack.push_back({ dest, conditional || condition != 0 });
+                }
+                for (const auto& [division, conditional] : conditionalArrival)
+                {
+                    auto& reach = reachOfKeyboard[k.id][division];
+                    ++reach.total;
+                    if (!conditional) ++reach.unconditional;
+                }
+            }
+        }
+        std::map<int, int> ownerOfDivision;   // division -> keyboard
+        for (const auto& [division, d] : odf.divisions)
+        {
+            int best = 0; Reach bestReach;
+            for (const auto& k : odf.keyboards)
+            {
+                const auto reach = reachOfKeyboard.count(k.id) > 0 && reachOfKeyboard.at(k.id).count(division) > 0 ? reachOfKeyboard.at(k.id).at(division) : Reach();
+                if (reach.total == 0) continue;
+                const bool better = best == 0 || reach.unconditional > bestReach.unconditional
+                    || (reach.unconditional == bestReach.unconditional && (reach.total > bestReach.total || (reach.total == bestReach.total && k.divisionId == division)));
+                if (better) { best = k.id; bestReach = reach; }
+            }
+            if (best > 0) ownerOfDivision[division] = best;
+        }
+        for (auto& k : odf.keyboards)
+        {
+            std::vector<std::pair<Reach, int>> mine;   // (reach, division) of the divisions this keyboard owns
+            for (const auto& [division, owner] : ownerOfDivision)
+                if (owner == k.id) mine.push_back({ reachOfKeyboard.at(k.id).at(division), division });
+            if (mine.empty()) { if (k.divisionId > 0) k.divisionIds = { k.divisionId }; continue; }
+            // The primary: the hint when it is among them, else the division most
+            // keys play without a condition; the rest by division id.
+            std::stable_sort(mine.begin(), mine.end(), [](const auto& a, const auto& b)
+            {
+                return a.first.unconditional != b.first.unconditional ? a.first.unconditional > b.first.unconditional
+                     : a.first.total != b.first.total ? a.first.total > b.first.total : a.second < b.second;
+            });
+            int primary = mine.front().second;
+            for (const auto& m : mine) if (m.second == k.divisionId) primary = k.divisionId;
+            k.divisionIds.clear();
+            k.divisionIds.push_back(primary);
+            std::vector<int> rest;
+            for (const auto& m : mine) if (m.second != primary) rest.push_back(m.second);
+            std::sort(rest.begin(), rest.end());
+            for (const int division : rest) k.divisionIds.push_back(division);
+            k.divisionId = primary;
+        }
     }
 
     // The stops' ranks (alternate = tremmed ranks marked, never taken).
@@ -574,20 +687,33 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
         const auto divisionName = divisions.count(k.divisionId) > 0 ? divisions.at(k.divisionId).name : juce::String();
         return k.name.containsIgnoreCase("ped") || divisionName.containsIgnoreCase("ped");
     };
+    // Every division a keyboard plays (the ODF links them through switches,
+    // Keyboard::divisionIds) is part of the keyboard's division of ours.
+    auto divisionsOf = [](const Keyboard& k)
+    {
+        std::vector<int> ids = k.divisionIds;
+        if (ids.empty() && k.divisionId > 0) ids.push_back(k.divisionId);
+        return ids;
+    };
     for (const auto& k : keyboards)
     {
-        if (k.divisionId <= 0 || divisionsUsed.count(k.divisionId) > 0) continue;   // a second keyboard of a division (a floating one) adds nothing
+        std::vector<int> ids;
+        for (const int id : divisionsOf(k)) if (divisionsUsed.count(id) == 0) ids.push_back(id);
+        if (ids.empty()) continue;   // a second keyboard of a division (a floating one) adds nothing
         const auto divisionName = divisions.count(k.divisionId) > 0 ? divisions.at(k.divisionId).name : juce::String();
         bool hasStops = false;
-        for (const auto& [id, stop] : stops) if (stop.divisionId == k.divisionId) { hasStops = true; break; }
+        for (const auto& [id, stop] : stops) if (std::find(ids.begin(), ids.end(), stop.divisionId) != ids.end()) { hasStops = true; break; }
         // A pedal without stops (a demo) stays - one of them: division P. is the
         // pedal or empty, never a manual; a second pedal keyboard without stops
         // (a split pedal) is left out.
         bool pedalKept = false;
         for (const auto& kept : ordered) if (isPedal(kept)) pedalKept = true;
         if (!hasStops && (!isPedal(k) || pedalKept)) { result.notes.add("division \"" + divisionName + "\" (keyboard \"" + k.name + "\") has no stops: left out"); continue; }
-        divisionsUsed.insert(k.divisionId);
-        ordered.push_back(k);
+        for (const int id : ids) divisionsUsed.insert(id);
+        Keyboard kept = k;
+        kept.divisionIds = ids;
+        if (std::find(ids.begin(), ids.end(), kept.divisionId) == ids.end()) kept.divisionId = ids.front();
+        ordered.push_back(kept);
     }
     // The manuals from the lowest up: a number at the start of the keyboard's
     // name ("1. manual [lowest]", "2. manual") wins, else the keyboard ID (the
@@ -615,8 +741,22 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
     }
     if (ordered.size() > 8) { result.notes.add(juce::String((int)ordered.size() - 8) + " division(s) beyond eight left out"); ordered.resize(8); }
     bool anyStops = false;
-    for (const auto& k : ordered) for (const auto& [id, stop] : stops) if (k.divisionId > 0 && stop.divisionId == k.divisionId) anyStops = true;
+    for (const auto& k : ordered)
+        for (const int divisionId : divisionsOf(k))
+            for (const auto& [id, stop] : stops) if (divisionId > 0 && stop.divisionId == divisionId) anyStops = true;
     if (!anyStops) { result.error = "No keyboard with stops was found in the organ definition."; return result; }
+    // The rows that carry folders: the stops without children, and the children
+    // of the stops that have them (a stop folder's own row has no folders).
+    auto leavesOf = [](PlanDivision& division)
+    {
+        std::vector<PlanStop*> leaves;
+        for (auto& stop : division.stops)
+        {
+            if (stop.children.empty()) { leaves.push_back(&stop); continue; }
+            for (auto& child : stop.children) leaves.push_back(&child);
+        }
+        return leaves;
+    };
 
     // Who owns a rank: the stop that plays it without a transposition (the
     // first in the file when several do); a rank nobody plays straight belongs
@@ -641,16 +781,68 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
         if (rank.pipes.empty() || rank.folder == juce::File()) return nullptr;
         return &rank;
     };
+    // The stop folder(s) of a set of ranks: the perspectives of a stop lie side
+    // by side under it, possibly spread over several installation packages (the
+    // rear perspective in its own package) with the same paths below each - so
+    // the paths relative to the packages are compared: their common part is the
+    // stop folder in every package concerned. A single rank is its own stop
+    // folder unless its name ends with its parent's ("03-rearMk4-PEd_Princip16"
+    // under "PEd_Princip16": the parent is the stop). A common part shorter than
+    // two folders means the perspectives lie ABOVE the stops: every rank folder
+    // is then a stop folder of its own.
+    auto foldersFor = [&](const std::vector<int>& rankIdsIn) -> std::vector<juce::File>
+    {
+        std::vector<juce::String> relatives;
+        std::set<int> packages;
+        std::vector<juce::File> rankFolders;
+        for (const int rankId : rankIdsIn)
+        {
+            const auto& rank = ranks.at(rankId);
+            relatives.push_back(rank.folderRelative); packages.insert(rank.packageId); rankFolders.push_back(rank.folder);
+        }
+        if (relatives.empty()) return {};
+        auto components = [](const juce::String& path) { return juce::StringArray::fromTokens(path, "/", ""); };
+        juce::StringArray common = components(relatives.front());
+        for (const auto& rel : relatives)
+        {
+            const auto parts = components(rel);
+            int n = 0;
+            while (n < common.size() && n < parts.size() && common[n].equalsIgnoreCase(parts[n])) ++n;
+            common.removeRange(n, common.size() - n);
+        }
+        if (relatives.size() == 1)
+        {
+            const auto parts = components(relatives.front());
+            if (parts.size() >= 2 && parts[parts.size() - 1].endsWithIgnoreCase(parts[parts.size() - 2]) && parts[parts.size() - 1].length() > parts[parts.size() - 2].length())
+                common.removeRange(common.size() - 1, 1);
+        }
+        std::vector<juce::File> folders;
+        if (common.size() >= 2)
+        {
+            const auto stopRelative = common.joinIntoString("/");
+            for (const int packageId : packages)
+            {
+                const auto folder = packageFolder(hauptwerkRoot, packageId).getChildFile(stopRelative);
+                if (folder.isDirectory()) folders.push_back(folder);
+            }
+        }
+        if (folders.empty()) folders = rankFolders;   // the perspectives above the stops, or nothing in common
+        return folders;
+    };
     std::set<int> plannedStopIds;
     for (const auto& k : ordered)
     {
         PlanDivision division;
         division.divisionId = k.divisionId;
+        division.divisionIds = divisionsOf(k);
         division.name = divisions.count(k.divisionId) > 0 ? divisions.at(k.divisionId).name : k.name;
         division.lowNote = k.lowNote; division.highNote = k.highNote;
+        // The stops of every ODF division the keyboard plays, the primary
+        // division's first (Caen: "GrandOrgue" then "GrandOrgueAnches").
+        for (const int divisionId : division.divisionIds)
         for (const auto& [id, stop] : stops)
         {
-            if (stop.divisionId != k.divisionId) continue;
+            if (stop.divisionId != divisionId) continue;
             std::vector<juce::File> rankFolders;
             std::vector<int> rankIds;
             std::map<int, std::set<int>> borrowed;   // owner stop -> the transpositions used
@@ -682,45 +874,65 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
             if (!borrowed.empty())
                 result.notes.add("\"" + stop.name + "\" borrows ranks of " + juce::String((int)borrowed.size()) + " other stop(s) in several ways: only its own ranks are taken");
             if (rankFolders.empty()) { ++result.stopsWithoutSamples; result.notes.add("\"" + stop.name + "\" has no usable pipes (tremmed, noise or missing samples): left out"); continue; }
-            // The stop folder: the perspectives of a stop lie side by side under
-            // it, possibly spread over several installation packages (the rear
-            // perspective in its own package) with the same paths below each - so
-            // the paths relative to the packages are compared: their common part
-            // is the stop folder in every package concerned. A single rank is its
-            // own stop folder unless its name ends with its parent's ("03-rearMk4-
-            // PEd_Princip16" under "PEd_Princip16": the parent is the stop). A
-            // common part shorter than two folders means the perspectives lie
-            // ABOVE the stops: every rank folder is then a stop folder of its own.
-            std::vector<juce::String> relatives;
-            std::set<int> packages;
-            for (const int rankId : rankIds) { relatives.push_back(ranks.at(rankId).folderRelative); packages.insert(ranks.at(rankId).packageId); }
-            auto components = [](const juce::String& path) { return juce::StringArray::fromTokens(path, "/", ""); };
-            juce::StringArray common = components(relatives.front());
-            for (const auto& rel : relatives)
-            {
-                const auto parts = components(rel);
-                int n = 0;
-                while (n < common.size() && n < parts.size() && common[n].equalsIgnoreCase(parts[n])) ++n;
-                common.removeRange(n, common.size() - n);
-            }
-            if (relatives.size() == 1)
-            {
-                const auto parts = components(relatives.front());
-                if (parts.size() >= 2 && parts[parts.size() - 1].endsWithIgnoreCase(parts[parts.size() - 2]) && parts[parts.size() - 1].length() > parts[parts.size() - 2].length())
-                    common.removeRange(common.size() - 1, 1);
-            }
             PlanStop planStop;
             planStop.stopId = id; planStop.name = stop.name; planStop.rankIds = rankIds;
-            if (common.size() >= 2)
+            // Several ranks in ONE perspective (Caen: a stereo stop recorded as
+            // an "(L component)" and an "(R component)" rank, two folders for the
+            // same perspective): OrganSampler's stop has one folder per
+            // perspective, so the stop becomes a stop folder whose children are
+            // the rank groups - the ranks matched across the perspectives by
+            // their name without the perspective head ("Rec: Quintaton 16 (L
+            // component)" in Front and Rear is one child), else by their folder
+            // name. One rank per perspective stays one stop, as ever.
             {
-                const auto stopRelative = common.joinIntoString("/");
-                for (const int packageId : packages)
+                std::map<juce::String, int> ranksPerLabel;
+                bool severalInOne = false;
+                for (const int rankId : rankIds)
                 {
-                    const auto folder = packageFolder(hauptwerkRoot, packageId).getChildFile(stopRelative);
-                    if (folder.isDirectory()) planStop.folders.push_back(folder);
+                    const auto& rank = ranks.at(rankId);
+                    if (++ranksPerLabel[rank.perspective.isNotEmpty() ? rank.perspective : juce::String("default")] > 1) severalInOne = true;
+                }
+                if (severalInOne)
+                {
+                    using Groups = std::vector<std::pair<juce::String, std::vector<int>>>;
+                    auto groupBy = [&](bool byName)
+                    {
+                        Groups groups;
+                        for (const int rankId : rankIds)
+                        {
+                            const auto& rank = ranks.at(rankId);
+                            juce::String key;
+                            if (byName)
+                            {
+                                key = rank.name;
+                                if (rank.perspective.isNotEmpty() && key.contains(":")) key = key.fromFirstOccurrenceOf(":", false, false).trim();
+                            }
+                            if (key.isEmpty()) key = rank.folder.getFileName();
+                            bool found = false;
+                            for (auto& group : groups) if (group.first.equalsIgnoreCase(key)) { group.second.push_back(rankId); found = true; break; }
+                            if (!found) groups.push_back({ key, { rankId } });
+                        }
+                        return groups;
+                    };
+                    Groups groups = groupBy(true);
+                    if (groups.size() < 2) groups = groupBy(false);
+                    if (groups.size() >= 2)
+                    {
+                        // The children by name ("(L component)" before "(R component)"), not in the file's order.
+                        std::stable_sort(groups.begin(), groups.end(), [](const auto& a, const auto& b) { return a.first.compareNatural(b.first) < 0; });
+                        for (const auto& [key, ids] : groups)
+                        {
+                            PlanStop child;
+                            child.stopId = id; child.name = key; child.rankIds = ids;
+                            child.folders = foldersFor(ids);
+                            planStop.children.push_back(child);
+                        }
+                        result.notes.add("\"" + stop.name + "\" has " + juce::String((int)rankIds.size()) + " ranks in " + juce::String((int)ranksPerLabel.size())
+                            + " perspective(s): made a stop folder with " + juce::String((int)groups.size()) + " stops (" + groups.front().first + " ...)");
+                    }
                 }
             }
-            if (planStop.folders.empty()) planStop.folders = rankFolders;   // the perspectives above the stops, or nothing in common
+            if (planStop.children.empty()) planStop.folders = foldersFor(rankIds);
             division.stops.push_back(planStop);
             plannedStopIds.insert(id);
         }
@@ -746,21 +958,21 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
     // stop takes its rank folders as stop folders of their own instead.
     {
         std::vector<juce::File> allFolders;
-        for (const auto& division : result.divisions) for (const auto& stop : division.stops) for (const auto& f : stop.folders) allFolders.push_back(f);
+        for (auto& division : result.divisions) for (auto* stop : leavesOf(division)) for (const auto& f : stop->folders) allFolders.push_back(f);
         for (auto& division : result.divisions)
-            for (auto& stop : division.stops)
+            for (auto* stop : leavesOf(division))
             {
                 bool holdsAnother = false;
-                for (const auto& f : stop.folders)
+                for (const auto& f : stop->folders)
                     for (const auto& g : allFolders)
                         if (g != f && g.isAChildOf(f)) holdsAnother = true;
                 if (!holdsAnother) continue;
                 std::vector<juce::File> rankFolders;
-                for (const int rankId : stop.rankIds)
+                for (const int rankId : stop->rankIds)
                     if (const auto* rank = usableRank(rankId)) rankFolders.push_back(rank->folder);
                 if (rankFolders.empty()) continue;
-                result.notes.add("\"" + stop.name + "\": its folder " + stop.folders.front().getFileName() + " holds other stops - its rank folders are taken one by one");
-                stop.folders = rankFolders;
+                result.notes.add("\"" + stop->name + "\": its folder " + stop->folders.front().getFileName() + " holds other stops - its rank folders are taken one by one");
+                stop->folders = rankFolders;
             }
     }
     // The trees: the parents of the stop folders, the one most stops lie in first.
@@ -770,8 +982,8 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
         const auto& k = ordered[d];
         std::map<juce::String, int> treeCount;   // folder path (lower case) -> stops
         std::map<juce::String, juce::File> treeFile;
-        for (const auto& stop : division.stops)
-            for (const auto& stopFolder : stop.folders)
+        for (const auto* stop : leavesOf(division))
+            for (const auto& stopFolder : stop->folders)
             {
                 const auto tree = stopFolder.getParentDirectory();
                 const auto key = tree.getFullPathName().toLowerCase();
@@ -783,7 +995,7 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
         std::sort(trees.begin(), trees.end(), [](const auto& a, const auto& b) { return a.first != b.first ? a.first > b.first : a.second.getFullPathName() < b.second.getFullPathName(); });
         for (const auto& t : trees) division.trees.push_back(t.second);
         bool anyFolders = false;
-        for (const auto& stop : division.stops) if (!stop.folders.empty()) anyFolders = true;
+        for (const auto* stop : leavesOf(division)) if (!stop->folders.empty()) anyFolders = true;
         if (division.trees.empty() && anyFolders) result.notes.add("division \"" + division.name + "\": no sample folders (its stops have no usable pipes)");
         else if (division.stops.empty() && k.divisionId > 0) result.notes.add("division \"" + division.name + "\" (keyboard \"" + k.name + "\") has no stops: it stays as the empty pedal");
     }
@@ -810,9 +1022,10 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
         // ("Direct;01-dirc-;03-dif2S-"), the commonest first.
         std::map<juce::String, std::map<juce::String, int>> prefixesByLabel;   // label -> prefix (as spelt first) -> rank folders
         std::map<juce::String, juce::String> spelling;                          // lower-case prefix -> first spelling
-        for (const auto& division : result.divisions)
-            for (const auto& stop : division.stops)
+        for (auto& division : result.divisions)
+            for (const auto* stopPtr : leavesOf(division))
             {
+                const auto& stop = *stopPtr;
                 if (stop.rankIds.size() < 2) continue;
                 for (const int rankId : stop.rankIds)
                 {
@@ -853,10 +1066,15 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
             result.perspectivePatterns.push_back(line);
         }
     }
-    const auto mainPackage = packageFolder(hauptwerkRoot, mainPackageId > 1 ? mainPackageId : (packageIds.empty() ? 0 : packageIds.front()));
+    // Where the configuration goes: OrganConfigurations beside OrganDefinitions
+    // and OrganInstallationPackages (0.8.125; before, the organ's main package
+    // folder - right, but nobody finds "001318"). The library root stays
+    // OrganInstallationPackages, reached from there as "../OrganInstallationPackages"
+    // (sampleLibraryRootRelative), so the file works from that folder and from
+    // anywhere else the root is known.
     juce::String fileName = result.organName;
     for (const auto c : juce::String("\\/:*?\"<>|")) fileName = fileName.replaceCharacter(c, '-');
-    result.configurationFile = (mainPackage.isDirectory() ? mainPackage : result.libraryRoot).getChildFile(fileName.trim() + ".json");
+    result.configurationFile = hauptwerkRoot.getChildFile("OrganConfigurations").getChildFile(fileName.trim() + ".json");
     if (encryptedSamples > 0)
         result.error = juce::String(encryptedSamples) + " of " + juce::String(sampleCount) + " samples are encrypted (.hbw): Hauptwerk's encrypted sample sets cannot be played by OrganSampler.";
     return result;
