@@ -10893,6 +10893,18 @@ void MainComponent::applyPortableConfiguration(juce::var configuration,
     configurationUsedThisSession = true;
     saveSettings();
     markConfigurationClean();
+    {
+        // Will the samples fit? A warning when the free memory is short (#16,
+        // #17: a 7 GB organ on an 8 GB Mac paged, every stroke stalled).
+        std::vector<juce::String> trees(sampleTrees.begin(), sampleTrees.end());
+        for (int manual = 0; manual <= manualCount && manual < SamplerEngine::maxManuals; ++manual)
+        {
+            const auto& config = manualConfigs[(size_t)manual];
+            if (config.folderPath.isNotEmpty()) trees.push_back(config.folderPath);
+            for (const auto& extra : config.extraFolderPaths) trees.push_back(extra);
+        }
+        warnIfMemoryShortForTrees(trees, configurationFile.getFileNameWithoutExtension());
+    }
     beginStartupFolderLoading();
 }
 

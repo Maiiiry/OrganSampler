@@ -1041,6 +1041,11 @@ private:
     void mergeConfigurationFile(const juce::File& file);
     void mergeConfiguration(juce::var added, const juce::File& addedFile, const juce::String& addedName, std::function<void()> afterLoad);
     friend class PolyphonyDisplay;   // the RAM column reads the two memory figures below
+    // Before a configuration loads: the WAV bytes of its trees against the free
+    // memory, a warning (log + message) when the samples will not fit - the
+    // system then pages them out and every stroke stalls (#16, #17). Counted on
+    // a thread of its own; the load goes on meanwhile.
+    void warnIfMemoryShortForTrees(std::vector<juce::String> trees, const juce::String& configurationName);
     static juce::int64 availablePhysicalMemoryBytes();   // free physical memory now (the samples must fit)
     static juce::int64 processMemoryBytes();             // the RAM this program holds now (resident), 0 when unknown
     // The CPU clocks for the polyphony measurement: this process's CPU time (ms,

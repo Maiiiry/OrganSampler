@@ -102,6 +102,48 @@ juce::int64 MainComponent::processMemoryBytes()
     return 0;
 }
 
+void MainComponent::warnIfMemoryShortForTrees(std::vector<juce::String> trees, const juce::String& configurationName)
+{
+    // Measured before the load starts (the free memory is what the samples get);
+    // the WAV bytes are summed on a thread of their own - a big organ has tens
+    // of thousands of files - and the verdict comes back to the message thread.
+    const juce::int64 available = availablePhysicalMemoryBytes();
+    const juce::int64 installed = (juce::int64)juce::SystemStats::getMemorySizeInMegabytes() * 1024 * 1024;
+    const double factor = sampleStorageFloat ? 1.0 : 0.7;   // 32-bit float holds the files as they are; 16-bit storage of 24-bit files about two thirds
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    juce::Thread::launch([trees, configurationName, available, installed, factor, safeThis]
+    {
+        juce::int64 bytes = 0;
+        std::vector<juce::String> done;
+        for (const auto& tree : trees)
+        {
+            if (tree.isEmpty()) continue;
+            bool below = false;   // a tree inside another counted tree: counted already
+            for (const auto& other : done) if (tree == other || juce::File(tree).isAChildOf(juce::File(other))) below = true;
+            if (below) continue;
+            const juce::File folder(tree);
+            if (!folder.isDirectory()) continue;
+            bytes += wavBytesUnder(folder);
+            done.push_back(tree);
+        }
+        const juce::int64 needed = (juce::int64)((double)bytes * factor);
+        juce::MessageManager::callAsync([safeThis, bytes, needed, available, installed, configurationName]
+        {
+            if (safeThis == nullptr) return;
+            const auto gb = [](juce::int64 b) { return juce::String((double)b / (1024.0 * 1024.0 * 1024.0), 1) + " GB"; };
+            const bool tight = needed > available - (juce::int64)512 * 1024 * 1024;
+            CrashHandler::note("Memory for \"" + configurationName + "\": " + gb(bytes) + " of WAV files, about " + gb(needed) + " in memory, "
+                + gb(available) + " free of " + gb(installed) + " installed" + (tight ? " - TOO LITTLE: the system will page samples out" : ""));
+            if (!tight) return;
+            juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Not enough memory for this organ",
+                "The samples of \"" + configurationName + "\" take " + gb(bytes) + " of WAV files - about " + gb(needed) + " held in memory - and only "
+                + gb(available) + " of the " + gb(installed) + " installed is free.\n\nThe system will page samples out, and every stroke that touches them "
+                "stalls the sound (callbacks of several periods, a window that answers slowly). Load fewer stops (a smaller configuration), keep the "
+                "16-bit sample storage, or add memory. The RAM column of the polyphony display shows what the program holds.", "OK", safeThis.getComponent());
+        });
+    });
+}
+
 bool MainComponent::readCpuClocks(double& processMs, double& systemBusyMs, double& systemTotalMs)
 {
    #if JUCE_WINDOWS

@@ -12,6 +12,16 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.130] - 2026-10-19
+
+### Added
+- Loading a configuration warns when the samples will not fit the memory:
+  the WAV bytes of its trees (about two thirds held as 16-bit samples) are
+  counted against the free memory, and when they do not fit, the log and a
+  message say so - the system would page samples out, and every stroke that
+  touches them would stall the sound and the window (#16, #17: a 7 GB organ
+  on an 8 GB Mac). The load goes on; the count runs on a thread of its own.
+
 ## [0.8.129] - 2026-10-19
 
 ### Added
