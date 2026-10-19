@@ -471,7 +471,12 @@ namespace EngineSelfTest
         report << "Block size: " << blockSize << " frames\n";
         for (int manual = 0; manual < divisions; ++manual)
             for (const auto& perspective : engine.getPerspectivesForManual(manual))
+            {
                 engine.setPerspectiveBlockSize(manual, perspective, blockSize);   // reverb partitions follow the block
+                // Every route "has a device" here (the test renders them all itself):
+                // a route without one gets no voices since 0.8.126.
+                engine.setPerspectiveDeviceKey(manual, perspective, "selftest|" + perspective + "|" + juce::String(manual));
+            }
         juce::AudioBuffer<float> buffer(2, blockSize);
        #if JUCE_WINDOWS
         // Measure like a real audio callback thread would run.
@@ -579,7 +584,7 @@ namespace EngineSelfTest
             const double sharedDb = chordLevelDb("Shared IR check, every route on one device");
             for (int manual = 0; manual < divisions; ++manual)
                 for (const auto& perspective : engine.getPerspectivesForManual(manual))
-                    engine.setPerspectiveDeviceKey(manual, perspective, {});
+                    engine.setPerspectiveDeviceKey(manual, perspective, "selftest|" + perspective + "|" + juce::String(manual));   // a device of its own again (not none: that would silence the route)
             const auto own = engine.getReverbSummary();
             const double diff = sharedDb - ownDb;
             report << "Shared IR: " << (shared.routes + shared.sharedRoutes) << " route(s) on one device in " << shared.routes

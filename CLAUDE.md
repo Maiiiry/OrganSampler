@@ -128,6 +128,16 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   root OrganInstallationPackages via `sampleLibraryRootRelative` "../OrganInstallationPackages"), no longer into
   the numbered package. Dev: `--hauptwerk` prints "keyboard N: ... -> division X (all: X Y)" and "STOP FOLDER with
   N children".
+  Voicing (0.8.126, `applyHauptwerkVoicing`): Hauptwerk has NO volume per perspective, so the pipe levels are split
+  in three: median of all pipe levels of (division, perspective) -> route volume (`perspectiveAudio[key].volumeDb` +
+  `setPerspectiveVolumeDb`, clamped -31..6), median of the residual (averaged over the stop's perspectives) -> stop dB,
+  the rest -> per-key dB. Never put a perspective's offset into the stops or pipes again.
+- A route without a device ("none") gets NO voices (0.8.126, `Route::hasDevice` set by `setPerspectiveDeviceKey`,
+  checked in `publishVoice`: the voice is finished at once). Before, every pipe was published to its perspective's
+  route whatever the device and sat there unrendered until `cleanStaleRoutes` flushed it after ~1 s, counted as
+  polyphony: the "8000 voices" of the Core 2 Duo Mac (#14, default routes none + auxiliary on the device) were half
+  ghosts - the same stimulus (61 keys x 7-8 strikes/s) on the default routes gives 2500. The self-test sets a device
+  key on every route (`"selftest|<perspective>|<manual>"`) - never clear it to {} there, that silences the route.
 - Engine kernels (0.8.119): AVX2 (8 frames; `ENGINE_AVX2_FN` = `__attribute__((target("avx2")))` on GCC/clang, plain on
   MSVC - before 0.8.119 the AVX2 code was `#if _MSC_VER` only, so Linux and both Macs rendered scalar), SSE2 and NEON
   four-frame kernels (`Lane4`, one code for both), scalar. `bestKernel()` picks at run time; `--kerneltest` (CI on every
@@ -151,9 +161,11 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   `_mm_pause` instead of yielding. 0.8.123: `raiseAudioThreadPriority()` (Linux SCHED_FIFO/SCHED_RR, logged when
   refused; macOS time-constraint thread), `gFewCores` (<= 2 physical): poster waits with `std::this_thread::yield()`,
   chunks <= 12 voices, hot spin window 1 ms. Never blame a kernel without the benchmark numbers from the report.
-  AND the scalar-days behaviour is back where the user measured: x86 without AVX2 renders SCALAR (`bestKernel`; the
-  SSE2 kernel exists only for the kernel test's comparison), ENGINE_CPU_PAUSE outside Windows is `std::this_thread::
-  yield()` again. Do not re-enable SSE2 or the pause spin for those machines without a measurement from them.
+  ENGINE_CPU_PAUSE outside Windows is `std::this_thread::yield()` again (do not bring the pause spin back there
+  without a measurement). x86 without AVX2 renders SSE2 by default again since 0.8.126 (`defaultKernel`): the user's
+  own A/B with the editor's switch on the same routes - Core 2 Duo Mac scalar 1700 vs SSE2 2500 voices (#14, 0.8.125),
+  Linux bench 5.07 vs 7.70 ns (#13) - and he asked for it ("bude stary CPU defaultne loadovat SSE2?"). 0.8.123-0.8.125
+  had scalar there at his request from before the priority fix.
   The kernel is a VISIBLE switch (0.8.124, the user asked three times where SSE2 is): Config Editor > Engine >
   "Interpolation kernel" = Automatic / scalar / SSE2 / AVX2 / NEON (only what this build+CPU can run,
   `SamplerEngine::availableKernelNames()`), setting `renderKernel` (machine-specific key), applied at once through the

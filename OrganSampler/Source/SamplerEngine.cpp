@@ -751,6 +751,14 @@ namespace
         // the first of them owns the engines and the hand-over buffers, the others
         // (reverbOwner set) add their dry signal to its input and carry no engines.
         juce::String deviceKey;
+        // Whether a device renders this route at all (deviceKey set): a route set
+        // to "none" gets no voices - before 0.8.126 every pipe was published to
+        // its perspective's route whatever the device, and on a route without
+        // one the voices sat unrendered until cleanStaleRoutes flushed them a
+        // second later, counted as polyphony all the while (the "8000 voices" of
+        // a Core 2 Duo Mac with the default routes on none and the auxiliary ones
+        // on the device: half of them never sounded, #14).
+        std::atomic<bool> hasDevice{ false };
         Route* reverbOwner = nullptr;
         int reverbGroupSize = 1;            // owner: the routes of its group, itself included
         int reverbGroupArrived = 0;         // owner: routes that handed their dry over in the current block
@@ -1155,13 +1163,13 @@ namespace
     inline KernelKind defaultKernel() noexcept
     {
        #if ENGINE_X86
-        // x86 without AVX2 (Core 2 Duo and the like): the scalar kernel, as
-        // before 0.8.119. The SSE2 kernel benchmarks faster in isolation, but
-        // the two-core laptops measured less polyphony with 0.8.119-0.8.122
-        // and the user wants the behaviour of the scalar days back (#9, #10);
-        // the kernel test still reports SSE2 beside scalar for comparison, and
-        // ORGAN_KERNEL=sse2 tries it in the real engine (below).
-        return cpuHasAvx2() ? KernelAvx2 : KernelScalar;
+        // x86 without AVX2 (Core 2 Duo and the like): SSE2 (0.8.126). What had
+        // made those laptops slower in 0.8.119-0.8.122 was the thread priority
+        // and the spin, not the kernel (0.8.123); measured on the same routes
+        // with the editor's switch, SSE2 gave 2500 voices against 1700 scalar on
+        // a Core 2 Duo Mac (#14, 0.8.125) and benchmarks 5.1 against 7.7 ns on
+        // the Linux one (#13). The switch stays for comparing.
+        return cpuHasAvx2() ? KernelAvx2 : KernelSse2;
        #elif ENGINE_ARM64
         return KernelNeon;
        #else
@@ -3944,9 +3952,13 @@ struct SamplerEngine::Impl
         const uint32_t tail = route.addTail.load(std::memory_order_relaxed);
         const uint32_t head = route.addHead.load(std::memory_order_acquire);
         const uint32_t cap = (uint32_t)route.addRing.size();
-        if (tail - head >= cap)
+        if (tail - head >= cap || !route.hasDevice.load(std::memory_order_acquire))
         {
-            // Cannot happen (ring holds the whole pool) but never write out of bounds.
+            // Over the ring (cannot happen: it holds the whole pool), or a route
+            // without a device ("none"): nothing would ever render the voice -
+            // finished at once, reclaimed by the next tick, never counted as
+            // polyphony. (The auxiliary copy, when the auxiliary route has a
+            // device, was published before this - see duplicateVoiceToAux.)
             v.state.store(VoiceFinished, std::memory_order_release);
             const juce::SpinLock::ScopedLockType lk(finishedLock);
             finishedQueue.push_back(idx);
@@ -6307,6 +6319,7 @@ void SamplerEngine::setPerspectiveDeviceKey(int manualIndex, const juce::String&
         route = impl->ensureRoute(manualIndex, perspective);
         if (route == nullptr || route->deviceKey == key) return;
         route->deviceKey = key;
+        route->hasDevice.store(key.isNotEmpty(), std::memory_order_release);
     }
     impl->regroupReverbs(route, false);
 }

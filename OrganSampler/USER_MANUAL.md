@@ -495,11 +495,14 @@ the reeds after the flues; the definition links keys to divisions through
 its switches, and the import follows those links) -, the stops with their
 sample folders, the perspectives
 (front, direct, diffuse, rear ... as the ranks are named, turned into the
-perspective patterns), and the per-pipe level adjustments as the voicing:
-Hauptwerk voices every perspective on its own, OrganSampler every stop, so
-the levels of a pipe are averaged over the perspectives; the median over the
-pipes becomes the stop's volume (most pipes stand at 0 dB, a few voiced ones
-must not pull the whole stop), the rest the per-key voicing. The way from a
+perspective patterns), and the per-pipe level adjustments as the voicing.
+Hauptwerk has no volume per perspective, only the pipes, so a perspective
+recorded quieter is quieter in every one of its pipes; OrganSampler has three
+steps, and the import uses them (0.8.126): the median of all pipe levels of a
+division's perspective becomes that route's volume (the division dialog's
+audio tab), the median of what is left becomes the stop's volume (averaged
+over its perspectives; most pipes stand at 0 dB, a few voiced ones must not
+pull the whole stop), the rest the per-key voicing. The way from a
 stop to its folders is the definition's own: stop > its StopRank rows > the
 ranks > the folders of their pipe samples; the folders decide what a stop
 is. A stop whose rows play another stop's ranks shifted (a 4' playing the 8'
@@ -1849,10 +1852,12 @@ thread helps instead of holding the block up.
 
 The code that renders every pipe (0.8.124). *Automatic* (the default) takes
 the kernel this processor is known to run well: AVX2 (eight frames a step,
-current x86-64 processors), NEON (four frames, Apple silicon and Linux arm64)
-or scalar (x86-64 without AVX2, such as a Core 2 Duo: the scalar kernel
-measured more polyphony there than the four-frame SSE2 one in 0.8.119-0.8.122,
-so Automatic stays scalar there). The list holds every kernel this computer
+current x86-64 processors), SSE2 (four frames, x86-64 without AVX2 such as a
+Core 2 Duo - since 0.8.126: measured with this switch on the same routes, SSE2
+gave 2500 voices against 1700 scalar on such a Mac; what had made those
+laptops slower in 0.8.119-0.8.122 was the thread priority, fixed in 0.8.123,
+not the kernel) or NEON (four frames, Apple silicon and Linux arm64). The
+list holds every kernel this computer
 can run: *scalar* (one frame a step, every CPU), *SSE2* (four frames, every
 x86-64), *AVX2* (eight frames, when the CPU has it), *NEON* (arm64). Pick one
 to compare it with another: the change takes effect at once, no reload, and

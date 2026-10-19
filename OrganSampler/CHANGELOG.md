@@ -12,6 +12,32 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.126] - 2026-10-19
+
+### Fixed
+- A route set to "none" (no device) no longer receives voices. Every pipe
+  was published to its perspective's route whatever the device; on a route
+  without one the voices sat unrendered until they were flushed a second
+  later, counted as polyphony all the while. The "8000 voices" of a Core 2
+  Duo Mac (#14, the default routes on none and the auxiliary ones on the
+  device) were half ghosts that never sounded; the same stimulus on the
+  default routes gives 2500, which is what that computer renders. The
+  polyphony count and the measurement are honest now, and the control thread
+  no longer books voices nobody renders.
+
+### Changed
+- x86 processors without AVX2 (Core 2 Duo and the like) render with the SSE2
+  kernel by default again. What had made those laptops slower in
+  0.8.119-0.8.122 was the thread priority and the spin (fixed in 0.8.123),
+  not the kernel: measured with the editor's switch on the same routes, SSE2
+  gave 2500 voices against 1700 scalar on a Core 2 Duo Mac (#14) and
+  benchmarks 5.1 against 7.7 ns per voice and frame on the Linux one (#13).
+  The switch stays for comparing.
+- Hauptwerk import: the pipe levels are split in three steps - the median
+  of a division's perspective becomes that route's volume (the division
+  dialog's audio tab; Hauptwerk has no volume per perspective), the median
+  of what is left the stop's volume, the rest the per-pipe voicing.
+
 ## [0.8.125] - 2026-10-19
 
 ### Changed

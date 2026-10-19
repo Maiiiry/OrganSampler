@@ -10227,26 +10227,77 @@ void MainComponent::applyHauptwerkVoicing(std::shared_ptr<HauptwerkOdf> odf, con
     // perspective, OrganSampler per stop); the MEDIAN over the notes is the
     // stop's volume (most pipes are at 0 dB - a few voiced ones must not pull
     // the whole stop), the rest is its per-key voicing.
+    // Three levels (0.8.126): Hauptwerk has no volume per perspective, only
+    // the pipes, so a perspective recorded quieter is quieter in every pipe of
+    // it. OrganSampler has the volume of a route (division x perspective), of
+    // a stop and of a pipe: the MEDIAN of all pipe levels of a division's
+    // perspective goes to that route's volume (the division dialog's audio
+    // tab), the median of what is left to the stop (averaged over its
+    // perspectives), the rest to the pipes.
     int voicedStops = 0, voicedNotes = 0;
+    juce::StringArray routeVolumesSet;
     {
-        const juce::ScopedLock lock(engine.getLock());
-        for (auto* stop : engine.getStops())
+        auto medianOf = [](std::vector<float> values)
         {
-            if (stop->container) continue;
-            std::vector<juce::File> folders;
-            if (stop->folder != juce::File()) folders.push_back(stop->folder);
-            for (const auto& rank : stop->ranks) if (rank->folder != juce::File()) folders.push_back(rank->folder);
-            const auto levels = odf->levelsForFolders(folders);
-            if (levels.empty()) continue;
-            std::vector<float> values;
-            for (const auto& [note, db] : levels) if (stop->hasNoteInAnyRank(note)) values.push_back(db);
-            if (values.empty()) continue;
             std::sort(values.begin(), values.end());
-            const float median = values.size() % 2 == 1 ? values[values.size() / 2] : 0.5f * (values[values.size() / 2 - 1] + values[values.size() / 2]);
-            stop->setDb(juce::jlimit(-24.0f, 12.0f, median));
-            for (const auto& [note, db] : levels)
-                if (stop->hasNoteInAnyRank(note)) { stop->setNoteDb(note, juce::jlimit(-12.0f, 12.0f, db - median)); ++voicedNotes; }
-            ++voicedStops;
+            return values.size() % 2 == 1 ? values[values.size() / 2] : 0.5f * (values[values.size() / 2 - 1] + values[values.size() / 2]);
+        };
+        struct Part { juce::String perspective; std::map<int, float> levels; };
+        struct Entry { Stop* stop; std::vector<Part> parts; };
+        std::vector<Entry> entries;
+        std::map<std::pair<int, juce::String>, std::vector<float>> routeLevels;   // (division, perspective) -> every pipe level in it
+        {
+            const juce::ScopedLock lock(engine.getLock());
+            for (auto* stop : engine.getStops())
+            {
+                if (stop->container) continue;
+                Entry entry{ stop, {} };
+                auto addPart = [&](const juce::String& perspective, const juce::File& folder)
+                {
+                    if (folder == juce::File()) return;
+                    auto levels = odf->levelsForFolders({ folder });
+                    for (auto it = levels.begin(); it != levels.end();) it = stop->hasNoteInAnyRank(it->first) ? std::next(it) : levels.erase(it);
+                    if (levels.empty()) return;
+                    auto& bucket = routeLevels[{ stop->primaryManual, perspective.isEmpty() ? juce::String("default") : perspective }];
+                    for (const auto& [note, db] : levels) bucket.push_back(db);
+                    entry.parts.push_back({ perspective.isEmpty() ? juce::String("default") : perspective, std::move(levels) });
+                };
+                addPart(stop->perspective, stop->folder);
+                for (const auto& rank : stop->ranks) addPart(rank->perspective, rank->folder);
+                if (!entry.parts.empty()) entries.push_back(std::move(entry));
+            }
+        }
+        std::map<std::pair<int, juce::String>, float> routeDb;
+        for (const auto& [key, values] : routeLevels) routeDb[key] = juce::jlimit(-31.0f, 6.0f, medianOf(values));
+        {
+            const juce::ScopedLock lock(engine.getLock());
+            for (auto& entry : entries)
+            {
+                auto* stop = entry.stop;
+                std::map<int, float> residualSum; std::map<int, int> residualCount;
+                for (const auto& part : entry.parts)
+                {
+                    const float route = routeDb[{ stop->primaryManual, part.perspective }];
+                    for (const auto& [note, db] : part.levels) { residualSum[note] += db - route; ++residualCount[note]; }
+                }
+                std::vector<float> values;
+                std::map<int, float> residual;
+                for (const auto& [note, sum] : residualSum) { residual[note] = sum / (float)residualCount[note]; values.push_back(residual[note]); }
+                if (values.empty()) continue;
+                const float median = medianOf(values);
+                stop->setDb(juce::jlimit(-24.0f, 12.0f, median));
+                for (const auto& [note, db] : residual) { stop->setNoteDb(note, juce::jlimit(-12.0f, 12.0f, db - median)); ++voicedNotes; }
+                ++voicedStops;
+            }
+        }
+        // The route volumes, into the division's audio settings (saved with the configuration).
+        for (const auto& [key, db] : routeDb)
+        {
+            const auto& [manual, perspective] = key;
+            if (manual < 0 || manual >= SamplerEngine::maxManuals) continue;
+            manualConfigs[(size_t)manual].perspectiveAudio[perspectiveRouteKey(manual, perspective)].volumeDb = db;
+            engine.setPerspectiveVolumeDb(manual, perspective, db);
+            routeVolumesSet.add((manual == 0 ? juce::String("P.") : romanNumeral(manual) + ".") + " / " + perspective + " " + juce::String(db, 1) + " dB");
         }
     }
     // The definition's extensions and transmissions: a transmission of the
@@ -10269,7 +10320,8 @@ void MainComponent::applyHauptwerkVoicing(std::shared_ptr<HauptwerkOdf> odf, con
     }
     hauptwerkExtensions.clear();
     if (voicer != nullptr) { voicer->updateStopStates(); voicer->rebuildUI(stopsContent, stopsViewport); }
-    CrashHandler::note("Hauptwerk import: voicing applied to " + juce::String(voicedStops) + " stop(s), " + juce::String(voicedNotes) + " pipe level(s), "
+    CrashHandler::note("Hauptwerk import: voicing applied to " + juce::String(voicedStops) + " stop(s), " + juce::String(voicedNotes) + " pipe level(s), route volumes "
+        + routeVolumesSet.joinIntoString(", ") + "; "
         + juce::String(extensionsMade) + " extension(s)/transmission(s) made" + (extensionsMissed.isEmpty() ? juce::String() : " (not made: " + extensionsMissed.joinIntoString(", ") + ")")
         + (saveIntoPackage ? "" : " (merge: not saved)"));
     if (!saveIntoPackage) { configurationDirty = true; return; }   // a merge: the report comes from the merge itself
@@ -10278,7 +10330,8 @@ void MainComponent::applyHauptwerkVoicing(std::shared_ptr<HauptwerkOdf> odf, con
     // for publishing, Save Configuration makes them when wanted).
     savePortableConfiguration(configurationFile, false, true, false);
     juce::String text = summary;
-    text << "\n\nVoicing: " << voicedStops << " stop(s) with the Hauptwerk pipe levels (averaged over the perspectives; the median as the stop's volume, the rest per key).";
+    text << "\n\nVoicing: " << voicedStops << " stop(s) with the Hauptwerk pipe levels in three steps - the median of a division's perspective as that route's volume ("
+         << routeVolumesSet.joinIntoString(", ") << "), the median of the rest as the stop's volume, the remainder per pipe.";
     if (extensionsMade > 0 || !extensionsMissed.isEmpty())
         text << "\nExtensions/transmissions made: " << extensionsMade << (extensionsMissed.isEmpty() ? juce::String(".") : " (not made: " + extensionsMissed.joinIntoString(", ") + ").");
     text
@@ -20090,7 +20143,7 @@ void MainComponent::showConfigurationEditor()
                     SamplerEngine::setKernelOverride(SamplerEngine::kernelKindForName(o.renderKernel));
                     o.saveSettings();
                 }, "The code that renders every pipe: Automatic takes the fastest kernel this CPU is known to run well "
-                   "(AVX2 on modern x86, NEON on Apple silicon, scalar on CPUs without AVX2). Pick another to compare: "
+                   "(AVX2 on modern x86, SSE2 on x86 without AVX2, NEON on Apple silicon). Pick another to compare: "
                    "run the polyphony measurement with each. Takes effect at once, no reload.");
                 addInfo("Currently active", juce::String(engine.getRenderWorkerCount() + 1) + " render threads, "
                     + juce::String(engine.currentKernelName()) + " interpolation kernel");

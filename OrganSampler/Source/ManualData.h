@@ -503,11 +503,14 @@ static const char* const kManualText_part2 =
     "its switches, and the import follows those links) -, the stops with their\n"
     "sample folders, the perspectives\n"
     "(front, direct, diffuse, rear ... as the ranks are named, turned into the\n"
-    "perspective patterns), and the per-pipe level adjustments as the voicing:\n"
-    "Hauptwerk voices every perspective on its own, OrganSampler every stop, so\n"
-    "the levels of a pipe are averaged over the perspectives; the median over the\n"
-    "pipes becomes the stop's volume (most pipes stand at 0 dB, a few voiced ones\n"
-    "must not pull the whole stop), the rest the per-key voicing. The way from a\n"
+    "perspective patterns), and the per-pipe level adjustments as the voicing.\n"
+    "Hauptwerk has no volume per perspective, only the pipes, so a perspective\n"
+    "recorded quieter is quieter in every one of its pipes; OrganSampler has three\n"
+    "steps, and the import uses them (0.8.126): the median of all pipe levels of a\n"
+    "division's perspective becomes that route's volume (the division dialog's\n"
+    "audio tab), the median of what is left becomes the stop's volume (averaged\n"
+    "over its perspectives; most pipes stand at 0 dB, a few voiced ones must not\n"
+    "pull the whole stop), the rest the per-key voicing. The way from a\n"
     "stop to its folders is the definition's own: stop > its StopRank rows > the\n"
     "ranks > the folders of their pipe samples; the folders decide what a stop\n"
     "is. A stop whose rows play another stop's ranks shifted (a 4' playing the 8'\n"
@@ -603,11 +606,11 @@ static const char* const kManualText_part2 =
     "configuration expects and where to put the file, the routes, the RAM the\n"
     "program used with the whole organ loaded (measured at the moment of saving\n"
     "and stored in the configuration as well; `configurations/INDEX.md` shows it\n"
+    ;
+static const char* const kManualText_part3 =
     "as a column, the figure readers need most), the version, and the Stop List\n"
     "as a table in the order of your grid with the buttons' captions,\n"
     "transmissions and extensions included. Fill in the three\n"
-    ;
-static const char* const kManualText_part3 =
     "\"(fill in: ...)\" places - the organ, the producer and product of the\n"
     "samples with the link to the page where the sample folders are bought or\n"
     "downloaded, your name - and send the two files: open the form\n"
@@ -805,11 +808,11 @@ static const char* const kManualText_part3 =
     "\n"
     "A button whose caption ends in \"(Trsm.)\" or \"(Ext.)\" is a **transmission**:\n"
     "the pipes of another stop played here, possibly transposed. \"(Ext.)\" marks an\n"
+    ;
+static const char* const kManualText_part4 =
     "extension - the stop's own pipes in its own division at another footage (a\n"
     "16' or 4' extension of an 8' stop); \"(Trsm.)\" marks a transmission into\n"
     "another division, at the same footage or at another one. An alias carries the\n"
-    ;
-static const char* const kManualText_part4 =
     "same mark after it. \"Transmissions and extensions\" and \"What a filled\n"
     "pipe is\" explain transmissions and the pipes they\n"
     "need beyond the stop's compass.\n"
@@ -1007,11 +1010,11 @@ static const char* const kManualText_part4 =
     "\n"
     "## 4.1 Folder trees and the pool\n"
     "\n"
+    ;
+static const char* const kManualText_part5 =
     "- **Load folder...** loads a folder tree (the samples of an organ, or a part of them) and\n"
     "  asks which division its stops go to. A tree is loaded once and its folders\n"
     "  can serve any division. When a tree of the organ is missing on this\n"
-    ;
-static const char* const kManualText_part5 =
     "  computer (a configuration from elsewhere: the division header says\n"
     "  \"Sample folder not found\"), a loaded folder of the same name takes the\n"
     "  missing tree's place and the stops built from it keep their samples.\n"
@@ -1209,11 +1212,11 @@ static const char* const kManualText_part5 =
     "everything the division plays - all its perspectives together, every pipe\n"
     "rendered once more into it - with its own device, output channels, volume,\n"
     "channel separation and IR reverb.\n"
+    ;
+static const char* const kManualText_part6 =
     "\n"
     "What it is good for:\n"
     "\n"
-    ;
-static const char* const kManualText_part6 =
     "- **Monitoring.** Send the auxiliary route to headphones or to the speakers of\n"
     "  a control room: you hear the whole division in one mix while the\n"
     "  perspectives play through their own outputs.\n"
@@ -1411,11 +1414,11 @@ static const char* const kManualText_part6 =
     "  devices). The buffer size and the sample rate are PipeWire's, the same\n"
     "  for every JACK route and every other program: choose them in the usual\n"
     "  *Audio buffer size* and *Sample rate* boxes of any JACK route; the choice\n"
+    ;
+static const char* const kManualText_part7 =
     "  is handed to PipeWire, the program waits until the server runs the new\n"
     "  clock, then opens the route, and the other JACK routes follow by\n"
     "  themselves. (From a terminal the same is `pw-metadata -n settings 0\n"
-    ;
-static const char* const kManualText_part7 =
     "  clock.force-quantum 512` and `pw-metadata -n settings 0 clock.force-rate\n"
     "  48000`.) *Reopen device* keeps the route's buffer size and rate (a JACK\n"
     "  device has no \"driver's own\" values to fall back to). The status line\n"
@@ -1613,11 +1616,11 @@ static const char* const kManualText_part7 =
     "of two such organs would be out of tune with itself. With every organ at 440 Hz\n"
     "the stops agree, and celeste beats and the global *Pitch* slider (Global\n"
     "sound, cents on top of everything) mean what they say. The voicing row's\n"
+    ;
+static const char* const kManualText_part8 =
     "*Undulation* line reads \"needs 440 Hz\" until this is done.\n"
     "\n"
     "## 6.4 MIDI learn\n"
-    ;
-static const char* const kManualText_part8 =
     "\n"
     "Everything that can be played from a console can be learned: stops,\n"
     "transmissions, couplers, tremulants, pistons and the stepping buttons, the\n"
@@ -1815,11 +1818,11 @@ static const char* const kManualText_part8 =
     "same, only the build after each load takes its full time.\n"
     "\n"
     "---\n"
+    ;
+static const char* const kManualText_part9 =
     "\n"
     "# 8. Configuration Editor reference\n"
     "\n"
-    ;
-static const char* const kManualText_part9 =
     "*Configuration Editor* (top bar) holds every setting of the program in one\n"
     "scrolling dialog, in sections: Engine, Global sound, Advanced global audio\n"
     "(collapsed by default: click its title), Console, Folder name patterns, and\n"
@@ -1871,10 +1874,12 @@ static const char* const kManualText_part9 =
     "\n"
     "The code that renders every pipe (0.8.124). *Automatic* (the default) takes\n"
     "the kernel this processor is known to run well: AVX2 (eight frames a step,\n"
-    "current x86-64 processors), NEON (four frames, Apple silicon and Linux arm64)\n"
-    "or scalar (x86-64 without AVX2, such as a Core 2 Duo: the scalar kernel\n"
-    "measured more polyphony there than the four-frame SSE2 one in 0.8.119-0.8.122,\n"
-    "so Automatic stays scalar there). The list holds every kernel this computer\n"
+    "current x86-64 processors), SSE2 (four frames, x86-64 without AVX2 such as a\n"
+    "Core 2 Duo - since 0.8.126: measured with this switch on the same routes, SSE2\n"
+    "gave 2500 voices against 1700 scalar on such a Mac; what had made those\n"
+    "laptops slower in 0.8.119-0.8.122 was the thread priority, fixed in 0.8.123,\n"
+    "not the kernel) or NEON (four frames, Apple silicon and Linux arm64). The\n"
+    "list holds every kernel this computer\n"
     "can run: *scalar* (one frame a step, every CPU), *SSE2* (four frames, every\n"
     "x86-64), *AVX2* (eight frames, when the CPU has it), *NEON* (arm64). Pick one\n"
     "to compare it with another: the change takes effect at once, no reload, and\n"
@@ -2015,13 +2020,13 @@ static const char* const kManualText_part9 =
     "*Measure...* does the procedure above for you, with the loaded organ and its\n"
     "configured audio outputs - every route, auxiliary route, IR reverb and\n"
     "driver as it is. The button is greyed out until samples are loaded: a\n"
+    ;
+static const char* const kManualText_part10 =
     "measurement without the organ would not say anything about it. What\n"
     "happens:\n"
     "\n"
     "1. The sound is turned down to -52 dB at once (everything is rendered as\n"
     "   usual; you hear the storm very quietly). The polyphony limit is out of the\n"
-    ;
-static const char* const kManualText_part10 =
     "   way (300 000) for the run, and so are *Attack minimum time* and *Attack\n"
     "   minimum delay*, which would hold the fast strikes back. The idle audio\n"
     "   devices are listened to for two seconds first. The progress window says\n"
@@ -2217,13 +2222,13 @@ static const char* const kManualText_part10 =
     "\n"
     "### Wind: maximum wind model effect\n"
     "\n"
+    ;
+static const char* const kManualText_part11 =
     "The strength of the whole wind model, 0 to 100 % (default 100). The steady sag\n"
     "of held keys and engaged stops follows it directly; every key stroke shakes the\n"
     "wind with a random 40 to 100 % of it, so repeated notes never sound mechanical.\n"
     "0 % switches the wind model off everywhere.\n"
     "\n"
-    ;
-static const char* const kManualText_part11 =
     "### Tremulant: harmonic filter\n"
     "\n"
     "The shelf following the tremulant: this much high-frequency loss at the bottom\n"
@@ -2419,13 +2424,13 @@ static const char* const kManualText_part11 =
     "compass than at the bottom (1 to 20, default 12); the a1 key always beats as\n"
     "set in the stop's voicing. Equal beats everywhere (1x) detune the bass most,\n"
     "as a real celeste tuned to constant beats would.\n"
+    ;
+static const char* const kManualText_part12 =
     "\n"
     "## 8.4 Console\n"
     "\n"
     "### Interface size\n"
     "\n"
-    ;
-static const char* const kManualText_part12 =
     "The size of every window, button, slider and text, in per cent of the design\n"
     "size (50 to 300 %). The first start estimates it from the screen so that Full\n"
     "HD, 4K and Retina screens show the console alike; double-click returns to that\n"
@@ -2621,13 +2626,13 @@ static const char* const kManualText_part12 =
     "The MIDI input that plays this division. Several divisions may listen to the\n"
     "same device (on different channels, or on the same channel to play them\n"
     "together).\n"
+    ;
+static const char* const kManualText_part13 =
     "\n"
     "### MIDI channel\n"
     "\n"
     "The MIDI channel (1 to 16) of the division on that device.\n"
     "\n"
-    ;
-static const char* const kManualText_part13 =
     "### Ignore MIDI velocity (organ keys)\n"
     "\n"
     "On: every key is sent as full velocity, so there is never a velocity fade-in\n"
@@ -2823,13 +2828,13 @@ static const char* const kManualText_part13 =
     "  `~/Library/OrganSampler`)\n"
     "- Linux: `~/.config/OrganSampler`\n"
     "\n"
+    ;
+static const char* const kManualText_part14 =
     "`CrashLogs/activity.log` is the activity log, `CrashLogs/crash-<date>.txt`\n"
     "a crash report with the stack of the crash; macOS writes its own report as\n"
     "well, in `~/Library/Logs/DiagnosticReports` (named `OrganSampler_...`).\n"
     "`settings.json` is the state of the program, `settings-<date>.json` the\n"
     "snapshot of each of the last seven days. If the program crashes at every\n"
-    ;
-static const char* const kManualText_part14 =
     "start, move `settings.json` away (keep it for the report) and it starts\n"
     "clean; a crash while an audio device was being opened is caught by the\n"
     "program itself: the next start opens that device with the default buffer\n"
