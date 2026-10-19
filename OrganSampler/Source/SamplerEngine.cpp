@@ -1,5 +1,6 @@
 #include "SamplerEngine.h"
 #include "CrashHandler.h"   // activity log notes (copy builds)
+#include "MemoryInfo.h"     // the free memory and the program's footprint (the loading stops when short)
 // Signalsmith Stretch (MIT): pitch shift with the length kept, for the
 // transposed copies of filled pipes (ThirdParty/signalsmith).
 #if JUCE_MSVC
@@ -255,34 +256,16 @@ namespace
     // system: below it the system starts compressing and paging, and every
     // stroke stalls on reading samples back (#16, #17) - the loading stops
     // there instead (loadDivisionTree).
-    juce::int64 freePhysicalMemoryBytes()
-    {
-       #if JUCE_WINDOWS
-        MEMORYSTATUSEX status{};
-        status.dwLength = sizeof(status);
-        if (GlobalMemoryStatusEx(&status)) return (juce::int64)status.ullAvailPhys;
-       #elif JUCE_LINUX
-        const auto text = juce::File("/proc/meminfo").loadFileAsString();
-        for (const auto& line : juce::StringArray::fromLines(text))
-            if (line.startsWith("MemAvailable:"))
-                return line.fromFirstOccurrenceOf(":", false, false).trim().upToFirstOccurrenceOf(" ", false, false).getLargeIntValue() * 1024;
-       #elif JUCE_MAC
-        vm_statistics64_data_t stats{};
-        mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
-        if (host_statistics64(mach_host_self(), HOST_VM_INFO64, (host_info64_t)&stats, &count) == KERN_SUCCESS)
-        {
-            vm_size_t pageSize = 0;
-            host_page_size(mach_host_self(), &pageSize);
-            return (juce::int64)(stats.free_count + stats.inactive_count) * (juce::int64)pageSize;
-        }
-       #endif
-        return (juce::int64)juce::SystemStats::getMemorySizeInMegabytes() * 1024 * 1024 / 2;   // unknown: half of the installed memory
-    }
-    juce::int64 memoryReserveBytes()
-    {
-        const juce::int64 installed = (juce::int64)juce::SystemStats::getMemorySizeInMegabytes() * 1024 * 1024;
-        return juce::jmax((juce::int64)768 * 1024 * 1024, installed / 16);   // 768 MB, or a sixteenth of the installed memory on a big machine
-    }
+    // The memory figures (MemoryInfo.h, shared with the window): the loading
+    // stops when the memory is short - the free memory under the reserve, the
+    // program's footprint within the system's share, or paging under way. The
+    // free figure alone was not enough: a 7 GB organ loaded whole on an 8 GB
+    // Mac (the system keeps inactive pages around while the compressor already
+    // holds the samples) and on a 7.7 GB Linux laptop (MemAvailable counts the
+    // reclaimable cache; the program held 6.9 GB, 2 GB were "free", and it
+    // swapped) - issues #17, #19.
+    juce::int64 freePhysicalMemoryBytes() { return MemoryInfo::freeBytes(); }
+    bool memoryShortNow(juce::String* reason = nullptr) { return MemoryInfo::shortNow(reason); }
 
     // The render workers and the control thread run beside the audio callbacks
     // at audio priority on every system (Windows had it from the start; on
@@ -9550,12 +9533,21 @@ void SamplerEngine::loadSamplesIntoStop(Stop* stop, const juce::File& folder, bo
     parallelFor((int)entries.size(), [&](int index, int thread)
     {
         if (loadOutOfMemory.load(std::memory_order_relaxed)) return;
-        // One stop of thousands of files: the reserve checked every 32 files too.
-        if ((index & 31) == 31 && freePhysicalMemoryBytes() < memoryReserveBytes())
+        // One stop of thousands of files: the memory checked every 32 files too.
+        if ((index & 31) == 31)
         {
-            loadStoppedForMemory.store(true, std::memory_order_relaxed);
-            loadOutOfMemory.store(true, std::memory_order_relaxed);
-            return;
+            juce::String memoryReason;
+            if (memoryShortNow(&memoryReason))
+            {
+                if (!loadStoppedForMemory.exchange(true, std::memory_order_relaxed))
+                {
+                    const juce::SpinLock::ScopedLockType lk(managerLock);
+                    loadMemoryStopReason = memoryReason;
+                    CrashHandler::note("Loading stopped for memory inside \"" + stop->name + "\": " + memoryReason);
+                }
+                loadOutOfMemory.store(true, std::memory_order_relaxed);
+                return;
+            }
         }
         juce::AudioFormatManager* manager = nullptr;
         {
@@ -9945,12 +9937,13 @@ void SamplerEngine::loadManualFolder(const juce::File& topFolder, int manualInde
             // below it the loading stops here and now - the stops loaded so far
             // make the instrument, the rest is listed in the message. (A stop
             // that merely failed to allocate, bad_alloc, stops the same way.)
-            if (!assignment.container && !loadOutOfMemory.load(std::memory_order_relaxed) && freePhysicalMemoryBytes() < memoryReserveBytes())
+            juce::String memoryReason;
+            if (!assignment.container && !loadOutOfMemory.load(std::memory_order_relaxed) && memoryShortNow(&memoryReason))
             {
                 loadStoppedForMemory.store(true, std::memory_order_relaxed);
                 loadOutOfMemory.store(true, std::memory_order_relaxed);
-                CrashHandler::note("Loading stopped for memory before \"" + stopName + "\": " + juce::String((double)freePhysicalMemoryBytes() / 1073741824.0, 2)
-                    + " GB free, the reserve is " + juce::String((double)memoryReserveBytes() / 1073741824.0, 2) + " GB");
+                loadMemoryStopReason = memoryReason;
+                CrashHandler::note("Loading stopped for memory before \"" + stopName + "\": " + memoryReason);
             }
             if (loadOutOfMemory.load(std::memory_order_relaxed)) { if (!assignment.container) loadMemorySkipped.add(stopName); continue; }
             if (assignment.container)
@@ -10039,8 +10032,8 @@ void SamplerEngine::loadManualFolder(const juce::File& topFolder, int manualInde
         for (int i = 0; i < juce::jmin(12, skipped); ++i) shown.add(loadMemorySkipped[i]);
         const juce::String list = shown.joinIntoString(", ") + (skipped > 12 ? ", and " + juce::String(skipped - 12) + " more" : juce::String());
         if (loadStoppedForMemory.load(std::memory_order_relaxed))
-            lastLoadError = "The memory is full: the loading stopped at " + juce::String((double)freePhysicalMemoryBytes() / 1073741824.0, 1) + " GB free of "
-                + juce::String((double)juce::SystemStats::getMemorySizeInMegabytes() / 1024.0, 1) + " GB installed (the system would page samples out, and every stroke would stall the sound).\n\n"
+            lastLoadError = "The memory is full: the loading stopped (" + (loadMemoryStopReason.isNotEmpty() ? loadMemoryStopReason : juce::String((double)freePhysicalMemoryBytes() / 1073741824.0, 1) + " GB free")
+                + " of " + juce::String((double)juce::SystemStats::getMemorySizeInMegabytes() / 1024.0, 1) + " GB installed; the system would page samples out, and every stroke would stall the sound).\n\n"
                 "The instrument is built from the stops loaded so far; " + juce::String(skipped) + " stop(s) of " + topFolder.getFileName() + " were not loaded: " + list
                 + ".\n\nThey stay in the Stop List without samples. Load fewer stops (a smaller configuration), keep the 16-bit sample storage, or add memory.";
         else

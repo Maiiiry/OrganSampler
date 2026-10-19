@@ -167,7 +167,16 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   non-container stop and every 32 files inside `loadStopFolder`'s parallelFor; `loadStoppedForMemory` + `loadOutOfMemory`
   set, the remaining stops of the load go to `loadMemorySkipped` (cleared by `takeLastLoadError`), the instrument is
   built from the stops loaded so far, `lastLoadError` names the stops left out (first 12). Never let the system page
-  samples: a stalled window thread looks like a hang. The Hauptwerk import sets `suppressPortableNotice` so the
+  samples: a stalled window thread looks like a hang. 0.8.133: the figures live in `Source/MemoryInfo.h`
+  (`MemoryInfo::freeBytes/heldBytes/swappedBytes/installedBytes/systemShareBytes/reserveBytes/shortNow`), used by the
+  engine (`memoryShortNow`), `MainComponent::availablePhysicalMemoryBytes/processMemoryBytes`, the RAM column and the
+  report. `shortNow`: free < reserve (768 MB / installed/16) OR held > installed - systemShare (1.5 GB / installed/5)
+  OR swapped > 256 MB (Linux VmSwap of the process, macOS compressor pages). The free figure alone let a 7 GB organ
+  load whole on the 8 GB Mac (#17) and on the 7.7 GB Linux laptop (#19: held 6.9 GB, "2 GB free", swapping) - the
+  footprint rule is the one that bites. The pre-load estimate reads bits/rate from the first 48 WAV headers (16/bits x
+  48000/rate when resampling, x 1.15 for copies), never a flat two thirds. Hauptwerk rows: name = the STOP FOLDER's
+  name as on disk (the user's rule: "ve jmenech ma byt, jak se jmenuji adresare"), alias = the HW stop name; a child
+  of a stop folder = its rank folder's name. The Hauptwerk import sets `suppressPortableNotice` so the
   "Configuration from another computer" notice is not shown (two message boxes over each other, the user refused).
   0.8.129 crescendo: `Combination` (a id, b name) named "cresc..." = one stage each, the stage = the number at the end
   of the name (`getTrailingIntValue`); `CombinationElement` (b CombinationID, c ControlledSwitchID, e Y = on); the

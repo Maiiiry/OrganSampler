@@ -8,6 +8,7 @@
 // temperament, the global settings) is left as it is and reported.
 #include "MainComponent.h"
 #include "CrashHandler.h"
+#include "MemoryInfo.h"
 
 #if JUCE_WINDOWS
  #include <windows.h>
@@ -41,66 +42,9 @@ namespace
     }
 }
 
-juce::int64 MainComponent::availablePhysicalMemoryBytes()
-{
-   #if JUCE_WINDOWS
-    MEMORYSTATUSEX status{};
-    status.dwLength = sizeof(status);
-    if (GlobalMemoryStatusEx(&status)) return (juce::int64)status.ullAvailPhys;
-   #elif JUCE_LINUX
-    const auto text = juce::File("/proc/meminfo").loadFileAsString();
-    for (const auto& line : juce::StringArray::fromLines(text))
-        if (line.startsWith("MemAvailable:"))
-            return line.fromFirstOccurrenceOf(":", false, false).trim().upToFirstOccurrenceOf(" ", false, false).getLargeIntValue() * 1024;
-   #elif JUCE_MAC
-    vm_statistics64_data_t stats{};
-    mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
-    if (host_statistics64(mach_host_self(), HOST_VM_INFO64, (host_info64_t)&stats, &count) == KERN_SUCCESS)
-    {
-        vm_size_t pageSize = 0;
-        host_page_size(mach_host_self(), &pageSize);
-        return (juce::int64)(stats.free_count + stats.inactive_count) * (juce::int64)pageSize;
-    }
-   #endif
-    return (juce::int64)juce::SystemStats::getMemorySizeInMegabytes() * 1024 * 1024 / 2;   // unknown: half of the installed memory
-}
-
-juce::int64 MainComponent::processMemoryBytes()
-{
-   #if JUCE_WINDOWS
-    PROCESS_MEMORY_COUNTERS_EX counters{};
-    counters.cb = sizeof(counters);
-    if (GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&counters, sizeof(counters)))
-        return (juce::int64)juce::jmax(counters.WorkingSetSize, counters.PrivateUsage);
-   #elif JUCE_LINUX
-    // Resident plus swapped out: what the program holds, not only what is in RAM now.
-    const auto text = juce::File("/proc/self/status").loadFileAsString();
-    juce::int64 resident = 0, swapped = 0;
-    for (const auto& line : juce::StringArray::fromLines(text))
-    {
-        auto kb = [&line] { return line.fromFirstOccurrenceOf(":", false, false).trim().upToFirstOccurrenceOf(" ", false, false).getLargeIntValue() * 1024; };
-        if (line.startsWith("VmRSS:")) resident = kb();
-        else if (line.startsWith("VmSwap:")) swapped = kb();
-    }
-    if (resident > 0) return resident + swapped;
-   #elif JUCE_MAC
-    // The physical footprint (what Activity Monitor calls Memory): the pages in
-    // RAM plus the ones the system has compressed or swapped out. The resident
-    // size alone counted 995 MB for an organ of several GB on an 8 GB Mac - the
-    // rest sat compressed, which is exactly the state the column should warn of.
-    {
-        task_vm_info_data_t vm{};
-        mach_msg_type_number_t vmCount = TASK_VM_INFO_COUNT;
-        if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vm, &vmCount) == KERN_SUCCESS && vm.phys_footprint > 0)
-            return (juce::int64)vm.phys_footprint;
-    }
-    mach_task_basic_info_data_t info{};
-    mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
-    if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t)&info, &count) == KERN_SUCCESS)
-        return (juce::int64)info.resident_size;
-   #endif
-    return 0;
-}
+// The figures live in MemoryInfo.h (shared with the engine's loading stop).
+juce::int64 MainComponent::availablePhysicalMemoryBytes() { return MemoryInfo::freeBytes(); }
+juce::int64 MainComponent::processMemoryBytes() { return MemoryInfo::heldBytes(); }
 
 void MainComponent::warnIfMemoryShortForTrees(std::vector<juce::String> trees, const juce::String& configurationName)
 {
@@ -109,12 +53,19 @@ void MainComponent::warnIfMemoryShortForTrees(std::vector<juce::String> trees, c
     // of thousands of files - and the verdict comes back to the message thread.
     const juce::int64 available = availablePhysicalMemoryBytes();
     const juce::int64 installed = (juce::int64)juce::SystemStats::getMemorySizeInMegabytes() * 1024 * 1024;
-    const double factor = sampleStorageFloat ? 1.0 : 0.7;   // 32-bit float holds the files as they are; 16-bit storage of 24-bit files about two thirds
+    const bool asFloat = sampleStorageFloat, resample = resampleOnLoad;
     juce::Component::SafePointer<MainComponent> safeThis(this);
-    juce::Thread::launch([trees, configurationName, available, installed, factor, safeThis]
+    juce::Thread::launch([trees, configurationName, available, installed, asFloat, resample, safeThis]
     {
         juce::int64 bytes = 0;
         std::vector<juce::String> done;
+        // What the files turn into in memory: 16-bit storage keeps 16-bit files
+        // as they are and 24-bit ones at two thirds (float storage: 32 bits a
+        // sample); resampling to 48 kHz scales by the rate; the filled pipes'
+        // copies add a share. Read from the headers of the first files met
+        // (a 16-bit 44.1 kHz set held 6.9 GB for 5.3 GB of files, #19 - the
+        // flat "two thirds" said 3.7).
+        double bitsSum = 0.0, rateSum = 0.0; int headers = 0;
         for (const auto& tree : trees)
         {
             if (tree.isEmpty()) continue;
@@ -125,7 +76,22 @@ void MainComponent::warnIfMemoryShortForTrees(std::vector<juce::String> trees, c
             if (!folder.isDirectory()) continue;
             bytes += wavBytesUnder(folder);
             done.push_back(tree);
+            if (headers < 48)
+                for (const auto& entry : juce::RangedDirectoryIterator(folder, true, "*.wav;*.WAV", juce::File::findFiles))
+                {
+                    juce::FileInputStream in(entry.getFile());
+                    char header[36]{};
+                    if (!in.openedOk() || in.read(header, 36) < 36 || std::memcmp(header, "RIFF", 4) != 0 || std::memcmp(header + 8, "WAVE", 4) != 0) continue;
+                    const int rate = (int)juce::ByteOrder::littleEndianInt(header + 24), bits = (int)juce::ByteOrder::littleEndianShort(header + 34);
+                    if (rate <= 0 || bits <= 0) continue;   // a format chunk not first: left out
+                    bitsSum += bits; rateSum += rate; ++headers;
+                    if (headers >= 48) break;
+                }
         }
+        const double bits = headers > 0 ? bitsSum / headers : 24.0, rate = headers > 0 ? rateSum / headers : 48000.0;
+        double factor = asFloat ? 32.0 / bits : 16.0 / bits;
+        if (resample && rate > 1000.0) factor *= 48000.0 / rate;
+        factor *= 1.15;   // the copies of filled pipes, loops, the program itself
         const juce::int64 needed = (juce::int64)((double)bytes * factor);
         juce::MessageManager::callAsync([safeThis, bytes, needed, available, installed, configurationName]
         {

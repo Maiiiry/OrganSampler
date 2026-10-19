@@ -10026,20 +10026,31 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
                 taken.add(stopBuildKey(name));
                 return name;
             };
+            // The row's name is the STOP FOLDER's name, as the folder is called
+            // ("PED_Trombone", "montre16"; a child of a stop folder: its rank
+            // folder's name) - the user's rule (0.8.133); the Hauptwerk stop name
+            // is the alias. (The automatic names of a tree scan were joined per
+            // rank before: "PED Trombone - 05-reaSen-PED Trombone ATT SE SUMEM / ...",
+            // as the scan did not know the perspectives yet.)
             auto automaticName = [&](const HauptwerkOdf::PlanStop& stop)
             {
+                if (!stop.folders.empty())
+                {
+                    const auto found = automaticNameOfFolder.find(stop.folders.front().getFullPathName().toLowerCase());
+                    const auto name = stop.folders.front().getFileName();
+                    // A stop folder holding only this stop's rank folders: its own name.
+                    // Rank folders taken one by one (the perspectives above the stops):
+                    // the scan's name when it has one for that folder, else the folder's.
+                    return name.isNotEmpty() ? name : (found != automaticNameOfFolder.end() ? found->second : stop.name);
+                }
                 juce::StringArray names;
                 for (const int rankId : stop.rankIds)
                 {
                     const auto rankIt = odf->ranks.find(rankId);
                     if (rankIt == odf->ranks.end() || rankIt->second.folder == juce::File()) continue;
-                    const auto found = automaticNameOfFolder.find(rankIt->second.folder.getFullPathName().toLowerCase());
-                    const auto name = found != automaticNameOfFolder.end() ? found->second : rankIt->second.folder.getFileName();
-                    bool present = false;
-                    for (const auto& existing : names) if (stopBuildKey(existing) == stopBuildKey(name)) present = true;
-                    if (!present) names.add(name);
+                    names.addIfNotAlreadyThere(rankIt->second.folder.getFileName());
                 }
-                return names.isEmpty() ? (stop.folders.empty() ? stop.name : stop.folders.front().getFileName()) : names.joinIntoString(" / ");
+                return names.isEmpty() ? stop.name : names[0];
             };
             for (const auto& stop : plan.divisions[d].stops)
             {

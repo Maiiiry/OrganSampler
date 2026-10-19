@@ -12,6 +12,28 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.133] - 2026-10-19
+
+### Fixed
+- The loading stops in time on every system: besides the free memory
+  (which macOS keeps high while its compressor already holds the samples,
+  and Linux counts the reclaimable cache into), it stops when the program's
+  own footprint reaches the installed memory less the system's share (1.5 GB
+  or a fifth), or when the system is paging already (Linux: the program's
+  swapped pages; macOS: the compressor) - a 7 GB organ loaded whole on an
+  8 GB Mac and on a 7.7 GB Linux laptop and swapped (#17, #19). The memory
+  figures (free, held, swapped) are one code for the loading, the merge, the
+  RAM column and the measurement report (MemoryInfo.h).
+- The warning before a load estimates the memory from the files' own
+  format (bits, sample rate, resampling) instead of a flat two thirds: a
+  16-bit 44.1 kHz set held 6.9 GB for 5.3 GB of files, the flat rule said 3.7.
+- Hauptwerk import: the rows of the Stop List are named after the stop
+  folders, as the folders are called ("PED_Trombone", "montre16"; a child of
+  a stop folder after its rank folder), the Hauptwerk stop name stays the
+  alias. The tree scan's names were joined per rank before ("PED Trombone -
+  05-reaSen-PED Trombone ATT SE SUMEM / ..."), as the scan did not know the
+  perspectives yet.
+
 ## [0.8.132] - 2026-10-19
 
 ### Fixed
