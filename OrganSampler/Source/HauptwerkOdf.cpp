@@ -268,30 +268,39 @@ juce::String HauptwerkOdf::perspectiveOfRankName(const juce::String& name)
     juce::String candidate;
     if (head.contains("(") && head.contains(")"))
         candidate = head.fromFirstOccurrenceOf("(", false, false).upToFirstOccurrenceOf(")", false, false);
+    // The label is the perspective word ITSELF, capitalised - never a class of
+    // synonyms: "Front C (distant)" and "Rear" are two perspectives of one set
+    // (Ashton-under-Lyne: direct, diffuse, distant, rear), and a table that
+    // read "distant" as Rear put two ranks into one perspective, which the
+    // import then made a stop folder of (0.8.131).
     auto labelOf = [](const juce::String& text) -> juce::String
     {
         const auto lower = text.toLowerCase();
-        struct Word { const char* word; const char* label; };
-        static const Word words[]{
-            { "direct", "Direct" }, { "dry", "Direct" }, { "diffuse", "Diffuse" }, { "ambient", "Diffuse" }, { "ambience", "Diffuse" },
-            { "surround", "Diffuse" }, { "wet", "Diffuse" }, { "room", "Diffuse" }, { "hall", "Diffuse" }, { "rear", "Rear" }, { "back", "Rear" },
-            { "distant", "Rear" }, { "far", "Rear" }, { "hinten", "Rear" }, { "lointain", "Rear" }, { "front", "Front" }, { "vorne", "Front" },
-            { "close", "Close" }, { "near", "Close" }, { "nah", "Close" }, { "proche", "Close" }, { "middle", "Middle" }, { "mid", "Middle" },
-            { "center", "Middle" }, { "centre", "Middle" }, { "mitte", "Middle" }, { "gallery", "Gallery" }, { "nave", "Nave" } };
-        for (const auto& w : words)
+        static const char* const words[]{ "direct", "dry", "diffuse", "ambient", "ambience", "surround", "wet", "room", "hall", "rear", "back",
+            "distant", "far", "hinten", "lointain", "front", "vorne", "close", "near", "nah", "proche", "middle", "mid", "center", "centre", "mitte",
+            "gallery", "nave", "semi-dry", "semidry" };
+        for (const auto* word : words)
         {
-            const int at = lower.indexOf(w.word);
+            const int at = lower.indexOf(word);
             if (at < 0) continue;
             // A whole word only ("mid" must not hit "middle"'s neighbours or "humid").
             const bool startOk = at == 0 || !juce::CharacterFunctions::isLetter(lower[at - 1]);
-            const int after = at + (int)strlen(w.word);
+            const int after = at + (int)strlen(word);
             const bool endOk = after >= lower.length() || !juce::CharacterFunctions::isLetter(lower[after]);
-            if (startOk && endOk) return w.label;
+            if (startOk && endOk) return juce::String(word).substring(0, 1).toUpperCase() + juce::String(word).substring(1);
         }
         return {};
     };
     auto label = labelOf(candidate);
+    if (label.isEmpty() && candidate.trim().isNotEmpty() && candidate.trim().length() <= 16)
+        label = candidate.trim().substring(0, 1).toUpperCase() + candidate.trim().substring(1);   // any short word in the parenthesis names the perspective
     if (label.isEmpty()) label = labelOf(head);
+    // "Front A", "Front B" without a parenthesis: the letter tells them apart.
+    if (label.isNotEmpty() && candidate.isEmpty())
+    {
+        const auto rest = head.trim().fromFirstOccurrenceOf(" ", false, false).trim();
+        if (rest.length() == 1 && juce::CharacterFunctions::isLetterOrDigit(rest[0])) label << " " << rest.toUpperCase();
+    }
     return label;
 }
 
@@ -717,6 +726,63 @@ HauptwerkOdf HauptwerkOdf::parse(const juce::File& file, const std::function<boo
         rank.packageId = packageId;
         rank.folderRelative = dir;
         rank.folder = packageFolder(root, packageId).getChildFile(dir.isEmpty() ? juce::String(".") : dir);
+    }
+    // Ranks of one stop that landed in ONE perspective label although their
+    // folders carry different prefixes ("02-dir22-", "04-dis2h-", "05-reaSen-"
+    // beside "03-dif22-"): the prefixes tell them apart, so they are different
+    // perspectives whatever the names said - never one perspective, never a
+    // stop folder of sub-stops (the user's rule: four prefixes, four
+    // perspectives). The label becomes the old one plus the prefix's core.
+    {
+        auto prefixCore = [](juce::String prefix)
+        {
+            while (prefix.isNotEmpty() && !juce::CharacterFunctions::isLetter(prefix[0])) prefix = prefix.substring(1);
+            while (prefix.isNotEmpty() && !juce::CharacterFunctions::isLetterOrDigit(prefix.getLastCharacter())) prefix = prefix.dropLastCharacters(1);
+            return prefix;
+        };
+        for (const auto& [stopId, stop] : odf.stops)
+        {
+            std::map<juce::String, std::vector<int>> byLabel;
+            for (const auto& use : stop.rankUses)
+            {
+                if (use.increment != 0) continue;
+                const auto rankIt = odf.ranks.find(use.rankId);
+                if (rankIt == odf.ranks.end() || rankIt->second.folder == juce::File() || rankIt->second.tremmed || rankIt->second.noise) continue;
+                auto& list = byLabel[rankIt->second.perspective];
+                if (std::find(list.begin(), list.end(), use.rankId) == list.end()) list.push_back(use.rankId);
+            }
+            for (auto& [label, rankIds] : byLabel)
+            {
+                if (rankIds.size() < 2) continue;
+                std::vector<juce::String> names;
+                for (const int id : rankIds) names.push_back(odf.ranks.at(id).folder.getFileName());
+                // The longest common ending of the folder names is the stop's part;
+                // what stands before it in each name is that rank's prefix.
+                int common = 0;
+                while (true)
+                {
+                    bool same = common < names.front().length();
+                    const auto c = same ? names.front()[names.front().length() - 1 - common] : 0;
+                    for (const auto& n : names) if (common >= n.length() || n[n.length() - 1 - common] != c) same = false;
+                    if (!same) break;
+                    ++common;
+                }
+                // A prefix stands BEFORE a common ending of some length; names that
+                // differ at their end ("quintaton16" / "quintaton16l", Caen's L and R
+                // components) are no perspectives but one stop's pieces: a stop folder.
+                if (common < 3) continue;
+                std::set<juce::String> prefixes;
+                std::vector<juce::String> cores;
+                for (const auto& n : names) { const auto core = prefixCore(n.dropLastCharacters(common)); cores.push_back(core); prefixes.insert(core.toLowerCase()); }
+                if (prefixes.size() != rankIds.size()) continue;   // the same prefix twice (an L/R split): a stop folder, as before
+                for (size_t i = 0; i < rankIds.size(); ++i)
+                {
+                    if (cores[i].isEmpty()) continue;
+                    auto& rank = odf.ranks.at(rankIds[i]);
+                    rank.perspective = (label.isEmpty() ? juce::String() : label + " ") + cores[i];
+                }
+            }
+        }
     }
     // The crescendo: every combination whose name says "cresc" is one stage
     // (the number at the end of the name: "Cresc.Comb.12"); its elements set
@@ -1175,11 +1241,39 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
                         if (name.length() > stopName.length() && name.endsWithIgnoreCase(stopName)) prefix = name.dropLastCharacters(stopName.length());
                         else
                         {
-                            // The rank folder is not "<prefix><stop folder>": the prefix is
+                            // The rank folder is not "<prefix><stop folder>" ("02-dir22-PED_Trombone_ATT_SE_SUMEM"
+                            // under "PED_Trombone"): the prefix is what stands before the longest
+                            // ending the stop's rank folder names share (0.8.132); failing that,
                             // the name up to and including its last separator run.
-                            int cut = -1;
-                            for (int i = 0; i < name.length(); ++i) if (name[i] == '-' || name[i] == '_' || name[i] == ' ') cut = i;
-                            prefix = cut >= 2 ? name.substring(0, cut + 1) : juce::String();
+                            std::vector<juce::String> siblings;
+                            for (const int otherId : stop.rankIds)
+                            {
+                                const auto other = ranks.find(otherId);
+                                if (other != ranks.end() && other->second.folder != juce::File() && other->second.folder.getParentDirectory() == below.getParentDirectory())
+                                    siblings.push_back(other->second.folder.getFileName());
+                            }
+                            int common = 0;
+                            if (siblings.size() >= 2)
+                                while (true)
+                                {
+                                    bool same = common < siblings.front().length();
+                                    const auto c = same ? siblings.front()[siblings.front().length() - 1 - common] : 0;
+                                    for (const auto& n : siblings) if (common >= n.length() || n[n.length() - 1 - common] != c) same = false;
+                                    if (!same) break;
+                                    ++common;
+                                }
+                            if (common >= 3 && name.length() > common)
+                            {
+                                prefix = name.dropLastCharacters(common);
+                                // The separator that follows belongs to the prefix ("02-dir22-", "01-ab_").
+                                for (int i = prefix.length(); i < name.length() && (name[i] == '-' || name[i] == '_' || name[i] == ' '); ++i) prefix << name[i];
+                            }
+                            else
+                            {
+                                int cut = -1;
+                                for (int i = 0; i < name.length(); ++i) if (name[i] == '-' || name[i] == '_' || name[i] == ' ') cut = i;
+                                prefix = cut >= 2 ? name.substring(0, cut + 1) : juce::String();
+                            }
                         }
                         if (prefix.length() < 3) break;   // a digit or two ("0-") names nothing: the loader learns those itself
                         const auto key = prefix.toLowerCase();

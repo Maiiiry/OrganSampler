@@ -12,6 +12,18 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.132] - 2026-10-19
+
+### Fixed
+- Hauptwerk import: a perspective is the word the rank name gives it -
+  Direct, Diffuse, Distant, Rear, Dry, Close ... - never a class of synonyms.
+  "Front C (distant)" and "Rear" were both read as Rear, two ranks landed in
+  one perspective, and the import made a stop folder of sub-stops out of a
+  plain four-perspective set (Ashton-under-Lyne, Albion Church). And ranks
+  of one stop that still share a label but carry different folder prefixes
+  (02-dir22-, 03-dif22-, 04-dis2h-, 05-reaSen-) are told apart by the
+  prefix: four prefixes are four perspectives, whatever the names say.
+
 ## [0.8.131] - 2026-10-19
 
 ### Changed

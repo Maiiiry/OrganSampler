@@ -132,6 +132,17 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   in three: median of all pipe levels of (division, perspective) -> route volume (`perspectiveAudio[key].volumeDb` +
   `setPerspectiveVolumeDb`, clamped -31..6), median of the residual (averaged over the stop's perspectives) -> stop dB,
   the rest -> per-key dB. Never put a perspective's offset into the stops or pipes again.
+  0.8.132 perspectives: `perspectiveOfRankName` returns the perspective WORD itself capitalised (Direct, Diffuse,
+  Distant, Rear, Dry, Close ... ; "Front A"/"Front B" without a parenthesis get the letter) - never a synonym class
+  (distant -> Rear put "Front C (distant)" and "Rear" of Ashton-under-Lyne into one label and the 0.8.125 rule made a
+  stop folder of a plain four-perspective set). Safety net at the end of `parse`: ranks of one stop with the same
+  label but different folder prefixes (longest common ending of the folder names = the stop part, the rest = the
+  prefix; core = letters/digits "dir22", "dis2h", "reaSen") are relabelled "<label> <core>" - four prefixes are four
+  perspectives, whatever the names say; the same prefix twice (L/R split) stays a stop folder, and so do names that
+  differ at their END (common ending < 3: Caen "quintaton16" / "quintaton16l" are pieces, not perspectives). The
+  user's rule: the ODF's StopRanks (rank names) decide, prefixes support them where they exist - Caen has none (its
+  perspectives are packages). Ashton Surround must give Direct / Diffuse / Distant / Rear, patterns "Direct;02-dir22-"
+  etc., no stop folders; Caen Recit keeps its 16 stop folders.
   0.8.128: stop compass from StopRank rows (h = first key, default the division's first; i = count, default to the
   division's last; union over the rows with increment 0; `HauptwerkOdf::compassForFolders`) -> keys outside switched
   off with `engine.setPipeEnabled(stop, pipe, false)` (voicing `disabledKeys`, no fills) in `applyHauptwerkVoicing`.
