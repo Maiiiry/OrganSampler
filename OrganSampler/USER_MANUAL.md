@@ -524,7 +524,12 @@ so they stay silent and no filled pipes are made for them (switch them on
 again in the voicing dialog if you want them filled). The speed of the
 definition's tremulant (the middle of the range it wanders in) becomes the
 tremulant rate of every division whose pipes it modulates; the tremulant
-itself stays off until you draw it. The rows of
+itself stays off until you draw it. The definition's general crescendo
+becomes ours (0.8.129): Hauptwerk keeps one combination per stage
+("Cresc.Comb.1" to "Cresc.Comb.64"), the stops each stage draws become a
+step of our crescendo (every row on or off, the hand registration
+cancelled, as there); more than 60 stages are spread over our 60 steps, and
+couplers are not taken. The rows of
 the Stop List are named after the folders, as for any organ built from
 folders; the Hauptwerk stop name becomes the alias, the caption on the
 button. Everything else - couplers, combinations, tremulants, wind,
@@ -740,10 +745,10 @@ them is MIDI-learnable (right-click). The polyphony display shows the voices
 sounding now (*NOW*), the most at once over the last seconds (*PEAK*), the
 *DSP* load - the time the busiest audio thread needed for its last block as a
 share of the block's duration; above 100 % that thread could not deliver in
-time (crackle), see "Getting the most polyphony" -, the *RAM* the program
-holds (0.8.128; orange when less than a tenth of the installed memory is
-free: the system then pages samples out and a block stalls on reading them
-back), and the polyphony *LIMIT* (editable).
+time (crackle), see "Getting the most polyphony" -, the memory the program
+holds (*RAM GB*, whole gigabytes rounded up; orange when less than a tenth
+of the installed memory is free: the system then pages samples out and a
+block stalls on reading them back), and the polyphony *LIMIT* (editable).
 
 ## 2.5 Division headers
 

@@ -115,7 +115,7 @@ public:
         g.setColour(juce::Colours::darkgrey);
         g.drawRoundedRectangle(r, 3.0f, 1.0f);
         const int column = columnWidth();
-        const juce::String labels[5]{ "NOW", "PEAK", "DSP", "RAM", "LIMIT" };
+        const juce::String labels[5]{ "NOW", "PEAK", "DSP", "RAM GB", "LIMIT" };
         const juce::String values[4]{ juce::String(current), juce::String(maximum),
             juce::String(juce::roundToInt(loadPeak * 100.0f)) + " %", ramText };
         const float valueFont = juce::jlimit(13.0f, 22.0f, (float)getHeight() * 0.32f);
@@ -152,8 +152,9 @@ private:
             const juce::int64 installed = (juce::int64)juce::SystemStats::getMemorySizeInMegabytes() * 1024 * 1024;
             if (used > 0)
             {
-                const double gb = (double)used / 1073741824.0;
-                ramText = gb >= 10.0 ? juce::String(juce::roundToInt(gb)) + " GB" : gb >= 1.0 ? juce::String(gb, 1) + " GB" : juce::String(juce::roundToInt(gb * 1024.0)) + " MB";
+                // Whole gigabytes, rounded up, the unit in the column's label: the
+                // cell is small on a small display and "1.2 GB" did not fit.
+                ramText = juce::String((int)std::ceil((double)used / 1073741824.0));
                 ramTight = installed > 0 && free >= 0 && free < installed / 10;
             }
         }
@@ -10179,6 +10180,45 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
         // sibling folders ending in "_TR" (II_TR beside II): never loaded.
         rootObject->setProperty("ignoredPatterns", juce::Array<juce::var>{ juce::var("trem"), juce::var("*_tr") });
         rootObject->setProperty("sampleLibraryRootName", plan.libraryRoot.getFileName());
+        // The definition's general crescendo (0.8.129): its stages become our
+        // steps - every row of ours on or off at each (the hand registration is
+        // cancelled, as Hauptwerk's crescendo does). More stages than our 60
+        // steps: the stages are spread over the steps; fewer: as many steps.
+        int crescendoStepsMade = 0;
+        if (!plan.crescendo.empty())
+        {
+            const int stages = (int)plan.crescendo.size();
+            const int stepCount = juce::jlimit(minCrescendoSteps, maxCrescendoSteps, stages);
+            juce::DynamicObject::Ptr crescendo = new juce::DynamicObject();
+            crescendo->setProperty("stepCount", stepCount);
+            crescendo->setProperty("cancelsHandStops", true);
+            juce::Array<juce::var> steps;
+            for (int step = 1; step <= juce::jmin(stepCount, stages); ++step)
+            {
+                // The stage this step stands for (the last one is always the top stage).
+                const int stageIndex = stages <= stepCount ? step - 1 : juce::jlimit(0, stages - 1, juce::roundToInt((double)step * stages / stepCount) - 1);
+                const auto& stage = plan.crescendo[(size_t)stageIndex];
+                std::set<int> on(stage.stopIds.begin(), stage.stopIds.end());
+                juce::Array<juce::var> stopStates;
+                for (const auto& [stopId, row] : rowOfStop)
+                {
+                    juce::DynamicObject::Ptr state = new juce::DynamicObject();
+                    state->setProperty("name", row.second);
+                    state->setProperty("perspective", juce::String());   // any
+                    state->setProperty("enabled", on.count(stopId) > 0);
+                    state->setProperty("primaryManual", row.first);
+                    stopStates.add(juce::var(state.get()));
+                }
+                juce::DynamicObject::Ptr item = new juce::DynamicObject();
+                item->setProperty("step", step);
+                item->setProperty("stops", stopStates);
+                item->setProperty("couplers", juce::Array<juce::var>());
+                steps.add(juce::var(item.get()));
+                ++crescendoStepsMade;
+            }
+            crescendo->setProperty("steps", steps);
+            rootObject->setProperty("crescendo", juce::var(crescendo.get()));
+        }
         {
             // An empty voicing state: a new organ, nothing of the previous one's
             // stops is kept (the voicing of unloaded stops is retained on purpose
@@ -10226,6 +10266,7 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
         if (plan.skippedTremmedRanks > 0) summary << "\nTremmed ranks left out: " << plan.skippedTremmedRanks << " (OrganSampler has its own tremulant).";
         if (plan.skippedNoiseRanks > 0) summary << "\nNoise ranks left out: " << plan.skippedNoiseRanks << ".";
         if (plan.extensions > 0) summary << "\nExtensions/transmissions (stops playing another stop's ranks, shifted): " << plan.extensions << " - made as transmissions once the stops are loaded.";
+        if (crescendoStepsMade > 0) summary << "\nGeneral crescendo: " << (int)plan.crescendo.size() << " stage(s) of the definition as " << crescendoStepsMade << " step(s) of ours (stops only; couplers are not taken).";
         if (plan.stopsWithoutSamples > 0) summary << "\nStops without playable pipes (couplers, tremulants, toys): " << plan.stopsWithoutSamples << ".";
         for (const auto& note : plan.notes) summary << "\n" << note;
         CrashHandler::note("Hauptwerk import plan: " + summary.replaceCharacters("\n", " ") + "; configuration " + plan.configurationFile.getFullPathName());

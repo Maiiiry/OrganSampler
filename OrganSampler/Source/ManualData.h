@@ -532,7 +532,12 @@ static const char* const kManualText_part2 =
     "again in the voicing dialog if you want them filled). The speed of the\n"
     "definition's tremulant (the middle of the range it wanders in) becomes the\n"
     "tremulant rate of every division whose pipes it modulates; the tremulant\n"
-    "itself stays off until you draw it. The rows of\n"
+    "itself stays off until you draw it. The definition's general crescendo\n"
+    "becomes ours (0.8.129): Hauptwerk keeps one combination per stage\n"
+    "(\"Cresc.Comb.1\" to \"Cresc.Comb.64\"), the stops each stage draws become a\n"
+    "step of our crescendo (every row on or off, the hand registration\n"
+    "cancelled, as there); more than 60 stages are spread over our 60 steps, and\n"
+    "couplers are not taken. The rows of\n"
     "the Stop List are named after the folders, as for any organ built from\n"
     "folders; the Hauptwerk stop name becomes the alias, the caption on the\n"
     "button. Everything else - couplers, combinations, tremulants, wind,\n"
@@ -601,13 +606,13 @@ static const char* const kManualText_part2 =
     "computer's default sound device at once; the computer keeps its own\n"
     "interface size and thread settings, and a message says what to set up:\n"
     "the MIDI keyboard of every division (*Settings* in the division header,\n"
+    ;
+static const char* const kManualText_part3 =
     "right-click the keyboard icon for *MIDI Learn*), the sound card, buffer and\n"
     "output channels of every route in the audio tabs, then *Measure the maximum\n"
     "polyphony* in the Configuration Editor and *Save Configuration*. Published\n"
     "configurations (see \"Organ configurations\" on the website) are saved this way.\n"
     "\n"
-    ;
-static const char* const kManualText_part3 =
     "Beside a portable configuration the program writes two more files for\n"
     "publishing it in the project's `configurations/` folder on GitHub:\n"
     "`<name>.zip`, the configuration zipped (a zip is downloaded from GitHub with\n"
@@ -750,10 +755,10 @@ static const char* const kManualText_part3 =
     "sounding now (*NOW*), the most at once over the last seconds (*PEAK*), the\n"
     "*DSP* load - the time the busiest audio thread needed for its last block as a\n"
     "share of the block's duration; above 100 % that thread could not deliver in\n"
-    "time (crackle), see \"Getting the most polyphony\" -, the *RAM* the program\n"
-    "holds (0.8.128; orange when less than a tenth of the installed memory is\n"
-    "free: the system then pages samples out and a block stalls on reading them\n"
-    "back), and the polyphony *LIMIT* (editable).\n"
+    "time (crackle), see \"Getting the most polyphony\" -, the memory the program\n"
+    "holds (*RAM GB*, whole gigabytes rounded up; orange when less than a tenth\n"
+    "of the installed memory is free: the system then pages samples out and a\n"
+    "block stalls on reading them back), and the polyphony *LIMIT* (editable).\n"
     "\n"
     "## 2.5 Division headers\n"
     "\n"
@@ -803,13 +808,13 @@ static const char* const kManualText_part3 =
     "dialog, scrollbars appear and every control stays reachable.\n"
     "\n"
     "---\n"
+    ;
+static const char* const kManualText_part4 =
     "\n"
     "# 3. Stops on the grid and their voicing\n"
     "\n"
     "## 3.1 Stop buttons\n"
     "\n"
-    ;
-static const char* const kManualText_part4 =
     "A stop is a button on the grid of its division: click to engage it, click\n"
     "again to disengage it. Engaged buttons are orange. The small corner button of\n"
     "a stop (\"+\") opens its **voicing row**; \"-\" folds it again. *Hide all voicing*\n"
@@ -1005,13 +1010,13 @@ static const char* const kManualText_part4 =
     "settings, transposition), into one new stop per perspective: a folder named\n"
     "after the stops (`StopMerged_Principal_8_Octava_4`) inside the loaded folder\n"
     "tree, with proper WAV files, loop points and release folders, ready to load as\n"
+    ;
+static const char* const kManualText_part5 =
     "an ordinary stop. A transmission merged alone gives a complete stop of the\n"
     "transposed rank - a way to turn a pitch-shifted extension into files. While\n"
     "the copies of a transmission's filled pipes are still being built the merge\n"
     "waits with a message.\n"
     "\n"
-    ;
-static const char* const kManualText_part5 =
     "---\n"
     "\n"
     "# 4. The Stop List (building the organ)\n"
@@ -1207,13 +1212,13 @@ static const char* const kManualText_part5 =
     "  on the third, D# on the fourth, E on the first again ...).\n"
     "- A **stereo sample** goes to a pair of channels, its left channel to one and\n"
     "  its right channel to the next. With an **even** number of ticked channels\n"
+    ;
+static const char* const kManualText_part6 =
     "  the pairs are fixed (the first and second, the third and fourth ...) and\n"
     "  neighbouring keys alternate between the pairs. With an **odd** number of\n"
     "  ticked channels the pairs shift by one channel from key to key, so the\n"
     "  stereo samples circulate through all the channels.\n"
     "- With a single output channel everything plays on it (a stereo sample mixed\n"
-    ;
-static const char* const kManualText_part6 =
     "  down).\n"
     "\n"
     "*Channel separation* below 100 % lets every channel of the route also carry a\n"
@@ -1409,13 +1414,13 @@ static const char* const kManualText_part6 =
     "thread of ... raised to realtime\", \"realtime already\" under JACK, or\n"
     "\"realtime refused\" with the reason). Through JACK the thread is PipeWire's\n"
     "own, which the system has already made realtime; through ALSA it is the\n"
+    ;
+static const char* const kManualText_part7 =
     "program's, and needs the permission above.\n"
     "\n"
     "**The two kinds of driver in OrganSampler:**\n"
     "\n"
     "- **JACK** - use this one. It is PipeWire itself: OrganSampler loads\n"
-    ;
-static const char* const kManualText_part7 =
     "  PipeWire's own JACK library at start (the activity log says \"JACK:\n"
     "  PipeWire's libjack loaded from ...\"), no separate JACK server is needed\n"
     "  or wanted. Every card in the Pro Audio profile appears under its own name\n"
@@ -1611,13 +1616,13 @@ static const char* const kManualText_part7 =
     "  **double-click** the temperament in the dialog (or pick it in\n"
     "  *Configuration Editor > Console > Samples' base temperament*). The voicing\n"
     "  row of every stop reports what its own ranks were found to be in\n"
+    ;
+static const char* const kManualText_part8 =
     "  (\"temperament = ...\"), which helps the choice. \"Equal\" is reported whenever\n"
     "  the recording matches equal temperament.\n"
     "- **The target temperament** is the temperament the organ *plays* in. A\n"
     "  **single click** on a temperament selects it (or *Target temperament* in\n"
     "  the Configuration Editor). Every pipe is then retuned by the difference\n"
-    ;
-static const char* const kManualText_part8 =
     "  between the target and the base: the recorded pitches are taken out and\n"
     "  the chosen ones put in. Choosing the recorded temperament itself as the\n"
     "  target plays the samples exactly as recorded. Every temperament can be\n"
@@ -1813,13 +1818,13 @@ static const char* const kManualText_part8 =
     "- The row *Filled pipes cache: <size> in <folder>* shows how much the cache\n"
     "  holds and where. Its button **Empty the cache** deletes every file. Use it\n"
     "  to get the disk space back, or after replacing the samples wholesale; the\n"
+    ;
+static const char* const kManualText_part9 =
     "  copies are built again (and cached again) the next time they are needed.\n"
     "  Nothing else is lost.\n"
     "- *Filled pipes cache: files of stops not loaded now* - **Remove them**\n"
     "  deletes only the files of ranks that are not loaded at the moment: the\n"
     "  stops of other configurations, of folders you have unloaded or deleted.\n"
-    ;
-static const char* const kManualText_part9 =
     "  The files of the loaded organ stay, so its next load is still fast. This is\n"
     "  the button for routine housekeeping.\n"
     "- *Filled pipes cache folder* - **Choose...** picks another folder for the\n"
@@ -2015,13 +2020,13 @@ static const char* const kManualText_part9 =
     "   the longer the release, the more polyphony it costs, because every voice\n"
     "   keeps its place in the polyphony until its release has died away\n"
     "   completely.\n"
+    ;
+static const char* const kManualText_part10 =
     "3. Watch *DSP* and *PEAK* while you do it. At the moment the audio starts to\n"
     "   break up (crackle, dropouts), note the *PEAK* value.\n"
     "4. Enter a somewhat lower number as the limit.\n"
     "5. Repeat until no breaking up of the audio (dropouts, crackle) is ever heard.\n"
     "\n"
-    ;
-static const char* const kManualText_part10 =
     "Everything in \"Getting the most polyphony\" (the auxiliary routes, the IR\n"
     "reverbs, the drivers) raises or lowers the number you will arrive at. Above\n"
     "all, do not be afraid of a larger audio buffer: a latency of about 10 ms\n"
@@ -2217,13 +2222,13 @@ static const char* const kManualText_part10 =
     "\n"
     "### Wind: one stop's share of the full sag\n"
     "\n"
+    ;
+static const char* const kManualText_part11 =
     "The sag a single engaged 8' stop produces, relative to the sag with many stops\n"
     "engaged (2 to 100 %, default 20). Smaller footages count less. A lower value\n"
     "keeps a solo stop steady and lets the sag come with full registration.\n"
     "\n"
     "### Wind: one pipe's share of the full sag\n"
-    ;
-static const char* const kManualText_part11 =
     "\n"
     "The sag with one key held, relative to the sag with many keys held (default\n"
     "50 %).\n"
@@ -2419,13 +2424,13 @@ static const char* const kManualText_part11 =
     "shifts). *Cubic interpolation* lowers the interpolation images by about 20 dB\n"
     "for these voices only. *Cubic + anti-alias filter* (default) also removes what\n"
     "would fold back when a pipe is transposed upwards: a low-passed copy of the\n"
+    ;
+static const char* const kManualText_part12 =
     "source is built for each such filled pipe (a few MB per rank, nothing for stops\n"
     "without upward shifts). Real pipes are never touched.\n"
     "\n"
     "### Treble per key: shelf start frequency\n"
     "\n"
-    ;
-static const char* const kManualText_part12 =
     "The *Treble per key* sliders of the voicing raise or lower everything above\n"
     "this frequency (120 to 5000 Hz, default 1800): a high shelf whose transition\n"
     "band runs from here to about twice this frequency. A pipe whose recorded\n"
@@ -2621,13 +2626,13 @@ static const char* const kManualText_part12 =
     "\n"
     "One collapsed section per division; the same settings as in the Divisions\n"
     "dialog (see \"Keyboard, MIDI and compass\", \"Swell, tremulant, wind\" and \"The\n"
+    ;
+static const char* const kManualText_part13 =
     "audio tabs\").\n"
     "\n"
     "### Stops and sample folders\n"
     "\n"
     "The folder trees loaded for this division, and the *Stop building...* button\n"
-    ;
-static const char* const kManualText_part13 =
     "that opens the Stop List (see \"Folder trees and the pool\") at it.\n"
     "\n"
     "### Shown in window\n"
@@ -2823,13 +2828,13 @@ static const char* const kManualText_part13 =
     "built for Windows, macOS and Linux; the macOS and Linux builds have had less\n"
     "playing time than the Windows build. What each build needs:\n"
     "\n"
+    ;
+static const char* const kManualText_part14 =
     "- **Windows:** `OrganSampler-windows.zip` - Windows 10 or 11, 64-bit. ASIO,\n"
     "  Windows Audio (WASAPI) and the aggregated WASAPI device.\n"
     "- **macOS:** `OrganSampler-macos.zip` runs on Apple silicon Macs with macOS\n"
     "  11 Big Sur or newer; `OrganSampler-macos-10.11-intel.zip` on Intel Macs\n"
     "  with macOS 10.11 El Capitan or newer. CoreAudio.\n"
-    ;
-static const char* const kManualText_part14 =
     "- **Linux:** `OrganSampler-linux-x86_64.tar.gz` - x86-64 with glibc 2.38 or\n"
     "  newer - a distribution of 2024 or later: Ubuntu 24.04, Linux Mint 22,\n"
     "  Debian 13, Fedora 39 and their successors. ALSA or JACK (PipeWire).\n"

@@ -332,6 +332,11 @@ HauptwerkOdf HauptwerkOdf::parse(const juce::File& file, const std::function<boo
     // which ranks, stops and divisions a tremulant works on.
     std::map<int, int> tremulantOfWaveform;                          // TremulantWaveformID -> TremulantID
     std::vector<std::pair<int, int>> tremulantPipes;                 // (PipeID, TremulantWaveformID)
+    // The combinations: the crescendo is one per stage ("Cresc.Comb.12"); an
+    // element = a switch the combination sets, on (Y) or off.
+    std::map<int, juce::String> combinationNames;                    // CombinationID -> name
+    struct ElementRow { int combinationId = 0, switchId = 0; bool on = false; };
+    std::vector<ElementRow> combinationElements;
     int rows = 0;
     while (true)
     {
@@ -435,11 +440,31 @@ HauptwerkOdf HauptwerkOdf::parse(const juce::File& file, const std::function<boo
                 if (pipe > 0 && waveform > 0) tremulantPipes.push_back({ pipe, waveform });
             }
         }
+        else if (lower == "combination")
+        {
+            while (scanner.nextRow(row))
+            {
+                const int id = row.integer("CombinationID", "a");
+                if (id > 0) combinationNames[id] = row.text("Name", "b");
+            }
+        }
+        else if (lower == "combinationelement")
+        {
+            while (scanner.nextRow(row))
+            {
+                ElementRow e;
+                e.combinationId = row.integer("CombinationID", "b");
+                e.switchId = row.integer("ControlledSwitchID", "c");
+                e.on = row.text("InitialStoredStateIsOn", "e").equalsIgnoreCase("Y");
+                if (e.combinationId > 0 && e.switchId > 0) combinationElements.push_back(e);
+            }
+        }
         else if (lower == "stop")
         {
             while (scanner.nextRow(row))
             {
                 Stop s; s.id = row.integer("StopID", "a"); s.name = row.text("Name", "b"); s.divisionId = row.integer("DivisionID", "c");
+                s.switchId = row.integer("ControllingSwitchID", "d");
                 if (s.id > 0) odf.stops[s.id] = s;
             }
         }
@@ -693,6 +718,57 @@ HauptwerkOdf HauptwerkOdf::parse(const juce::File& file, const std::function<boo
         rank.folderRelative = dir;
         rank.folder = packageFolder(root, packageId).getChildFile(dir.isEmpty() ? juce::String(".") : dir);
     }
+    // The crescendo: every combination whose name says "cresc" is one stage
+    // (the number at the end of the name: "Cresc.Comb.12"); its elements set
+    // switches, which reach the stops' own switches through the switch
+    // linkages (Doesburg, Schwerin: "CrescendoCombSwitch ..." switches linked
+    // to the stops), either way, within a few hops. An element reaching no stop
+    // (a coupler, a tremulant) is left out.
+    {
+        std::map<int, int> stopOfSwitch;
+        for (const auto& [id, stop] : odf.stops) if (stop.switchId > 0) stopOfSwitch[stop.switchId] = id;
+        std::map<int, std::vector<int>> neighbours;   // both directions of the linkages
+        for (const auto& [source, links] : switchLinks)
+            for (const auto& [dest, condition] : links) { neighbours[source].push_back(dest); neighbours[dest].push_back(source); }
+        auto stopOf = [&](int switchId) -> int
+        {
+            std::set<int> seen{ switchId };
+            std::vector<int> frontier{ switchId };
+            for (int hop = 0; hop < 8 && !frontier.empty(); ++hop)   // Schwerin: 4 hops (CrescendoCombSwitch > CrescendoIfOnSwitch > ... > C.<stop> > the stop)
+            {
+                for (const int s : frontier) { const auto it = stopOfSwitch.find(s); if (it != stopOfSwitch.end()) return it->second; }
+                std::vector<int> next;
+                for (const int s : frontier)
+                    for (const int t : neighbours[s]) if (seen.insert(t).second) next.push_back(t);
+                frontier.swap(next);
+            }
+            return 0;
+        };
+        std::map<int, std::set<int>> stopsOnByStage;
+        std::map<int, int> stageOfCombination;
+        for (const auto& [id, name] : combinationNames)
+        {
+            if (!name.containsIgnoreCase("cresc")) continue;
+            const auto digits = name.trim().getTrailingIntValue();
+            if (digits <= 0) continue;
+            stageOfCombination[id] = digits;
+            stopsOnByStage[digits];   // a stage with nothing drawn is a stage all the same
+        }
+        if (!stageOfCombination.empty())
+        {
+            std::map<int, int> stopCache;
+            for (const auto& e : combinationElements)
+            {
+                const auto stage = stageOfCombination.find(e.combinationId);
+                if (stage == stageOfCombination.end() || !e.on) continue;
+                auto cached = stopCache.find(e.switchId);
+                const int stopId = cached != stopCache.end() ? cached->second : (stopCache[e.switchId] = stopOf(e.switchId));
+                if (stopId > 0) stopsOnByStage[stage->second].insert(stopId);
+            }
+            for (const auto& [stage, ids] : stopsOnByStage)
+                odf.crescendo.push_back({ stage, std::vector<int>(ids.begin(), ids.end()) });
+        }
+    }
     // Which divisions every tremulant works on: its waveforms' pipes -> their
     // ranks -> the stop playing the rank straight -> that stop's division.
     {
@@ -728,6 +804,7 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
     if (error.isNotEmpty()) { result.error = error; return result; }
     if (hauptwerkRoot == juce::File()) { result.error = "The Hauptwerk folders were not found: the organ definition must lie in OrganDefinitions beside OrganInstallationPackages."; return result; }
     result.libraryRoot = hauptwerkRoot.getChildFile("OrganInstallationPackages");
+    result.crescendo = crescendo;
 
     // The divisions in keyboard order, the pedal first: a keyboard whose name
     // (or division's name) says "ped", else the first keyboard with at most 32

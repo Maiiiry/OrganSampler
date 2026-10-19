@@ -138,6 +138,17 @@ public:
                 }
             }
             for (const auto& p : plan.perspectivePatterns) report << "  perspective pattern: " << p << "\n";
+            if (!plan.crescendo.empty())
+            {
+                report << "  crescendo: " << (int)plan.crescendo.size() << " stage(s)\n";
+                for (const auto& stage : plan.crescendo)
+                {
+                    if (stage.stage > 6 && stage.stage != plan.crescendo.back().stage) continue;   // the first six and the last
+                    report << "      stage " << stage.stage << ":";
+                    for (const int id : stage.stopIds) report << " [" << (odf.stops.count(id) > 0 ? odf.stops.at(id).name : juce::String(id)) << "]";
+                    report << "\n";
+                }
+            }
             report << "  tremmed ranks skipped " << plan.skippedTremmedRanks << ", noise ranks " << plan.skippedNoiseRanks << ", stops without samples " << plan.stopsWithoutSamples
                    << ", extensions/transmissions " << plan.extensions << "\n";
             for (const auto& n : plan.notes) report << "  note: " << n << "\n";

@@ -53,6 +53,7 @@ struct HauptwerkOdf
     struct Stop
     {
         int id = 0, divisionId = 0;
+        int switchId = 0;               // the switch that draws it (ControllingSwitchID): what combinations set
         juce::String name;
         std::vector<int> rankIds;       // the ranks of its StopRank rows (alternate ranks excluded), in file order
         // How each StopRank row maps the keys to the rank: the first key mapped,
@@ -77,6 +78,13 @@ struct HauptwerkOdf
     // rank > the stop playing it > its division).
     struct Tremulant { int id = 0; juce::String name; float rateHz = 0.0f; std::set<int> divisionIds; };
     std::vector<Tremulant> tremulants;
+    // The general crescendo of the definition: Hauptwerk keeps it as one
+    // combination per stage ("Cresc.Comb.1" ... "Cresc.Comb.64"), each listing
+    // the switches it sets; the stop switches are found through the switch
+    // linkages (the stages set intermediate "CrescendoCombSwitch" switches).
+    // A stage = the ODF stops drawn at it (couplers are left out).
+    struct CrescendoStep { int stage = 0; std::vector<int> stopIds; };
+    std::vector<CrescendoStep> crescendo;        // by stage
 
     juce::String organName, builder, location, supplier;
     int mainPackageId = 0;
@@ -142,6 +150,7 @@ struct HauptwerkOdf
         juce::String organName;
         std::vector<PlanDivision> divisions;         // [0] = pedal (when the organ has one), then the manuals
         std::vector<juce::String> perspectivePatterns;   // "Direct;01-dirMk2H-" ... (empty: a single perspective)
+        std::vector<CrescendoStep> crescendo;        // the definition's crescendo stages (ODF stop ids drawn at each)
         std::vector<juce::File> allTrees;
         juce::File libraryRoot;                      // OrganInstallationPackages
         juce::File configurationFile;                // where the configuration goes: the main package folder

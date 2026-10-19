@@ -73,11 +73,27 @@ juce::int64 MainComponent::processMemoryBytes()
     if (GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&counters, sizeof(counters)))
         return (juce::int64)juce::jmax(counters.WorkingSetSize, counters.PrivateUsage);
    #elif JUCE_LINUX
+    // Resident plus swapped out: what the program holds, not only what is in RAM now.
     const auto text = juce::File("/proc/self/status").loadFileAsString();
+    juce::int64 resident = 0, swapped = 0;
     for (const auto& line : juce::StringArray::fromLines(text))
-        if (line.startsWith("VmRSS:"))
-            return line.fromFirstOccurrenceOf(":", false, false).trim().upToFirstOccurrenceOf(" ", false, false).getLargeIntValue() * 1024;
+    {
+        auto kb = [&line] { return line.fromFirstOccurrenceOf(":", false, false).trim().upToFirstOccurrenceOf(" ", false, false).getLargeIntValue() * 1024; };
+        if (line.startsWith("VmRSS:")) resident = kb();
+        else if (line.startsWith("VmSwap:")) swapped = kb();
+    }
+    if (resident > 0) return resident + swapped;
    #elif JUCE_MAC
+    // The physical footprint (what Activity Monitor calls Memory): the pages in
+    // RAM plus the ones the system has compressed or swapped out. The resident
+    // size alone counted 995 MB for an organ of several GB on an 8 GB Mac - the
+    // rest sat compressed, which is exactly the state the column should warn of.
+    {
+        task_vm_info_data_t vm{};
+        mach_msg_type_number_t vmCount = TASK_VM_INFO_COUNT;
+        if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vm, &vmCount) == KERN_SUCCESS && vm.phys_footprint > 0)
+            return (juce::int64)vm.phys_footprint;
+    }
     mach_task_basic_info_data_t info{};
     mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
     if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t)&info, &count) == KERN_SUCCESS)

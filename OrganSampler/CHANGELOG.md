@@ -12,6 +12,29 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.129] - 2026-10-19
+
+### Added
+- Hauptwerk import: the definition's general crescendo becomes ours. Hauptwerk
+  keeps it as one combination per stage ("Cresc.Comb.1" ... "Cresc.Comb.64",
+  Doesburg, Schwerin); the stops each stage draws are found through the
+  switch linkages and become our steps (every row on or off at each step, the
+  hand registration cancelled as there). More than 60 stages are spread over
+  our 60 steps; couplers are not taken.
+
+### Changed
+- The polyphony display's RAM column shows whole gigabytes rounded up, the
+  unit in its label ("RAM GB"): "1.2 GB" did not fit the cell on a small
+  display.
+
+### Fixed
+- macOS and Linux: the memory figure (the RAM column, the measurement
+  report, the configuration's RAM line) counts what the program holds, the
+  pages the system has compressed or swapped out included (macOS: the
+  physical footprint Activity Monitor shows; Linux: resident + swap). The
+  resident size alone showed 995 MB for an organ of several GB on an 8 GB
+  Mac - the rest sat compressed, the very state the column should warn of.
+
 ## [0.8.128] - 2026-10-19
 
 ### Added
