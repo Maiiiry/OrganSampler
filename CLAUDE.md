@@ -173,7 +173,10 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   report. `shortNow`: free < reserve (768 MB / installed/16) OR held > installed - systemShare (1.5 GB / installed/5)
   OR swapped > 256 MB (Linux VmSwap of the process, macOS compressor pages). The free figure alone let a 7 GB organ
   load whole on the 8 GB Mac (#17) and on the 7.7 GB Linux laptop (#19: held 6.9 GB, "2 GB free", swapping) - the
-  footprint rule is the one that bites. The pre-load estimate reads bits/rate from the first 48 WAV headers (16/bits x
+  footprint rule is the one that bites. 0.8.134: `MemoryInfo::pressureLevel()` = macOS `kern.memorystatus_vm_pressure_level`
+  (1 normal, 2 warning, 4 critical; the kernel's own figure, counting what freeing the inactive pages would give - a
+  user process cannot purge them: `purge` needs root and drops only the disk cache, madvise touches our pages only);
+  level >= 2 is the fourth sign in `shortNow`. The pre-load estimate reads bits/rate from the first 48 WAV headers (16/bits x
   48000/rate when resampling, x 1.15 for copies), never a flat two thirds. Hauptwerk rows: name = the STOP FOLDER's
   name as on disk (the user's rule: "ve jmenech ma byt, jak se jmenuji adresare"), alias = the HW stop name; a child
   of a stop folder = its rank folder's name. The Hauptwerk import sets `suppressPortableNotice` so the

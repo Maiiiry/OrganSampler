@@ -15,6 +15,7 @@
  #include <mach/mach.h>
  #include <mach/mach_host.h>
  #include <mach/task_info.h>
+ #include <sys/sysctl.h>
 #endif
 
 //==============================================================================
@@ -128,14 +129,33 @@ namespace MemoryInfo
         return juce::jmax((juce::int64)768 * 1024 * 1024, installedBytes() / 16);
     }
 
+    // macOS: the kernel's own memory pressure level (1 normal, 2 warning, 4
+    // critical) - it already counts what freeing the inactive pages would give,
+    // which a user process cannot force (purge needs root and only drops the
+    // disk cache; madvise touches our own pages only). 0 where unknown.
+    inline int pressureLevel()
+    {
+       #if JUCE_MAC
+        int level = 0;
+        size_t size = sizeof(level);
+        if (sysctlbyname("kern.memorystatus_vm_pressure_level", &level, &size, nullptr, 0) == 0) return level;
+       #endif
+        return 0;
+    }
+
     // Is the memory short now - must a loading stop? Any one sign: the free
     // memory under the reserve; the program's footprint within the system's
     // share; the program (Linux) or the system (macOS compressor) swapping
-    // more than 256 MB.
+    // more than 256 MB; the kernel reporting pressure (macOS, warning or worse).
     inline bool shortNow(juce::String* reason = nullptr)
     {
         auto gb = [](juce::int64 b) { return juce::String((double)b / 1073741824.0, 2) + " GB"; };
         const juce::int64 installed = installedBytes(), free = freeBytes(), held = heldBytes(), swapped = swappedBytes();
+        if (const int level = pressureLevel(); level >= 2)
+        {
+            if (reason != nullptr) *reason = juce::String("the system reports memory pressure (level ") + juce::String(level) + ", " + (level >= 4 ? "critical" : "warning") + "), " + gb(free) + " free, the program holds " + gb(held);
+            return true;
+        }
         if (free < reserveBytes())
         {
             if (reason != nullptr) *reason = gb(free) + " free, the reserve is " + gb(reserveBytes());

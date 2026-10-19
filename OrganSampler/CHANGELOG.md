@@ -12,6 +12,15 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.134] - 2026-10-19
+
+### Changed
+- macOS: the loading also stops when the kernel itself reports memory
+  pressure (its level "warning" or "critical"), the one figure that already
+  counts what freeing the inactive pages would give - a user program cannot
+  force that freeing (purge needs root and drops the disk cache only). The
+  reason is named in the log and the message.
+
 ## [0.8.133] - 2026-10-19
 
 ### Fixed
