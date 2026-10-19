@@ -361,9 +361,27 @@ namespace CrashHandler
         }
     private:
         void timerCallback() override { lastBeatMs.store(juce::Time::getMillisecondCounterHiRes()); }
+    public:
+        // What to do when the message thread has answered nothing for three
+        // seconds (called once per stall, from the watchdog thread): the polyphony
+        // measurement sets it to release every key - its strokes run on the
+        // message thread, so a stall left the keys down, the load on, and the
+        // starved thread never came back (#15, a two-core Linux laptop).
+        static std::function<void(double)>& stallAction()
+        {
+            static std::function<void(double)> action;
+            return action;
+        }
+        static juce::CriticalSection& stallActionLock() { static juce::CriticalSection lock; return lock; }
+        static void setStallAction(std::function<void(double)> action)
+        {
+            const juce::ScopedLock sl(stallActionLock());
+            stallAction() = std::move(action);
+        }
+    private:
         void run() override
         {
-            bool stalled = false;
+            bool stalled = false, actionDone = false;
             double lastReportMs = 0.0, longest = 0.0;
             while (!threadShouldExit())
             {
@@ -371,8 +389,16 @@ namespace CrashHandler
                 if (threadShouldExit()) return;
                 const double now = juce::Time::getMillisecondCounterHiRes();
                 const double silent = now - lastBeatMs.load();
+                if (silent >= 3000.0 && !actionDone)
+                {
+                    actionDone = true;
+                    std::function<void(double)> action;
+                    { const juce::ScopedLock sl(stallActionLock()); action = stallAction(); }
+                    if (action) { note("Message thread silent for 3 s: the stall action runs (keys released)"); action(silent); }
+                }
                 if (silent < 8000.0)
                 {
+                    if (silent < 3000.0) actionDone = false;
                     if (stalled)
                         note("Message thread responsive again (it answered nothing for about " + juce::String(juce::roundToInt(longest / 1000.0)) + " s)");
                     stalled = false;

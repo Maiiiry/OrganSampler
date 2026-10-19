@@ -12,6 +12,25 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.127] - 2026-10-19
+
+### Fixed
+- Linux (and macOS): the program no longer hangs for good during the
+  polyphony measurement on a two-core computer (#15). The audio thread and
+  the render worker run as SCHED_FIFO and waited for each other with
+  sched_yield, which under FIFO hands the core only to threads of the same
+  policy: the window thread starved, and as it drives the measurement's
+  strokes the keys stayed down, the load stayed, and nothing ever came
+  back. Real-time threads now wait with a short sleep outside Windows, a
+  worker on one or two cores does not spin after work, and the watchdog
+  releases every key when the window thread has answered nothing for three
+  seconds during a measurement (the run is abandoned with a note in the log).
+- The measurement report tells how much memory the program holds of the
+  installed RAM and how much is free, with a warning when it is tight: a big
+  organ on a small computer pages samples out, and a block then stalls on
+  reading them back when a stroke touches them (#16: a callback of two
+  periods at a handful of voices on an 8 GB Mac with 78 stops).
+
 ## [0.8.126] - 2026-10-19
 
 ### Fixed

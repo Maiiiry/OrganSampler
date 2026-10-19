@@ -166,6 +166,19 @@ namespace
 #else
  #define ENGINE_CPU_PAUSE() std::this_thread::yield()
 #endif
+// The wait of a real-time thread for another thread (the poster for its lanes,
+// a worker for its task): on Windows the pause instruction (the lanes hold
+// their cores, MMCSS behind them); everywhere else a short SLEEP, never a
+// yield - a SCHED_FIFO thread's sched_yield hands the core only to threads of
+// the same policy, so on a two-core Linux laptop the yielding audio thread and
+// worker kept both cores and the window thread (SCHED_OTHER) starved; as the
+// window thread drives the polyphony measurement's strokes, the keys stayed
+// down, the load stayed, and the program hung for good (#15, 0.8.126).
+#if JUCE_WINDOWS
+ #define ENGINE_RT_WAIT() _mm_pause()
+#else
+ #define ENGINE_RT_WAIT() std::this_thread::sleep_for(std::chrono::microseconds(30))
+#endif
 
 //==============================================================================
 // Small helpers
@@ -2492,10 +2505,7 @@ namespace
             // lane that was preempted (the sound server, the window) gets it back
             // at once instead of this thread spinning on it.
             while (job->lanesLeft.load(std::memory_order_acquire) != job->lanesJoined.load(std::memory_order_acquire))
-            {
-                if (gFewCores) std::this_thread::yield();
-                else ENGINE_CPU_PAUSE();
-            }
+                ENGINE_RT_WAIT();
             job->open.store(false, std::memory_order_release);
             {
                 // Utilisation of this job: the lanes' rendering time against the
@@ -2570,7 +2580,7 @@ namespace
                     int expected = 1;
                     if (task.state.compare_exchange_strong(expected, 2, std::memory_order_acq_rel)) { task.fn(task.ctx); task.state.store(3, std::memory_order_release); return; }
                 }
-                ENGINE_CPU_PAUSE();
+                ENGINE_RT_WAIT();
             }
         }
 
@@ -2768,7 +2778,12 @@ namespace
                 // what keeps Windows from throttling our real-time threads and
                 // preempting a lane in the middle of a chunk.
                 const int64_t now = juce::Time::getHighResolutionTicks();
-                if (now < hotUntilTicks.load(std::memory_order_relaxed) || now - lastWorkTicks < hotWindowTicks)
+               #if JUCE_WINDOWS
+                const bool spinAllowed = true;
+               #else
+                const bool spinAllowed = !gFewCores;   // one or two cores: a spinning SCHED_FIFO worker starves the window thread (#15)
+               #endif
+                if (spinAllowed && (now < hotUntilTicks.load(std::memory_order_relaxed) || now - lastWorkTicks < hotWindowTicks))
                 {
                     for (int i = 0; i < 16; ++i) ENGINE_CPU_PAUSE();
                     continue;

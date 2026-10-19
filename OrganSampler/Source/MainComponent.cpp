@@ -17857,6 +17857,21 @@ void MainComponent::startPolyphonyMeasurement()
     state->previousLimit = engine.getMaxPolyphony();
     state->previousMuted = audioMuted.load();
     engine.setMaxPolyphony(SamplerEngine::maxVoices);   // out of the way while measuring
+    // The safety net: the strokes run on the message thread; should it stall
+    // (starved by the real-time threads on a two-core machine, #15), the
+    // watchdog thread releases every key so that the load drops and the thread
+    // comes back - the run is then abandoned with a note in the log.
+    {
+        juce::Component::SafePointer<MainComponent> safeThis(this);
+        CrashHandler::StallWatchdog::setStallAction([safeThis](double silentMs)
+        {
+            if (safeThis == nullptr) return;
+            safeThis->engine.noteOffAll();
+            CrashHandler::note("Polyphony measurement: the message thread answered nothing for " + juce::String(juce::roundToInt(silentMs / 1000.0))
+                + " s - every key released by the watchdog; the run cannot be trusted");
+            juce::MessageManager::callAsync([safeThis] { if (safeThis != nullptr) safeThis->finishPolyphonyMeasurement(true); });
+        });
+    }
     // The attack minimum time and delay would hold the fast strikes back: off for the run.
     state->previousAttackMinimumMs = attackMinimumSlider.getValue();
     state->previousAttackDelayMs = attackMinimumDelaySlider.getValue();
@@ -18570,6 +18585,7 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
     auto state = polyphonyMeasurement;
     if (state == nullptr) return;
     polyphonyMeasurement = nullptr;   // the timers see this and stop
+    CrashHandler::StallWatchdog::setStallAction(nullptr);
     // Keys up, everything back as it was: the registration, the mute state, the sound.
     for (int manual = 0; manual <= manualCount; ++manual)
         for (int note = 36; note <= 96; ++note) routeKeyboardNote(manual, note, 0, false);
@@ -18770,6 +18786,21 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
         else advice << " CPU during the run: not readable on this system.";
         if (state->poolSamples > 0)
             advice << " Lanes busy inside the route jobs: " << juce::roundToInt(100.0 * state->poolUtilisationSum / state->poolSamples) << " %.";
+        {
+            // Memory: a big organ on a small computer pages samples out, and a
+            // block then stalls on reading them back (one stroke of many stops
+            // touching pages the system had compressed or swapped: a callback of
+            // two periods at a handful of voices, #16).
+            const juce::int64 used = MainComponent::processMemoryBytes(), free = MainComponent::availablePhysicalMemoryBytes();
+            const juce::int64 installed = (juce::int64)juce::SystemStats::getMemorySizeInMegabytes() * 1024 * 1024;
+            if (used > 0 && installed > 0)
+            {
+                advice << " Memory: the program holds " << juce::String((double)used / 1073741824.0, 1) << " GB of the " << juce::String((double)installed / 1073741824.0, 1)
+                       << " GB installed, " << juce::String((double)free / 1073741824.0, 1) << " GB free.";
+                if (free < installed / 10 || used > installed * 7 / 10)
+                    advice << " That is tight: the system pages samples out and a block stalls on reading them back when a stroke touches them - fewer stops loaded, 16-bit storage, or more RAM.";
+            }
+        }
         const juce::String power = MainComponent::powerSettingDescription();
         if (power.isNotEmpty()) advice << " " << power;
 

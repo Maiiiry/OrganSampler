@@ -162,7 +162,13 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   refused; macOS time-constraint thread), `gFewCores` (<= 2 physical): poster waits with `std::this_thread::yield()`,
   chunks <= 12 voices, hot spin window 1 ms. Never blame a kernel without the benchmark numbers from the report.
   ENGINE_CPU_PAUSE outside Windows is `std::this_thread::yield()` again (do not bring the pause spin back there
-  without a measurement). x86 without AVX2 renders SSE2 by default again since 0.8.126 (`defaultKernel`): the user's
+  without a measurement). 0.8.127: a real-time thread's wait for another thread (`ENGINE_RT_WAIT`: the poster for
+  its lanes, a worker for its task) is `_mm_pause` on Windows and a 30 us SLEEP everywhere else - NEVER a yield:
+  under SCHED_FIFO `sched_yield` hands the core only to FIFO threads, the SCHED_OTHER window thread starved on the
+  two-core Linux laptop, and as it drives the measurement's strokes the keys stayed down and the hang never resolved
+  (#15, "Message thread unresponsive for 70 s"). On <= 2 cores outside Windows the worker does not spin after work.
+  `CrashHandler::StallWatchdog::setStallAction` (called from the watchdog thread after 3 s of silence): the
+  measurement sets it to `engine.noteOffAll()` + abandon the run; cleared in `finishPolyphonyMeasurement`. x86 without AVX2 renders SSE2 by default again since 0.8.126 (`defaultKernel`): the user's
   own A/B with the editor's switch on the same routes - Core 2 Duo Mac scalar 1700 vs SSE2 2500 voices (#14, 0.8.125),
   Linux bench 5.07 vs 7.70 ns (#13) - and he asked for it ("bude stary CPU defaultne loadovat SSE2?"). 0.8.123-0.8.125
   had scalar there at his request from before the priority fix.
