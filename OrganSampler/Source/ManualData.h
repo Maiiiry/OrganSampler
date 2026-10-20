@@ -807,9 +807,19 @@ static const char* const kManualText_part3 =
     "loaded and another not, is dropped whole, and every stop left out is named\n"
     "once in the message and stays in the pool of the Stop List - nothing stands\n"
     "on the grid half loaded. The polyphony report then says the loading stopped\n"
-    "on purpose; it never claims the system is paging when it is not. The \"free\" figure is what the\n"
+    "on purpose; it never claims the system is paging when it is not.\n"
     ;
 static const char* const kManualText_part4 =
+    "\n"
+    "The report also profiles the device thread (0.8.137): per route callback,\n"
+    "in microseconds, how much went into this thread's own rendering of voices,\n"
+    "into waiting for the other lanes and merging their output, into the mixing\n"
+    "(block context, harmonic shelf, channel separation, safety clip), into the\n"
+    "IR hand-over (and of it, waiting for the convolution task) and into the\n"
+    "bookkeeping (voices in and out, recording, load statistics); with the period\n"
+    "for scale and the share of the time the device threads spent inside the\n"
+    "callbacks. It is what tells, on a computer whose render cores are not full\n"
+    "when the sound breaks, where the time goes. The \"free\" figure is what the\n"
     "system could give the program now: Windows' available physical memory,\n"
     "Linux's MemAvailable (the reclaimable cache included), macOS's free and\n"
     "inactive pages; the footprint rule is the one that bites on an 8 GB machine.\n"
@@ -1000,6 +1010,8 @@ static const char* const kManualText_part4 =
     "\n"
     "A pipe is one set of voices, no matter how many keys hold it: the same pipe\n"
     "reached through the stop itself, through a transmission and through a coupler\n"
+    ;
+static const char* const kManualText_part5 =
     "sounds once, and stops only when no route holds it any more. While several\n"
     "routes hold it, the loudest of them sets its volume and the highest *Treble\n"
     "per key* setting among them sets its tone; when the loudest route lets go,\n"
@@ -1010,8 +1022,6 @@ static const char* const kManualText_part4 =
     "key that started it for as long as it sounds - even after that key has been\n"
     "released, while other keys still hold it; only when it has stopped and is\n"
     "started again does it take the tuning of the new key. Switching a\n"
-    ;
-static const char* const kManualText_part5 =
     "transmission off releases exactly the pipes that no other route holds.\n"
     "Keys whose pipe lies beyond the rank's compass (the bottom octave of a 16'\n"
     "extension) play **filled pipes**: see \"What a filled pipe is\".\n"
@@ -1202,6 +1212,8 @@ static const char* const kManualText_part5 =
     "## 5.2 Swell, tremulant, wind\n"
     "\n"
     "The swell pedal is learned by right-clicking the swell bar in the division\n"
+    ;
+static const char* const kManualText_part6 =
     "header. *Swell: maximum attenuation when closed* and *Swell: shutter inertia*\n"
     "shape it. The *Tremulant* header (click to fold) opens rate, depth and the\n"
     "phase drift between ranks; the *Wind model* header opens depth, frequency,\n"
@@ -1212,8 +1224,6 @@ static const char* const kManualText_part5 =
     "The tremulant's strength wanders between 60 and 100 % of the set depth, and\n"
     "every key stroke shakes the wind with a random strength, so nothing repeats\n"
     "mechanically.\n"
-    ;
-static const char* const kManualText_part6 =
     "\n"
     "## 5.3 The audio tabs\n"
     "\n"
@@ -1404,6 +1414,8 @@ static const char* const kManualText_part6 =
     "**Step 1 - set the interface to the \"Pro Audio\" profile.** With this profile\n"
     "PipeWire hands the card over as it is: every output and every input becomes\n"
     "a port of its own, nothing is mixed, remapped or volume-controlled on the\n"
+    ;
+static const char* const kManualText_part7 =
     "way, and the card runs at PipeWire's clock. Where to set it:\n"
     "\n"
     "- KDE Plasma (Ubuntu Studio, Kubuntu, Fedora KDE): *System Settings >\n"
@@ -1414,8 +1426,6 @@ static const char* const kManualText_part6 =
     "- Any desktop: the program `pavucontrol`, tab *Configuration*, the card's\n"
     "  profile box.\n"
     "\n"
-    ;
-static const char* const kManualText_part7 =
     "The desktop's own sounds then no longer go to that interface unless you\n"
     "choose it as the system output; use the on-board chip for the desktop and\n"
     "the interface for the organ. After switching the profile the card appears\n"
@@ -1606,6 +1616,8 @@ static const char* const kManualText_part7 =
     "  one thread; spread over several devices they run beside each other. So an\n"
     "  organ spread over many Windows Audio devices, or over two ASIO interfaces,\n"
     "  can measure *more* than the same organ on one ASIO driver - that is\n"
+    ;
+static const char* const kManualText_part8 =
     "  expected (at the price of the different latencies above). Which channels\n"
     "  the routes use on one device makes no difference: two routes on the same\n"
     "  pair cost the same as two routes on different pairs. The measurement\n"
@@ -1616,8 +1628,6 @@ static const char* const kManualText_part7 =
     "The *DSP* value is the whole callback of the busiest audio device - the\n"
     "render of all its routes, the note bookkeeping of attacks and releases, the\n"
     "copies to the device - as a share of the device's period, held at its peak\n"
-    ;
-static const char* const kManualText_part8 =
     "for a moment. That is what decides about dropouts: at 100 % the next\n"
     "callback is late. A value of several hundred percent means the audio thread\n"
     "was kept waiting by something else on the computer, not that the voices took\n"
@@ -1808,6 +1818,8 @@ static const char* const kManualText_part8 =
     "\n"
     "All in *Configuration Editor > Advanced global audio* unless said otherwise;\n"
     "the sliders that do not apply to the chosen method are greyed out. Every one\n"
+    ;
+static const char* const kManualText_part9 =
     "of them has its own chapter in \"Advanced global audio\".\n"
     "\n"
     "- **Formants (filled pipes)** - in every stop's and transmission's voicing\n"
@@ -1818,8 +1830,6 @@ static const char* const kManualText_part8 =
     "  points more; beyond an octave every further octave in either direction adds\n"
     "  15 points with the resampling methods and 25 with the phase vocoder, because\n"
     "  a copy two octaves away is a pipe of another size. A pipe is one copy: inside\n"
-    ;
-static const char* const kManualText_part9 =
     "  the stop's own compass the stop's value applies; a pipe beyond it, asked for\n"
     "  by transmissions only, takes the value of the first transmission in the\n"
     "  stop's list whose shifted compass holds it. Changing it rebuilds only the\n"
@@ -2010,6 +2020,8 @@ static const char* const kManualText_part9 =
     "at a quarter of the sample rate (half when the high cut of the wet signal\n"
     "lies above 2.5 kHz, so that the wet band stays intact), trims the IR where\n"
     "its energy has fallen 60 dB below the whole (a church IR of 7 s is there\n"
+    ;
+static const char* const kManualText_part10 =
     "after 3.5 s; what follows is inaudible under the organ) and reduces a true\n"
     "stereo IR to its direct channels - a small fraction of the work, the same\n"
     "room, a little less air in the top of the reverb. *Automatic* (default)\n"
@@ -2020,8 +2032,6 @@ static const char* const kManualText_part9 =
     "while playing; it remembers that choice for this computer and returns to\n"
     "Full when Full would clearly fit again (below 12 %). The line below the\n"
     "setting says what the reverbs cost now; the activity log records every\n"
-    ;
-static const char* const kManualText_part10 =
     "measurement and choice. Full and Light set the mode by hand. The setting\n"
     "belongs to the computer, not to the organ: a portable configuration does not\n"
     "carry it.\n"
@@ -2212,6 +2222,8 @@ static const char* const kManualText_part10 =
     "sample takes over (default 70 ms). Too short and the join clicks or the pipe\n"
     "stops unnaturally; too long and the release sounds smeared. The value is for\n"
     "the sounding c1 (MIDI 60 of an 8' rank, the rank's footage counted in): pipes\n"
+    ;
+static const char* const kManualText_part11 =
     "below it get 1.5 times as much per octave (a 32' C 3.4 times), because a big\n"
     "pipe's sound cannot stop as fast; higher pipes the value as set. A filled pipe\n"
     "counts as the pipe it stands for.\n"
@@ -2222,8 +2234,6 @@ static const char* const kManualText_part10 =
     "ms), scaled by pitch exactly like the sustain fade-out. The two together shape\n"
     "the join between the held note and its release.\n"
     "\n"
-    ;
-static const char* const kManualText_part11 =
     "### Release sample volume\n"
     "\n"
     "The level of all release samples, -20 to +6 dB (default 0); the leftmost\n"
@@ -2414,6 +2424,8 @@ static const char* const kManualText_part11 =
     "rebuilt; switch it on when the releases of an extension are clearly louder or\n"
     "softer than those of the real pipes beside them.\n"
     "\n"
+    ;
+static const char* const kManualText_part12 =
     "### Filled pipes: loop crossfade\n"
     "\n"
     "The splice of the loops of the filled pipes' copies, as a share of each loop's\n"
@@ -2424,8 +2436,6 @@ static const char* const kManualText_part11 =
     "for the loops the phase vocoder breaks (its output at the loop end no longer\n"
     "matches the loop start) and for the seams the other methods make slightly\n"
     "worse; raise it when a held extension pipe clicks or bumps at every repeat of\n"
-    ;
-static const char* const kManualText_part12 =
     "its loop. See \"The transposition methods\".\n"
     "\n"
     "### Filled pipes: loudness kept when pitch shifting\n"
@@ -2616,6 +2626,8 @@ static const char* const kManualText_part12 =
     "moment before moving to the new key, so a brief overlap of two keys does not\n"
     "make the solo stop jump. Off: it follows at once.\n"
     "\n"
+    ;
+static const char* const kManualText_part13 =
     "### Load the last configuration at startup\n"
     "\n"
     "Off by default. On: the configuration file used last time is opened when the\n"
@@ -2626,8 +2638,6 @@ static const char* const kManualText_part12 =
     "\n"
     "The temperament the loaded samples were *recorded* in. It is found from the\n"
     "samples by itself when two thirds or more of the ranks agree (the activity\n"
-    ;
-static const char* const kManualText_part13 =
     "log says so); set it by hand only when the ranks disagree or the set has no\n"
     "smpl pitches - the voicing row of every stop reports what its ranks were found\n"
     "to be in. Every pipe's retuning to the target temperament starts from here;\n"
@@ -2818,6 +2828,8 @@ static const char* const kManualText_part13 =
     "\n"
     "The frequency the wind pressure oscillates at after a key stroke (4 to 10 Hz,\n"
     "default 7.5), the \"bounce\" of the bellows.\n"
+    ;
+static const char* const kManualText_part14 =
     "\n"
     "### Wind: number of oscillations\n"
     "\n"
@@ -2828,8 +2840,6 @@ static const char* const kManualText_part13 =
     "The impulse a key stroke gives the wind (0 to 100 %, default 40); 100 % is\n"
     "twice the impulse of 50 %, and the sag ceiling grows with it.\n"
     "\n"
-    ;
-static const char* const kManualText_part14 =
     "### Wind: sag settling lag\n"
     "\n"
     "How long the wind pressure takes to settle after stops or keys change (100 to\n"

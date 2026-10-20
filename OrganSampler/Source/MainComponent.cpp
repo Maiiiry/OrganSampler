@@ -17908,6 +17908,10 @@ struct MainComponent::PolyphonyMeasurement
     double poolUtilisationSum = 0.0, lastPoolUtilisation = 0.0; int poolSamples = 0, lastPoolJobs = 0;
     // The voice profile over the run: ns per voice and block, weighted by the voices of every second.
     double profHeaderSum = 0.0, profSpansSum = 0.0, profKernelSum = 0.0, profPostSum = 0.0; double profVoicesSum = 0.0;
+    // The device thread's profile over the run (0.8.137): ns per route callback in its phases, weighted by the callbacks of every second,
+    // and the share of the time the device threads spent inside the route callbacks (callbacks x their length per second).
+    double devCalls = 0.0, devTake = 0.0, devOwn = 0.0, devWait = 0.0, devMix = 0.0, devCompact = 0.0, devSeparation = 0.0, devReverb = 0.0, devReverbWait = 0.0,
+           devClip = 0.0, devRecord = 0.0, devStats = 0.0, devBusySum = 0.0; int devBusySamples = 0;
     int renderThreads = 1;            // the render threads (the audio thread included) = the cores the program renders on
     // The kernel benchmark of this computer (ns per voice and frame, cache and RAM), taken for the report once the run is over.
     SamplerEngine::KernelBenchmark kernelBench;
@@ -18398,6 +18402,15 @@ void MainComponent::startPolyphonyMeasurement()
                 state->profVoicesSum += w;
             }
         }
+        if (pool.routeCallbacks > 0)
+        {
+            const double w = (double)pool.routeCallbacks;
+            state->devCalls += w; state->devTake += pool.routeTakeNs * w; state->devOwn += pool.routePoolOwnNs * w; state->devWait += pool.routePoolWaitNs * w;
+            state->devMix += pool.routeMixNs * w; state->devCompact += pool.routeCompactNs * w; state->devSeparation += pool.routeSeparationNs * w;
+            state->devReverb += pool.routeReverbNs * w; state->devReverbWait += pool.routeReverbWaitNs * w; state->devClip += pool.routeClipNs * w;
+            state->devRecord += pool.routeRecordNs * w; state->devStats += pool.routeStatsNs * w;
+            state->devBusySum += w * pool.routeTotalNs() * 1.0e-9; ++state->devBusySamples;   // seconds inside the callbacks per second
+        }
         int worstRouteIndex = -1;
         const float worst = safeThis->engine.takeMaxBlockLoad(&worstRouteIndex);
         safeThis->takeLateCallbacksOfAllRoutes();   // the per-route counters (health log), cleared
@@ -18431,7 +18444,11 @@ void MainComponent::startPolyphonyMeasurement()
             + " % (" + safeThis->engine.routeLabel(worstRouteIndex) + "), lanes busy " + juce::String(juce::roundToInt(pool.laneUtilisation * 100.0)) + " % of "
             + juce::String(pool.jobs) + " route job(s) on " + juce::String(pool.lanes) + " lanes, per voice and block: header " + juce::String(juce::roundToInt(pool.voiceHeaderNs))
             + " ns, spans " + juce::String(juce::roundToInt(pool.voiceSpansNs)) + " ns, kernel " + juce::String(juce::roundToInt(pool.voiceKernelNs)) + " ns, post " + juce::String(juce::roundToInt(pool.voicePostNs))
-            + " ns (" + juce::String(pool.profiledVoices) + " voice renders), CPU " + juce::String(juce::roundToInt(state->lastProcessShare * 100.0))
+            + " ns (" + juce::String(pool.profiledVoices) + " voice renders), device thread per route callback: " + juce::String(juce::roundToInt(pool.routeTotalNs() / 1000.0))
+            + " us = own render " + juce::String(juce::roundToInt(pool.routePoolOwnNs / 1000.0)) + " + wait for lanes " + juce::String(juce::roundToInt(pool.routePoolWaitNs / 1000.0))
+            + " + mix " + juce::String(juce::roundToInt((pool.routeMixNs + pool.routeSeparationNs + pool.routeClipNs) / 1000.0)) + " + IR hand-over " + juce::String(juce::roundToInt(pool.routeReverbNs / 1000.0))
+            + " (waiting " + juce::String(juce::roundToInt(pool.routeReverbWaitNs / 1000.0)) + ") + bookkeeping " + juce::String(juce::roundToInt((pool.routeTakeNs + pool.routeCompactNs + pool.routeRecordNs + pool.routeStatsNs) / 1000.0))
+            + " (" + juce::String(pool.routeCallbacks) + " callbacks, " + juce::String(juce::roundToInt(100.0 * (double)pool.routeCallbacks * pool.routeTotalNs() * 1.0e-9)) + " % of the time), CPU " + juce::String(juce::roundToInt(state->lastProcessShare * 100.0))
             + " % of all logical CPUs, late driver callbacks: ASIO " + juce::String(lateness.asioLate)
             + " (gaps over 1.5 periods " + juce::String(lateness.asioOver15) + ", over 2 " + juce::String(lateness.asioOver2) + ", longest "
             + juce::String(lateness.asioMaxGapMs, 1) + " ms), other devices " + juce::String(lateness.otherLate) + " (longest " + juce::String(lateness.otherMaxGapMs, 1) + " ms)");
@@ -19066,6 +19083,23 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
             const double ceiling = (double)renderCores * 0.85 * blockMs * 1.0e6 / ((double)blockFrames * nsBest);
             advice << " The kernel alone would reach about " << juce::String(juce::roundToInt(ceiling / 100.0) * 100) << " voices at this buffer; the limit of "
                    << newLimit << " is " << juce::roundToInt(100.0 * newLimit / juce::jmax(1.0, ceiling)) << " % of that - the rest is bookkeeping, hand-over and the device thread's own work.";
+        }
+        if (state->devCalls > 0.0)
+        {
+            // The device thread's profile of the run (0.8.137): where a route callback's
+            // time went besides the rendering of the lanes. Per route callback, in
+            // microseconds; the period for scale; the share of the time the device
+            // threads spent inside the callbacks (every route of every device).
+            auto us = [&](double sum) { return juce::String(juce::roundToInt(sum / state->devCalls / 1000.0)); };
+            const double total = state->devTake + state->devOwn + state->devWait + state->devMix + state->devCompact + state->devSeparation
+                + state->devReverb + state->devClip + state->devRecord + state->devStats;
+            const double busy = state->devBusySamples > 0 ? state->devBusySum / state->devBusySamples : 0.0;
+            advice << "\n\nThe device thread, per route callback (a period is " << juce::roundToInt(blockMs * 1000.0) << " us): " << us(total) << " us in all - its own rendering of voices "
+                   << us(state->devOwn) << ", waiting for the other lanes and merging their output " << us(state->devWait)
+                   << ", mixing (block context, harmonic shelf, channel separation, safety clip) " << us(state->devMix + state->devSeparation + state->devClip)
+                   << ", IR hand-over " << us(state->devReverb) << " (of it waiting for the convolution " << us(state->devReverbWait) << ")"
+                   << ", bookkeeping (voices in and out, recording, load statistics) " << us(state->devTake + state->devCompact + state->devRecord + state->devStats)
+                   << ". The device threads spent " << juce::roundToInt(busy * 100.0) << " % of the time inside the route callbacks (the copy to the driver, a few us per route, not counted).";
         }
         // The callback time of this run as a fixed part per block and a part per
         // voice (from the lowest clean level and the failing level). No forecast

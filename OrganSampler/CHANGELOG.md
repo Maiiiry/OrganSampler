@@ -12,6 +12,20 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.137] - 2026-10-20
+
+### Added
+- The polyphony report profiles the device thread: per route callback, in
+  microseconds, this thread's own rendering of voices, the wait for the other
+  lanes with the merging of their output, the mixing (block context, harmonic
+  shelf, channel separation, safety clip), the IR hand-over (and of it the
+  wait for the convolution task) and the bookkeeping (voices in and out,
+  recording, load statistics), with the period for scale and the share of the
+  time the device threads spent inside the callbacks. The per-second log line
+  of the measurement carries the same figures. On a computer whose render
+  cores are not full when the sound breaks (the two-core laptops), this says
+  where the time goes before anything is changed.
+
 ## [0.8.136] - 2026-10-20
 
 ### Fixed

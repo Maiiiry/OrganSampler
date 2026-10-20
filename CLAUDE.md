@@ -232,6 +232,16 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   editor + OK, `placeDialog` key "longMessage") for the Hauptwerk summary; the polyphony report uses the same component.
   Save prompt = Save / Don't Save / Cancel ("Save As..." without a file). Linux window icon = icon48 (X11 takes one
   image); the desktop-entry installer also writes ~/.local/share/pixmaps/organsampler.png (48) for antiX-like WMs.
+  0.8.137 device-thread profile (while `gVoiceProfiling`): `renderRoute` laps `statRouteTake/Loop/Compact/Separation/
+  Reverb/Clip/Record/Stats` (profiling clock, ten reads per route callback), the pool fills `tlPoolOwnTicks` (the
+  poster's own chunks) and `tlPoolWaitTicks` (the rest of pool->render: waiting for lanes, merging their scratch),
+  `waitIrTask` fills `tlReverbWaitTicks`; `RenderPoolStats::routeCallbacks` + `route*Ns` per route callback
+  (`routeMixNs` = loop - own - wait), `routeTotalNs()`. The report paragraph "The device thread, per route callback
+  (a period is P us): ..." and the per-second log line ("device thread per route callback: ... N % of the time") are the
+  measurement the batch rendering of all routes of a device in one pool job (the next step, not coded yet) must be
+  judged against: routes of one device are ALREADY one stream (one AudioDeviceManager host, route callbacks called in
+  sequence - `route->managerInUse->addAudioCallback`); the IR convolution already runs as a pool task posted by the last
+  route of the group and joined by the first route of the next block. Never claim "one stream per device" is missing.
 - A route without a device ("none") gets NO voices (0.8.126, `Route::hasDevice` set by `setPerspectiveDeviceKey`,
   checked in `publishVoice`: the voice is finished at once). Before, every pipe was published to its perspective's
   route whatever the device and sat there unrendered until `cleanStaleRoutes` flushed it after ~1 s, counted as

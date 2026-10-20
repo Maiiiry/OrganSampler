@@ -965,6 +965,16 @@ public:
         // The voice profile (while setVoiceProfiling is on): ns per voice and block
         // in the voice header (bookkeeping), the span logic, the kernels, the tone post-processing.
         juce::int64 profiledVoices = 0; double voiceHeaderNs = 0.0, voiceSpansNs = 0.0, voiceKernelNs = 0.0, voicePostNs = 0.0;
+        // The device thread's profile (0.8.137, while setVoiceProfiling is on): ns per
+        // route callback in its phases - the voices taken in, the pool (this thread's own
+        // rendering, the wait for the other lanes with the hand-over), the mixing
+        // around the pool (block context, shelf low-pass), the finished voices handed
+        // back, the channel separation, the IR hand-over (of it: waiting for the
+        // convolution task), the safety clip, the recording, the load statistics.
+        juce::int64 routeCallbacks = 0;
+        double routeTakeNs = 0.0, routePoolOwnNs = 0.0, routePoolWaitNs = 0.0, routeMixNs = 0.0, routeCompactNs = 0.0, routeSeparationNs = 0.0,
+               routeReverbNs = 0.0, routeReverbWaitNs = 0.0, routeClipNs = 0.0, routeRecordNs = 0.0, routeStatsNs = 0.0;
+        double routeTotalNs() const noexcept { return routeTakeNs + routePoolOwnNs + routePoolWaitNs + routeMixNs + routeCompactNs + routeSeparationNs + routeReverbNs + routeClipNs + routeRecordNs + routeStatsNs; }
     };
     RenderPoolStats takeRenderPoolStats() noexcept;
     // Times the parts of every voice render (a few clock reads per voice): the

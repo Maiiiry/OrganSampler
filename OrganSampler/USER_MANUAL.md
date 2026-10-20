@@ -797,7 +797,17 @@ instrument; a stop cut in the middle of its files, or with one perspective
 loaded and another not, is dropped whole, and every stop left out is named
 once in the message and stays in the pool of the Stop List - nothing stands
 on the grid half loaded. The polyphony report then says the loading stopped
-on purpose; it never claims the system is paging when it is not. The "free" figure is what the
+on purpose; it never claims the system is paging when it is not.
+
+The report also profiles the device thread (0.8.137): per route callback,
+in microseconds, how much went into this thread's own rendering of voices,
+into waiting for the other lanes and merging their output, into the mixing
+(block context, harmonic shelf, channel separation, safety clip), into the
+IR hand-over (and of it, waiting for the convolution task) and into the
+bookkeeping (voices in and out, recording, load statistics); with the period
+for scale and the share of the time the device threads spent inside the
+callbacks. It is what tells, on a computer whose render cores are not full
+when the sound breaks, where the time goes. The "free" figure is what the
 system could give the program now: Windows' available physical memory,
 Linux's MemAvailable (the reclaimable cache included), macOS's free and
 inactive pages; the footprint rule is the one that bites on an 8 GB machine.

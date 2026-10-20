@@ -204,6 +204,10 @@ namespace
     std::atomic<bool> gVoiceProfiling{ false };
     struct VoiceProfile { int64_t header = 0, spans = 0, kernel = 0, post = 0; int64_t voices = 0; };
     thread_local VoiceProfile tlVoiceProfile;
+    // The device thread's profile (0.8.137): inside pool->render, this thread's own
+    // rendering and the rest (waiting for the other lanes, the hand-over, merging
+    // their scratch); inside the IR hand-over, the wait for the convolution task.
+    thread_local int64_t tlPoolOwnTicks = 0, tlPoolWaitTicks = 0, tlReverbWaitTicks = 0;
     // The profiling clock is the CPU's cycle counter (rdtsc, cntvct_el0), a
     // register read of a few ns: six reads per voice. The system clock of JUCE
     // (clock_gettime) was a ~1 us call on an old Linux laptop with an HPET clock
@@ -2488,10 +2492,13 @@ namespace
             for (int c = 0; c < mine.numOuts; ++c) { mine.out[c] = outs[c]; mine.wet[c] = wets[c]; }
             mine.sink = sink;
 
+            const bool prof = gVoiceProfiling.load(std::memory_order_relaxed);
+            const int64_t profEntry = prof ? profileTicks() : 0;
             Job* job = numWorkers > 0 && num >= 24 && laneLimit != 1 ? acquireJob() : nullptr;
             if (job == nullptr)
             {
                 renderRange(voiceIndices, 0, num, pool, ctx, mine);
+                if (prof) tlPoolOwnTicks += profileDelta(profEntry, profileTicks());
                 return;
             }
 
@@ -2547,8 +2554,10 @@ namespace
             // This thread is a lane as well.
             int idx, count;
             const int64_t posterStart = juce::Time::getHighResolutionTicks();
+            const int64_t profPoster0 = prof ? profileTicks() : 0;
             while ((count = takeChunk(*job, idx)) > 0)
                 renderRange(voiceIndices, idx, idx + count, pool, ctx, mine);
+            const int64_t profOwn = prof ? profileDelta(profPoster0, profileTicks()) : 0;
             const int64_t posterBusy = juce::Time::getHighResolutionTicks() - posterStart;
             foldVoiceProfile();
             // Wait for the other lanes. On few cores the wait yields the core: a
@@ -2588,6 +2597,11 @@ namespace
                 releaseScratch(scratchIndex);
             }
             job->inUse.store(false, std::memory_order_release);
+            if (prof)
+            {
+                tlPoolOwnTicks += profOwn;
+                tlPoolWaitTicks += juce::jmax<int64_t>(0, profileDelta(profEntry, profileTicks()) - profOwn);
+            }
         }
 
         //----------------------------------------------------------------------
@@ -3893,7 +3907,7 @@ struct SamplerEngine::Impl
             route.reverbGroupSeenBlock = host.reverbGroupBlockId;
         }
         // The previous block's convolution must be over (it had a whole period).
-        if (first && host.irTaskIndex >= 0) pool->waitTask(host.irTaskIndex);
+        if (first && host.irTaskIndex >= 0) waitIrTask(host);
         const int pairCount = juce::jmin((int)rv->pairs.size(), host.irIn.getNumChannels() / 2, host.irOut.getNumChannels() / 2);
         const bool mixPrevious = first && host.irOutValid && host.irOutFrames == totalSamples;
         int pairIndex = 0;
@@ -3940,9 +3954,17 @@ struct SamplerEngine::Impl
 
     // The convolution of the dry block in host.irIn goes to a worker (the
     // previous one is over: waited above). Render thread, host.reverbGroupLock held.
+    // The wait for the group's convolution task (timed for the device thread's profile).
+    void waitIrTask(Route& host) noexcept
+    {
+        const bool prof = gVoiceProfiling.load(std::memory_order_relaxed);
+        const int64_t w0 = prof ? profileTicks() : 0;
+        pool->waitTask(host.irTaskIndex);
+        if (prof) tlReverbWaitTicks += profileDelta(w0, profileTicks());
+    }
     void postRouteConvolution(Route& host) noexcept
     {
-        if (host.irTaskIndex >= 0) pool->waitTask(host.irTaskIndex);
+        if (host.irTaskIndex >= 0) waitIrTask(host);
         host.irTask.impl = this;
         host.irTask.route = &host;
         const int index = routeIndexOf(&host);
@@ -5390,6 +5412,18 @@ struct SamplerEngine::Impl
         if (suspended.load(std::memory_order_acquire)) return;
         juce::ScopedNoDenormals noDenormals;
         const int64_t startTicks = juce::Time::getHighResolutionTicks();
+        // The device thread's profile (0.8.137, while the measurement profiles): a
+        // clock read at every phase boundary of this callback, ten per route.
+        const bool prof = gVoiceProfiling.load(std::memory_order_relaxed);
+        int64_t profLast = prof ? profileTicks() : 0;
+        auto lap = [&](std::atomic<int64_t>& into)
+        {
+            if (!prof) return;
+            const int64_t t = profileTicks();
+            into.fetch_add(profileDelta(profLast, t), std::memory_order_relaxed);
+            profLast = t;
+        };
+        if (prof) { tlPoolOwnTicks = 0; tlPoolWaitTicks = 0; tlReverbWaitTicks = 0; }
         const double now = nowMs();
         const int totalSamples = buffer.getNumSamples();
         const int numOuts = buffer.getNumChannels();
@@ -5412,6 +5446,7 @@ struct SamplerEngine::Impl
             }
             route.addHead.store(head, std::memory_order_release);
         }
+        lap(statRouteTake);
         route.lastRenderMs.store(now, std::memory_order_relaxed);
         lastBlockMs.store(1000.0 * totalSamples / juce::jmax(1000.0, route.sampleRate.load(std::memory_order_relaxed)),
             std::memory_order_relaxed);
@@ -5452,6 +5487,8 @@ struct SamplerEngine::Impl
             }
         }
 
+        lap(statRouteLoop);
+        if (prof) { statRoutePoolOwn.fetch_add(tlPoolOwnTicks, std::memory_order_relaxed); statRoutePoolWait.fetch_add(tlPoolWaitTicks, std::memory_order_relaxed); }
         // Compact: finished voices go back to the control thread.
         route.finishedScratch.clear();
         size_t w = 0;
@@ -5477,6 +5514,7 @@ struct SamplerEngine::Impl
             if (controlThreadRunning.load(std::memory_order_relaxed)) controlWake.signal();   // reclaim them soon
         }
 
+        lap(statRouteCompact);
         // Channel separation: with less than 100 % each route channel receives
         // (1 - separation) of every other channel's signal (mono pipes spread over
         // several channels leak into the others; at 0 % all channels carry the sum).
@@ -5509,9 +5547,12 @@ struct SamplerEngine::Impl
             }
         }
 
+        lap(statRouteSeparation);
         // IR reverb of this route (its output pairs), before the safety clip and
         // the recording so both see the final sound of the perspective.
         applyRouteReverb(route, buffer, ctx, numOuts, totalSamples);
+        lap(statRouteReverb);
+        if (prof) statRouteReverbWait.fetch_add(tlReverbWaitTicks, std::memory_order_relaxed);
 
         // Safety clip: identity below 0.98, smooth saturation above so a huge
         // registration can never hand hard-clipped garbage to the driver.
@@ -5534,6 +5575,7 @@ struct SamplerEngine::Impl
             }
         }
 
+        lap(statRouteClip);
         // Recording: add this route's final output into the shared stereo ring.
         if (owner.recordingActive.load(std::memory_order_acquire) && recorder != nullptr
             && route.recRing[0].size() == (size_t)Recorder::ringSize)
@@ -5564,6 +5606,7 @@ struct SamplerEngine::Impl
             route.recPosPublished.store(route.recPos, std::memory_order_release);
         }
 
+        lap(statRouteRecord);
         const double elapsedSeconds = (double)(juce::Time::getHighResolutionTicks() - startTicks)
             / (double)juce::Time::getHighResolutionTicksPerSecond();
         const double blockSeconds = totalSamples / juce::jmax(1000.0, ctx.routeRate);
@@ -5606,8 +5649,14 @@ struct SamplerEngine::Impl
         }
         owner.renderThreadLoadCount.store(juce::jmin(numThreads, 8), std::memory_order_relaxed);
         activeAudioThreads.store(juce::jmax(1, numThreads), std::memory_order_relaxed);
+        lap(statRouteStats);
+        if (prof) statRouteCalls.fetch_add(1, std::memory_order_relaxed);
     }
     std::atomic<int> activeAudioThreads{ 1 };   // device callback threads that rendered within 250 ms
+    // The device thread's profile: profiling-clock ticks summed over the route
+    // callbacks since the last takeRenderPoolStats (see RenderPoolStats).
+    std::atomic<int64_t> statRouteCalls{ 0 }, statRouteTake{ 0 }, statRouteLoop{ 0 }, statRoutePoolOwn{ 0 }, statRoutePoolWait{ 0 }, statRouteCompact{ 0 },
+        statRouteSeparation{ 0 }, statRouteReverb{ 0 }, statRouteReverbWait{ 0 }, statRouteClip{ 0 }, statRouteRecord{ 0 }, statRouteStats{ 0 };
 };
 
 //==============================================================================
@@ -5857,6 +5906,26 @@ SamplerEngine::RenderPoolStats SamplerEngine::takeRenderPoolStats() noexcept
         impl->pool->takeStats(stats.jobs, stats.laneUtilisation, stats.posterShare, stats.jobSeconds,
             stats.profiledVoices, stats.voiceHeaderNs, stats.voiceSpansNs, stats.voiceKernelNs, stats.voicePostNs);
     stats.lanes = getRenderWorkerCount() + 1;
+    if (impl != nullptr)
+    {
+        auto& i = *impl;
+        const int64_t calls = i.statRouteCalls.exchange(0, std::memory_order_relaxed);
+        const double per = calls > 0 ? 1.0e9 / (double)profileTicksPerSecond() / (double)calls : 0.0;
+        auto take = [&](std::atomic<int64_t>& a) { return (double)a.exchange(0, std::memory_order_relaxed) * per; };
+        stats.routeCallbacks = calls;
+        stats.routeTakeNs = take(i.statRouteTake);
+        const double loop = take(i.statRouteLoop);
+        stats.routePoolOwnNs = take(i.statRoutePoolOwn);
+        stats.routePoolWaitNs = take(i.statRoutePoolWait);
+        stats.routeMixNs = juce::jmax(0.0, loop - stats.routePoolOwnNs - stats.routePoolWaitNs);
+        stats.routeCompactNs = take(i.statRouteCompact);
+        stats.routeSeparationNs = take(i.statRouteSeparation);
+        stats.routeReverbNs = take(i.statRouteReverb);
+        stats.routeReverbWaitNs = take(i.statRouteReverbWait);
+        stats.routeClipNs = take(i.statRouteClip);
+        stats.routeRecordNs = take(i.statRouteRecord);
+        stats.routeStatsNs = take(i.statRouteStats);
+    }
     return stats;
 }
 
