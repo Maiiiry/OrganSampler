@@ -4423,7 +4423,24 @@ juce::File MainComponent::writeProblemReport(const juce::String& what, const juc
     // The computer, the program and the audio devices as they are now.
     juce::String system;
     const juce::String version(ProjectInfo::versionString);
-    const auto os = juce::SystemStats::getOperatingSystemName();
+    // The operating system with its version (0.8.138): Windows 11 (24H2, build
+    // 26100), Linux Mint 22 with its kernel; macOS names its version itself.
+    juce::String os = juce::SystemStats::getOperatingSystemName();
+   #if JUCE_WINDOWS
+    {
+        const auto release = juce::WindowsRegistry::getValue("HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\DisplayVersion");
+        const auto build = juce::WindowsRegistry::getValue("HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\CurrentBuildNumber");
+        if (release.isNotEmpty() || build.isNotEmpty())
+            os << " (" << release << (release.isNotEmpty() && build.isNotEmpty() ? ", " : "") << (build.isNotEmpty() ? "build " + build : juce::String()) << ")";
+    }
+   #elif JUCE_LINUX
+    {
+        for (const auto& line : juce::StringArray::fromLines(juce::File("/etc/os-release").loadFileAsString()))
+            if (line.startsWith("PRETTY_NAME=")) { os << " " << line.fromFirstOccurrenceOf("=", false, false).trim().unquoted(); break; }
+        const auto kernel = juce::File("/proc/sys/kernel/osrelease").loadFileAsString().trim();
+        if (kernel.isNotEmpty()) os << ", kernel " << kernel;
+    }
+   #endif
     const auto cpu = juce::SystemStats::getCpuModel().trim();
     const int physical = juce::SystemStats::getNumPhysicalCpus(), logical = juce::SystemStats::getNumCpus();
     const int ramMb = juce::SystemStats::getMemorySizeInMegabytes();
@@ -4440,10 +4457,12 @@ juce::File MainComponent::writeProblemReport(const juce::String& what, const juc
            << "divisions: " << (manualCount + 1) << ", stops: " << engine.getStops().size() << ", folder trees: " << (int)sampleTrees.size() << "\n";
     for (const auto& tree : sampleTrees) system << "  tree: " << tree << (juce::File(tree).isDirectory() ? "" : "  (not found)") << "\n";
     juce::String audio;
+    int routeLines = 0;
     static const juce::String names[8]{ "Pedal", "I.", "II.", "III.", "IV.", "V.", "VI.", "VII." };
     for (int manual = 0; manual <= manualCount && manual < SamplerEngine::maxManuals; ++manual)
         for (const auto& perspective : engine.getPerspectivesForManual(manual))
         {
+            ++routeLines;
             auto* manager = managerForRoute(manual, perspective);
             auto* device = manager != nullptr ? manager->getCurrentAudioDevice() : nullptr;
             const auto& channels = perspective.equalsIgnoreCase("default") ? manualConfigs[(size_t)manual].outputChannels
@@ -4504,17 +4523,37 @@ juce::File MainComponent::writeProblemReport(const juce::String& what, const juc
     // The GitHub form with its fields filled in. The operating system is a text
     // field: GitHub takes text from the link, a dropdown's value it did not
     // (the user had to pick it by hand).
-    issueUrl = juce::URL("https://github.com/zurek-jiri/OrganSampler/issues/new")
-        .withParameter("template", "bug_report.yml")
-        .withParameter("title", "[Bug] " + what.upToFirstOccurrenceOf("\n", false, false).substring(0, 70))
-        .withParameter("version", version)
-        .withParameter("os", os)
-        .withParameter("audio", audio.isNotEmpty() ? audio : juce::String("no audio device"))
-        .withParameter("samples", currentConfigurationName.isNotEmpty() ? "configuration \"" + currentConfigurationName + "\"" : juce::String())
-        .withParameter("what", what)
-        .withParameter("steps", steps)
-        .withParameter("system", systemBlock)   // the computer, the routes, the configuration - in the issue even without the zip
-        .withParameter("hardware", cpu + ", " + juce::String(ramMb / 1024.0, 0) + " GB RAM");
+    // The link must stay short (0.8.138): GitHub answered a long one - the
+    // whole system block of a computer with twenty routes - with "500" after the
+    // sign-in it asked for (it folds the link into the sign-in's return link).
+    // Under 6000 characters the full block goes; else the routes are cut (they
+    // are in system.txt of logs.zip), else the block goes altogether.
+    auto clipped = [](const juce::String& text, int limit)
+    {
+        return text.length() <= limit ? text : text.substring(0, limit) + "\n[... the rest is in system.txt of logs.zip]";
+    };
+    auto makeUrl = [&](const juce::String& systemText)
+    {
+        return juce::URL("https://github.com/zurek-jiri/OrganSampler/issues/new")
+            .withParameter("template", "bug_report.yml")
+            .withParameter("title", "[Bug] " + what.upToFirstOccurrenceOf("\n", false, false).substring(0, 70))
+            .withParameter("version", version)
+            .withParameter("os", os)
+            .withParameter("audio", audio.isNotEmpty() ? audio : juce::String("no audio device"))
+            .withParameter("samples", currentConfigurationName.isNotEmpty() ? "configuration \"" + currentConfigurationName + "\"" : juce::String())
+            .withParameter("what", clipped(what, 1500))
+            .withParameter("steps", clipped(steps, 1500))
+            .withParameter("system", systemText)   // the computer, the routes, the configuration - in the issue even without the zip
+            .withParameter("hardware", cpu + ", " + juce::String(ramMb / 1024.0, 0) + " GB RAM");
+    };
+    issueUrl = makeUrl(systemBlock);
+    if (issueUrl.toString(true).length() > 6000)
+    {
+        const juce::String head = systemBlock.upToFirstOccurrenceOf("route ", false, false);
+        issueUrl = makeUrl(head + "routes: " + juce::String(routeLines) + " (in system.txt of logs.zip)\n");
+    }
+    if (issueUrl.toString(true).length() > 6000) issueUrl = makeUrl("See system.txt in logs.zip.");
+    CrashHandler::note("Problem report link: " + juce::String(issueUrl.toString(true).length()) + " characters");
     // The link to the filled-in form as a file in the folder: a double-click opens
     // it again - after a sign-in, a password reset or a new account, when GitHub
     // forgot where the user was going.
@@ -4542,7 +4581,7 @@ void MainComponent::showAfterReport(const juce::URL& url, const juce::File& fold
     // account) and then land somewhere else - the form is opened again from here,
     // filled in, as often as needed; the link is in the folder as well.
     auto* window = new juce::AlertWindow("Report a problem",
-        "The report folder " + folder.getFileName() + " is on your Desktop, the GitHub form opens in the browser.\n"
+        "The report folder " + folder.getFileName() + " (on your Desktop) opens in the file manager, the GitHub form in the browser - put them side by side.\n"
         "Drag logs.zip into \"Logs\" and the pictures into \"Screenshots\", then \"Submit new issue\".\n"
         "Asked to sign in first? Press \"Open the GitHub form\" again afterwards.",
         juce::MessageBoxIconType::InfoIcon);
@@ -4552,8 +4591,15 @@ void MainComponent::showAfterReport(const juce::URL& url, const juce::File& fold
     window->enterModalState(true, juce::ModalCallbackFunction::create([url, folder](int result)
     {
         if (result == 1) { url.launchInDefaultBrowser(); showAfterReport(url, folder); }
-        else if (result == 2) { folder.revealToUser(); showAfterReport(url, folder); }
+        else if (result == 2) { folder.startAsProcess(); showAfterReport(url, folder); }
     }), true);
+    // At the bottom of the screen, out of the way of the browser and the file
+    // manager the user drags the zip between (0.8.138: it sat in the middle over both).
+    if (auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
+    {
+        const auto area = display->userArea;
+        window->setTopLeftPosition(area.getX() + (area.getWidth() - window->getWidth()) / 2, area.getBottom() - window->getHeight() - area.getHeight() / 50);
+    }
 }
 
 void MainComponent::showProblemReportDialog()
@@ -4617,7 +4663,7 @@ void MainComponent::showProblemReportDialog()
                 juce::URL url;
                 const auto folder = owner.writeProblemReport(whatText, steps.getText().trim(), windowShots.getToggleState(), extra, url);
                 if (auto* window = findParentComponentOfClass<juce::DialogWindow>()) window->exitModalState(0);
-                folder.revealToUser();
+                folder.startAsProcess();   // the folder itself (revealToUser opened its parent on macOS, the folder only selected)
                 url.launchInDefaultBrowser();
                 MainComponent::showAfterReport(url, folder);
             };
@@ -10236,12 +10282,43 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
                 juce::DynamicObject::Ptr item = new juce::DynamicObject();
                 item->setProperty("step", step);
                 item->setProperty("stops", stopStates);
-                item->setProperty("couplers", juce::Array<juce::var>());
+                // The definition's couplers at this stage (0.8.138): on when the stage draws
+                // their drawstop, off otherwise - like the stops.
+                juce::Array<juce::var> couplerStates;
+                for (const auto& coupler : plan.couplers)
+                {
+                    juce::DynamicObject::Ptr state = new juce::DynamicObject();
+                    state->setProperty("id", coupler.id);
+                    state->setProperty("enabled", std::find(stage.couplerSwitchIds.begin(), stage.couplerSwitchIds.end(), coupler.switchId) != stage.couplerSwitchIds.end());
+                    couplerStates.add(juce::var(state.get()));
+                }
+                item->setProperty("couplers", couplerStates);
                 steps.add(juce::var(item.get()));
                 ++crescendoStepsMade;
             }
             crescendo->setProperty("steps", steps);
             rootObject->setProperty("crescendo", juce::var(crescendo.get()));
+        }
+        // The couplers of the definition (0.8.138): the ones OrganSampler has a
+        // coupler for are shown; the catalog's default unison couplers that the
+        // definition does not have are hidden, so the console shows Hauptwerk's.
+        {
+            std::set<juce::String> wanted;
+            for (const auto& coupler : plan.couplers) wanted.insert(coupler.id);
+            std::set<juce::String> ids(wanted);
+            const int manuals = juce::jmax(1, (int)plan.divisions.size() - 1);
+            for (int source = 0; source <= manuals; ++source)
+                for (int target = source + 1; target <= manuals; ++target) ids.insert(juce::String(target) + "-" + juce::String(source) + "-8");
+            if (manuals >= 2) ids.insert("1-2-8");
+            juce::Array<juce::var> couplerList;
+            for (const auto& id : ids)
+            {
+                juce::DynamicObject::Ptr item = new juce::DynamicObject();
+                item->setProperty("id", id);
+                item->setProperty("visible", wanted.count(id) > 0);
+                couplerList.add(juce::var(item.get()));
+            }
+            rootObject->setProperty("couplers", couplerList);
         }
         {
             // An empty voicing state: a new organ, nothing of the previous one's
@@ -10290,7 +10367,14 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
         if (plan.skippedTremmedRanks > 0) summary << "\nTremmed ranks left out: " << plan.skippedTremmedRanks << " (OrganSampler has its own tremulant).";
         if (plan.skippedNoiseRanks > 0) summary << "\nNoise ranks left out: " << plan.skippedNoiseRanks << ".";
         if (plan.extensions > 0) summary << "\nExtensions/transmissions (stops playing another stop's ranks, shifted): " << plan.extensions << " - made as transmissions once the stops are loaded.";
-        if (crescendoStepsMade > 0) summary << "\nGeneral crescendo: " << (int)plan.crescendo.size() << " stage(s) of the definition as " << crescendoStepsMade << " step(s) of ours (stops only; couplers are not taken).";
+        if (crescendoStepsMade > 0) summary << "\nGeneral crescendo: " << (int)plan.crescendo.size() << " stage(s) of the definition as " << crescendoStepsMade << " step(s) of ours (stops and couplers).";
+        if (!plan.couplers.empty() || plan.couplersUnmapped > 0)
+        {
+            juce::StringArray labels;
+            for (const auto& coupler : plan.couplers) labels.add(coupler.label);
+            summary << "\nCouplers: " << (int)plan.couplers.size() << " of the definition made as ours (" << labels.joinIntoString(", ") << ")"
+                    << (plan.couplersUnmapped > 0 ? " - " + juce::String(plan.couplersUnmapped) + " without a coupler of ours, see below" : juce::String()) << ".";
+        }
         if (plan.stopsWithoutSamples > 0) summary << "\nStops without playable pipes (couplers, tremulants, toys): " << plan.stopsWithoutSamples << ".";
         for (const auto& note : plan.notes) summary << "\n" << note;
         CrashHandler::note("Hauptwerk import plan: " + summary.replaceCharacters("\n", " ") + "; configuration " + plan.configurationFile.getFullPathName());
@@ -17912,6 +17996,7 @@ struct MainComponent::PolyphonyMeasurement
     // and the share of the time the device threads spent inside the route callbacks (callbacks x their length per second).
     double devCalls = 0.0, devTake = 0.0, devOwn = 0.0, devWait = 0.0, devMix = 0.0, devCompact = 0.0, devSeparation = 0.0, devReverb = 0.0, devReverbWait = 0.0,
            devClip = 0.0, devRecord = 0.0, devStats = 0.0, devBusySum = 0.0; int devBusySamples = 0;
+    double devMaxTotal = 0.0, devMaxOwn = 0.0, devMaxWait = 0.0;   // the longest route callback of the run and its parts (ns)
     int renderThreads = 1;            // the render threads (the audio thread included) = the cores the program renders on
     // The kernel benchmark of this computer (ns per voice and frame, cache and RAM), taken for the report once the run is over.
     SamplerEngine::KernelBenchmark kernelBench;
@@ -18410,6 +18495,7 @@ void MainComponent::startPolyphonyMeasurement()
             state->devReverb += pool.routeReverbNs * w; state->devReverbWait += pool.routeReverbWaitNs * w; state->devClip += pool.routeClipNs * w;
             state->devRecord += pool.routeRecordNs * w; state->devStats += pool.routeStatsNs * w;
             state->devBusySum += w * pool.routeTotalNs() * 1.0e-9; ++state->devBusySamples;   // seconds inside the callbacks per second
+            if (pool.routeMaxTotalNs > state->devMaxTotal) { state->devMaxTotal = pool.routeMaxTotalNs; state->devMaxOwn = pool.routeMaxOwnNs; state->devMaxWait = pool.routeMaxWaitNs; }
         }
         int worstRouteIndex = -1;
         const float worst = safeThis->engine.takeMaxBlockLoad(&worstRouteIndex);
@@ -18448,7 +18534,8 @@ void MainComponent::startPolyphonyMeasurement()
             + " us = own render " + juce::String(juce::roundToInt(pool.routePoolOwnNs / 1000.0)) + " + wait for lanes " + juce::String(juce::roundToInt(pool.routePoolWaitNs / 1000.0))
             + " + mix " + juce::String(juce::roundToInt((pool.routeMixNs + pool.routeSeparationNs + pool.routeClipNs) / 1000.0)) + " + IR hand-over " + juce::String(juce::roundToInt(pool.routeReverbNs / 1000.0))
             + " (waiting " + juce::String(juce::roundToInt(pool.routeReverbWaitNs / 1000.0)) + ") + bookkeeping " + juce::String(juce::roundToInt((pool.routeTakeNs + pool.routeCompactNs + pool.routeRecordNs + pool.routeStatsNs) / 1000.0))
-            + " (" + juce::String(pool.routeCallbacks) + " callbacks, " + juce::String(juce::roundToInt(100.0 * (double)pool.routeCallbacks * pool.routeTotalNs() * 1.0e-9)) + " % of the time), CPU " + juce::String(juce::roundToInt(state->lastProcessShare * 100.0))
+            + " (" + juce::String(pool.routeCallbacks) + " callbacks, " + juce::String(juce::roundToInt(100.0 * (double)pool.routeCallbacks * pool.routeTotalNs() * 1.0e-9)) + " % of the time; longest "
+            + juce::String(juce::roundToInt(pool.routeMaxTotalNs / 1000.0)) + " us with own render " + juce::String(juce::roundToInt(pool.routeMaxOwnNs / 1000.0)) + ", wait " + juce::String(juce::roundToInt(pool.routeMaxWaitNs / 1000.0)) + "), CPU " + juce::String(juce::roundToInt(state->lastProcessShare * 100.0))
             + " % of all logical CPUs, late driver callbacks: ASIO " + juce::String(lateness.asioLate)
             + " (gaps over 1.5 periods " + juce::String(lateness.asioOver15) + ", over 2 " + juce::String(lateness.asioOver2) + ", longest "
             + juce::String(lateness.asioMaxGapMs, 1) + " ms), other devices " + juce::String(lateness.otherLate) + " (longest " + juce::String(lateness.otherMaxGapMs, 1) + " ms)");
@@ -19099,7 +19186,9 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
                    << ", mixing (block context, harmonic shelf, channel separation, safety clip) " << us(state->devMix + state->devSeparation + state->devClip)
                    << ", IR hand-over " << us(state->devReverb) << " (of it waiting for the convolution " << us(state->devReverbWait) << ")"
                    << ", bookkeeping (voices in and out, recording, load statistics) " << us(state->devTake + state->devCompact + state->devRecord + state->devStats)
-                   << ". The device threads spent " << juce::roundToInt(busy * 100.0) << " % of the time inside the route callbacks (the copy to the driver, a few us per route, not counted).";
+                   << ". The device threads spent " << juce::roundToInt(busy * 100.0) << " % of the time inside the route callbacks (the copy to the driver, a few us per route, not counted)."
+                   << " The longest route callback of the run took " << juce::roundToInt(state->devMaxTotal / 1000.0) << " us - its own rendering " << juce::roundToInt(state->devMaxOwn / 1000.0)
+                   << ", waiting for the lanes " << juce::roundToInt(state->devMaxWait / 1000.0) << ": the sound breaks on such a peak, not on the average.";
         }
         // The callback time of this run as a fixed part per block and a part per
         // voice (from the lowest clean level and the failing level). No forecast

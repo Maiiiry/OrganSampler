@@ -64,6 +64,12 @@ struct HauptwerkOdf
         std::vector<RankUse> rankUses;
     };
     struct Division { int id = 0; juce::String name; };
+    // A coupler of the definition (a KeyAction row): the keys of a keyboard play
+    // a destination keyboard or a division directly, shifted by 'shift'
+    // semitones, while the condition switch (the coupler's drawstop) is on;
+    // melody = the top note only (Billerbeck "ii-ped cantus firmus").
+    struct Coupler { int sourceKeyboardId = 0, destKeyboardId = 0, destDivisionId = 0, switchId = 0, shift = 0; bool melody = false; juce::String name, switchName; };
+    std::vector<Coupler> couplers;                  // in file order
     // A keyboard and the divisions its keys play: every division whose inputs
     // the key switches reach through the switch linkages, with or without a
     // condition switch (Caen: the Pedal keyboard plays "Pedal" always and
@@ -89,7 +95,7 @@ struct HauptwerkOdf
     // the switches it sets; the stop switches are found through the switch
     // linkages (the stages set intermediate "CrescendoCombSwitch" switches).
     // A stage = the ODF stops drawn at it (couplers are left out).
-    struct CrescendoStep { int stage = 0; std::vector<int> stopIds; };
+    struct CrescendoStep { int stage = 0; std::vector<int> stopIds; std::vector<int> couplerSwitchIds; };   // couplerSwitchIds: the coupler switches the stage draws (0.8.138)
     std::vector<CrescendoStep> crescendo;        // by stage
 
     juce::String organName, builder, location, supplier;
@@ -162,6 +168,12 @@ struct HauptwerkOdf
         juce::File configurationFile;                // where the configuration goes: the main package folder
         int stopsWithoutSamples = 0, skippedTremmedRanks = 0, skippedNoiseRanks = 0, extensions = 0;
         std::vector<juce::String> oneShotFolders;    // stop folder names of the one-shot stops (no release samples): for the One-shot Patterns
+        // The couplers of the definition OrganSampler has a coupler for (0.8.138):
+        // id = our coupler id ("target-source-type", MainComponent::rebuildCouplerCatalog),
+        // label = the definition's name, switchId = its drawstop (the crescendo stages name it).
+        struct PlanCoupler { juce::String id, label; int switchId = 0; };
+        std::vector<PlanCoupler> couplers;
+        int couplersUnmapped = 0;                    // couplers of the definition with no coupler of ours (the notes say which)
         juce::StringArray notes;                     // what was left out and why (for the log and the message)
         juce::String error;
     };

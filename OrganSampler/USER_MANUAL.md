@@ -536,7 +536,15 @@ division; a FLOATING division - one no keyboard reaches without a coupler
 8" on the Great, "Ped. Clairon en chamade" on the Pedal, "5. Tuba 16" on V).
 A stop none of whose ranks has release samples (a carillon, chimes) is a
 one-shot stop: its folder names join the One-shot Patterns of the
-configuration. A stop
+configuration. The couplers of the definition (0.8.138: its KeyAction rows -
+the keys of one keyboard playing another keyboard or a division, shifted by
+0, 12 or -12 semitones, or the top note only) become the couplers of ours
+that exist for them - a keyboard pulling a higher division at 8', 16', 4' or
+as a melody coupler, itself at 16' and 4', I from II - and only those are
+shown on the console; a coupler of the definition OrganSampler has no
+coupler for (one to a division without a keyboard of ours, a 24' coupler) is
+named in the import's report. The general crescendo takes them too: a stage
+that draws a coupler's drawstop switches it on in that step. A stop
 with several ranks in ONE perspective (Caen: a stereo stop recorded as a
 left and a right rank, "Quintaton 16 (L component)" and "(R component)",
 two folders for the same perspective) becomes a stop folder: its own row
@@ -806,8 +814,10 @@ into waiting for the other lanes and merging their output, into the mixing
 IR hand-over (and of it, waiting for the convolution task) and into the
 bookkeeping (voices in and out, recording, load statistics); with the period
 for scale and the share of the time the device threads spent inside the
-callbacks. It is what tells, on a computer whose render cores are not full
-when the sound breaks, where the time goes. The "free" figure is what the
+callbacks, and the longest route callback of the run with its parts - the
+sound breaks on such a peak, never on the average. It is what tells, on a
+computer whose render cores are not full when the sound breaks, where the
+time goes. The "free" figure is what the
 system could give the program now: Windows' available physical memory,
 Linux's MemAvailable (the reclaimable cache included), macOS's free and
 inactive pages; the footprint rule is the one that bites on an 8 GB machine.
@@ -2844,7 +2854,12 @@ untick the box if you do not want them), plus any screenshot files you add
 with *Add screenshot files...*. Then the GitHub bug report opens in your
 browser with its fields filled in from the dialog: drag `logs.zip` into
 "Logs" (the first field of the form) and the pictures into "Screenshots",
-check the text, submit. A free
+check the text, submit. The report folder itself opens in the file manager
+beside it, and the program's own message sits at the bottom of the screen,
+out of the way: put the browser and the folder side by side and drag. The
+link carries the computer and the routes only while it stays short (0.8.138;
+GitHub answered a long one with an error after its sign-in) - the whole
+list is in `system.txt` of `logs.zip` in any case. A free
 GitHub account is needed to submit; the report is public, like every issue
 of a free program.
 

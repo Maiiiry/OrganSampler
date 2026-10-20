@@ -346,6 +346,7 @@ HauptwerkOdf HauptwerkOdf::parse(const juce::File& file, const std::function<boo
     // The combinations: the crescendo is one per stage ("Cresc.Comb.12"); an
     // element = a switch the combination sets, on (Y) or off.
     std::map<int, juce::String> combinationNames;                    // CombinationID -> name
+    std::map<int, juce::String> switchNames;                         // SwitchID -> name (the couplers' drawstops)
     struct ElementRow { int combinationId = 0, switchId = 0; bool on = false; };
     std::vector<ElementRow> combinationElements;
     int rows = 0;
@@ -412,6 +413,34 @@ HauptwerkOdf HauptwerkOdf::parse(const juce::File& file, const std::function<boo
             {
                 const int division = row.integer("DivisionID", "a"), inputSwitch = row.integer("SwitchID", "b");
                 if (division > 0 && inputSwitch > 0) divisionOfInputSwitch[inputSwitch] = division;
+            }
+        }
+        else if (lower == "switch")
+        {
+            while (scanner.nextRow(row))
+            {
+                const int id = row.integer("SwitchID", "a");
+                if (id > 0) switchNames[id] = row.text("Name", "b");
+            }
+        }
+        else if (lower == "keyaction")
+        {
+            // A coupler: a = the keyboard played, c = the keyboard it plays as well (or
+            // d = the division), f = the condition switch (the drawstop), n = the
+            // semitones (12 = a 4' coupler, -12 = 16'), h = 3 on a melody coupler
+            // (Bellevue, Billerbeck, Caen: compacted letters; the long names are a guess
+            // for an uncompacted file and fall back to the letters).
+            while (scanner.nextRow(row))
+            {
+                Coupler c;
+                c.sourceKeyboardId = row.integer("SourceKeyboardID", "a");
+                c.destKeyboardId = row.integer("DestKeyboardID", "c");
+                c.destDivisionId = row.integer("DestDivisionID", "d");
+                c.switchId = row.integer("ConditionSwitchID", "f");
+                c.shift = row.integer("MIDINoteNumIncrementToDestination", "n", 0);
+                c.melody = row.integer("ActionTypeCode", "h", 0) == 3;
+                c.name = row.text("Name", "e");
+                if (c.sourceKeyboardId > 0 && c.switchId > 0 && (c.destKeyboardId > 0 || c.destDivisionId > 0)) odf.couplers.push_back(c);
             }
         }
         else if (lower == "switchlinkage")
@@ -801,6 +830,8 @@ HauptwerkOdf HauptwerkOdf::parse(const juce::File& file, const std::function<boo
             }
         }
     }
+    for (auto& c : odf.couplers)
+        if (const auto name = switchNames.find(c.switchId); name != switchNames.end()) c.switchName = name->second;
     // The crescendo: every combination whose name says "cresc" is one stage
     // (the number at the end of the name: "Cresc.Comb.12"); its elements set
     // switches, which reach the stops' own switches through the switch
@@ -827,6 +858,25 @@ HauptwerkOdf HauptwerkOdf::parse(const juce::File& file, const std::function<boo
             }
             return 0;
         };
+        // The couplers a stage draws: the element's switch reaching a coupler's
+        // drawstop the same way (0.8.138).
+        std::set<int> couplerSwitches;
+        for (const auto& c : odf.couplers) couplerSwitches.insert(c.switchId);
+        auto couplerSwitchOf = [&](int switchId) -> int
+        {
+            std::set<int> seen{ switchId };
+            std::vector<int> frontier{ switchId };
+            for (int hop = 0; hop < 8 && !frontier.empty(); ++hop)
+            {
+                for (const int s : frontier) if (couplerSwitches.count(s) > 0) return s;
+                std::vector<int> next;
+                for (const int s : frontier)
+                    for (const int t : neighbours[s]) if (seen.insert(t).second) next.push_back(t);
+                frontier.swap(next);
+            }
+            return 0;
+        };
+        std::map<int, std::set<int>> couplersOnByStage;
         std::map<int, std::set<int>> stopsOnByStage;
         std::map<int, int> stageOfCombination;
         for (const auto& [id, name] : combinationNames)
@@ -846,10 +896,15 @@ HauptwerkOdf HauptwerkOdf::parse(const juce::File& file, const std::function<boo
                 if (stage == stageOfCombination.end() || !e.on) continue;
                 auto cached = stopCache.find(e.switchId);
                 const int stopId = cached != stopCache.end() ? cached->second : (stopCache[e.switchId] = stopOf(e.switchId));
-                if (stopId > 0) stopsOnByStage[stage->second].insert(stopId);
+                if (stopId > 0) { stopsOnByStage[stage->second].insert(stopId); continue; }
+                if (const int couplerSwitch = couplerSwitchOf(e.switchId); couplerSwitch > 0) couplersOnByStage[stage->second].insert(couplerSwitch);
             }
             for (const auto& [stage, ids] : stopsOnByStage)
-                odf.crescendo.push_back({ stage, std::vector<int>(ids.begin(), ids.end()) });
+            {
+                CrescendoStep step{ stage, std::vector<int>(ids.begin(), ids.end()), {} };
+                if (const auto c = couplersOnByStage.find(stage); c != couplersOnByStage.end()) step.couplerSwitchIds.assign(c->second.begin(), c->second.end());
+                odf.crescendo.push_back(step);
+            }
         }
     }
     // Which divisions every tremulant works on: its waveforms' pipes -> their
@@ -1378,6 +1433,79 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
     for (const auto& division : result.divisions)
         for (const auto& tree : division.trees)
             if (std::find(result.allTrees.begin(), result.allTrees.end(), tree) == result.allTrees.end()) result.allTrees.push_back(tree);
+    // The couplers of the definition as couplers of ours (0.8.138): the keyboard
+    // played = our source division, the keyboard or division pulled = our
+    // target; the type from the semitones (0 unison, 12 the 4', -12 the 16') or
+    // the melody flag. What our catalog has (MainComponent::rebuildCouplerCatalog):
+    // a keyboard pulls a higher division in every type, itself at 16' and 4', I
+    // from II (the usual exception) and the pedal a bass coupler; the rest
+    // (Bellevue "Bom-Ped 8" of a floating division, a 24' coupler) is noted.
+    {
+        auto indexOfKeyboard = [&](int keyboardId) -> int
+        {
+            for (size_t i = 0; i < ordered.size(); ++i) if (ordered[i].id == keyboardId) return (int)i;
+            return -1;
+        };
+        auto indexOfDivision = [&](int divisionId) -> int
+        {
+            for (size_t i = 0; i < ordered.size(); ++i)
+            {
+                const auto ids = divisionsOf(ordered[i]);
+                if (std::find(ids.begin(), ids.end(), divisionId) != ids.end()) return (int)i;
+            }
+            return -1;
+        };
+        const int top = (int)ordered.size() - 1;
+        for (const auto& c : couplers)
+        {
+            const int source = indexOfKeyboard(c.sourceKeyboardId);
+            // A coupler to a division: the division of ours that holds its stops. The
+            // stops of a floating division (Bellevue "Chamade") lie in several divisions
+            // of ours by their names - nothing of ours to couple.
+            bool floating = false;
+            int target = -1;
+            if (c.destKeyboardId > 0) target = indexOfKeyboard(c.destKeyboardId);
+            else
+            {
+                std::set<int> holders;
+                for (size_t i = 0; i < result.divisions.size(); ++i)
+                    for (const auto& planStop : result.divisions[i].stops)
+                        if (const auto it = stops.find(planStop.stopId); it != stops.end() && it->second.divisionId == c.destDivisionId) holders.insert((int)i);
+                if (holders.size() == 1) target = *holders.begin();
+                else if (holders.size() > 1) floating = true;
+                else target = indexOfDivision(c.destDivisionId);   // no stop of it loaded: the keyboard playing it
+            }
+            juce::String type;
+            if (c.melody) type = "mel";
+            else if (c.shift == 0) type = "8";
+            else if (c.shift == 12) type = "4";
+            else if (c.shift == -12) type = "16";
+            bool ok = source >= 0 && target >= 0 && source <= top && target <= top && type.isNotEmpty();
+            if (ok)
+            {
+                if (target > source) ok = true;
+                else if (target == source) ok = type == "16" || type == "4";
+                else ok = target == 1 && source == 2;
+            }
+            juce::String label = c.switchName.isNotEmpty() ? c.switchName : c.name;
+            for (const char* head : { "Slider Coupler ", "Slider ", "Coupler " })
+                if (label.startsWithIgnoreCase(head)) label = label.substring((int)std::strlen(head)).trim();
+            if (!ok)
+            {
+                ++result.couplersUnmapped;
+                result.notes.add("coupler \"" + label + "\" (" + c.name + "): no coupler of ours for it"
+                    + (floating ? juce::String(" - a floating division, its stops lie in several divisions of ours") : target < 0 ? juce::String(" - its division has no keyboard of ours") : type.isEmpty() ? " - " + juce::String(c.shift) + " semitones" : juce::String()));
+                continue;
+            }
+            Plan::PlanCoupler pc;
+            pc.id = juce::String(target) + "-" + juce::String(source) + "-" + type;
+            pc.label = label;
+            pc.switchId = c.switchId;
+            bool known = false;
+            for (const auto& existing : result.couplers) if (existing.id == pc.id) known = true;
+            if (!known) result.couplers.push_back(pc);
+        }
+    }
     // What the whole definition holds besides (for the message): the tremmed
     // ranks (alternate ranks of the stops, never listed under them) and the noises.
     for (const auto& [id, rank] : ranks)

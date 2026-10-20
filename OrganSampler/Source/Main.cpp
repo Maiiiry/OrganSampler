@@ -146,6 +146,7 @@ public:
                     if (stage.stage > 6 && stage.stage != plan.crescendo.back().stage) continue;   // the first six and the last
                     report << "      stage " << stage.stage << ":";
                     for (const int id : stage.stopIds) report << " [" << (odf.stops.count(id) > 0 ? odf.stops.at(id).name : juce::String(id)) << "]";
+                    for (const int sw : stage.couplerSwitchIds) for (const auto& c : plan.couplers) if (c.switchId == sw) report << " {" << c.label << "}";
                     report << "\n";
                 }
             }
@@ -153,6 +154,8 @@ public:
                    << ", extensions/transmissions " << plan.extensions << "\n";
             for (const auto& n : plan.notes) report << "  note: " << n << "\n";
             for (const auto& f : plan.oneShotFolders) report << "  one-shot folder: " << f << "\n";
+            for (const auto& c : plan.couplers) report << "  coupler " << c.id << " = \"" << c.label << "\" (switch " << c.switchId << ")\n";
+            if (plan.couplersUnmapped > 0) report << "  couplers without one of ours: " << plan.couplersUnmapped << "\n";
             report << "  configuration: " << plan.configurationFile.getFullPathName() << "\n";
             juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile("OrganSampler").getChildFile("hauptwerk.txt").replaceWithText(report);
             std::fputs(report.toRawUTF8(), stdout);

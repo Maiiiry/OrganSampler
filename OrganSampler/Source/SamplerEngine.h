@@ -975,6 +975,11 @@ public:
         double routeTakeNs = 0.0, routePoolOwnNs = 0.0, routePoolWaitNs = 0.0, routeMixNs = 0.0, routeCompactNs = 0.0, routeSeparationNs = 0.0,
                routeReverbNs = 0.0, routeReverbWaitNs = 0.0, routeClipNs = 0.0, routeRecordNs = 0.0, routeStatsNs = 0.0;
         double routeTotalNs() const noexcept { return routeTakeNs + routePoolOwnNs + routePoolWaitNs + routeMixNs + routeCompactNs + routeSeparationNs + routeReverbNs + routeClipNs + routeRecordNs + routeStatsNs; }
+        // The longest route callback since the last query and its parts (0.8.138): the
+        // sound breaks on such a peak, never on the average - the averages of the
+        // two-core laptops sat at a third of the period while the longest driver
+        // callback took 87 % of it.
+        double routeMaxTotalNs = 0.0, routeMaxOwnNs = 0.0, routeMaxWaitNs = 0.0;
     };
     RenderPoolStats takeRenderPoolStats() noexcept;
     // Times the parts of every voice render (a few clock reads per voice): the

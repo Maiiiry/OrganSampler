@@ -5416,6 +5416,7 @@ struct SamplerEngine::Impl
         // clock read at every phase boundary of this callback, ten per route.
         const bool prof = gVoiceProfiling.load(std::memory_order_relaxed);
         int64_t profLast = prof ? profileTicks() : 0;
+        const int64_t profStart = profLast;
         auto lap = [&](std::atomic<int64_t>& into)
         {
             if (!prof) return;
@@ -5650,13 +5651,26 @@ struct SamplerEngine::Impl
         owner.renderThreadLoadCount.store(juce::jmin(numThreads, 8), std::memory_order_relaxed);
         activeAudioThreads.store(juce::jmax(1, numThreads), std::memory_order_relaxed);
         lap(statRouteStats);
-        if (prof) statRouteCalls.fetch_add(1, std::memory_order_relaxed);
+        if (prof)
+        {
+            statRouteCalls.fetch_add(1, std::memory_order_relaxed);
+            // The longest callback and its parts: the peak is what breaks the sound.
+            auto atomicMax = [](std::atomic<int64_t>& into, int64_t value)
+            {
+                int64_t known = into.load(std::memory_order_relaxed);
+                while (value > known && !into.compare_exchange_weak(known, value, std::memory_order_relaxed)) {}
+            };
+            atomicMax(statRouteMaxTotal, profileDelta(profStart, profLast));
+            atomicMax(statRouteMaxOwn, tlPoolOwnTicks);
+            atomicMax(statRouteMaxWait, tlPoolWaitTicks);
+        }
     }
     std::atomic<int> activeAudioThreads{ 1 };   // device callback threads that rendered within 250 ms
     // The device thread's profile: profiling-clock ticks summed over the route
     // callbacks since the last takeRenderPoolStats (see RenderPoolStats).
     std::atomic<int64_t> statRouteCalls{ 0 }, statRouteTake{ 0 }, statRouteLoop{ 0 }, statRoutePoolOwn{ 0 }, statRoutePoolWait{ 0 }, statRouteCompact{ 0 },
-        statRouteSeparation{ 0 }, statRouteReverb{ 0 }, statRouteReverbWait{ 0 }, statRouteClip{ 0 }, statRouteRecord{ 0 }, statRouteStats{ 0 };
+        statRouteSeparation{ 0 }, statRouteReverb{ 0 }, statRouteReverbWait{ 0 }, statRouteClip{ 0 }, statRouteRecord{ 0 }, statRouteStats{ 0 },
+        statRouteMaxTotal{ 0 }, statRouteMaxOwn{ 0 }, statRouteMaxWait{ 0 };
 };
 
 //==============================================================================
@@ -5925,6 +5939,10 @@ SamplerEngine::RenderPoolStats SamplerEngine::takeRenderPoolStats() noexcept
         stats.routeClipNs = take(i.statRouteClip);
         stats.routeRecordNs = take(i.statRouteRecord);
         stats.routeStatsNs = take(i.statRouteStats);
+        const double tickNs = 1.0e9 / (double)profileTicksPerSecond();
+        stats.routeMaxTotalNs = (double)i.statRouteMaxTotal.exchange(0, std::memory_order_relaxed) * tickNs;
+        stats.routeMaxOwnNs = (double)i.statRouteMaxOwn.exchange(0, std::memory_order_relaxed) * tickNs;
+        stats.routeMaxWaitNs = (double)i.statRouteMaxWait.exchange(0, std::memory_order_relaxed) * tickNs;
     }
     return stats;
 }
@@ -10188,6 +10206,7 @@ void SamplerEngine::loadManualFolder(const juce::File& topFolder, int manualInde
             lastLoadError = "The computer ran out of memory while loading\n" + topFolder.getFullPathName()
                 + "\n\nOnly the stops loaded so far are available" + (skipped > 0 ? " (not loaded: " + list + ")" : juce::String()) + ". Unload another division or close other programs.";
     }
+    if (lastLoadError.isNotEmpty()) CrashHandler::note("Load message: " + lastLoadError.replace("\n", " | "));   // what the dialog says (0.8.138: the reports did not carry it)
     for (auto& [groupManual, group] : groups) impl->pendingDivisions.push_back(std::move(group.division));
 }
 

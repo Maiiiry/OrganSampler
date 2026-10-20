@@ -12,6 +12,38 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.138] - 2026-10-20
+
+### Added
+- Hauptwerk import: the couplers of the definition (its KeyAction rows: the
+  keys of one keyboard playing another keyboard or a division, shifted by 0,
+  12 or -12 semitones, or the top note only) become the couplers of ours that
+  exist for them - a keyboard pulling a higher division at 8', 16', 4' or as
+  a melody coupler, itself at 16' and 4', I from II - and the console shows
+  only those. The general crescendo takes them too: a stage that draws a
+  coupler's drawstop switches it on in that step. A coupler of the
+  definition OrganSampler has no coupler for (one to a division without a
+  keyboard of ours, a 24' coupler) is named in the import's report.
+
+### Fixed
+- Report a problem: GitHub answered the filled-in form link with an error
+  after the sign-in it asked for when the link was long (a computer with
+  twenty routes). The link carries the routes only while it stays under
+  6000 characters, else their number; the whole list is in system.txt of
+  logs.zip. The report folder itself opens in the file manager (macOS
+  opened its parent), and the program's message sits at the bottom of the
+  screen instead of over the browser and the folder.
+- The operating system of a report names its version: "Windows 11 (24H2,
+  build 26100)", "Linux Mint 22, kernel 6.8".
+- The device-thread profile of the polyphony report also gives the longest
+  route callback of the run with its own rendering and its wait for the
+  lanes: the first reports with the profile (#27-#31) showed the callbacks
+  at a third of the period on average while the longest driver callback took
+  87 % of it - the sound breaks on a peak, never on the average, and the
+  average could not show it. The per-second log line carries the peak too.
+- The message of a loading stopped for memory goes into the activity log
+  ("Load message: ..."): the reports did not carry what the dialog said.
+
 ## [0.8.137] - 2026-10-20
 
 ### Added

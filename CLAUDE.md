@@ -242,6 +242,31 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   judged against: routes of one device are ALREADY one stream (one AudioDeviceManager host, route callbacks called in
   sequence - `route->managerInUse->addAudioCallback`); the IR convolution already runs as a pool task posted by the last
   route of the group and joined by the first route of the next block. Never claim "one stream per device" is missing.
+  0.8.138 couplers: `KeyAction` rows (a source keyboard, c dest keyboard / d dest division, f condition switch = the
+  drawstop, n semitones, h = 3 melody; e name "4 To 3,121") -> `HauptwerkOdf::couplers` (+ `switchName` from the
+  `Switch` table, b = name); `plan()` maps them to OUR ids "target-source-type" (type 8/16/4/mel; source = our index of
+  keyboard a, target = our index of keyboard c or of the division d) within the catalog (target > source any type,
+  self 16/4, 1 from 2) -> `Plan.couplers` (`PlanCoupler{id,label,switchId}`), the rest `couplersUnmapped` + notes
+  (Bellevue "Bom-Ped 8" to the floating Chamade division, Billerbeck 24'). The import writes the top-level "couplers"
+  list ({id, visible}: the HW ones visible, the catalog's default unison ones hidden) and the crescendo steps'
+  "couplers" [{id, enabled}] (`CrescendoStep::couplerSwitchIds`: elements reaching a coupler drawstop through the
+  linkage BFS, like the stops). Billerbeck must give iv-i, iv-ped, super iii-ped ... as 5-1-8, 5-0-8, 4-0-4 ...;
+  Caen 4 To 1 / 3 To 1 / 2 To 1 (keyboards) + the -12 division couplers. `--hauptwerk` prints "coupler <id> = ...".
+  Report link 0.8.138: GitHub returned 500 after the sign-in for a long link (the whole system block with 20+ routes
+  folded into the sign-in's return URL): `makeUrl` keeps the link under 6000 chars (what/steps clipped to 1500, the
+  routes replaced by their count, then the block dropped; everything is in system.txt of logs.zip), logged "Problem
+  report link: N characters". OS string with version (Windows DisplayVersion + build from the registry, Linux
+  PRETTY_NAME + kernel). The report folder opens with `startAsProcess()` (not `revealToUser`: macOS showed the
+  parent), the after-report box sits at the bottom of the screen.
+  First profiles (#27-#31, 0.8.137): per route callback the AVERAGE is 100-500 us (own render 70-80 %, wait for lanes
+  10-15 %, mix, IR hand-over ~0, bookkeeping up to 66 us at 44 000 voices on the Ryzen) = 13-71 % of the time, while
+  "longest driver callback" (DeviceClock: first route entry -> last route end of one driver callback, a gap > 0.2 ms
+  between routes starts a new one) was 80-87 % - the break is a PEAK of one period, invisible in averages (a single
+  9 ms stretch per second adds 6 us to a 440 us average). 0.8.138 adds `statRouteMaxTotal/Own/Wait` (RenderPoolStats
+  `routeMax*Ns`, MeasureState `devMax*`, log "longest T us with own render A, wait B", report "The longest route
+  callback of the run took ..."). Next: find what the peak is (a lane preempted? the control thread? the worker asleep
+  at the period start on <= 2 cores?) before touching the 85 % rule or batching. `lastLoadError` is logged as "Load
+  message: ..." (the Mac reports of #27 stopped by kernel pressure level 2 at 5.0 GB of 8 GB).
 - A route without a device ("none") gets NO voices (0.8.126, `Route::hasDevice` set by `setPerspectiveDeviceKey`,
   checked in `publishVoice`: the voice is finished at once). Before, every pipe was published to its perspective's
   route whatever the device and sat there unrendered until `cleanStaleRoutes` flushed it after ~1 s, counted as
@@ -365,8 +390,33 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   over (use a non-portable configuration of this machine, a portable one would ask for the root); quit the program
   afterwards. No legend above the table. Every README looks the same. Stralsund: 53 + 18 = 71.
 
+## Pending for the next session (the user, 20 Oct 2026 evening, from Linux - delete when done)
+- Linux window icon at start-up is "rozsypana" (scrambled) since 0.8.136 (`Main.cpp` sends `icon48_png` to `setIcon`
+  instead of AppIcon 1024). Before it was upside down for a moment while loading but crisp. Find out why the 48 px
+  image comes out scrambled through JUCE's X11 `_NET_WM_ICON` path (image format/stride? RGB vs ARGB?) - and fix the
+  upside-down too if it is ours. NEVER a rescaled icon: the hand-tuned set only.
+- Linux: switching the route device from JACK to ALSA after a polyphony measurement plays a flood of release tails
+  ("zamrzly buffer z konce mereni"): voices published to routes whose device stopped stay in the route's ring/active
+  list and sound when the route gets a device again. After the measurement (and whenever a route's device closes) the
+  route's voices must be dropped for good (noteOffAll + flush the add ring, the active list and the IR hand-over
+  buffers of every route) - never left to play later.
+- macOS: the memory stop still reports "too many stops not loaded" while every stop seems loaded. Check exactly what
+  `/mnt/pracovni/Suchy_rejstrik/Kobrle/TestingOrgan.json` holds (rows per division, nested trees "Samply" +
+  "Samply/testy/*": a stop reachable through two trees may be counted twice or the count may include the nested tree's
+  scan) and what the dialog says when the load stops early. The user thinks it is still wrong.
+- New issues on GitHub (read them all) and the optimisation question: "rendering sleeps while the device thread does
+  not keep up - the CPU is not used fully" (two-core machines). With the 0.8.137 device-thread profile in the reports,
+  propose how to use the idle lanes: batch rendering of all routes of a device in one pool job, the device thread not
+  waiting idle, the IR task placement, the control tick. Propose, then code after the user says so.
+- Report a problem: open the browser in the LEFT half of the screen and the file manager in the RIGHT half, INSIDE the
+  report folder (macOS `revealToUser` opens the parent folder with the folder selected - open the folder itself,
+  `juce::File::startAsProcess()` / `open <folder>`), so both are visible side by side and the zip can be dragged into the
+  form; the "Report a problem" message box must not sit in the middle over them - put it small at the bottom of the
+  screen or fold it into the report dialog. Nothing centred over everything.
+- The user went to Windows; more reports come from there and he says what to do next.
+
 ## Pending for the next Linux session (delete when done)
-- The Linux clone `~/OrganSamplerC-linux` is at 0.8.135 (20 Oct 2026); the NTFS checkout `F:` is the user's (git cannot
+- The Linux clone `~/OrganSamplerC-linux` needs `git pull` (0.8.138 was made on Windows); the NTFS checkout `F:` is the user's (git cannot
   run there from Linux: "expected submodule path 'JUCE' not to be a symbolic link"). After each release copy the Linux
   binary to `~/Downloads/OrganSampler`.
 - Windows builds: never run two MSBuilds of the solution at once - the second fails with C1041 (PDB) and can
