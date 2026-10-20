@@ -68,7 +68,7 @@ struct HauptwerkOdf
     // a destination keyboard or a division directly, shifted by 'shift'
     // semitones, while the condition switch (the coupler's drawstop) is on;
     // melody = the top note only (Billerbeck "ii-ped cantus firmus").
-    struct Coupler { int sourceKeyboardId = 0, destKeyboardId = 0, destDivisionId = 0, switchId = 0, shift = 0; bool melody = false; juce::String name, switchName; };
+    struct Coupler { int sourceKeyboardId = 0, destKeyboardId = 0, destDivisionId = 0, switchId = 0, shift = 0; bool melody = false, bass = false; juce::String name, switchName; };   // bass: the lowest key only (Doesburg "bass_1": the manual's lowest key plays the pedal)
     std::vector<Coupler> couplers;                  // in file order
     // A keyboard and the divisions its keys play: every division whose inputs
     // the key switches reach through the switch linkages, with or without a

@@ -301,6 +301,7 @@ namespace
     // compressor holds other programs' pages at idle (0.43 GB on the 8 GB Mac,
     // #21, and the rule stopped a load of 2.4 GB). -1: no load running.
     std::atomic<juce::int64> gSwapBaseline{ -1 };
+    std::atomic<uint64_t> gRenderWorkerAffinity{ 0 };   // the render workers' processors (Windows, a hybrid CPU's performance cores; 0 = any)
     bool memoryShortNow(juce::String* reason = nullptr) { return MemoryInfo::shortNow(reason, juce::jmax((juce::int64)0, gSwapBaseline.load())); }
 
     // The render workers and the control thread run beside the audio callbacks
@@ -2857,6 +2858,13 @@ namespace
             juce::Thread::setCurrentThreadName("Organ Render " + juce::String(index));
             const auto granted = raiseAudioThreadPriority("Render worker");
             if (index == 0) CrashHandler::note(granted);   // once: every worker gets the same
+           #if JUCE_WINDOWS
+            if (const uint64_t mask = gRenderWorkerAffinity.load(std::memory_order_relaxed); mask != 0)
+            {
+                SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)mask);
+                if (index == 0) CrashHandler::note("Render workers pinned to the performance cores (mask 0x" + juce::String::toHexString((juce::int64)mask) + ")");
+            }
+           #endif
             juce::ScopedNoDenormals noDenormals;
             int64_t lastWorkTicks = 0;
             while (!shutdown.load(std::memory_order_relaxed))
@@ -6194,10 +6202,12 @@ juce::String SamplerEngine::runKernelSelfCheck()
     return result.trimEnd();
 }
 
-void SamplerEngine::setRenderThreadCount(int workers)
+void SamplerEngine::setRenderWorkerAffinityMask(juce::uint64 mask) { gRenderWorkerAffinity.store((uint64_t)mask, std::memory_order_relaxed); }
+
+void SamplerEngine::setRenderThreadCount(int workers, bool force)
 {
     const int wanted = workers < 0 ? Impl::automaticWorkerCount() : juce::jlimit(0, 62, workers);
-    if (impl->pool != nullptr && impl->pool->getWorkerCount() == wanted) return;
+    if (!force && impl->pool != nullptr && impl->pool->getWorkerCount() == wanted) return;
     impl->suspend();
     {
         const juce::ScopedLock sl(controlLock);

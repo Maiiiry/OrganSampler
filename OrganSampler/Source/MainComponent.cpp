@@ -50,6 +50,7 @@ namespace
 }
 #include "CrashHandler.h"
 #include "MemoryInfo.h"
+#include "CpuInfo.h"
 #include "TemperamentsData.h"   // temperaments.csv embedded by the pre-build step
 #include "LicencesData.h"       // the licence texts embedded (GenerateLicencesData.ps1)
 #include "ManualData.h"         // the user manual embedded (GenerateManualData.ps1)
@@ -4600,8 +4601,9 @@ namespace
     void placeNativeWindow(HWND hwnd, const juce::Rectangle<int>& r)
     {
         if (hwnd == nullptr) return;
-        if (IsZoomed(hwnd)) ShowWindow(hwnd, SW_RESTORE);
-        SetWindowPos(hwnd, HWND_TOP, r.getX(), r.getY(), r.getWidth(), r.getHeight(), SWP_NOZORDER | SWP_NOACTIVATE);
+        if (IsZoomed(hwnd) || IsIconic(hwnd)) ShowWindow(hwnd, SW_RESTORE);
+        // On top of everything else (our own windows included), both of them.
+        SetWindowPos(hwnd, HWND_TOP, r.getX(), r.getY(), r.getWidth(), r.getHeight(), SWP_SHOWWINDOW);
     }
 }
 #endif
@@ -4631,6 +4633,9 @@ void MainComponent::arrangeReportWindows(const juce::File& folder)
     DWORD pid = 0;
     if (foreground != nullptr) GetWindowThreadProcessId(foreground, &pid);
     if (foreground != nullptr && foreground != explorer.found && pid != GetCurrentProcessId()) placeNativeWindow(foreground, leftPx);
+    // The browser in front (the next thing the user does is in it), the folder visible beside it.
+    if (explorer.found != nullptr) BringWindowToTop(explorer.found);
+    if (foreground != nullptr && foreground != explorer.found && pid != GetCurrentProcessId()) { BringWindowToTop(foreground); SetForegroundWindow(foreground); }
     juce::ignoreUnused(left, right);
    #elif JUCE_MAC
     auto run = [](const juce::String& script)
@@ -4640,8 +4645,26 @@ void MainComponent::arrangeReportWindows(const juce::File& folder)
     };
     run("tell application \"Finder\" to set bounds of front window to {" + juce::String(right.getX()) + ", " + juce::String(right.getY()) + ", "
         + juce::String(right.getRight()) + ", " + juce::String(right.getBottom()) + "}");
-    run("tell application \"System Events\" to tell (first application process whose frontmost is true) to set {position, size} of front window to {{"
-        + juce::String(left.getX()) + ", " + juce::String(left.getY()) + "}, {" + juce::String(left.getWidth()) + ", " + juce::String(left.getHeight()) + "}}");
+    // The browser by its own scripting (Safari, Chrome, Edge, Brave take "bounds of
+    // front window" without any permission); where that fails (Firefox), through
+    // System Events, which needs the accessibility permission.
+    juce::String app;
+    {
+        juce::ChildProcess process;
+        if (process.start(juce::StringArray{ "osascript", "-e", "tell application \"System Events\" to get name of first application process whose frontmost is true" }))
+        { app = process.readAllProcessOutput().trim(); process.waitForProcessToFinish(3000); }
+    }
+    const juce::String bounds = "{" + juce::String(left.getX()) + ", " + juce::String(left.getY()) + ", " + juce::String(left.getRight()) + ", " + juce::String(left.getBottom()) + "}";
+    bool placed = false;
+    if (app.isNotEmpty() && app != "Finder" && app != "OrganSampler")
+    {
+        juce::ChildProcess process;
+        if (process.start(juce::StringArray{ "osascript", "-e", "tell application \"" + app + "\" to set bounds of front window to " + bounds }))
+        { process.waitForProcessToFinish(3000); placed = process.getExitCode() == 0; }
+    }
+    if (!placed)
+        run("tell application \"System Events\" to tell (first application process whose frontmost is true) to set {position, size} of front window to {{"
+            + juce::String(left.getX()) + ", " + juce::String(left.getY()) + "}, {" + juce::String(left.getWidth()) + ", " + juce::String(left.getHeight()) + "}}");
    #elif JUCE_LINUX
     if (!juce::File("/usr/bin/wmctrl").existsAsFile()) return;
     auto run = [](const juce::StringArray& args) { juce::ChildProcess process; if (process.start(args)) process.waitForProcessToFinish(3000); };
@@ -4738,13 +4761,16 @@ void MainComponent::showProblemReportDialog()
                 juce::URL url;
                 const auto folder = owner.writeProblemReport(whatText, steps.getText().trim(), windowShots.getToggleState(), extra, url);
                 if (auto* window = findParentComponentOfClass<juce::DialogWindow>()) window->exitModalState(0);
-                folder.startAsProcess();   // the folder itself (revealToUser opened its parent on macOS, the folder only selected)
+                // Our own message first (it takes the focus when it appears), then the
+                // two programs, so they end up on top: the folder itself in the file
+                // manager (revealToUser opened its parent on macOS), the form in the browser.
+                MainComponent::showAfterReport(url, folder);
+                folder.startAsProcess();
                 url.launchInDefaultBrowser();
                 // Side by side: the browser on the left, the folder on the right (the
                 // windows exist a moment later; a second try for a slow browser start).
                 juce::Timer::callAfterDelay(1500, [folder] { MainComponent::arrangeReportWindows(folder); });
                 juce::Timer::callAfterDelay(4500, [folder] { MainComponent::arrangeReportWindows(folder); });
-                MainComponent::showAfterReport(url, folder);
             };
             addAndMakeVisible(create);
             cancel.setButtonText("Cancel");
@@ -19197,6 +19223,10 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
         const int renderCores = juce::jmax(1, engine.getRenderWorkerCount() + 1);
         advice << "\n\nRender threads: " << renderCores << " on " << physical << " physical " << (physical == 1 ? "core" : "cores")
                << ", kernel " << engine.currentKernelName() << ".";
+        if (const auto& hybrid = CpuInfo::hybrid(); hybrid.hybrid())
+            advice << " This processor has " << hybrid.performanceCores << " performance and " << hybrid.efficiencyCores << " efficiency cores"
+                   << (renderThreadPreset == "performance" && renderThreads == 0 ? ": the render workers ran on the performance cores only."
+                       : " - a render worker on an efficiency core holds the others up; try Render threads: Performance cores only.");
         if (state->cpuSamples > 0)
         {
             // One figure (#24: "34 % on average, 100 % at the peak; the whole computer
@@ -19585,6 +19615,7 @@ int MainComponent::workersForCurrentPreset() const
     if (renderThreadPreset == "all") lanes = logical;
     else if (renderThreadPreset == "allMinusOne") lanes = logical - 1;
     else if (renderThreadPreset == "physicalMinusOne") lanes = physical - 1;
+    else if (renderThreadPreset == "performance" && CpuInfo::hybrid().hybrid()) lanes = CpuInfo::hybrid().performanceCores;   // a hybrid CPU: the P cores only (0.8.140)
     // "All physical cores" means all of them on every computer, two cores
     // included: the workers run at audio priority, spin only briefly and take
     // small chunks there (SamplerEngine), so the second lane helps instead of
@@ -19595,7 +19626,11 @@ int MainComponent::workersForCurrentPreset() const
 void MainComponent::applyRenderThreadSetting()
 {
     // renderThreads holds the total thread count (audio thread included), 0 = preset.
-    engine.setRenderThreadCount(renderThreads > 0 ? juce::jlimit(0, 62, renderThreads - 1) : workersForCurrentPreset());
+    // A hybrid CPU with the "performance" preset: the workers pinned to the P
+    // cores (the pool is rebuilt so that every worker takes the mask).
+    const bool performanceOnly = renderThreadPreset == "performance" && renderThreads == 0 && CpuInfo::hybrid().hybrid();
+    engine.setRenderWorkerAffinityMask(performanceOnly ? CpuInfo::hybrid().performanceMask : 0);
+    engine.setRenderThreadCount(renderThreads > 0 ? juce::jlimit(0, 62, renderThreads - 1) : workersForCurrentPreset(), true);
 }
 
 void MainComponent::showAboutDialog(const juce::String& manualSection, const juce::String& fallbackSection)
@@ -20541,6 +20576,14 @@ void MainComponent::showConfigurationEditor()
                 juce::StringArray items;
                 items.add("All physical cores (" + juce::String(physical) + (physical == 1 ? " thread" : " threads") + ")  [default]");
                 if (physical > 1) { presetIds.add("physicalMinusOne"); items.add("All physical cores - 1 (" + juce::String(physical - 1) + (physical == 2 ? " thread" : " threads") + ")"); }
+                // A hybrid processor (P + E cores, Windows tells): the performance cores
+                // only - a worker on an E core renders slower and the others wait for it (#34).
+                if (const auto& hybrid = CpuInfo::hybrid(); hybrid.hybrid())
+                {
+                    presetIds.add("performance");
+                    items.add("Performance cores only (" + juce::String(hybrid.performanceCores) + " threads; this processor has " + juce::String(hybrid.performanceCores)
+                        + " P and " + juce::String(hybrid.efficiencyCores) + " E cores - a worker on an E core holds the others up)");
+                }
                 if (logical > physical)
                 {
                     presetIds.add("all"); items.add("All logical CPUs (" + juce::String(logical) + " threads, hyper-threading, not recommended)");

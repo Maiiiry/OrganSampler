@@ -12,6 +12,25 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.140] - 2026-10-20
+
+### Added
+- Render threads: "Performance cores only" on a hybrid processor (Intel P + E
+  cores, Windows): the render workers run on the performance cores. A worker
+  on an efficiency core renders several times slower and the device thread
+  waits for it (#34: the longest callback 2.6 ms, of it 2.4 ms waiting for
+  the lanes). The polyphony report names such a processor and the choice.
+
+### Fixed
+- Hauptwerk import: the bass couplers of a definition (Doesburg "bass_1" to
+  "bass_4": the manual's lowest key plays the pedal) become our bass couplers
+  to the pedal; before they were left out.
+- Report a problem: the program's own message comes first and the file
+  manager and the browser after it, both brought to the top side by side -
+  the folder window went behind the program when the browser opened. On
+  macOS the browser is placed through its own scripting (Safari, Chrome,
+  Edge, Brave), System Events only where that fails.
+
 ## [0.8.139] - 2026-10-20
 
 ### Added

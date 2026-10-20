@@ -438,7 +438,9 @@ HauptwerkOdf HauptwerkOdf::parse(const juce::File& file, const std::function<boo
                 c.destDivisionId = row.integer("DestDivisionID", "d");
                 c.switchId = row.integer("ConditionSwitchID", "f");
                 c.shift = row.integer("MIDINoteNumIncrementToDestination", "n", 0);
-                c.melody = row.integer("ActionTypeCode", "h", 0) == 3;
+                const int actionType = row.integer("ActionTypeCode", "h", 0);   // 2 = the lowest key only (a bass coupler), 3 = the highest (melody)
+                c.melody = actionType == 3;
+                c.bass = actionType == 2;
                 c.name = row.text("Name", "e");
                 if (c.sourceKeyboardId > 0 && c.switchId > 0 && (c.destKeyboardId > 0 || c.destDivisionId > 0)) odf.couplers.push_back(c);
             }
@@ -1477,6 +1479,7 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
             }
             juce::String type;
             if (c.melody) type = "mel";
+            else if (c.bass) type = "bass";
             else if (c.shift == 0) type = "8";
             else if (c.shift == 12) type = "4";
             else if (c.shift == -12) type = "16";
@@ -1485,7 +1488,7 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
             {
                 if (target > source) ok = true;
                 else if (target == source) ok = type == "16" || type == "4";
-                else ok = target >= 1 && target < source;   // the couplers downwards (I/III, II/III ...), 0.8.139
+                else ok = (target >= 1 && target < source) || (target == 0 && type == "bass");   // the couplers downwards (I/III, II/III ...), 0.8.139; the pedal from a manual: its bass coupler (Doesburg "bass_1", 0.8.140)
             }
             juce::String label = c.switchName.isNotEmpty() ? c.switchName : c.name;
             for (const char* head : { "Slider Coupler ", "Slider ", "Coupler " })

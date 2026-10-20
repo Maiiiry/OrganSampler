@@ -901,7 +901,8 @@ public:
     // Number of render worker threads in addition to the audio callback thread.
     // 0 = the callback thread renders alone; negative = automatic (one lane per
     // physical core). Message thread only; briefly suspends rendering.
-    void setRenderThreadCount(int workers);
+    void setRenderThreadCount(int workers, bool force = false);   // force: rebuild the pool even at the same count (a new affinity, 0.8.140)
+    void setRenderWorkerAffinityMask(juce::uint64 mask);         // Windows: the logical processors the render workers run on (0 = any; the performance cores of a hybrid CPU)
     // Longest control tick (MIDI/attack/release bookkeeping) since the last call, in ms.
     float takeMaxControlTickMs() noexcept { return maxControlTickMs.exchange(0.0f); }
     // Control work since the last call: ticks run, their total time in ms, voices started.

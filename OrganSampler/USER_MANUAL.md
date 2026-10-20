@@ -548,7 +548,8 @@ couplers has the "downward" ones since 0.8.139 - a keyboard pulling a lower
 manual, I/II, I/III, II/III and so on at 8', 16', 4', as a melody or bass
 coupler, listed after the usual ones and hidden until shown (Couplers
 dialog) or brought by an import; the bass couplers to the pedal are the
-"pedal from the manual" couplers (the manual's lowest key plays the pedal). The general crescendo takes them too: a stage
+"pedal from the manual" couplers (the manual's lowest key plays the pedal) -
+Doesburg's "bass_1" to "bass_4" become them (0.8.140). The general crescendo takes them too: a stage
 that draws a coupler's drawstop switches it on in that step. A stop
 with several ranks in ONE perspective (Caen: a stereo stop recorded as a
 left and a right rank, "Quintaton 16 (L component)" and "(R component)",
@@ -1940,7 +1941,13 @@ against 0.9 ms), and such peaks are what breaks the sound up. So the
 leave room for other programs. Changing it briefly mutes the engine. The list
 holds only the choices this computer can tell apart: without hyper-threading
 "All logical CPUs" is the same as "All physical cores" and is not shown, a
-single core has no "all - 1". The setting belongs to the computer, never to an
+single core has no "all - 1". A hybrid processor (Intel 12th generation and
+later: performance and efficiency cores; Windows tells them apart) offers
+*Performance cores only* (0.8.140): a render worker on an efficiency core
+renders several times slower and the device thread waits for it - the
+measurement's longest callback of an Ultra 7 notebook was 2.6 ms of which
+2.4 ms waiting for the lanes; the report says so for such a processor. The
+setting belongs to the computer, never to an
 organ: a portable configuration carries none, and one of an older version that
 does is ignored (this computer's own setting stays). The default is every
 physical core on every computer: a setting that is not the default and was

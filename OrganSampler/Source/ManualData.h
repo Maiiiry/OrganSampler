@@ -556,7 +556,8 @@ static const char* const kManualText_part2 =
     "manual, I/II, I/III, II/III and so on at 8', 16', 4', as a melody or bass\n"
     "coupler, listed after the usual ones and hidden until shown (Couplers\n"
     "dialog) or brought by an import; the bass couplers to the pedal are the\n"
-    "\"pedal from the manual\" couplers (the manual's lowest key plays the pedal). The general crescendo takes them too: a stage\n"
+    "\"pedal from the manual\" couplers (the manual's lowest key plays the pedal) -\n"
+    "Doesburg's \"bass_1\" to \"bass_4\" become them (0.8.140). The general crescendo takes them too: a stage\n"
     "that draws a coupler's drawstop switches it on in that step. A stop\n"
     "with several ranks in ONE perspective (Caen: a stereo stop recorded as a\n"
     "left and a right rank, \"Quintaton 16 (L component)\" and \"(R component)\",\n"
@@ -605,9 +606,9 @@ static const char* const kManualText_part2 =
     "by a relative path, so the file works from that folder and from any other\n"
     "place the root is known. It is loaded at once and saved again with the\n"
     "voicing once the folders are loaded. Then check\n"
-    "the Stop List, give the perspectives their audio routes and the divisions\n"
     ;
 static const char* const kManualText_part3 =
+    "the Stop List, give the perspectives their audio routes and the divisions\n"
     "their MIDI keyboards, and *Save Configuration* - as a portable one to\n"
     "publish it.\n"
     "\n"
@@ -807,9 +808,9 @@ static const char* const kManualText_part3 =
     "block stalls on reading them back), and the polyphony *LIMIT* (editable; the\n"
     "measurement writes its verdict into it the moment its report opens).\n"
     "\n"
-    "The loading never lets the system page: before every stop (and every 32\n"
     ;
 static const char* const kManualText_part4 =
+    "The loading never lets the system page: before every stop (and every 32\n"
     "files inside a large one) the program looks at the memory and stops loading\n"
     "when any sign says it is short - less free than 512 MB or a sixteenth of the\n"
     "installed memory, its own footprint within the system's share (1.5 GB or a\n"
@@ -1009,9 +1010,9 @@ static const char* const kManualText_part4 =
     "- **Treble per key** (-9 to +9 dB) - a high shelf per pipe, above the\n"
     "  frequency set in *Treble per key: shelf start frequency* (default 1800 Hz).\n"
     "- A *Reset to 0 dB* button sits beside each header; dragging with the right\n"
-    "  mouse button paints one value across a row of sliders.\n"
     ;
 static const char* const kManualText_part5 =
+    "  mouse button paints one value across a row of sliders.\n"
     "- The sliders light up while the key sounds. A **green thumb** marks a filled\n"
     "  pipe (hover it: the tooltip names the stop, the sample file and the shift it\n"
     "  was made with, \"HW Tromp 16', sample 039-D#.wav, -12 st (from key 51)\"). An\n"
@@ -1211,9 +1212,9 @@ static const char* const kManualText_part5 =
     "\n"
     "*Settings* in a division header opens the dialog at that division; the\n"
     "division is chosen at the top. The settings of a division are the same as in\n"
-    "its section of the Configuration Editor (\"Division sections (Pedal, Manual I\n"
     ;
 static const char* const kManualText_part6 =
+    "its section of the Configuration Editor (\"Division sections (Pedal, Manual I\n"
     "... Manual VII)\" describes every one of them); the dialog adds the keyboard\n"
     "drawing, the coupler and swell learning, and the audio tabs.\n"
     "\n"
@@ -1413,9 +1414,9 @@ static const char* const kManualText_part6 =
     "  packets of 480 samples at 48 kHz, so a smaller buffer only splits each\n"
     "  packet into shorter deadlines - an IR's tail FFT alone can exceed a block\n"
     "  of 256 - without lowering the latency at all.\n"
-    "\n"
     ;
 static const char* const kManualText_part7 =
+    "\n"
     "The price of mixing drivers (ASIO beside WASAPI in one organ) - read this\n"
     "before you do it:\n"
     "\n"
@@ -1615,9 +1616,9 @@ static const char* const kManualText_part7 =
     "  perspectives cost nothing. Dry/wet at 0 %, or *Clear*, removes the cost\n"
     "  entirely.\n"
     "- **ASIO.** All routes on one ASIO driver are rendered by one audio thread\n"
-    "  and the render workers behind it (*Render threads* in the Configuration\n"
     ;
 static const char* const kManualText_part8 =
+    "  and the render workers behind it (*Render threads* in the Configuration\n"
     "  Editor): the voices of every route are shared out over all the processor's\n"
     "  cores. This is the layout with the highest polyphony. The buffer size sets\n"
     "  how much time each block of audio may take: a buffer of 512 samples allows\n"
@@ -1817,9 +1818,9 @@ static const char* const kManualText_part8 =
     "stretch.\n"
     "\n"
     "**Phase vocoder (Signalsmith Stretch).** Keeps every length and every loop\n"
-    "point: the pipe speaks at its real speed and the room decays in its real time.\n"
     ;
 static const char* const kManualText_part9 =
+    "point: the pipe speaks at its real speed and the room decays in its real time.\n"
     "The analysis block is sized from the pitch, so deep pipes keep their harmonics.\n"
     "Excellent within an octave either way. Weaknesses: upwards the vocoder\n"
     "slightly wobbles the pitch (a gentle unsteadiness of the tone); two octaves\n"
@@ -1962,7 +1963,13 @@ static const char* const kManualText_part9 =
     "leave room for other programs. Changing it briefly mutes the engine. The list\n"
     "holds only the choices this computer can tell apart: without hyper-threading\n"
     "\"All logical CPUs\" is the same as \"All physical cores\" and is not shown, a\n"
-    "single core has no \"all - 1\". The setting belongs to the computer, never to an\n"
+    "single core has no \"all - 1\". A hybrid processor (Intel 12th generation and\n"
+    "later: performance and efficiency cores; Windows tells them apart) offers\n"
+    "*Performance cores only* (0.8.140): a render worker on an efficiency core\n"
+    "renders several times slower and the device thread waits for it - the\n"
+    "measurement's longest callback of an Ultra 7 notebook was 2.6 ms of which\n"
+    "2.4 ms waiting for the lanes; the report says so for such a processor. The\n"
+    "setting belongs to the computer, never to an\n"
     "organ: a portable configuration carries none, and one of an older version that\n"
     "does is ignored (this computer's own setting stays). The default is every\n"
     "physical core on every computer: a setting that is not the default and was\n"
@@ -2013,6 +2020,8 @@ static const char* const kManualText_part9 =
     "routes already renders on ten threads beside each other; the default of 1\n"
     "(the device thread alone, no workers) is right for that layout, and more\n"
     "threads per route only fight each other there. Raise it when one or two\n"
+    ;
+static const char* const kManualText_part10 =
     "aggregated routes carry the whole organ (a big division on a single route is\n"
     "otherwise bound to one core): the route then shares its pipes out over the\n"
     "set number of threads, like a route on ASIO does over all *Render threads*.\n"
@@ -2020,8 +2029,6 @@ static const char* const kManualText_part9 =
     "every such device is one stream with one callback, and all its routes are\n"
     "rendered by the whole pool of *Render threads* (since 0.8.47 for Windows\n"
     "Audio too - before, every Windows Audio route had a stream and a thread of\n"
-    ;
-static const char* const kManualText_part10 =
     "its own, so a big division on one route was bound to a single core).\n"
     "\n"
     "### Sample storage in RAM\n"
@@ -2215,6 +2222,8 @@ static const char* const kManualText_part10 =
     "     doubled buffer gave 17 % more voices, on a Ryzen a quarter of the\n"
     "     buffer still gave 62 % of the voices - no model fits, the buffer is\n"
     "     cheap to try and the measurement tells. A buffer below 256 samples\n"
+    ;
+static const char* const kManualText_part11 =
     "     gets a recommendation to try 256 or 512, nothing more.\n"
     "   On Linux the report names the CPU governor (\"performance\" keeps the\n"
     "   clock up), on Windows the power plan; when the CPU clocks cannot be read\n"
@@ -2222,8 +2231,6 @@ static const char* const kManualText_part10 =
     "   cores and the lane utilisation every second. The measurement is also\n"
     "   started from the audio tab of a division's Settings (*Measure polyphony*,\n"
     "   beside *Reopen device*).\n"
-    ;
-static const char* const kManualText_part11 =
     "\n"
     "Then save the configuration: the value belongs to this organ. Measure again\n"
     "after changing the audio routes, the IRs, the buffer size or the samples.\n"
@@ -2417,6 +2424,8 @@ static const char* const kManualText_part11 =
     "(0 to 100 %, default 50). 0 % leaves it as resampled - two octaves down the\n"
     "attack is four times as slow; 100 % gives it the source's duration; 50 % is\n"
     "half way on a logarithmic scale (two octaves down: twice as slow, which the ear\n"
+    ;
+static const char* const kManualText_part12 =
     "accepts where four times is too much). Applies to shifts downwards; upwards the\n"
     "attack stays as resampled. Higher values fray the attack more (see \"The\n"
     "transposition methods\"); lower\n"
@@ -2424,8 +2433,6 @@ static const char* const kManualText_part11 =
     "copies.\n"
     "\n"
     "### Filled pipes: time stretch of the release\n"
-    ;
-static const char* const kManualText_part12 =
     "\n"
     "Pitch shift + time stretch: how far the release is stretched back from the\n"
     "resampled length towards the source's, in both directions (0 to 100 %, default\n"
@@ -2619,6 +2626,8 @@ static const char* const kManualText_part12 =
     "Shows or hides the Load Configuration button (an OrganSampler `.json`, or a\n"
     "Hauptwerk organ definition - see \"Loading a Hauptwerk organ definition\").\n"
     "Right-click: merge another configuration into the loaded organ.\n"
+    ;
+static const char* const kManualText_part13 =
     "\n"
     "### Top bar: Save Configuration\n"
     "\n"
@@ -2626,8 +2635,6 @@ static const char* const kManualText_part12 =
     "\n"
     "### Top bar: Shut down PC\n"
     "\n"
-    ;
-static const char* const kManualText_part13 =
     "Shows or hides the Shut down PC button (see \"Top bar buttons\"): save, quit and shut the\n"
     "computer down without any question. Hidden by default. A hidden button still\n"
     "fires from its learned MIDI control, which is how a headless console uses it.\n"
@@ -2821,6 +2828,8 @@ static const char* const kManualText_part13 =
     "### Random tuning error of pipes\n"
     "\n"
     "On: the pipes of this division get the small random detune set per stop\n"
+    ;
+static const char* const kManualText_part14 =
     "(*Random pitch error* in the voicing). Off: every pipe speaks exactly at its\n"
     "pitch.\n"
     "\n"
@@ -2828,8 +2837,6 @@ static const char* const kManualText_part13 =
     "\n"
     "On: pipes of the same pitch sounding together pull each other into tune a\n"
     "little, as neighbouring pipes on one chest do. Off: every pipe keeps its own\n"
-    ;
-static const char* const kManualText_part14 =
     "detune.\n"
     "\n"
     "### Tremulant rate\n"

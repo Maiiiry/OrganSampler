@@ -281,6 +281,16 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   pixels; macOS osascript Finder bounds + System Events frontmost; Linux wmctrl) called 1.5 s and 4.5 s after the
   launch. Coupler catalog: downward couplers for every (target < source, target >= 1) in all five types after the
   pedal bass couplers; default visible only unison with target > source and 1-2-8; HW mapping allows target < source.
+  0.8.140: KeyAction h = 2 -> `Coupler::bass` -> type "bass", target 0 allowed for bass (Doesburg bass_1..4 = 0-N-bass);
+  `Source/CpuInfo.h` `CpuInfo::hybrid()` (Windows GetLogicalProcessorInformationEx EfficiencyClass; P = the max class,
+  `performanceMask`), preset "performance" (menu item only on a hybrid CPU) -> `workersForCurrentPreset` = P cores,
+  `applyRenderThreadSetting` sets `engine.setRenderWorkerAffinityMask` (gRenderWorkerAffinity, applied in `workerLoop`
+  with SetThreadAffinityMask) and rebuilds the pool (`setRenderThreadCount(..., force)`); the report names a hybrid CPU.
+  Report windows: showAfterReport FIRST, then startAsProcess + launchInDefaultBrowser; `placeNativeWindow` HWND_TOP +
+  SWP_SHOWWINDOW, BringWindowToTop both, SetForegroundWindow the browser; macOS: frontmost app name via System Events,
+  then `tell application "<app>" to set bounds of front window` (no permission needed for Safari/Chrome/Edge/Brave),
+  System Events position/size as the fallback. The "ASIO Komplete Audio shows not ready" report: no such text exists
+  in the sources - ask the user for the exact wording and where it appears (device list? division dialog?).
 - A route without a device ("none") gets NO voices (0.8.126, `Route::hasDevice` set by `setPerspectiveDeviceKey`,
   checked in `publishVoice`: the voice is finished at once). Before, every pipe was published to its perspective's
   route whatever the device and sat there unrendered until `cleanStaleRoutes` flushed it after ~1 s, counted as
