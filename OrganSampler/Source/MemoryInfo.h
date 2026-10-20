@@ -175,7 +175,17 @@ namespace MemoryInfo
             if (reason != nullptr) *reason = "the program holds " + gb(held) + " of " + gb(installed) + " installed and the system needs " + gb(systemShareBytes());
             return true;
         }
-        if (swapped - swappedBaseline > (juce::int64)256 * 1024 * 1024)
+        const bool swapGrew = swapped - swappedBaseline > (juce::int64)256 * 1024 * 1024;
+       #if JUCE_MAC
+        // The compressor figure is the whole system's: it grows as macOS squeezes
+        // other programs to make room - which is what it should do. A sign only
+        // when little is left to give (#22, #25: it stopped a 2 GB load with
+        // 3.4 GB free; the footprint and the kernel's pressure level catch the rest).
+        const bool swapSign = swapGrew && free < 2 * reserveBytes();
+       #else
+        const bool swapSign = swapGrew;
+       #endif
+        if (swapSign)
         {
             if (reason != nullptr) *reason = "the system is paging already (" + gb(swapped) + " swapped or compressed, " + gb(swappedBaseline) + " when the load began), " + gb(free) + " free";
             return true;

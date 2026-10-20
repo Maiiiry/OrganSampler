@@ -49,6 +49,7 @@ namespace
     }
 }
 #include "CrashHandler.h"
+#include "MemoryInfo.h"
 #include "TemperamentsData.h"   // temperaments.csv embedded by the pre-build step
 #include "LicencesData.h"       // the licence texts embedded (GenerateLicencesData.ps1)
 #include "ManualData.h"         // the user manual embedded (GenerateManualData.ps1)
@@ -1882,10 +1883,10 @@ void MainComponent::askToKeepChanges(const juce::String& title, const juce::Stri
         askOnTop(juce::MessageBoxOptions()
             .withIconType(juce::MessageBoxIconType::QuestionIcon)
             .withTitle(title)
-            .withMessage("The instrument was changed (sample folders, stops, voicing, settings) but no configuration file is open.\n"
-                "Save it as a new configuration file? Without that these changes are lost: the next start begins with an empty instrument.")
-            .withButton("Save to a file...")
-            .withButton(continueCapitalised + " and lose these changes")
+            .withMessage("The instrument you built is not saved in any configuration file. It will be lost when "
+                + juce::String(continueVerb == "quit" ? "the program quits" : "another configuration loads") + ".\n\nSave it to a file first?")
+            .withButton("Save As...")
+            .withButton("Don't Save")
             .withButton("Cancel"), this,
             [safeThis, proceed](int result)
             {
@@ -1904,9 +1905,10 @@ void MainComponent::askToKeepChanges(const juce::String& title, const juce::Stri
     askOnTop(juce::MessageBoxOptions()
         .withIconType(juce::MessageBoxIconType::QuestionIcon)
         .withTitle(title)
-        .withMessage("Save the changed settings into the configuration \"" + currentConfigurationName + "\" before you " + continueVerb + "?")
-        .withButton("Save it, then " + continueVerb)
-        .withButton(continueCapitalised + " and keep the file as it is")
+        .withMessage("The configuration \"" + currentConfigurationName + "\" has unsaved changes.\n\nSave them before "
+            + juce::String(continueVerb == "quit" ? "quitting" : "loading another configuration") + "?")
+        .withButton("Save")
+        .withButton("Don't Save")
         .withButton("Cancel"), this,
         [safeThis, proceed](int result)
         {
@@ -7106,7 +7108,7 @@ void MainComponent::showKeyboardsDialog(int onlyManual)
             MainComponent& owner;
             int manual;
             juce::Label title;
-            juce::Viewport view;
+            EdgeViewport view;
             juce::Component content;
             juce::OwnedArray<juce::ToggleButton> boxes;
         };
@@ -10452,7 +10454,7 @@ void MainComponent::applyHauptwerkVoicing(std::shared_ptr<HauptwerkOdf> odf, con
          << "\n\nThe configuration is saved as\n" << configurationFile.getFullPathName()
          << "\n\nEverything else of the organ definition (couplers, combinations, displays, tremulants, wind) was ignored: the folder structure decides the organ in OrganSampler. "
             "Check the Stop List, the audio routes of the perspectives and the MIDI keyboards, then Save Configuration.";
-    juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, "Hauptwerk organ definition imported", text, "OK", this);
+    showLongMessage("Hauptwerk organ definition imported", text);   // longer than an alert box shows (0.8.136)
 }
 
 void MainComponent::runWhenLoaded(std::function<void()> action)
@@ -12017,6 +12019,16 @@ void MainComponent::installLinuxDesktopEntry()
         if (image.getWidth() != entry.size) image = image.rescaled(entry.size, entry.size, juce::Graphics::highResamplingQuality);
         if (juce::PNGImageFormat().writeImageToStream(image, out)) ++icons;
     }
+    // Window managers without an icon-theme lookup (IceWM, JWM, Fluxbox on antiX)
+    // take <name>.png from the pixmaps folders: the 48 px icon there too (0.8.136).
+    {
+        const auto pixmaps = share.getChildFile("pixmaps");
+        pixmaps.createDirectory();
+        const auto file = pixmaps.getChildFile("organsampler.png");
+        file.deleteFile();
+        juce::FileOutputStream out(file);
+        if (out.openedOk() && juce::PNGImageFormat().writeImageToStream(juce::ImageCache::getFromMemory(BinaryData::icon48_png, BinaryData::icon48_pngSize), out)) ++icons;
+    }
     const auto apps = share.getChildFile("applications");
     apps.createDirectory();
     const auto entry = apps.getChildFile("organsampler.desktop");
@@ -12533,6 +12545,16 @@ std::vector<MainComponent::ReadyStop> MainComponent::readyStopsNotIn(const std::
         for (const auto& assignment : engine.scanTreeAssignments(tree, false))
         {
             if (assignment.container) continue;
+            // A tree inside this tree (Testing organ: "Samply" holds "Samply/testy/III",
+            // a tree of its own): its folders belong to that tree's scan, not to this
+            // one - they stood in the pool as a second copy of every stop (#23, 0.8.136).
+            bool ofNestedTree = false;
+            for (const auto& other : sampleTrees)
+            {
+                const juce::File otherTree(other);
+                if (otherTree != tree && otherTree.isAChildOf(tree) && (assignment.folder == otherTree || assignment.folder.isAChildOf(otherTree))) { ofNestedTree = true; break; }
+            }
+            if (ofNestedTree) continue;
             const juce::String perspective = assignment.perspective.isEmpty() ? juce::String("default") : assignment.perspective;
             ReadyStop* target = nullptr;
             if (assignment.grouped)
@@ -12542,16 +12564,27 @@ std::vector<MainComponent::ReadyStop> MainComponent::readyStopsNotIn(const std::
             target->folders[perspective] = { treeIndex, slashes(assignment.folder.getRelativePathFrom(tree)) };
         }
     }
+    // Used = by its place on disk, whatever tree a row reaches it through (a
+    // folder under two nested trees has two (tree, path) names).
+    auto placeOf = [&](const ManualConfig::StopBuild::FolderRef& ref) -> juce::String
+    {
+        if (ref.tree < 0 || ref.tree >= (int)sampleTrees.size()) return {};
+        const juce::File tree(sampleTrees[(size_t)ref.tree]);
+        const auto relative = juce::String(ref.relativePath).replaceCharacter('/', juce::File::getSeparatorChar());
+        return (relative.isEmpty() || relative == "." ? tree : tree.getChildFile(relative)).getFullPathName().toLowerCase();
+    };
+    std::set<juce::String> usedPlaces;
+    for (const auto& entries : allEntries)
+        for (const auto& entry : entries)
+        {
+            if (entry.isTransmission()) continue;
+            for (const auto& [perspective, used] : entry.folders)
+                if (const auto place = placeOf(used); place.isNotEmpty()) usedPlaces.insert(place);
+        }
     auto folderUsed = [&](const ManualConfig::StopBuild::FolderRef& ref)
     {
-        for (const auto& entries : allEntries)
-            for (const auto& entry : entries)
-            {
-                if (entry.isTransmission()) continue;
-                for (const auto& [perspective, used] : entry.folders)
-                    if (used.tree == ref.tree && used.relativePath.equalsIgnoreCase(ref.relativePath)) return true;
-            }
-        return false;
+        const auto place = placeOf(ref);
+        return place.isNotEmpty() && usedPlaces.count(place) > 0;
     };
     std::vector<ReadyStop> missing;
     for (auto& stop : ready)
@@ -13519,7 +13552,7 @@ void MainComponent::showStopBuildingDialog(int)
         std::vector<juce::String> perspectives;       // the union of every division's perspective columns
         juce::Label intro, info, pathTip, ghost;
         std::map<juce::Component*, juce::String> cellPaths;
-        juce::Viewport view;
+        EdgeViewport view;
         GridArea grid;
         CellButton* draggedCell = nullptr;   // the folder cell being dragged (shown orange meanwhile)
 
@@ -18408,8 +18441,13 @@ void MainComponent::startPolyphonyMeasurement()
         // where this organ stops being clean on this computer.
         bool brokeUp = late > 0 || callbackShare > 1.0f || worst > 1.0f;
         // A clean second at a settled level counts towards the verdict (see cleanSecondSafe).
-        if (late == 0 && callbackShare <= 0.85f && worst <= 0.85f) state->greySeconds = 0;
-        if (late == 0 && callbackShare <= 0.85f && worst <= 0.85f && state->secondsSinceChange >= 1 && state->second >= 2
+        // A second without a measured callback (0 %) while voices sound is a
+        // stream that stopped delivering (#24: seven seconds at 90 000 voices with
+        // "callback 0 %" made a limit of 93 700): it counts as nothing, never as clean.
+        const bool callbacksSeen = callbackShare > 0.0f || state->lastPeakSecond == 0;
+        if (!callbacksSeen) CrashHandler::note("Polyphony measurement: no driver callback measured this second - not a clean second");
+        if (late == 0 && callbacksSeen && callbackShare <= 0.85f && worst <= 0.85f) state->greySeconds = 0;
+        if (late == 0 && callbacksSeen && callbackShare <= 0.85f && worst <= 0.85f && state->secondsSinceChange >= 1 && state->second >= 2
             && state->lastPeakSecond > 0)
         {
             const float share = juce::jmax(callbackShare, worst);
@@ -18711,6 +18749,57 @@ void MainComponent::cancelPolyphonyMeasurement()
     finishPolyphonyMeasurement(true);
 }
 
+// A long message in a window of its own: read-only text with scrollbars and
+// OK (an alert box cannot scroll; the polyphony report and the Hauptwerk
+// import's summary are longer than a screen).
+struct LongMessageComponent final : public juce::Component
+{
+    LongMessageComponent(const juce::String& body, std::function<void()> onClose) : closeAction(std::move(onClose))
+    {
+        editor.setMultiLine(true, true);
+        editor.setReadOnly(true);
+        editor.setScrollbarsShown(true);
+        editor.setCaretVisible(false);
+        editor.setFont(juce::FontOptions(16.0f));
+        editor.setColour(juce::TextEditor::backgroundColourId, juce::Colour(0xff2b2b2b));
+        editor.setColour(juce::TextEditor::outlineColourId, juce::Colour(0xff555555));
+        editor.setColour(juce::TextEditor::focusedOutlineColourId, juce::Colour(0xff555555));
+        editor.setColour(juce::TextEditor::textColourId, juce::Colours::white);
+        editor.setText(body, false);
+        addAndMakeVisible(editor);
+        ok.setButtonText("OK");
+        ok.onClick = [this]
+        {
+            if (auto* window = findParentComponentOfClass<juce::DialogWindow>()) window->closeButtonPressed();
+        };
+        addAndMakeVisible(ok);
+        setSize(820, 560);
+    }
+    ~LongMessageComponent() override { if (closeAction) closeAction(); }
+    void resized() override
+    {
+        auto area = getLocalBounds().reduced(12);
+        ok.setBounds(area.removeFromBottom(30).withSizeKeepingCentre(110, 30));
+        area.removeFromBottom(10);
+        editor.setBounds(area);
+    }
+    juce::TextEditor editor;
+    juce::TextButton ok;
+    std::function<void()> closeAction;
+};
+
+void MainComponent::showLongMessage(const juce::String& title, const juce::String& body)
+{
+    juce::DialogWindow::LaunchOptions options;
+    options.dialogTitle = title;
+    options.dialogBackgroundColour = juce::Colours::darkgrey;
+    options.content.setOwned(new LongMessageComponent(body, nullptr));
+    options.componentToCentreAround = this;
+    options.useNativeTitleBar = true;
+    options.resizable = true;
+    if (auto* window = options.launchAsync()) placeDialog(*window, "longMessage", 820, 560);
+}
+
 void MainComponent::finishPolyphonyMeasurement(bool cancelled)
 {
     auto state = polyphonyMeasurement;
@@ -18907,16 +18996,19 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
                << ", kernel " << engine.currentKernelName() << ".";
         if (state->cpuSamples > 0)
         {
-            const double processAvg = state->cpuProcessSum / state->cpuSamples, systemAvg = state->cpuSystemSum / state->cpuSamples;
-            const double coreAvg = juce::jlimit(0.0, 1.0, processAvg * cpus / renderCores), corePeak = juce::jlimit(0.0, 1.0, state->cpuProcessPeak * cpus / renderCores);
-            advice << " CPU of the render " << (renderCores == 1 ? "core" : "cores") << ": " << juce::roundToInt(coreAvg * 100.0) << " % on average, "
-                   << juce::roundToInt(corePeak * 100.0) << " % at the peak; the whole computer " << juce::roundToInt(systemAvg * 100.0) << " %.";
-            if (state->firstFailingPeak > 0 && corePeak < 0.6 && renderCores > 1)
+            // One figure (#24: "34 % on average, 100 % at the peak; the whole computer
+            // 17 %" read as nonsense - the peak was the whole process over all its
+            // threads, the computer figure counted the hyper-threads).
+            const double processAvg = state->cpuProcessSum / state->cpuSamples;
+            const double coreAvg = juce::jlimit(0.0, 1.0, processAvg * cpus / renderCores);
+            advice << " Processor: the " << renderCores << " render " << (renderCores == 1 ? "core was" : "cores were") << " busy "
+                   << juce::roundToInt(coreAvg * 100.0) << " % on average over the run.";
+            if (state->firstFailingPeak > 0 && coreAvg < 0.6 && renderCores > 1)
                 advice << " The sound broke with the render cores under 60 %: the time went into the device thread (bookkeeping, hand-over, waiting for the slowest lane), not into the rendering.";
         }
         else advice << " CPU during the run: not readable on this system.";
         if (state->poolSamples > 0)
-            advice << " Lanes busy inside the route jobs: " << juce::roundToInt(100.0 * state->poolUtilisationSum / state->poolSamples) << " %.";
+            advice << " While a route was being rendered, its lanes were busy " << juce::roundToInt(100.0 * state->poolUtilisationSum / state->poolSamples) << " % of the time.";
         {
             // Memory: a big organ on a small computer pages samples out, and a
             // block then stalls on reading them back (one stroke of many stops
@@ -18926,10 +19018,20 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
             const juce::int64 installed = (juce::int64)juce::SystemStats::getMemorySizeInMegabytes() * 1024 * 1024;
             if (used > 0 && installed > 0)
             {
-                advice << " Memory: the program holds " << juce::String((double)used / 1073741824.0, 1) << " GB of the " << juce::String((double)installed / 1073741824.0, 1)
-                       << " GB installed, " << juce::String((double)free / 1073741824.0, 1) << " GB free.";
-                if (free < installed / 10 || used > installed * 7 / 10)
-                    advice << " That is tight: the system pages samples out and a block stalls on reading them back when a stroke touches them - fewer stops loaded, 16-bit storage, or more RAM.";
+                auto gb = [](juce::int64 b) { return juce::String((double)b / 1073741824.0, 1); };
+                advice << " Memory: the program holds " << gb(used) << " GB of the " << gb(installed) << " GB installed";
+                // Never "the system pages" when the program itself stopped loading to
+                // keep it from paging (#25, #26): that is the loading's doing, said so.
+                if (engine.lastLoadWasMemoryLimited())
+                    advice << " - the loading stopped there on purpose, at the share the system keeps for itself, so nothing is paged out; the stops left out are in the Stop List's pool. More RAM gives more stops, not more polyphony.";
+               #if JUCE_MAC
+                else if (MemoryInfo::pressureLevel() >= 2)
+                    advice << ", and macOS reports memory pressure: a block stalls when a stroke touches samples the system has compressed - fewer stops, 16-bit storage, or more RAM.";
+               #else
+                else if (MemoryInfo::swappedBytes() > (juce::int64)256 * 1024 * 1024)
+                    advice << ", and " << gb(MemoryInfo::swappedBytes()) << " GB of it is swapped out: a block stalls when a stroke touches those samples - fewer stops, 16-bit storage, or more RAM.";
+               #endif
+                else advice << ", " << gb(free) << " GB free.";
             }
         }
         const juce::String power = MainComponent::powerSettingDescription();
@@ -19077,41 +19179,7 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
     // advice names every route on Windows Audio and every auxiliary route). The
     // level glides back after OK.
     juce::Component::SafePointer<MainComponent> safeThis(this);
-    struct Report final : public juce::Component
-    {
-        Report(const juce::String& body, std::function<void()> onClose) : closeAction(std::move(onClose))
-        {
-            editor.setMultiLine(true, true);
-            editor.setReadOnly(true);
-            editor.setScrollbarsShown(true);
-            editor.setCaretVisible(false);
-            editor.setFont(juce::FontOptions(16.0f));
-            editor.setColour(juce::TextEditor::backgroundColourId, juce::Colour(0xff2b2b2b));
-            editor.setColour(juce::TextEditor::outlineColourId, juce::Colour(0xff555555));
-            editor.setColour(juce::TextEditor::focusedOutlineColourId, juce::Colour(0xff555555));
-            editor.setColour(juce::TextEditor::textColourId, juce::Colours::white);
-            editor.setText(body, false);
-            addAndMakeVisible(editor);
-            ok.setButtonText("OK");
-            ok.onClick = [this]
-            {
-                if (auto* window = findParentComponentOfClass<juce::DialogWindow>()) window->closeButtonPressed();
-            };
-            addAndMakeVisible(ok);
-            setSize(820, 560);
-        }
-        ~Report() override { if (closeAction) closeAction(); }
-        void resized() override
-        {
-            auto area = getLocalBounds().reduced(12);
-            ok.setBounds(area.removeFromBottom(30).withSizeKeepingCentre(110, 30));
-            area.removeFromBottom(10);
-            editor.setBounds(area);
-        }
-        juce::TextEditor editor;
-        juce::TextButton ok;
-        std::function<void()> closeAction;
-    };
+    using Report = LongMessageComponent;
     juce::DialogWindow::LaunchOptions options;
     options.dialogTitle = "Maximum polyphony measured";
     options.dialogBackgroundColour = juce::Colours::darkgrey;

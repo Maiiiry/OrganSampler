@@ -219,6 +219,19 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   rows > ranks > folders, users), `Tools/odf_links.py <odf> <division filter>` (keyboard -> division switch paths),
   `Tools/pool_folders.py <cfg.json> <OrganInstallationPackages>` (the scan folders no row uses = what the pool shows;
   Bellevue and Billerbeck must list nothing but Ped_ContreBomb32's output folders).
+  0.8.136: the pool matches folders by their PLACE ON DISK (`placeOf` in `readyStopsNotIn`) and a tree's scan skips
+  folders of a nested tree (Testing organ: tree "Samply" holds the trees "Samply/testy/P|I|II|III" - every stop was in
+  the pool twice, #23). Memory stop: `loadMemorySkipped` once per stop (`addIfNotAlreadyThere`; #22 said "35 stops" for
+  15 rows x perspectives), `loadMemorySkippedKeys` drops a stop with a perspective loaded and another skipped;
+  `lastLoadMemoryLimited` (engine, `lastLoadWasMemoryLimited()`) makes the polyphony report say "the loading stopped
+  on purpose" - never "the system pages" after our own stop (#25, #26). macOS compressor rule only with free < 2 x
+  reserve (#22/#25: 0.3 GB growth stopped a 2 GB load with 3.4 GB free). Report CPU = one figure (render cores busy on
+  average; #24), a second with callbackShare 0 while voices sound is never clean (#24: 93 700 after the stream died).
+  `EdgeViewport` (UIControls.h) for viewports inside ScrollableContent dialogs: the wheel passes to the window at the
+  edge (Stop List buttons unreachable by wheel). `showLongMessage(title, body)` = `LongMessageComponent` (read-only
+  editor + OK, `placeDialog` key "longMessage") for the Hauptwerk summary; the polyphony report uses the same component.
+  Save prompt = Save / Don't Save / Cancel ("Save As..." without a file). Linux window icon = icon48 (X11 takes one
+  image); the desktop-entry installer also writes ~/.local/share/pixmaps/organsampler.png (48) for antiX-like WMs.
 - A route without a device ("none") gets NO voices (0.8.126, `Route::hasDevice` set by `setPerspectiveDeviceKey`,
   checked in `publishVoice`: the voice is finished at once). Before, every pipe was published to its perspective's
   route whatever the device and sat there unrendered until `cleanStaleRoutes` flushed it after ~1 s, counted as

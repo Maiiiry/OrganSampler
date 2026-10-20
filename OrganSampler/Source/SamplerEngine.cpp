@@ -9971,7 +9971,12 @@ void SamplerEngine::loadManualFolder(const juce::File& topFolder, int manualInde
     loadOutOfMemory.store(false, std::memory_order_relaxed);
     loadStoppedForMemory.store(false, std::memory_order_relaxed);
     loadMemoryCutStops.clear();
-    if (gSwapBaseline.load() < 0) gSwapBaseline.store(MemoryInfo::swappedBytes());   // the paging rule counts the growth from here
+    loadMemorySkippedKeys.clear();
+    if (gSwapBaseline.load() < 0)   // the first tree of a load
+    {
+        gSwapBaseline.store(MemoryInfo::swappedBytes());   // the paging rule counts the growth from here
+        lastLoadMemoryLimited.store(false, std::memory_order_relaxed);
+    }
     for (auto& [groupManual, group] : groups)
     {
         auto& newStops = group.division->stops;
@@ -9994,7 +9999,12 @@ void SamplerEngine::loadManualFolder(const juce::File& topFolder, int manualInde
                 loadMemoryStopReason = memoryReason;
                 CrashHandler::note("Loading stopped for memory before \"" + stopName + "\": " + memoryReason);
             }
-            if (loadOutOfMemory.load(std::memory_order_relaxed)) { if (!assignment.container) loadMemorySkipped.add(stopName); continue; }
+            if (loadOutOfMemory.load(std::memory_order_relaxed))
+            {
+                // Once per stop, not once per perspective folder (#22: "35 stops" of 15).
+                if (!assignment.container) { loadMemorySkipped.addIfNotAlreadyThere(stopName); loadMemorySkippedKeys.insert(comparableFolderName(stopName)); }
+                continue;
+            }
             if (assignment.container)
             {
                 // No samples: the stop only carries its children (and their transmissions).
@@ -10035,19 +10045,22 @@ void SamplerEngine::loadManualFolder(const juce::File& topFolder, int manualInde
         }
         // The stops the memory stop cut in the middle (a perspective rank of
         // theirs included): dropped whole, named with the skipped ones.
-        if (!loadMemoryCutStops.empty())
+        // So is a stop with one perspective loaded and another skipped: it was
+        // on the grid AND in the pool with its missing perspectives (#23).
+        if (!loadMemoryCutStops.empty() || !loadMemorySkippedKeys.empty())
         {
             for (int i = newStops.size(); --i >= 0;)
             {
                 Stop* stop = newStops[i];
-                bool cut = loadMemoryCutStops.count(stop) > 0;
+                bool cut = loadMemoryCutStops.count(stop) > 0 || loadMemorySkippedKeys.count(comparableFolderName(stop->name)) > 0;
                 for (const auto& rank : stop->ranks) if (loadMemoryCutStops.count(rank.get()) > 0) cut = true;
                 if (!cut) continue;
-                loadMemorySkipped.insert(0, stop->name);
+                if (!loadMemorySkipped.contains(stop->name)) loadMemorySkipped.insert(0, stop->name);
                 perspectiveStops.erase(comparableFolderName(stop->name));
                 newStops.remove(i);
             }
             loadMemoryCutStops.clear();
+            loadMemorySkippedKeys.clear();
         }
         juce::Random random;
         for (auto* stop : newStops) regenerateRandomTuning(stop, random);
@@ -10092,6 +10105,7 @@ void SamplerEngine::loadManualFolder(const juce::File& topFolder, int manualInde
     std::lock_guard<std::mutex> lk(impl->pendingMutex);
     if (loadOutOfMemory.load(std::memory_order_relaxed))
     {
+        lastLoadMemoryLimited.store(true, std::memory_order_relaxed);
         const int skipped = loadMemorySkipped.size();
         juce::StringArray shown;
         for (int i = 0; i < juce::jmin(12, skipped); ++i) shown.add(loadMemorySkipped[i]);
@@ -10099,8 +10113,8 @@ void SamplerEngine::loadManualFolder(const juce::File& topFolder, int manualInde
         if (loadStoppedForMemory.load(std::memory_order_relaxed))
             lastLoadError = "The memory is full: the loading stopped (" + (loadMemoryStopReason.isNotEmpty() ? loadMemoryStopReason : juce::String((double)freePhysicalMemoryBytes() / 1073741824.0, 1) + " GB free")
                 + " of " + juce::String((double)juce::SystemStats::getMemorySizeInMegabytes() / 1024.0, 1) + " GB installed; the system would page samples out, and every stroke would stall the sound).\n\n"
-                "The instrument is built from the stops loaded so far; " + juce::String(skipped) + " stop(s) of " + topFolder.getFileName() + " were not loaded: " + list
-                + ".\n\nThey stay in the Stop List without samples. Load fewer stops (a smaller configuration), keep the 16-bit sample storage, or add memory.";
+                "The instrument is built from the stops loaded so far; " + juce::String(skipped) + " stop(s) were not loaded: " + list
+                + ".\n\nThey are not on the grid; the Stop List keeps their rows and offers them in its pool. Load fewer stops (a smaller configuration), keep the 16-bit sample storage, or add memory.";
         else
             lastLoadError = "The computer ran out of memory while loading\n" + topFolder.getFullPathName()
                 + "\n\nOnly the stops loaded so far are available" + (skipped > 0 ? " (not loaded: " + list + ")" : juce::String()) + ". Unload another division or close other programs.";

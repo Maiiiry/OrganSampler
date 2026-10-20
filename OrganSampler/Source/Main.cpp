@@ -266,7 +266,14 @@ public:
             setUsingNativeTitleBar (true);
             // The program's icon on the window (title bar, task bar, dock): the
             // 1024 px icon embedded at build time, scaled by the window system.
+           #if JUCE_LINUX
+            // X11 takes one image for _NET_WM_ICON and the window manager scales
+            // it to its 16-32 px: the hand-tuned 48 px icon scales down crisp,
+            // the 1024 px picture came out as a blur (antiX, 0.8.136).
+            setIcon (juce::ImageCache::getFromMemory (BinaryData::icon48_png, BinaryData::icon48_pngSize));
+           #else
             setIcon (juce::ImageCache::getFromMemory (BinaryData::AppIcon_png, BinaryData::AppIcon_pngSize));
+           #endif
             setContentOwned (new MainComponent(), true);
 
            #if JUCE_IOS || JUCE_ANDROID

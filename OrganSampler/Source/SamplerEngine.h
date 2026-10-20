@@ -688,6 +688,7 @@ public:
     void refillStop(Stop* stop);
     // Non-empty after a load ran out of memory (the division is then incomplete).
     juce::String takeLastLoadError();
+    bool lastLoadWasMemoryLimited() const noexcept { return lastLoadMemoryLimited.load(std::memory_order_relaxed); }
 
     // Records the stereo mix of every route's output (even output channels to
     // the left, odd to the right) into a 24-bit WAV. Message thread only.
@@ -1324,6 +1325,8 @@ private:
     std::atomic<bool> loadOutOfMemory{ false };
     std::atomic<bool> loadStoppedForMemory{ false };   // the memory reserve was reached (not a failed allocation): the load stopped on purpose
     juce::StringArray loadMemorySkipped;               // the stops left out since the stop, over every tree of one load (cleared by takeLastLoadError)
+    std::set<juce::String> loadMemorySkippedKeys;      // group keys (comparable names) of the stops skipped in this tree: a stop with one perspective loaded and another skipped is dropped whole (0.8.136)
+    std::atomic<bool> lastLoadMemoryLimited{ false };  // the last load (every tree of it) stopped at the memory limit: the polyphony report says so instead of "the system pages" (#25, #26)
     std::set<Stop*> loadMemoryCutStops;                // stops (or perspective ranks) the memory stop cut in the middle of their files: dropped at the end of the tree, not half a stop on the grid (0.8.135)
     juce::String loadMemoryStopReason;                 // why (free memory, the compressor, the program's footprint): for the message
     std::atomic<float> undulationBeatRatio{ 12.0f };

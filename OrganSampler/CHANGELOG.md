@@ -12,6 +12,48 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.136] - 2026-10-20
+
+### Fixed
+- The pool of the Stop List listed every stop of a tree that lies inside
+  another loaded tree a second time (Testing organ: "Samply" holds
+  "Samply/testy/III", a tree of its own; #23): a folder is matched by its
+  place on disk now, whatever tree a row reaches it through, and a tree's
+  scan leaves the folders of a nested tree to that tree.
+- The memory stop counted a stop once per perspective folder ("35 stops"
+  of a division of 15, #22); a stop with one perspective loaded and another
+  skipped stood on the grid and in the pool at once - it is dropped whole
+  now. The message no longer names one tree for a count taken over the
+  whole load.
+- macOS: the loading stopped at 2 GB with 3.4 GB free because the system's
+  compressor had grown by 0.3 GB (#22, #25) - that growth is macOS squeezing
+  other programs, which is what it should do; it counts only when less than
+  twice the reserve is free.
+- The polyphony report said "the system pages samples out" after the program
+  itself had stopped loading to keep it from paging (#25, #26): it now says
+  the loading stopped on purpose, and names paging only when the program is
+  swapped out (Linux) or macOS reports memory pressure.
+- The report's processor line "34 % on average, 100 % at the peak; the whole
+  computer 17 %" (#24) is one figure: how busy the render cores were on
+  average over the run. The lanes figure says what it means.
+- The measurement counted a second with no driver callback measured as clean
+  (#24: seven seconds at 90 000 voices with "callback 0 %" after the stream
+  stopped gave a limit of 93 700): such a second counts as nothing.
+- The Stop List did not scroll past its table with the mouse wheel: at the
+  table's edge the wheel now scrolls the window, so the row of buttons comes
+  into view.
+- The Hauptwerk import's summary opens in a window with scrollbars; the
+  alert box cut long ones.
+- Linux: the window icon is the hand-tuned 48 px one (the window manager
+  scaled the 1024 px picture to a blur); "Install menu entry and icon" also
+  writes the 48 px icon into ~/.local/share/pixmaps for window managers
+  without an icon-theme lookup (antiX).
+
+### Changed
+- The "save first?" question is the usual one: "The configuration has unsaved
+  changes. Save them before loading another configuration / quitting?" with
+  Save / Don't Save / Cancel (Save As... for an instrument with no file).
+
 ## [0.8.135] - 2026-10-20
 
 ### Fixed

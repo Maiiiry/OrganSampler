@@ -64,6 +64,21 @@ private:
     int designWidth, designHeight;
 };
 
+// A viewport inside a scrolling dialog: the wheel scrolls this one until its
+// edge, then the dialog itself (a plain Viewport swallows the wheel at its edge
+// and the row of buttons below the table never came into view - the Stop
+// List, 0.8.136).
+class EdgeViewport : public juce::Viewport
+{
+public:
+    void mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel) override
+    {
+        const auto before = getViewPosition();
+        if (useMouseWheelMoveIfNeeded(e, wheel) && getViewPosition() != before) return;
+        juce::Component::mouseWheelMove(e, wheel);   // at the edge: the parent scrolls
+    }
+};
+
 // "Swipe switching": press a stop, coupler or tremulant button and drag across
 // any other such button to give it the same state. All families share one
 // registry, so one drag can run from the stops into the couplers and back.

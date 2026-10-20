@@ -484,10 +484,10 @@ program. *Save Configuration* and *Load Configuration* are in the top bar. A
 configuration counts as open once it was loaded or saved in the session (its
 name is in the window title). When you quit, or load another configuration,
 while the open configuration has unsaved changes, the program asks whether to
-write the changes into its file first ("Save it, then load" / "Save it, then quit") or
-leave the file as it is and go on ("Load and keep the file as it is"); an
-instrument built without any file open is offered a new file or lost ("Load
-and lose these changes"). *Shut down PC* never asks:
+save the changes first: *Save* writes them into the file and goes on, *Don't
+Save* goes on and leaves the file as it was, *Cancel* stays. An instrument
+built with no file open is offered a new file the same way (*Save As...*).
+*Shut down PC* never asks:
 it saves into the open configuration (or into a rescue file) and shuts down.
 Starting the program without *Load the last configuration at startup* begins
 with an empty instrument; nothing stops you from loading folders and playing
@@ -788,12 +788,16 @@ The loading never lets the system page: before every stop (and every 32
 files inside a large one) the program looks at the memory and stops loading
 when any sign says it is short - less free than 512 MB or a sixteenth of the
 installed memory, its own footprint within the system's share (1.5 GB or a
-fifth; 1 GB on a computer of 4 GB and less), the system swapping or
-compressing more than 256 MB beyond what it did when the load began, or the
-macOS kernel reporting memory pressure. The stops loaded so far make the
-instrument; a stop cut in the middle of its files is dropped whole, and every
-stop left out is named in the message and stays in the pool of the Stop
-List - nothing stands on the grid half loaded. The "free" figure is what the
+fifth; 1 GB on a computer of 4 GB and less), the program swapped out by more
+than 256 MB since the load began (Linux; on macOS the system's compressor
+growing that much while less than twice the reserve is free - it grows as
+macOS squeezes other programs, which is what it should do), or the macOS
+kernel reporting memory pressure. The stops loaded so far make the
+instrument; a stop cut in the middle of its files, or with one perspective
+loaded and another not, is dropped whole, and every stop left out is named
+once in the message and stays in the pool of the Stop List - nothing stands
+on the grid half loaded. The polyphony report then says the loading stopped
+on purpose; it never claims the system is paging when it is not. The "free" figure is what the
 system could give the program now: Windows' available physical memory,
 Linux's MemAvailable (the reclaimable cache included), macOS's free and
 inactive pages; the footprint rule is the one that bites on an 8 GB machine.
