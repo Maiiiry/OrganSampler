@@ -289,8 +289,10 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   Report windows: showAfterReport FIRST, then startAsProcess + launchInDefaultBrowser; `placeNativeWindow` HWND_TOP +
   SWP_SHOWWINDOW, BringWindowToTop both, SetForegroundWindow the browser; macOS: frontmost app name via System Events,
   then `tell application "<app>" to set bounds of front window` (no permission needed for Safari/Chrome/Edge/Brave),
-  System Events position/size as the fallback. The "ASIO Komplete Audio shows not ready" report: no such text exists
-  in the sources - ask the user for the exact wording and where it appears (device list? division dialog?).
+  System Events position/size as the fallback. "ASIO shows not ready" (#34 log: `ASIO host opened for 'default
+  device': no device`, then "Audio devices still missing after the wait: ASIO default") = a route on the ASIO TYPE
+  without a driver name; 0.8.141 `sharedHostFor`: ASIO + empty name -> the driver running in another host of ours,
+  else `defaultDeviceNameOfType` (a scan, no open), logged "ASIO without a driver name: X taken".
 - A route without a device ("none") gets NO voices (0.8.126, `Route::hasDevice` set by `setPerspectiveDeviceKey`,
   checked in `publishVoice`: the voice is finished at once). Before, every pipe was published to its perspective's
   route whatever the device and sat there unrendered until `cleanStaleRoutes` flushed it after ~1 s, counted as

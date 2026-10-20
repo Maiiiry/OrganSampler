@@ -12,6 +12,14 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.141] - 2026-10-20
+
+### Fixed
+- A route set to ASIO without a driver name opened a host with no device and
+  was reported as "not available" after the wait (#34: "ASIO default"): it
+  takes the ASIO driver already running in the program, else the first one
+  installed.
+
 ## [0.8.140] - 2026-10-20
 
 ### Added

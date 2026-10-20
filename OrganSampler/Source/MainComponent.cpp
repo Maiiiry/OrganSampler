@@ -3734,6 +3734,19 @@ juce::AudioDeviceManager* MainComponent::sharedHostFor(const juce::String& typeN
     // to its name so that every "default" route shares that one stream.
     const bool asio = typeName.equalsIgnoreCase("ASIO");
     if (name.isEmpty() && !asio) name = defaultDeviceNameOfType(typeName);
+    // ASIO without a driver name (a route set to the type alone, a portable
+    // configuration): the driver already running in a host of ours, else the
+    // first driver installed. JUCE has no "default" ASIO device: the host opened
+    // with none, the route counted as missing and "Audio devices not available"
+    // came after the wait (#34, 0.8.141).
+    if (name.isEmpty() && asio)
+    {
+        for (const auto& running : asioHosts)
+            if (running->getCurrentAudioDeviceType().equalsIgnoreCase("ASIO"))
+                if (auto* device = running->getCurrentAudioDevice()) { name = device->getName(); break; }
+        if (name.isEmpty()) name = defaultDeviceNameOfType(typeName);
+        if (name.isNotEmpty()) CrashHandler::note("ASIO without a driver name: " + name + " taken");
+    }
     if (auto* existing = findSharedHost(typeName, name)) return existing;
     // Hosts are only ever removed by pruneUnusedAsioHosts, after the selectors
     // that listen to them have been replaced: a selector deleted later than its
