@@ -1,6 +1,7 @@
 #include "SamplerEngine.h"
 #include "CrashHandler.h"   // activity log notes (copy builds)
 #include "MemoryInfo.h"     // the free memory and the program's footprint (the loading stops when short)
+#include "StopNames.h"      // the capital after a division abbreviation in the names the program makes
 // Signalsmith Stretch (MIT): pitch shift with the length kept, for the
 // transposed copies of filled pipes (ThirdParty/signalsmith).
 #if JUCE_MSVC
@@ -265,7 +266,12 @@ namespace
     // reclaimable cache; the program held 6.9 GB, 2 GB were "free", and it
     // swapped) - issues #17, #19.
     juce::int64 freePhysicalMemoryBytes() { return MemoryInfo::freeBytes(); }
-    bool memoryShortNow(juce::String* reason = nullptr) { return MemoryInfo::shortNow(reason); }
+    // The swapped/compressed figure at the start of a load: the paging rule
+    // counts the growth since then, not the figure itself - the macOS
+    // compressor holds other programs' pages at idle (0.43 GB on the 8 GB Mac,
+    // #21, and the rule stopped a load of 2.4 GB). -1: no load running.
+    std::atomic<juce::int64> gSwapBaseline{ -1 };
+    bool memoryShortNow(juce::String* reason = nullptr) { return MemoryInfo::shortNow(reason, juce::jmax((juce::int64)0, gSwapBaseline.load())); }
 
     // The render workers and the control thread run beside the audio callbacks
     // at audio priority on every system (Windows had it from the start; on
@@ -354,6 +360,33 @@ namespace
             result += text[i];
         }
         return result;
+    }
+
+    // A folder named after its sibling or its parent with "tr" or "trem"
+    // appended ("02-suchy_pos_bourdontr" beside "02-suchy_pos_bourdon",
+    // "HW_Gedackt8TREM" beside "HW_Gedackt8", "Ped_claironTr" beside
+    // "Ped_clairon"): the tremmed recording of that stop, never loaded by a
+    // tree scan - it stood in the pool as a second copy of every stop (0.8.135,
+    // Bellevue, Billerbeck). 'keys' = the lower-case full paths of every folder
+    // of the tree. A folder a row names explicitly is loaded whatever its name.
+    std::set<juce::String> folderKeysOf(const std::vector<juce::File>& folders)
+    {
+        std::set<juce::String> keys;
+        for (const auto& f : folders) keys.insert(f.getFullPathName().toLowerCase());
+        return keys;
+    }
+    bool isTremmedVariantFolder(const juce::File& folder, const std::set<juce::String>& keys)
+    {
+        const auto name = folder.getFileName().toLowerCase();
+        juce::String base;
+        if (name.endsWith("trem")) base = name.dropLastCharacters(4);
+        else if (name.endsWith("tr")) base = name.dropLastCharacters(2);
+        else return false;
+        base = base.trimCharactersAtEnd("-_ ");
+        if (base.isEmpty()) return false;
+        const auto parent = folder.getParentDirectory();
+        if (parent.getFileName().toLowerCase() == base) return true;
+        return keys.count(parent.getChildFile(base).getFullPathName().toLowerCase()) > 0;
     }
 
     // The perspective prefix of a folder name taken off ("dir-Principal 8" ->
@@ -5654,6 +5687,7 @@ juce::String SamplerEngine::takeLastLoadError()
     auto result = lastLoadError;
     lastLoadError.clear();
     loadMemorySkipped.clear();
+    gSwapBaseline.store(-1);   // the next load takes its own baseline
     return result;
 }
 
@@ -8966,7 +9000,7 @@ juce::String SamplerEngine::folderStopAlias(const juce::File& folder) const
     auto alias = footageDisplayName(displayFolderName(leaf).trim());
     // A capital first letter: the labels of a grid look even that way ("fletna 8'" -> "Fletna 8'").
     if (alias.isNotEmpty()) alias = alias.substring(0, 1).toUpperCase() + alias.substring(1);
-    return alias;
+    return StopNames::capitaliseAfterDivisionPrefix(alias);   // "P. trombone 16" -> "P. Trombone 16"
 }
 
 namespace
@@ -9572,6 +9606,15 @@ void SamplerEngine::loadSamplesIntoStop(Stop* stop, const juce::File& folder, bo
             decoded[(size_t)index] = nullptr;
         }
     });
+    // Cut by the memory stop (or a failed allocation) in the middle of its
+    // files: half a stop is no stop - what was decoded is dropped and the tree
+    // loader leaves the stop out, named among the skipped ones; it stays in the
+    // pool (0.8.135; before, the part loaded stood on the grid as a stop).
+    if (loadOutOfMemory.load(std::memory_order_relaxed))
+    {
+        loadMemoryCutStops.insert(stop);
+        return;
+    }
     for (size_t i = 0; i < entries.size(); ++i)
     {
         if (decoded[i] == nullptr) continue;
@@ -9634,10 +9677,12 @@ bool SamplerEngine::folderHasNumberedSamples(const juce::File& folder)
 std::vector<juce::File> SamplerEngine::listSampleFolders(const juce::File& tree) const
 {
     std::vector<juce::File> result;
-    for (const juce::File& folder : subdirectoriesRecursive(tree))
+    const auto allFolders = subdirectoriesRecursive(tree);
+    const auto folderKeys = folderKeysOf(allFolders);
+    for (const juce::File& folder : allFolders)
     {
         if (folder.getFileName().startsWithIgnoreCase("rel")) continue;
-        if (isIgnoredFolderName(folder.getFileName())) continue;
+        if (isIgnoredFolderName(folder.getFileName()) || isTremmedVariantFolder(folder, folderKeys)) continue;
         if (!folderHasNumberedSamples(folder)) continue;
         result.push_back(folder);
     }
@@ -9648,6 +9693,8 @@ std::vector<SamplerEngine::FolderAssignment> SamplerEngine::scanTreeAssignments(
 {
     std::vector<juce::String> perspectives = perspectivePatterns;
     auto folderHasValidWavFiles = [](const juce::File& folder) { return folderHasNumberedSamples(folder); };
+    const auto allFolders = subdirectoriesRecursive(topFolder);
+    const auto folderKeys = folderKeysOf(allFolders);
 
     // Perspective prefixes the folder names reveal themselves: when the same
     // stops appear under several prefixes ("01-dirMk2H-OW_Flote8",
@@ -9674,10 +9721,10 @@ std::vector<SamplerEngine::FolderAssignment> SamplerEngine::scanTreeAssignments(
         // "01-dirMk2H-OW_" with the rest of the name as the stop.
         struct PrefixCandidate { std::set<juce::String> stops; juce::String spelling; };
         std::map<juce::String, PrefixCandidate> byPrefix;   // lower-case prefix (separators included)
-        for (const juce::File& stopFolder : subdirectoriesRecursive(topFolder))
+        for (const juce::File& stopFolder : allFolders)
         {
             const auto name = stopFolder.getFileName();
-            if (name.startsWithIgnoreCase("rel") || isIgnoredFolderName(name) || !folderHasValidWavFiles(stopFolder)) continue;
+            if (name.startsWithIgnoreCase("rel") || isIgnoredFolderName(name) || isTremmedVariantFolder(stopFolder, folderKeys) || !folderHasValidWavFiles(stopFolder)) continue;
             if (patternMatches(name)) continue;   // already a known perspective
             auto isSeparator = [](juce::juce_wchar c) { return c == '-' || c == '_' || c == ' '; };
             for (int i = 1; i < name.length() && i <= 24; ++i)
@@ -9766,10 +9813,10 @@ std::vector<SamplerEngine::FolderAssignment> SamplerEngine::scanTreeAssignments(
     };
 
     std::vector<FolderAssignment> assignments;
-    for (const juce::File& stopFolder : subdirectoriesRecursive(topFolder))
+    for (const juce::File& stopFolder : allFolders)
     {
         if (stopFolder.getFileName().startsWithIgnoreCase("rel")) continue;
-        if (isIgnoredFolderName(stopFolder.getFileName())) continue;
+        if (isIgnoredFolderName(stopFolder.getFileName()) || isTremmedVariantFolder(stopFolder, folderKeys)) continue;
         if (!folderHasValidWavFiles(stopFolder)) continue;
 
         juce::String perspective;
@@ -9804,7 +9851,7 @@ std::vector<SamplerEngine::FolderAssignment> SamplerEngine::scanTreeAssignments(
         {
             const auto descendant = stopFolder.getRelativePathFrom(perspectiveRoot)
                 .replaceCharacter('\\', '/').replace("/", " - ");
-            stopName = displayFolderName(perspectiveRootName) + " - " + displayFolderName(descendant);
+            stopName = StopNames::capitaliseAfterDivisionPrefix(displayFolderName(perspectiveRootName)) + " - " + StopNames::capitaliseAfterDivisionPrefix(displayFolderName(descendant));
         }
         else
         {
@@ -9816,7 +9863,7 @@ std::vector<SamplerEngine::FolderAssignment> SamplerEngine::scanTreeAssignments(
                 displayParent = displayParent.getParentDirectory();
             auto relativeParent = displayFolderName(displayParent.getRelativePathFrom(topFolder)
                 .replaceCharacter('\\', '/').replace("/", " - "));
-            leafName = displayFolderName(leafName);
+            leafName = StopNames::capitaliseAfterDivisionPrefix(displayFolderName(leafName));
             stopName = relativeParent == "." || relativeParent.isEmpty() ? leafName : relativeParent + " - " + leafName;
         }
         // Perspective folders of one stop name form one stop; a folder without a
@@ -9923,6 +9970,8 @@ void SamplerEngine::loadManualFolder(const juce::File& topFolder, int manualInde
     int processedFolders = 0;
     loadOutOfMemory.store(false, std::memory_order_relaxed);
     loadStoppedForMemory.store(false, std::memory_order_relaxed);
+    loadMemoryCutStops.clear();
+    if (gSwapBaseline.load() < 0) gSwapBaseline.store(MemoryInfo::swappedBytes());   // the paging rule counts the growth from here
     for (auto& [groupManual, group] : groups)
     {
         auto& newStops = group.division->stops;
@@ -9983,6 +10032,22 @@ void SamplerEngine::loadManualFolder(const juce::File& topFolder, int manualInde
                 loadRank(miscStop.get(), stopFolder, groupManual);
                 newStops.add(miscStop.release());
             }
+        }
+        // The stops the memory stop cut in the middle (a perspective rank of
+        // theirs included): dropped whole, named with the skipped ones.
+        if (!loadMemoryCutStops.empty())
+        {
+            for (int i = newStops.size(); --i >= 0;)
+            {
+                Stop* stop = newStops[i];
+                bool cut = loadMemoryCutStops.count(stop) > 0;
+                for (const auto& rank : stop->ranks) if (loadMemoryCutStops.count(rank.get()) > 0) cut = true;
+                if (!cut) continue;
+                loadMemorySkipped.insert(0, stop->name);
+                perspectiveStops.erase(comparableFolderName(stop->name));
+                newStops.remove(i);
+            }
+            loadMemoryCutStops.clear();
         }
         juce::Random random;
         for (auto* stop : newStops) regenerateRandomTuning(stop, random);

@@ -12,6 +12,66 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.135] - 2026-10-20
+
+### Fixed
+- Hauptwerk import: a rank several stops play belongs to the stop whose name
+  it carries ("Rear: GO. Bombarde 16" to "GO. Bombarde 16"), else to the one
+  playing it straight over the whole division, then to the one with the most
+  keys - no longer to the first stop in the file (Bellevue: the pedal came
+  first and "owned" the Great's Bombarde, Violonbasse and the Positif's
+  Doucaine, which then became transmissions of the pedal). A stop with ranks
+  of its own is loaded from them whatever it borrows besides (Billerbeck's
+  Tuba 16 and Tuba 4 are stops again); a stop with no rank of its own is a
+  transmission of the owner it borrows the most keys from (Tuba 8 of the
+  Tuba 16, "P. Flute 16" of the "Grosse flute 32", "5. Tuba Ped. 2" of the
+  Tuba 4 - before, such a stop was dropped as "borrowing in several ways").
+- Hauptwerk import: a floating division - one no keyboard reaches without a
+  coupler (Bellevue's "Chamade", played from every keyboard through
+  "Bom-Ped/Gt/Pos/Rec 8") - is placed stop by stop where the stop's name says
+  ("GO. Trompette en chamade 8" on the Great, "Ped. ..." on the Pedal, "5. ..."
+  on V); before, all of them landed in one division.
+- The pool of the Stop List listed every stop a second time for sample sets
+  whose tremmed recordings lie in sibling folders named after the stop with
+  "tr" or "TREM" appended ("02-suchy_Pos_Bourdontr" beside
+  "02-suchy_Pos_Bourdon", "HW_Gedackt8TREM"): a tree scan now skips a folder
+  named after its sibling or its parent plus "tr"/"trem". "output" joins the
+  default Ignored Patterns (the "outputsum"/"outputharm" renderings some sets
+  keep under a rank stood in the pool too). A folder a row names explicitly
+  is loaded whatever its name (Billerbeck's "Grosse flute 32" lives in TREM
+  folders only; the import's report says so).
+- A stop the memory stop cut in the middle of its files stood on the grid
+  with the pipes loaded so far: it is dropped whole now, named among the
+  skipped stops, and stays in the pool.
+- macOS: the loading stopped at idle on an 8 GB Mac with "paging already
+  (0.43 GB swapped or compressed)" - the compressor holds other programs'
+  pages; the rule now counts the growth since the load began (#21).
+- The Stop List opened after a configuration load showed the organ before
+  it (its perspectives and pool) when it had been left open: the window is
+  closed by the load now.
+- The measurement's verdict goes into the LIMIT box of the polyphony display
+  at once, the caret in it or not.
+
+### Changed
+- One-shot stops: the defaults are "Chiff", "Chimes", "Tubular", "Celesta",
+  "Harp", "Glockenspiel"; a Hauptwerk import adds the folders of every stop
+  the definition plays without release samples (a carillon).
+- Names the program makes put a capital after a division abbreviation: "P.
+  Trombone 16", "3 Geigenpr 8", "Rec: Hautbois 8" - the row names of a tree
+  scan, the aliases from folder names and the Hauptwerk import's aliases.
+  Names typed by the user are never touched.
+- Memory: the reserve of free memory is 512 MB or a sixteenth of the
+  installed memory (768 MB until now - too much of a small one); the system's
+  share is 1 GB on a computer of 4 GB and less (1.5 GB or a fifth above).
+- The polyphony report names the render cores only, no "of all N logical
+  CPUs" (the manual rejects the hyper-threads).
+- The buttons of the "save first?" question say what happens: "Save it, then
+  load" / "Load and keep the file as it is" / "Load and lose these changes".
+- The "Configuration from another computer" message box is gone: the
+  activity log notes it (it stood over the import's own report and the
+  memory warning). The "Report a problem" message is three lines.
+- Bug report form: the "Logs" field (logs.zip) is the first field.
+
 ## [0.8.134] - 2026-10-19
 
 ### Changed

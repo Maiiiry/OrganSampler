@@ -429,13 +429,22 @@ static const char* const kManualText_part2 =
     "  rates sound alike and need the same RAM. The audio device may run at any\n"
     "  rate.\n"
     "- **One-shot stops.** A folder whose name matches one of the patterns listed\n"
-    "  in *One-shot stops (folder contains)* (default \"Chiff\") holds samples that\n"
+    "  in *One-shot stops (folder contains)* (defaults \"Chiff\", \"Chimes\", \"Tubular\",\n"
+    "  \"Celesta\", \"Harp\", \"Glockenspiel\" - \"Celesta\" the keyboard instrument, not\n"
+    "  the \"Celeste\" rank of strings) holds samples that\n"
     "  play once from start to end without looping, however long the key is held:\n"
     "  chiffs recorded separately, percussion, bells. Their files are named like\n"
     "  any other pipe's; no release folder is needed.\n"
     "- **Folders to skip** (tremulant recordings, say) are listed in *Ignored\n"
-    "  folders (folder contains)* (defaults \"trem\" and \"*_tr\"): such folders are\n"
-    "  not loaded.\n"
+    "  folders (folder contains)* (defaults \"trem\", \"*_tr\" and \"output\" - the\n"
+    "  summed or harmonic renderings some sets keep under a rank, \"outputsum\",\n"
+    "  \"outputharm\"): such folders are not loaded. Besides the patterns, a folder\n"
+    "  named after its sibling or its parent with \"tr\" or \"trem\" appended\n"
+    "  (\"Pos_Bourdontr\" beside \"Pos_Bourdon\", \"HW_Gedackt8TREM\" beside\n"
+    "  \"HW_Gedackt8\") is the tremmed recording of that stop and is skipped by every\n"
+    "  tree scan too (0.8.135; such folders stood in the pool as a second copy of\n"
+    "  every stop). A folder a Stop List row names explicitly is loaded whatever\n"
+    "  its name.\n"
     "- **How the folder-name patterns match.** A pattern without a star matches\n"
     "  anywhere in the folder name (\"trem\" matches \"Principal 8 trem\" and\n"
     "  \"tremulant\"). A star at the start anchors the pattern to the end of the\n"
@@ -483,7 +492,10 @@ static const char* const kManualText_part2 =
     "configuration counts as open once it was loaded or saved in the session (its\n"
     "name is in the window title). When you quit, or load another configuration,\n"
     "while the open configuration has unsaved changes, the program asks whether to\n"
-    "write the changes into its file; \"without saving\" drops them. *Shut down PC* never asks:\n"
+    "write the changes into its file first (\"Save it, then load\" / \"Save it, then quit\") or\n"
+    "leave the file as it is and go on (\"Load and keep the file as it is\"); an\n"
+    "instrument built without any file open is offered a new file or lost (\"Load\n"
+    "and lose these changes\"). *Shut down PC* never asks:\n"
     "it saves into the open configuration (or into a rescue file) and shuts down.\n"
     "Starting the program without *Load the last configuration at startup* begins\n"
     "with an empty instrument; nothing stops you from loading folders and playing\n"
@@ -513,11 +525,26 @@ static const char* const kManualText_part2 =
     "pull the whole stop), the rest the per-key voicing. The way from a\n"
     "stop to its folders is the definition's own: stop > its StopRank rows > the\n"
     "ranks > the folders of their pipe samples; the folders decide what a stop\n"
-    "is. A stop whose rows play another stop's ranks shifted (a 4' playing the 8'\n"
-    "rank an octave up, a stop borrowed into another division) is an extension or\n"
-    "transmission in Hauptwerk's terms as in ours: it is made as a transmission of\n"
-    "that stop with the same shift, not loaded a second time; a few top pipes of\n"
-    "its own, if it has them, are left out (filled pipes cover them). A stop\n"
+    "is. Who owns a rank several stops play (0.8.135): the stop whose name the\n"
+    "rank carries (\"Rear: GO. Bombarde 16\" belongs to \"GO. Bombarde 16\", whatever\n"
+    "the file order - the pedal's \"Ped. Bombarde 16\" borrows it, not the other\n"
+    "way round), else the stop playing it straight over its whole division, then\n"
+    "the one with the most keys. A stop with ranks of its own is a stop of its\n"
+    "own and is loaded from them, whatever it borrows besides (Billerbeck's \"Tuba\n"
+    "16\" plays its own rank and takes three top keys from the \"Tuba 4\": the\n"
+    "filled pipes cover those). A stop with NO rank of its own - its rows play\n"
+    "another stop's ranks shifted (a 4' playing the 8' rank an octave up, a stop\n"
+    "borrowed into another division) - is an extension or transmission in\n"
+    "Hauptwerk's terms as in ours: it is made as a transmission of the owner it\n"
+    "borrows the most keys from, with that shift, not loaded a second time. A\n"
+    "stop goes to the division of ours whose keyboard plays its Hauptwerk\n"
+    "division; a FLOATING division - one no keyboard reaches without a coupler\n"
+    "(Bellevue's \"Chamade\", played from every keyboard through \"Bom-Ped/Gt/Pos/Rec\n"
+    "8\") - is placed stop by stop where the name says (\"GO. Trompette en chamade\n"
+    "8\" on the Great, \"Ped. Clairon en chamade\" on the Pedal, \"5. Tuba 16\" on V).\n"
+    "A stop none of whose ranks has release samples (a carillon, chimes) is a\n"
+    "one-shot stop: its folder names join the One-shot Patterns of the\n"
+    "configuration. A stop\n"
     "with several ranks in ONE perspective (Caen: a stereo stop recorded as a\n"
     "left and a right rank, \"Quintaton 16 (L component)\" and \"(R component)\",\n"
     "two folders for the same perspective) becomes a stop folder: its own row\n"
@@ -544,9 +571,14 @@ static const char* const kManualText_part2 =
     "displays, noises (blower, key and stop action, Zimbelstern...) - is ignored:\n"
     "the folder structure decides the organ, as always. Tremmed samples (the\n"
     "\"tremmed\" ranks, the `trem` folders, the `..._TR` sibling folders of the\n"
-    "divisions) are left out and `*_tr` joins the Ignored Patterns; OrganSampler\n"
-    "has its own tremulant. Encrypted sample sets (`.hbw` files) cannot be played\n"
-    "and the import says so.\n"
+    "divisions, the `...tr` / `...TREM` siblings of the stop folders) are left out\n"
+    "and the configuration starts with the default Ignored Patterns; OrganSampler\n"
+    "has its own tremulant. (A stop the definition plays from folders named TREM\n"
+    "only - Billerbeck's \"Grosse flute 32\" - is taken as Hauptwerk has it, and the\n"
+    "import's report says so.) Names and aliases the import makes put a capital\n"
+    "after a division abbreviation (\"P. Trombone 16\", \"3 Geigenpr 8\"); so do the\n"
+    "row names of every tree scan. Encrypted sample sets (`.hbw` files) cannot be\n"
+    "played and the import says so.\n"
     "\n"
     "The samples must lie where Hauptwerk keeps them: the definition in\n"
     "`OrganDefinitions`, the packages in `OrganInstallationPackages/<six-digit\n"
@@ -574,6 +606,8 @@ static const char* const kManualText_part2 =
     "of the Stop List under the existing rows of their division (drag them where\n"
     "they belong), their folder trees join yours, and their voicing comes with\n"
     "them. What would collide is left as it is and listed in the message at the\n"
+    ;
+static const char* const kManualText_part3 =
     "end: a stop whose sample folder is already loaded is shared and not added; a\n"
     "perspective your organ already has keeps its audio route and settings, a new\n"
     "perspective brings the added configuration's; a division that has stops\n"
@@ -604,10 +638,9 @@ static const char* const kManualText_part2 =
     "polyphony. Loaded on another computer, every route that had a device - the\n"
     "auxiliary routes with their reverbs included - plays through that\n"
     "computer's default sound device at once; the computer keeps its own\n"
-    "interface size and thread settings, and a message says what to set up:\n"
+    "interface size and thread settings, and the activity log notes it (no\n"
+    "message box since 0.8.135). What to set up:\n"
     "the MIDI keyboard of every division (*Settings* in the division header,\n"
-    ;
-static const char* const kManualText_part3 =
     "right-click the keyboard icon for *MIDI Learn*), the sound card, buffer and\n"
     "output channels of every route in the audio tabs, then *Measure the maximum\n"
     "polyphony* in the Configuration Editor and *Save Configuration*. Published\n"
@@ -758,8 +791,25 @@ static const char* const kManualText_part3 =
     "time (crackle), see \"Getting the most polyphony\" -, the memory the program\n"
     "holds (*RAM GB*, whole gigabytes rounded up; orange when less than a tenth\n"
     "of the installed memory is free: the system then pages samples out and a\n"
-    "block stalls on reading them back), and the polyphony *LIMIT* (editable).\n"
+    "block stalls on reading them back), and the polyphony *LIMIT* (editable; the\n"
+    "measurement writes its verdict into it the moment its report opens).\n"
     "\n"
+    "The loading never lets the system page: before every stop (and every 32\n"
+    "files inside a large one) the program looks at the memory and stops loading\n"
+    "when any sign says it is short - less free than 512 MB or a sixteenth of the\n"
+    "installed memory, its own footprint within the system's share (1.5 GB or a\n"
+    "fifth; 1 GB on a computer of 4 GB and less), the system swapping or\n"
+    "compressing more than 256 MB beyond what it did when the load began, or the\n"
+    "macOS kernel reporting memory pressure. The stops loaded so far make the\n"
+    "instrument; a stop cut in the middle of its files is dropped whole, and every\n"
+    "stop left out is named in the message and stays in the pool of the Stop\n"
+    "List - nothing stands on the grid half loaded. The \"free\" figure is what the\n"
+    "system could give the program now: Windows' available physical memory,\n"
+    "Linux's MemAvailable (the reclaimable cache included), macOS's free and\n"
+    "inactive pages; the footprint rule is the one that bites on an 8 GB machine.\n"
+    "\n"
+    ;
+static const char* const kManualText_part4 =
     "## 2.5 Division headers\n"
     "\n"
     "Each division column starts with a one-line header: a keyboard icon that\n"
@@ -808,8 +858,6 @@ static const char* const kManualText_part3 =
     "dialog, scrollbars appear and every control stays reachable.\n"
     "\n"
     "---\n"
-    ;
-static const char* const kManualText_part4 =
     "\n"
     "# 3. Stops on the grid and their voicing\n"
     "\n"
@@ -962,6 +1010,8 @@ static const char* const kManualText_part4 =
     "Keys whose pipe lies beyond the rank's compass (the bottom octave of a 16'\n"
     "extension) play **filled pipes**: see \"What a filled pipe is\".\n"
     "\n"
+    ;
+static const char* const kManualText_part5 =
     "## 3.5 Velocity layers\n"
     "\n"
     "An organ key never plays softer when it is struck gently, so the velocity\n"
@@ -1010,8 +1060,6 @@ static const char* const kManualText_part4 =
     "settings, transposition), into one new stop per perspective: a folder named\n"
     "after the stops (`StopMerged_Principal_8_Octava_4`) inside the loaded folder\n"
     "tree, with proper WAV files, loop points and release folders, ready to load as\n"
-    ;
-static const char* const kManualText_part5 =
     "an ordinary stop. A transmission merged alone gives a complete stop of the\n"
     "transposed rank - a way to turn a pitch-shifted extension into files. While\n"
     "the copies of a transmission's filled pipes are still being built the merge\n"
@@ -1164,6 +1212,8 @@ static const char* const kManualText_part5 =
     "## 5.3 The audio tabs\n"
     "\n"
     "Every perspective of the division has an audio tab (the default perspective,\n"
+    ;
+static const char* const kManualText_part6 =
     "Direct, Diffuse, Rear ... as the sample folders have them), plus one tab\n"
     "**auxiliary** (see \"The auxiliary route\" below). Every tab is one **audio\n"
     "route**: the pipes of that perspective rendered to that device and those\n"
@@ -1212,8 +1262,6 @@ static const char* const kManualText_part5 =
     "  on the third, D# on the fourth, E on the first again ...).\n"
     "- A **stereo sample** goes to a pair of channels, its left channel to one and\n"
     "  its right channel to the next. With an **even** number of ticked channels\n"
-    ;
-static const char* const kManualText_part6 =
     "  the pairs are fixed (the first and second, the third and fourth ...) and\n"
     "  neighbouring keys alternate between the pairs. With an **odd** number of\n"
     "  ticked channels the pairs shift by one channel from key to key, so the\n"
@@ -1366,6 +1414,8 @@ static const char* const kManualText_part6 =
     "choose it as the system output; use the on-board chip for the desktop and\n"
     "the interface for the organ. After switching the profile the card appears\n"
     "under a new name (its own, \"Komplete Audio 6\" instead of \"Analog Stereo\n"
+    ;
+static const char* const kManualText_part7 =
     "1/2\"), so choose it again in the audio tabs.\n"
     "\n"
     "**Step 2 - the packages.** OrganSampler needs PipeWire's JACK library and\n"
@@ -1414,8 +1464,6 @@ static const char* const kManualText_part6 =
     "thread of ... raised to realtime\", \"realtime already\" under JACK, or\n"
     "\"realtime refused\" with the reason). Through JACK the thread is PipeWire's\n"
     "own, which the system has already made realtime; through ALSA it is the\n"
-    ;
-static const char* const kManualText_part7 =
     "program's, and needs the permission above.\n"
     "\n"
     "**The two kinds of driver in OrganSampler:**\n"
@@ -1568,6 +1616,8 @@ static const char* const kManualText_part7 =
     "callback is late. A value of several hundred percent means the audio thread\n"
     "was kept waiting by something else on the computer, not that the voices took\n"
     "that long; the activity log notes every such event.\n"
+    ;
+static const char* const kManualText_part8 =
     "\n"
     "---\n"
     "\n"
@@ -1616,8 +1666,6 @@ static const char* const kManualText_part7 =
     "  **double-click** the temperament in the dialog (or pick it in\n"
     "  *Configuration Editor > Console > Samples' base temperament*). The voicing\n"
     "  row of every stop reports what its own ranks were found to be in\n"
-    ;
-static const char* const kManualText_part8 =
     "  (\"temperament = ...\"), which helps the choice. \"Equal\" is reported whenever\n"
     "  the recording matches equal temperament.\n"
     "- **The target temperament** is the temperament the organ *plays* in. A\n"
@@ -1770,6 +1818,8 @@ static const char* const kManualText_part8 =
     "  by transmissions only, takes the value of the first transmission in the\n"
     "  stop's list whose shifted compass holds it. Changing it rebuilds only the\n"
     "  pipes concerned. Default 30 %; the right value is a matter of listening.\n"
+    ;
+static const char* const kManualText_part9 =
     "- **Filled pipes: release length** (pitch shift method) - the decay of a\n"
     "  release copy laid out to this share of the source's duration (the room does\n"
     "  not grow or shrink with the pipe).\n"
@@ -1818,8 +1868,6 @@ static const char* const kManualText_part8 =
     "- The row *Filled pipes cache: <size> in <folder>* shows how much the cache\n"
     "  holds and where. Its button **Empty the cache** deletes every file. Use it\n"
     "  to get the disk space back, or after replacing the samples wholesale; the\n"
-    ;
-static const char* const kManualText_part9 =
     "  copies are built again (and cached again) the next time they are needed.\n"
     "  Nothing else is lost.\n"
     "- *Filled pipes cache: files of stops not loaded now* - **Remove them**\n"
@@ -1972,6 +2020,8 @@ static const char* const kManualText_part9 =
     "belongs to the computer, not to the organ: a portable configuration does not\n"
     "carry it.\n"
     "\n"
+    ;
+static const char* const kManualText_part10 =
     "Routes that share everything the reverb depends on share one convolution\n"
     "(since 0.8.109): rendered by the same audio device to the same output\n"
     "channels, with the same impulse response, dry/wet, wet volume, high and low\n"
@@ -2020,8 +2070,6 @@ static const char* const kManualText_part9 =
     "   the longer the release, the more polyphony it costs, because every voice\n"
     "   keeps its place in the polyphony until its release has died away\n"
     "   completely.\n"
-    ;
-static const char* const kManualText_part10 =
     "3. Watch *DSP* and *PEAK* while you do it. At the moment the audio starts to\n"
     "   break up (crackle, dropouts), note the *PEAK* value.\n"
     "4. Enter a somewhat lower number as the limit.\n"
@@ -2174,6 +2222,8 @@ static const char* const kManualText_part10 =
     "\n"
     "The level of all release samples, -20 to +6 dB (default 0); the leftmost\n"
     "position \"-inf\" silences them. Quieter releases make a drier organ without\n"
+    ;
+static const char* const kManualText_part11 =
     "losing the room entirely.\n"
     "\n"
     "### Release cutting\n"
@@ -2222,8 +2272,6 @@ static const char* const kManualText_part10 =
     "\n"
     "### Wind: one stop's share of the full sag\n"
     "\n"
-    ;
-static const char* const kManualText_part11 =
     "The sag a single engaged 8' stop produces, relative to the sag with many stops\n"
     "engaged (2 to 100 %, default 20). Smaller footages count less. A lower value\n"
     "keeps a solo stop steady and lets the sag come with full registration.\n"
@@ -2376,6 +2424,8 @@ static const char* const kManualText_part11 =
     "\n"
     "### Filled pipes: loudness kept when pitch shifting\n"
     "\n"
+    ;
+static const char* const kManualText_part12 =
     "Pitch shift methods. On (default): every shifted copy is brought to the\n"
     "loudness of its source sample, so a filled pipe is as strong as the pipe it was\n"
     "made from. Off: the copy keeps whatever level the shift left it with (a copy\n"
@@ -2424,8 +2474,6 @@ static const char* const kManualText_part11 =
     "shifts). *Cubic interpolation* lowers the interpolation images by about 20 dB\n"
     "for these voices only. *Cubic + anti-alias filter* (default) also removes what\n"
     "would fold back when a pipe is transposed upwards: a low-passed copy of the\n"
-    ;
-static const char* const kManualText_part12 =
     "source is built for each such filled pipe (a few MB per rank, nothing for stops\n"
     "without upward shifts). Real pipes are never touched.\n"
     "\n"
@@ -2578,6 +2626,8 @@ static const char* const kManualText_part12 =
     "smpl pitches - the voicing row of every stop reports what its ranks were found\n"
     "to be in. Every pipe's retuning to the target temperament starts from here;\n"
     "a wrong base temperament puts the whole organ slightly out of tune. See\n"
+    ;
+static const char* const kManualText_part13 =
     "\"Temperaments\".\n"
     "\n"
     "### Target temperament\n"
@@ -2598,15 +2648,20 @@ static const char* const kManualText_part12 =
     "### One-shot stops (folder contains)\n"
     "\n"
     "Folders whose name matches one of these patterns hold samples that play once\n"
-    "without looping (chiff, percussion, bells). Default: \"Chiff\". The patterns\n"
+    "without looping (chiff, percussion, bells). Defaults: \"Chiff\", \"Chimes\",\n"
+    "\"Tubular\", \"Celesta\", \"Harp\", \"Glockenspiel\" (a Hauptwerk import adds the\n"
+    "folders of every stop the definition plays without release samples). The patterns\n"
     "match like those of *Ignored folders (folder contains)* (a star at the start\n"
     "or the end anchors them). Applies to the next folder load.\n"
     "\n"
     "### Ignored folders (folder contains)\n"
     "\n"
     "Folders whose name matches one of these patterns are not loaded at all\n"
-    "(tremulant recordings, say). Defaults: \"trem\" (anywhere in the name) and\n"
-    "\"*_tr\" (names ending in \"_tr\"). A pattern without a star matches anywhere, a\n"
+    "(tremulant recordings, say). Defaults: \"trem\" (anywhere in the name),\n"
+    "\"*_tr\" (names ending in \"_tr\") and \"output\" (the \"outputsum\"/\"outputharm\"\n"
+    "renderings under a rank). A folder named after its sibling or parent with\n"
+    "\"tr\"/\"trem\" appended is skipped by every tree scan besides (see \"Folders to\n"
+    "skip\" in chapter 2). A pattern without a star matches anywhere, a\n"
     "star at the start anchors it to the end of the name, a star at the end to its\n"
     "start; underscores count. Applies to the next folder load.\n"
     "\n"
@@ -2626,8 +2681,6 @@ static const char* const kManualText_part12 =
     "\n"
     "One collapsed section per division; the same settings as in the Divisions\n"
     "dialog (see \"Keyboard, MIDI and compass\", \"Swell, tremulant, wind\" and \"The\n"
-    ;
-static const char* const kManualText_part13 =
     "audio tabs\").\n"
     "\n"
     "### Stops and sample folders\n"
@@ -2775,6 +2828,8 @@ static const char* const kManualText_part13 =
     "\n"
     "How long the wind pressure takes to settle after stops or keys change (100 to\n"
     "400 ms, default 255). The same lag governs the volume glide when a pipe held\n"
+    ;
+static const char* const kManualText_part14 =
     "through several routes passes from one route to another.\n"
     "\n"
     "### Wind: also affects divisions\n"
@@ -2806,7 +2861,8 @@ static const char* const kManualText_part13 =
     "untick the box if you do not want them), plus any screenshot files you add\n"
     "with *Add screenshot files...*. Then the GitHub bug report opens in your\n"
     "browser with its fields filled in from the dialog: drag `logs.zip` into\n"
-    "\"Logs\" and the pictures into \"Screenshots\", check the text, submit. A free\n"
+    "\"Logs\" (the first field of the form) and the pictures into \"Screenshots\",\n"
+    "check the text, submit. A free\n"
     "GitHub account is needed to submit; the report is public, like every issue\n"
     "of a free program.\n"
     "\n"
@@ -2828,8 +2884,6 @@ static const char* const kManualText_part13 =
     "built for Windows, macOS and Linux; the macOS and Linux builds have had less\n"
     "playing time than the Windows build. What each build needs:\n"
     "\n"
-    ;
-static const char* const kManualText_part14 =
     "- **Windows:** `OrganSampler-windows.zip` - Windows 10 or 11, 64-bit. ASIO,\n"
     "  Windows Audio (WASAPI) and the aggregated WASAPI device.\n"
     "- **macOS:** `OrganSampler-macos.zip` runs on Apple silicon Macs with macOS\n"

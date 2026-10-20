@@ -421,13 +421,22 @@ Principal 8
   rates sound alike and need the same RAM. The audio device may run at any
   rate.
 - **One-shot stops.** A folder whose name matches one of the patterns listed
-  in *One-shot stops (folder contains)* (default "Chiff") holds samples that
+  in *One-shot stops (folder contains)* (defaults "Chiff", "Chimes", "Tubular",
+  "Celesta", "Harp", "Glockenspiel" - "Celesta" the keyboard instrument, not
+  the "Celeste" rank of strings) holds samples that
   play once from start to end without looping, however long the key is held:
   chiffs recorded separately, percussion, bells. Their files are named like
   any other pipe's; no release folder is needed.
 - **Folders to skip** (tremulant recordings, say) are listed in *Ignored
-  folders (folder contains)* (defaults "trem" and "*_tr"): such folders are
-  not loaded.
+  folders (folder contains)* (defaults "trem", "*_tr" and "output" - the
+  summed or harmonic renderings some sets keep under a rank, "outputsum",
+  "outputharm"): such folders are not loaded. Besides the patterns, a folder
+  named after its sibling or its parent with "tr" or "trem" appended
+  ("Pos_Bourdontr" beside "Pos_Bourdon", "HW_Gedackt8TREM" beside
+  "HW_Gedackt8") is the tremmed recording of that stop and is skipped by every
+  tree scan too (0.8.135; such folders stood in the pool as a second copy of
+  every stop). A folder a Stop List row names explicitly is loaded whatever
+  its name.
 - **How the folder-name patterns match.** A pattern without a star matches
   anywhere in the folder name ("trem" matches "Principal 8 trem" and
   "tremulant"). A star at the start anchors the pattern to the end of the
@@ -475,7 +484,10 @@ program. *Save Configuration* and *Load Configuration* are in the top bar. A
 configuration counts as open once it was loaded or saved in the session (its
 name is in the window title). When you quit, or load another configuration,
 while the open configuration has unsaved changes, the program asks whether to
-write the changes into its file; "without saving" drops them. *Shut down PC* never asks:
+write the changes into its file first ("Save it, then load" / "Save it, then quit") or
+leave the file as it is and go on ("Load and keep the file as it is"); an
+instrument built without any file open is offered a new file or lost ("Load
+and lose these changes"). *Shut down PC* never asks:
 it saves into the open configuration (or into a rescue file) and shuts down.
 Starting the program without *Load the last configuration at startup* begins
 with an empty instrument; nothing stops you from loading folders and playing
@@ -505,11 +517,26 @@ over its perspectives; most pipes stand at 0 dB, a few voiced ones must not
 pull the whole stop), the rest the per-key voicing. The way from a
 stop to its folders is the definition's own: stop > its StopRank rows > the
 ranks > the folders of their pipe samples; the folders decide what a stop
-is. A stop whose rows play another stop's ranks shifted (a 4' playing the 8'
-rank an octave up, a stop borrowed into another division) is an extension or
-transmission in Hauptwerk's terms as in ours: it is made as a transmission of
-that stop with the same shift, not loaded a second time; a few top pipes of
-its own, if it has them, are left out (filled pipes cover them). A stop
+is. Who owns a rank several stops play (0.8.135): the stop whose name the
+rank carries ("Rear: GO. Bombarde 16" belongs to "GO. Bombarde 16", whatever
+the file order - the pedal's "Ped. Bombarde 16" borrows it, not the other
+way round), else the stop playing it straight over its whole division, then
+the one with the most keys. A stop with ranks of its own is a stop of its
+own and is loaded from them, whatever it borrows besides (Billerbeck's "Tuba
+16" plays its own rank and takes three top keys from the "Tuba 4": the
+filled pipes cover those). A stop with NO rank of its own - its rows play
+another stop's ranks shifted (a 4' playing the 8' rank an octave up, a stop
+borrowed into another division) - is an extension or transmission in
+Hauptwerk's terms as in ours: it is made as a transmission of the owner it
+borrows the most keys from, with that shift, not loaded a second time. A
+stop goes to the division of ours whose keyboard plays its Hauptwerk
+division; a FLOATING division - one no keyboard reaches without a coupler
+(Bellevue's "Chamade", played from every keyboard through "Bom-Ped/Gt/Pos/Rec
+8") - is placed stop by stop where the name says ("GO. Trompette en chamade
+8" on the Great, "Ped. Clairon en chamade" on the Pedal, "5. Tuba 16" on V).
+A stop none of whose ranks has release samples (a carillon, chimes) is a
+one-shot stop: its folder names join the One-shot Patterns of the
+configuration. A stop
 with several ranks in ONE perspective (Caen: a stereo stop recorded as a
 left and a right rank, "Quintaton 16 (L component)" and "(R component)",
 two folders for the same perspective) becomes a stop folder: its own row
@@ -536,9 +563,14 @@ button. Everything else - couplers, combinations, tremulants, wind,
 displays, noises (blower, key and stop action, Zimbelstern...) - is ignored:
 the folder structure decides the organ, as always. Tremmed samples (the
 "tremmed" ranks, the `trem` folders, the `..._TR` sibling folders of the
-divisions) are left out and `*_tr` joins the Ignored Patterns; OrganSampler
-has its own tremulant. Encrypted sample sets (`.hbw` files) cannot be played
-and the import says so.
+divisions, the `...tr` / `...TREM` siblings of the stop folders) are left out
+and the configuration starts with the default Ignored Patterns; OrganSampler
+has its own tremulant. (A stop the definition plays from folders named TREM
+only - Billerbeck's "Grosse flute 32" - is taken as Hauptwerk has it, and the
+import's report says so.) Names and aliases the import makes put a capital
+after a division abbreviation ("P. Trombone 16", "3 Geigenpr 8"); so do the
+row names of every tree scan. Encrypted sample sets (`.hbw` files) cannot be
+played and the import says so.
 
 The samples must lie where Hauptwerk keeps them: the definition in
 `OrganDefinitions`, the packages in `OrganInstallationPackages/<six-digit
@@ -596,7 +628,8 @@ render-thread, interface-size, window or cache settings, no measured
 polyphony. Loaded on another computer, every route that had a device - the
 auxiliary routes with their reverbs included - plays through that
 computer's default sound device at once; the computer keeps its own
-interface size and thread settings, and a message says what to set up:
+interface size and thread settings, and the activity log notes it (no
+message box since 0.8.135). What to set up:
 the MIDI keyboard of every division (*Settings* in the division header,
 right-click the keyboard icon for *MIDI Learn*), the sound card, buffer and
 output channels of every route in the audio tabs, then *Measure the maximum
@@ -748,7 +781,22 @@ share of the block's duration; above 100 % that thread could not deliver in
 time (crackle), see "Getting the most polyphony" -, the memory the program
 holds (*RAM GB*, whole gigabytes rounded up; orange when less than a tenth
 of the installed memory is free: the system then pages samples out and a
-block stalls on reading them back), and the polyphony *LIMIT* (editable).
+block stalls on reading them back), and the polyphony *LIMIT* (editable; the
+measurement writes its verdict into it the moment its report opens).
+
+The loading never lets the system page: before every stop (and every 32
+files inside a large one) the program looks at the memory and stops loading
+when any sign says it is short - less free than 512 MB or a sixteenth of the
+installed memory, its own footprint within the system's share (1.5 GB or a
+fifth; 1 GB on a computer of 4 GB and less), the system swapping or
+compressing more than 256 MB beyond what it did when the load began, or the
+macOS kernel reporting memory pressure. The stops loaded so far make the
+instrument; a stop cut in the middle of its files is dropped whole, and every
+stop left out is named in the message and stays in the pool of the Stop
+List - nothing stands on the grid half loaded. The "free" figure is what the
+system could give the program now: Windows' available physical memory,
+Linux's MemAvailable (the reclaimable cache included), macOS's free and
+inactive pages; the footprint rule is the one that bites on an 8 GB machine.
 
 ## 2.5 Division headers
 
@@ -2570,15 +2618,20 @@ returns to where it was last time, always with its title bar on the screen.
 ### One-shot stops (folder contains)
 
 Folders whose name matches one of these patterns hold samples that play once
-without looping (chiff, percussion, bells). Default: "Chiff". The patterns
+without looping (chiff, percussion, bells). Defaults: "Chiff", "Chimes",
+"Tubular", "Celesta", "Harp", "Glockenspiel" (a Hauptwerk import adds the
+folders of every stop the definition plays without release samples). The patterns
 match like those of *Ignored folders (folder contains)* (a star at the start
 or the end anchors them). Applies to the next folder load.
 
 ### Ignored folders (folder contains)
 
 Folders whose name matches one of these patterns are not loaded at all
-(tremulant recordings, say). Defaults: "trem" (anywhere in the name) and
-"*_tr" (names ending in "_tr"). A pattern without a star matches anywhere, a
+(tremulant recordings, say). Defaults: "trem" (anywhere in the name),
+"*_tr" (names ending in "_tr") and "output" (the "outputsum"/"outputharm"
+renderings under a rank). A folder named after its sibling or parent with
+"tr"/"trem" appended is skipped by every tree scan besides (see "Folders to
+skip" in chapter 2). A pattern without a star matches anywhere, a
 star at the start anchors it to the end of the name, a star at the end to its
 start; underscores count. Applies to the next folder load.
 
@@ -2776,7 +2829,8 @@ of the program as it is at that moment (keep the dialog in question open;
 untick the box if you do not want them), plus any screenshot files you add
 with *Add screenshot files...*. Then the GitHub bug report opens in your
 browser with its fields filled in from the dialog: drag `logs.zip` into
-"Logs" and the pictures into "Screenshots", check the text, submit. A free
+"Logs" (the first field of the form) and the pictures into "Screenshots",
+check the text, submit. A free
 GitHub account is needed to submit; the report is public, like every issue
 of a free program.
 

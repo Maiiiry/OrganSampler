@@ -119,14 +119,20 @@ namespace MemoryInfo
     // footprint reaches installed - share: beyond it the system pages samples
     // out, and every stroke that touches them stalls the sound (two-core
     // laptops with 8 GB and a 7 GB organ, issues #16, #17, #19).
+    // On a small computer (4 GB and less) 1 GB: 1.5 GB of 4 would leave the
+    // organ a bare half (0.8.135).
     inline juce::int64 systemShareBytes()
     {
-        return juce::jmax((juce::int64)1536 * 1024 * 1024, installedBytes() / 5);
+        const juce::int64 installed = installedBytes();
+        if (installed <= (juce::int64)4608 * 1024 * 1024) return (juce::int64)1024 * 1024 * 1024;
+        return juce::jmax((juce::int64)1536 * 1024 * 1024, installed / 5);
     }
-    // The free memory the loading leaves untouched: 768 MB or a sixteenth.
+    // The free memory the loading leaves untouched: 512 MB or a sixteenth
+    // (768 MB until 0.8.134 - too much of a small memory; the footprint rule
+    // above is the one that bites on the 8 GB machines).
     inline juce::int64 reserveBytes()
     {
-        return juce::jmax((juce::int64)768 * 1024 * 1024, installedBytes() / 16);
+        return juce::jmax((juce::int64)512 * 1024 * 1024, installedBytes() / 16);
     }
 
     // macOS: the kernel's own memory pressure level (1 normal, 2 warning, 4
@@ -146,8 +152,11 @@ namespace MemoryInfo
     // Is the memory short now - must a loading stop? Any one sign: the free
     // memory under the reserve; the program's footprint within the system's
     // share; the program (Linux) or the system (macOS compressor) swapping
-    // more than 256 MB; the kernel reporting pressure (macOS, warning or worse).
-    inline bool shortNow(juce::String* reason = nullptr)
+    // more than 256 MB beyond what it held when the load began (the macOS
+    // figure is the whole system's: other programs' compressed pages sit there
+    // at idle, 0.43 GB on the 8 GB Mac of #21 - the absolute figure stopped a
+    // load of 2.4 GB); the kernel reporting pressure (macOS, warning or worse).
+    inline bool shortNow(juce::String* reason = nullptr, juce::int64 swappedBaseline = 0)
     {
         auto gb = [](juce::int64 b) { return juce::String((double)b / 1073741824.0, 2) + " GB"; };
         const juce::int64 installed = installedBytes(), free = freeBytes(), held = heldBytes(), swapped = swappedBytes();
@@ -166,9 +175,9 @@ namespace MemoryInfo
             if (reason != nullptr) *reason = "the program holds " + gb(held) + " of " + gb(installed) + " installed and the system needs " + gb(systemShareBytes());
             return true;
         }
-        if (swapped > (juce::int64)256 * 1024 * 1024)
+        if (swapped - swappedBaseline > (juce::int64)256 * 1024 * 1024)
         {
-            if (reason != nullptr) *reason = "the system is paging already (" + gb(swapped) + " swapped or compressed), " + gb(free) + " free";
+            if (reason != nullptr) *reason = "the system is paging already (" + gb(swapped) + " swapped or compressed, " + gb(swappedBaseline) + " when the load began), " + gb(free) + " free";
             return true;
         }
         return false;

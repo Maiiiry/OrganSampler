@@ -190,6 +190,35 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   (`crescendoFromVar` format: stepCount, cancelsHandStops, steps[{step, stops[{name=row name, perspective "",
   enabled, primaryManual}], couplers[]}]); more than 60 stages spread over 60 steps. Doesburg Surround: 64 stages,
   stage 2 = Aeoline 8 + Echobass 16 + Echo-Gamba 8.
+  0.8.135 ownership (`HauptwerkOdf::plan`, the claims block): a rank's owner among the stops playing it with increment 0
+  = name match (rank name after the perspective head == stop name) > count 0 (the whole division) > more keys > file
+  order; a rank nobody plays straight -> its first user. A stop with ANY rank of its own is a stop, loaded from them
+  (its borrowed rows are covered by the filled pipes, noted); a stop with none -> extension of the owner it borrows
+  the MOST keys from (count 0 = division size). Never the first-in-file rule again (Bellevue: the pedal came first in
+  the file and "owned" GO. Bombarde 16; Billerbeck Tuba 16/4 own their ranks, Tuba 8 and "5. Tuba Ped. 2" and
+  "P. Flute 16" are extensions). Floating ODF division = no keyboard's `unconditionalDivisionIds` holds it (Bellevue
+  "Chamade", reached through the Bom-Ped/Gt/Pos/Rec 8 couplers only; Billerbeck "Tuba" has a keyboard, not floating):
+  its stops go stop by stop where the name's prefix says (`divisionIndexByPrefix`: P./Ped. -> pedal, digits and roman
+  -> manual N, go/gt/hw/sw/rec/pos/rp/ch/so/ech synonyms against the keyboard and ODF division names), noted.
+  One-shot ranks: zero `Pipe_SoundEngine01_ReleaseSample` rows (b = LayerID) -> `Rank::oneShot`; a stop with only such
+  ranks -> `Plan.oneShotFolders` -> the configuration's "oneShotPatterns" (defaults + those folder names). Tremmed
+  siblings: `isTremmedVariantFolder` (SamplerEngine.cpp) - a folder named like a sibling or its parent + "tr"/"trem"
+  (separators trimmed) is skipped by every tree scan (listSampleFolders, scanTreeAssignments: the pool showed every
+  Bellevue/Billerbeck stop twice), never by a row that names it (Billerbeck "P. Grosse flute 32" lives in
+  Ped_flute32/Rea_Ped_flute32TREM only - loaded as Hauptwerk has it, noted). Defaults: ignored {"trem","*_tr","output"}
+  ("outputsum"/"outputharm" under a rank), one-shot {"Chiff","Chimes","Tubular","Celesta","Harp","Glockenspiel"} -
+  "Celesta" the instrument, never "Celeste". `StopNames::capitaliseAfterDivisionPrefix` (Source/StopNames.h) on the
+  scan's row names, the folder aliases and the HW names/aliases ("P. Trombone 16", "3 Geigenpr 8") - never a custom
+  name. Memory 0.8.135: `gSwapBaseline` (SamplerEngine.cpp) = swapped/compressed figure at load start, `shortNow(reason,
+  baseline)` fires on a growth > 256 MB (the mac compressor held 0.43 GB of other programs at idle, #21); reserve
+  512 MB or installed/16; system share 1 GB on <= 4.5 GB installed; a stop cut in the middle of its files
+  (`loadMemoryCutStops`, set in `loadSamplesIntoStop`) is removed whole from the division at the end of the tree and
+  named first in `loadMemorySkipped` - nothing half-loaded on the grid. The "Configuration from another computer"
+  message box is gone (a log line); `applyPortableConfiguration` closes an open Stop List window (it was shown again
+  stale after the load). Dev tools (Python, run with -I): `Tools/odf_stops.py <odf> <name filters>` (stop > StopRank
+  rows > ranks > folders, users), `Tools/odf_links.py <odf> <division filter>` (keyboard -> division switch paths),
+  `Tools/pool_folders.py <cfg.json> <OrganInstallationPackages>` (the scan folders no row uses = what the pool shows;
+  Bellevue and Billerbeck must list nothing but Ped_ContreBomb32's output folders).
 - A route without a device ("none") gets NO voices (0.8.126, `Route::hasDevice` set by `setPerspectiveDeviceKey`,
   checked in `publishVoice`: the voice is finished at once). Before, every pipe was published to its perspective's
   route whatever the device and sat there unrendered until `cleanStaleRoutes` flushed it after ~1 s, counted as
@@ -314,9 +343,9 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   afterwards. No legend above the table. Every README looks the same. Stralsund: 53 + 18 = 71.
 
 ## Pending for the next Linux session (delete when done)
-- `git pull` in `~/OrganSamplerC-linux` (the NTFS checkout `F:` is current, 0.8.109; git cannot run there from
-  Linux: "expected submodule path 'JUCE' not to be a symbolic link"); copy the Linux binary of the newest release
-  to `~/Downloads/OrganSampler`.
+- The Linux clone `~/OrganSamplerC-linux` is at 0.8.135 (20 Oct 2026); the NTFS checkout `F:` is the user's (git cannot
+  run there from Linux: "expected submodule path 'JUCE' not to be a symbolic link"). After each release copy the Linux
+  binary to `~/Downloads/OrganSampler`.
 - Windows builds: never run two MSBuilds of the solution at once - the second fails with C1041 (PDB) and can
   leave orphaned `cl.exe` processes (0 s CPU, parent gone) holding the PDB; stop them before the next build.
 - The dual boot clock is settled: Windows and Linux both keep the hardware clock in local time

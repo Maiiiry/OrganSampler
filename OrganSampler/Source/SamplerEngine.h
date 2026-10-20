@@ -1229,8 +1229,10 @@ public:
 
     // Default folder-name pattern lists: used when the program starts without
     // saved lists, when a saved list is empty and after a Global Reset.
-    static std::vector<juce::String> defaultOneShotPatterns() { return { "Chiff" }; }
-    static std::vector<juce::String> defaultIgnoredPatterns() { return { "trem", "*_tr" }; }   // "*_tr": folders ending in "_tr"
+    // One-shot stops: percussion and bells play once, however long the key is held ("Celesta" is the keyboard instrument, "Celeste" a rank of strings - not matched).
+    static std::vector<juce::String> defaultOneShotPatterns() { return { "Chiff", "Chimes", "Tubular", "Celesta", "Harp", "Glockenspiel" }; }
+    // Folders a tree scan never loads: "trem" anywhere, names ending in "_tr", and "output" (the summed/harmonic renderings some sets keep under a rank, "outputsum"/"outputharm").
+    static std::vector<juce::String> defaultIgnoredPatterns() { return { "trem", "*_tr", "output" }; }
     // Folder-name patterns: no star = anywhere in the name, "*x" = the name ends
     // in x, "x*" = it starts with x; case-insensitive, underscores count.
     static bool folderNameMatchesPattern(const juce::String& folderName, const juce::String& pattern);
@@ -1322,6 +1324,7 @@ private:
     std::atomic<bool> loadOutOfMemory{ false };
     std::atomic<bool> loadStoppedForMemory{ false };   // the memory reserve was reached (not a failed allocation): the load stopped on purpose
     juce::StringArray loadMemorySkipped;               // the stops left out since the stop, over every tree of one load (cleared by takeLastLoadError)
+    std::set<Stop*> loadMemoryCutStops;                // stops (or perspective ranks) the memory stop cut in the middle of their files: dropped at the end of the tree, not half a stop on the grid (0.8.135)
     juce::String loadMemoryStopReason;                 // why (free memory, the compressor, the program's footprint): for the message
     std::atomic<float> undulationBeatRatio{ 12.0f };
     juce::String lastLoadError;

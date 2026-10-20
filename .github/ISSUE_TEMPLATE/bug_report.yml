@@ -11,6 +11,14 @@ body:
         activity log, crash reports, settings, the last self-test and a description of your computer and audio devices into one zip,
         takes screenshots of its windows and puts everything into a folder on your Desktop. Then drag the zip into "Logs" and the
         pictures into "Screenshots" below. Screenshots can be dragged into any text field.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Drag logs.zip from the report folder on your Desktop here first (it holds activity.log, crash logs, settings.json, selftest.txt and system.txt - no sample data). GitHub takes files only this way - no program can attach them for you. Or zip the CrashLogs folder of the application-data folder by hand.
+      placeholder: Drag the zip file into this field.
+    validations:
+      required: true
   - type: input
     id: version
     attributes:
@@ -65,14 +73,6 @@ body:
       label: System
       description: Filled in by "Report a problem" (the program, the computer, the render threads, the configuration and every audio route as they were). Leave it as it is.
       render: text
-  - type: textarea
-    id: logs
-    attributes:
-      label: Logs
-      description: Drag logs.zip from the report folder on your Desktop here (it holds activity.log, crash logs, settings.json, selftest.txt and system.txt - no sample data). GitHub takes files only this way - no program can attach them for you. Or zip the CrashLogs folder of the application-data folder by hand.
-      placeholder: Drag the zip file into this field.
-    validations:
-      required: true
   - type: textarea
     id: screenshots
     attributes:

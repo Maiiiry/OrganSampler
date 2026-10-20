@@ -43,6 +43,7 @@ struct HauptwerkOdf
         int id = 0;
         juce::String name;
         bool tremmed = false;           // an alternate (tremulant) rank, or named "(tremmed)"
+        bool oneShot = false;           // its pipes have no release samples at all (chimes, harp, carillon): a one-shot stop
         bool noise = false;             // key/stop action noises, blower, tremulant noise: no stop of ours
         juce::String perspective;       // "Direct", "Diffuse", "Rear", "Front" ... from the name; empty when the name says nothing
         std::vector<Pipe> pipes;        // the first layer's attack sample of every pipe (tremmed layers and "trem" folders excluded)
@@ -70,7 +71,12 @@ struct HauptwerkOdf
     // for OrganSampler a division IS a keyboard). divisionId is the primary one
     // (the ODF's hint when it is among them), divisionIds all of them, the
     // primary first.
-    struct Keyboard { int id = 0, divisionId = 0, lowNote = 0, highNote = 0; juce::String name; std::vector<int> divisionIds; };
+    struct Keyboard
+    {
+        int id = 0, divisionId = 0, lowNote = 0, highNote = 0; juce::String name;
+        std::vector<int> divisionIds;
+        std::set<int> unconditionalDivisionIds;   // the divisions its keys reach without a condition switch (a division no keyboard reaches so is a floating one)
+    };
 
     // A tremulant of the definition: its speed (Hauptwerk gives a range the
     // speed wanders in; the middle is taken) and the divisions whose pipes it
@@ -155,6 +161,7 @@ struct HauptwerkOdf
         juce::File libraryRoot;                      // OrganInstallationPackages
         juce::File configurationFile;                // where the configuration goes: the main package folder
         int stopsWithoutSamples = 0, skippedTremmedRanks = 0, skippedNoiseRanks = 0, extensions = 0;
+        std::vector<juce::String> oneShotFolders;    // stop folder names of the one-shot stops (no release samples): for the One-shot Patterns
         juce::StringArray notes;                     // what was left out and why (for the log and the message)
         juce::String error;
     };

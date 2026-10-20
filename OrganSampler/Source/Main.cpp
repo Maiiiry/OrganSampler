@@ -152,6 +152,7 @@ public:
             report << "  tremmed ranks skipped " << plan.skippedTremmedRanks << ", noise ranks " << plan.skippedNoiseRanks << ", stops without samples " << plan.stopsWithoutSamples
                    << ", extensions/transmissions " << plan.extensions << "\n";
             for (const auto& n : plan.notes) report << "  note: " << n << "\n";
+            for (const auto& f : plan.oneShotFolders) report << "  one-shot folder: " << f << "\n";
             report << "  configuration: " << plan.configurationFile.getFullPathName() << "\n";
             juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile("OrganSampler").getChildFile("hauptwerk.txt").replaceWithText(report);
             std::fputs(report.toRawUTF8(), stdout);

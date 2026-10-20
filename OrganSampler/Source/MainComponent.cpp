@@ -106,6 +106,8 @@ public:
         limitEditor.setBounds(4 * column + 4, getHeight() - 27, limitWidth - 8, 24);
     }
     int columnWidth() const noexcept { return juce::jmax(1, getWidth() * 18 / 100); }   // LIMIT gets the rest (28 %)
+    // The measurement's verdict into the LIMIT box at once, the caret in it or not (0.8.135).
+    void refreshLimit() { limitEditor.giveAwayKeyboardFocus(); limitEditor.setText(juce::String(engine.getMaxPolyphony()), false); }
     void paint(juce::Graphics& g) override
     {
         // Same look as the combination display: black, lime digits.
@@ -1883,7 +1885,7 @@ void MainComponent::askToKeepChanges(const juce::String& title, const juce::Stri
             .withMessage("The instrument was changed (sample folders, stops, voicing, settings) but no configuration file is open.\n"
                 "Save it as a new configuration file? Without that these changes are lost: the next start begins with an empty instrument.")
             .withButton("Save to a file...")
-            .withButton(continueCapitalised + " without saving")
+            .withButton(continueCapitalised + " and lose these changes")
             .withButton("Cancel"), this,
             [safeThis, proceed](int result)
             {
@@ -1903,8 +1905,8 @@ void MainComponent::askToKeepChanges(const juce::String& title, const juce::Stri
         .withIconType(juce::MessageBoxIconType::QuestionIcon)
         .withTitle(title)
         .withMessage("Save the changed settings into the configuration \"" + currentConfigurationName + "\" before you " + continueVerb + "?")
-        .withButton("Save and " + continueVerb)
-        .withButton(continueCapitalised + " without saving")
+        .withButton("Save it, then " + continueVerb)
+        .withButton(continueCapitalised + " and keep the file as it is")
         .withButton("Cancel"), this,
         [safeThis, proceed](int result)
         {
@@ -4538,11 +4540,9 @@ void MainComponent::showAfterReport(const juce::URL& url, const juce::File& fold
     // account) and then land somewhere else - the form is opened again from here,
     // filled in, as often as needed; the link is in the folder as well.
     auto* window = new juce::AlertWindow("Report a problem",
-        "The report folder is on your Desktop (" + folder.getFileName() + ") and the GitHub form is opening in your browser "
-        "with the fields filled in. Drag logs.zip into the \"Logs\" field and the PNG pictures into \"Screenshots\", check the text, "
-        "press \"Submit new issue\".\n\n"
-        "If GitHub asked you to sign in (or to make a free account) and then showed another page, press \"Open the GitHub form\" "
-        "here once more - signed in, the form opens filled in. The link is also in the folder as \"Report on GitHub.html\".",
+        "The report folder " + folder.getFileName() + " is on your Desktop, the GitHub form opens in the browser.\n"
+        "Drag logs.zip into \"Logs\" and the pictures into \"Screenshots\", then \"Submit new issue\".\n"
+        "Asked to sign in first? Press \"Open the GitHub form\" again afterwards.",
         juce::MessageBoxIconType::InfoIcon);
     window->addButton("Open the GitHub form", 1, juce::KeyPress(juce::KeyPress::returnKey));
     window->addButton("Open the report folder", 2);
@@ -10188,8 +10188,19 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
         for (const auto& pattern : plan.perspectivePatterns) patterns.add(pattern);
         rootObject->setProperty("perspectivePatterns", patterns);
         // Tremmed samples: Hauptwerk sets keep them in "trem" folders or in
-        // sibling folders ending in "_TR" (II_TR beside II): never loaded.
-        rootObject->setProperty("ignoredPatterns", juce::Array<juce::var>{ juce::var("trem"), juce::var("*_tr") });
+        // sibling folders ending in "_TR" (II_TR beside II) or "tr"/"TREM" after
+        // the stop's own name (the scan skips those by itself): the defaults.
+        {
+            juce::Array<juce::var> ignored;
+            for (const auto& pattern : SamplerEngine::defaultIgnoredPatterns()) ignored.add(pattern);
+            rootObject->setProperty("ignoredPatterns", ignored);
+            // One-shot stops: the defaults plus every stop folder the definition
+            // plays without release samples (a carillon, chimes: the plan found them).
+            juce::Array<juce::var> oneShot;
+            for (const auto& pattern : SamplerEngine::defaultOneShotPatterns()) oneShot.add(pattern);
+            for (const auto& folder : plan.oneShotFolders) if (!oneShot.contains(juce::var(folder))) oneShot.add(folder);
+            rootObject->setProperty("oneShotPatterns", oneShot);
+        }
         rootObject->setProperty("sampleLibraryRootName", plan.libraryRoot.getFileName());
         // The definition's general crescendo (0.8.129): its stages become our
         // steps - every row of ours on or off at each (the hand registration is
@@ -10726,6 +10737,9 @@ void MainComponent::applyPortableConfiguration(juce::var configuration,
     const juce::File& configurationFile, const juce::File& libraryRoot)
 {
     saveSettings();
+    // A Stop List left open from the organ before would be shown again as it
+    // was - the old perspectives and pool - at its next opening (0.8.135).
+    if (stopBuildWindow != nullptr) stopBuildWindow.reset();
     const auto localConfiguration = juce::JSON::parse(settingsFile.loadFileAsString());
     auto* root = configuration.getDynamicObject();
     if (root == nullptr) return;
@@ -16035,15 +16049,9 @@ void MainComponent::showPortableNoticeIfDue()
 {
     if (!portableNoticePending || !applicationReady.load() || activeFolderLoader != nullptr) return;
     portableNoticePending = false;
-    juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, "Configuration from another computer",
-        "This configuration was saved to be shared: it brings the organ - folders, stops, voicing, reverbs, couplers, combinations - "
-        "but nothing of the computer it came from. Right now every route of it - the auxiliary routes included - plays through this "
-        "computer's default sound device on the output channels 1-2, with no MIDI keyboard assigned.\n\n"
-        "To set it up for this computer:\n"
-        "1. Settings in each division's header: the MIDI keyboard (right-click the keyboard icon for MIDI Learn and press a key).\n"
-        "2. The audio tabs of the same dialog: the sound card, buffer size and output channels of every route.\n"
-        "3. Configuration Editor: Measure the maximum polyphony.\n"
-        "4. Save Configuration.");
+    // The log only (0.8.135): the message box stood over the import's own report
+    // and the memory warning and said nothing the division dialogs do not show.
+    CrashHandler::note("Configuration from another computer: every route on this computer's default device, no MIDI keyboard assigned - set the divisions' settings");
 }
 
 juce::String MainComponent::missingTreeNotice(int manual, bool detail) const
@@ -18201,8 +18209,7 @@ void MainComponent::startPolyphonyMeasurement()
         const double coreShare = juce::jlimit(0.0, 1.0, state->lastProcessShare * (double)logicalCpus / (double)renderCores);
         juce::String cpuLine;
         if (state->cpuSamples > 0)
-            cpuLine << "\nCPU: " << juce::roundToInt(coreShare * 100.0) << " % of the " << renderCores << " render " << (renderCores == 1 ? "core" : "cores")
-                    << " (" << juce::roundToInt(state->lastProcessShare * 100.0) << " % of all " << logicalCpus << " logical CPUs)";
+            cpuLine << "\nCPU: " << juce::roundToInt(coreShare * 100.0) << " % of the " << renderCores << " render " << (renderCores == 1 ? "core" : "cores");
         if (state->lastPoolJobs > 0)
             cpuLine << (cpuLine.isEmpty() ? "\n" : ", ") << "lanes busy " << juce::roundToInt(state->lastPoolUtilisation * 100.0) << " % inside the route jobs";
         state->label->setText(state->summary + "\n\n" + head + "\n" + describe() + ", " + juce::String(state->lastPeakSecond) + " voices now"
@@ -18749,6 +18756,7 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
     const int cleanBase = juce::jmax(state->highestCleanPeak, state->cleanSecondSafe);
     const int newLimit = hundreds(cleanBase > 0 ? cleanBase : juce::jmax(200, state->firstFailingPeak / 2));
     engine.setMaxPolyphony(newLimit);
+    if (auto* display = dynamic_cast<PolyphonyDisplay*>(polyphonyDisplay.get())) display->refreshLimit();
     saveSettings();
     refreshConfigurationEditor();
 
@@ -18896,14 +18904,13 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
         const int physical = juce::jmax(1, juce::SystemStats::getNumPhysicalCpus());
         const int renderCores = juce::jmax(1, engine.getRenderWorkerCount() + 1);
         advice << "\n\nRender threads: " << renderCores << " on " << physical << " physical " << (physical == 1 ? "core" : "cores")
-               << " (" << cpus << " logical CPUs), kernel " << engine.currentKernelName() << ".";
+               << ", kernel " << engine.currentKernelName() << ".";
         if (state->cpuSamples > 0)
         {
             const double processAvg = state->cpuProcessSum / state->cpuSamples, systemAvg = state->cpuSystemSum / state->cpuSamples;
             const double coreAvg = juce::jlimit(0.0, 1.0, processAvg * cpus / renderCores), corePeak = juce::jlimit(0.0, 1.0, state->cpuProcessPeak * cpus / renderCores);
             advice << " CPU of the render " << (renderCores == 1 ? "core" : "cores") << ": " << juce::roundToInt(coreAvg * 100.0) << " % on average, "
-                   << juce::roundToInt(corePeak * 100.0) << " % at the peak (" << juce::roundToInt(processAvg * 100.0) << " % / " << juce::roundToInt(state->cpuProcessPeak * 100.0)
-                   << " % of all " << cpus << " logical CPUs); the whole computer " << juce::roundToInt(systemAvg * 100.0) << " %.";
+                   << juce::roundToInt(corePeak * 100.0) << " % at the peak; the whole computer " << juce::roundToInt(systemAvg * 100.0) << " %.";
             if (state->firstFailingPeak > 0 && corePeak < 0.6 && renderCores > 1)
                 advice << " The sound broke with the render cores under 60 %: the time went into the device thread (bookkeeping, hand-over, waiting for the slowest lane), not into the rendering.";
         }
