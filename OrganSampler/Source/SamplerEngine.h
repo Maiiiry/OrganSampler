@@ -1119,6 +1119,10 @@ public:
     // pipe. The stops just remember that their copies are missing;
     // launchCopyBuilds (the last step) lifts the hold and launches them all.
     void holdCopyBuilds();
+    // The loading dialog's Cancel (0.8.139): the loading stops at the next stop (or
+    // 32 files), the instrument is built from the stops loaded so far, the rest
+    // is named in the message like a memory stop.
+    void cancelLoading() noexcept { loadCancelRequested.store(true, std::memory_order_relaxed); }
     bool copyBuildsHeld() const noexcept { return buildsHeld.load(std::memory_order_acquire); }
     // A safety net for the UI's timer: builds that ended before their last pipe and
     // were not launched again (whatever the reason) are launched now. Returns how many.
@@ -1338,6 +1342,7 @@ private:
     std::array<std::atomic<int>, maxManuals> compassLow{}, compassHigh{};   // set in the constructor (0..127)
     std::atomic<bool> recordingActive{ false };
     std::atomic<bool> loadOutOfMemory{ false };
+    std::atomic<bool> loadCancelRequested{ false }, loadCancelled{ false };   // cancelLoading(): asked, and acted on in this load
     std::atomic<bool> loadStoppedForMemory{ false };   // the memory reserve was reached (not a failed allocation): the load stopped on purpose
     juce::StringArray loadMemorySkipped;               // the stops left out since the stop, over every tree of one load (cleared by takeLastLoadError)
     std::set<juce::String> loadMemorySkippedKeys;      // group keys (comparable names) of the stops skipped in this tree: a stop with one perspective loaded and another skipped is dropped whole (0.8.136)

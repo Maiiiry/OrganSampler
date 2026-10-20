@@ -20,6 +20,14 @@
 #include <thread>
 #include <condition_variable>
 #include <type_traits>
+#if JUCE_LINUX
+ #include <sys/resource.h>
+ #include <sys/syscall.h>
+ #include <unistd.h>
+#elif JUCE_MAC
+ #include <pthread.h>
+ #include <sched.h>
+#endif
 #if JUCE_WINDOWS
 #include <filesystem>
 #include <system_error>
@@ -270,6 +278,24 @@ namespace
     // reclaimable cache; the program held 6.9 GB, 2 GB were "free", and it
     // swapped) - issues #17, #19.
     juce::int64 freePhysicalMemoryBytes() { return MemoryInfo::freeBytes(); }
+    // The worker threads of the loading and the copy builds run below the window
+    // thread (0.8.139): with all cores busy building filled pipes the message
+    // box's OK did not react, and the loading dialog's Cancel must.
+    void lowerCurrentThreadPriority() noexcept
+    {
+       #if JUCE_WINDOWS
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+       #elif JUCE_LINUX
+        setpriority(PRIO_PROCESS, (id_t)syscall(SYS_gettid), 10);   // the nice value of THIS thread on Linux
+       #elif JUCE_MAC
+        sched_param sp{}; int policy = 0;
+        if (pthread_getschedparam(pthread_self(), &policy, &sp) == 0)
+        {
+            sp.sched_priority = juce::jmax(sched_get_priority_min(policy), sp.sched_priority - 8);
+            pthread_setschedparam(pthread_self(), policy, &sp);
+        }
+       #endif
+    }
     // The swapped/compressed figure at the start of a load: the paging rule
     // counts the growth since then, not the figure itself - the macOS
     // compressor holds other programs' pages at idle (0.43 GB on the 8 GB Mac,
@@ -6833,6 +6859,7 @@ namespace
         for (int t = 0; t < threads; ++t)
             workers.emplace_back([&, t]
             {
+                lowerCurrentThreadPriority();
                 // An exception on a worker (out of memory, a broken file) must not end
                 // the program: the item is skipped, the others go on.
                 for (int i = next.fetch_add(1); i < count; i = next.fetch_add(1))
@@ -8377,6 +8404,7 @@ void SamplerEngine::buildAntiAliasCopies(Stop* stop, bool background)
         backgroundBuilds.fetch_add(1, std::memory_order_acq_rel);
         juce::Thread::launch([this, stop]
         {
+            lowerCurrentThreadPriority();
             // 'stop' may be unloaded while this waits for the lock: the build checks
             // its presence under the lock and clears the queued flag itself; nothing
             // touches the pointer here afterwards.
@@ -9657,6 +9685,7 @@ void SamplerEngine::loadSamplesIntoStop(Stop* stop, const juce::File& folder, bo
         // One stop of thousands of files: the memory checked every 32 files too.
         if ((index & 31) == 31)
         {
+            if (loadCancelRequested.load(std::memory_order_relaxed)) { loadCancelled.store(true, std::memory_order_relaxed); loadOutOfMemory.store(true, std::memory_order_relaxed); return; }
             juce::String memoryReason;
             if (memoryShortNow(&memoryReason))
             {
@@ -10063,6 +10092,8 @@ void SamplerEngine::loadManualFolder(const juce::File& topFolder, int manualInde
     {
         gSwapBaseline.store(MemoryInfo::swappedBytes());   // the paging rule counts the growth from here
         lastLoadMemoryLimited.store(false, std::memory_order_relaxed);
+        loadCancelRequested.store(false, std::memory_order_relaxed);
+        loadCancelled.store(false, std::memory_order_relaxed);
     }
     for (auto& [groupManual, group] : groups)
     {
@@ -10078,15 +10109,30 @@ void SamplerEngine::loadManualFolder(const juce::File& topFolder, int manualInde
             // below it the loading stops here and now - the stops loaded so far
             // make the instrument, the rest is listed in the message. (A stop
             // that merely failed to allocate, bad_alloc, stops the same way.)
+            // A stop whose samples the division holds already (a reload: the commit
+            // adopts them, nothing is decoded) or that sits in the pool needs no
+            // memory: loaded whatever the memory says (0.8.139, #33: a reload on the
+            // 8 GB Mac "skipped" 25 stops that were in memory all along and named them).
+            const bool replacesHere = !append || (replacing != nullptr && replacing->count(groupManual) != 0);
+            const bool adoptable = !assignment.container && (isPooledStop(groupManual, stopName) || (replacesHere && hasLoadedRankForFolder(groupManual, stopFolder)));
             juce::String memoryReason;
-            if (!assignment.container && !loadOutOfMemory.load(std::memory_order_relaxed) && memoryShortNow(&memoryReason))
+            if (!assignment.container && !adoptable && !loadOutOfMemory.load(std::memory_order_relaxed))
             {
-                loadStoppedForMemory.store(true, std::memory_order_relaxed);
-                loadOutOfMemory.store(true, std::memory_order_relaxed);
-                loadMemoryStopReason = memoryReason;
-                CrashHandler::note("Loading stopped for memory before \"" + stopName + "\": " + memoryReason);
+                if (loadCancelRequested.load(std::memory_order_relaxed))
+                {
+                    loadCancelled.store(true, std::memory_order_relaxed);
+                    loadOutOfMemory.store(true, std::memory_order_relaxed);
+                    CrashHandler::note("Loading cancelled by the user before \"" + stopName + "\"");
+                }
+                else if (memoryShortNow(&memoryReason))
+                {
+                    loadStoppedForMemory.store(true, std::memory_order_relaxed);
+                    loadOutOfMemory.store(true, std::memory_order_relaxed);
+                    loadMemoryStopReason = memoryReason;
+                    CrashHandler::note("Loading stopped for memory before \"" + stopName + "\": " + memoryReason);
+                }
             }
-            if (loadOutOfMemory.load(std::memory_order_relaxed))
+            if (loadOutOfMemory.load(std::memory_order_relaxed) && !adoptable)
             {
                 // Once per stop, not once per perspective folder (#22: "35 stops" of 15).
                 if (!assignment.container) { loadMemorySkipped.addIfNotAlreadyThere(stopName); loadMemorySkippedKeys.insert(comparableFolderName(stopName)); }
@@ -10192,12 +10238,15 @@ void SamplerEngine::loadManualFolder(const juce::File& topFolder, int manualInde
     std::lock_guard<std::mutex> lk(impl->pendingMutex);
     if (loadOutOfMemory.load(std::memory_order_relaxed))
     {
-        lastLoadMemoryLimited.store(true, std::memory_order_relaxed);
+        if (!loadCancelled.load(std::memory_order_relaxed)) lastLoadMemoryLimited.store(true, std::memory_order_relaxed);
         const int skipped = loadMemorySkipped.size();
         juce::StringArray shown;
         for (int i = 0; i < juce::jmin(12, skipped); ++i) shown.add(loadMemorySkipped[i]);
         const juce::String list = shown.joinIntoString(", ") + (skipped > 12 ? ", and " + juce::String(skipped - 12) + " more" : juce::String());
-        if (loadStoppedForMemory.load(std::memory_order_relaxed))
+        if (loadCancelled.load(std::memory_order_relaxed))
+            lastLoadError = "The loading was cancelled. The instrument is built from the stops loaded so far; " + juce::String(skipped) + " stop(s) were not loaded: " + list
+                + ".\n\nThey are not on the grid; the Stop List keeps their rows and offers them in its pool.";
+        else if (loadStoppedForMemory.load(std::memory_order_relaxed))
             lastLoadError = "The memory is full: the loading stopped (" + (loadMemoryStopReason.isNotEmpty() ? loadMemoryStopReason : juce::String((double)freePhysicalMemoryBytes() / 1073741824.0, 1) + " GB free")
                 + " of " + juce::String((double)juce::SystemStats::getMemorySizeInMegabytes() / 1024.0, 1) + " GB installed; the system would page samples out, and every stroke would stall the sound).\n\n"
                 "The instrument is built from the stops loaded so far; " + juce::String(skipped) + " stop(s) were not loaded: " + list

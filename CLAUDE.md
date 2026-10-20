@@ -267,6 +267,20 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   callback of the run took ..."). Next: find what the peak is (a lane preempted? the control thread? the worker asleep
   at the period start on <= 2 cores?) before touching the 85 % rule or batching. `lastLoadError` is logged as "Load
   message: ..." (the Mac reports of #27 stopped by kernel pressure level 2 at 5.0 GB of 8 GB).
+  0.8.139: `measurementShareLimit` (MainComponent, machine-specific key "measurementShareLimit", 0.6..1.0, editor
+  slider "Measurement limit" before Measure...; `PolyphonyMeasurement::shareLimit` fixed at the start of a run; every
+  former 0.85f of the measurement reads it, the "safe" scaling uses limit - 0.05). `cancelLoading()` /
+  `loadCancelRequested` + `loadCancelled` (engine; reset at the first tree of a load with gSwapBaseline): the
+  loaders' ThreadWithProgressWindow have a Cancel button (30 s), their progress lambdas call cancelLoading() when
+  threadShouldExit(); a cancelled StartupFolderLoader compiles the phases like a complete one (finished(false)).
+  Adoptable stops (`isPooledStop` or `hasLoadedRankForFolder` on a replacing reload) bypass the memory stop (#33).
+  `lowerCurrentThreadPriority()` (SamplerEngine.cpp) on parallelFor workers and copy-build threads (Windows
+  BELOW_NORMAL, Linux nice 10 per thread, macOS SCHED_OTHER priority - 8). `startPolyphonyMeasurement` refuses while
+  `pendingBackgroundWorkers() > 0` (#32). `arrangeReportWindows(folder)` (static; Windows EnumWindows "CabinetWClass"
+  by the folder name -> right half, the foreground window of another process -> left half, SPI_GETWORKAREA physical
+  pixels; macOS osascript Finder bounds + System Events frontmost; Linux wmctrl) called 1.5 s and 4.5 s after the
+  launch. Coupler catalog: downward couplers for every (target < source, target >= 1) in all five types after the
+  pedal bass couplers; default visible only unison with target > source and 1-2-8; HW mapping allows target < source.
 - A route without a device ("none") gets NO voices (0.8.126, `Route::hasDevice` set by `setPerspectiveDeviceKey`,
   checked in `publishVoice`: the voice is finished at once). Before, every pipe was published to its perspective's
   route whatever the device and sat there unrendered until `cleanStaleRoutes` flushed it after ~1 s, counted as
@@ -390,30 +404,20 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   over (use a non-portable configuration of this machine, a portable one would ask for the root); quit the program
   afterwards. No legend above the table. Every README looks the same. Stralsund: 53 + 18 = 71.
 
-## Pending for the next session (the user, 20 Oct 2026 evening, from Linux - delete when done)
-- Linux window icon at start-up is "rozsypana" (scrambled) since 0.8.136 (`Main.cpp` sends `icon48_png` to `setIcon`
-  instead of AppIcon 1024). Before it was upside down for a moment while loading but crisp. Find out why the 48 px
-  image comes out scrambled through JUCE's X11 `_NET_WM_ICON` path (image format/stride? RGB vs ARGB?) - and fix the
-  upside-down too if it is ours. NEVER a rescaled icon: the hand-tuned set only.
-- Linux: switching the route device from JACK to ALSA after a polyphony measurement plays a flood of release tails
-  ("zamrzly buffer z konce mereni"): voices published to routes whose device stopped stay in the route's ring/active
-  list and sound when the route gets a device again. After the measurement (and whenever a route's device closes) the
-  route's voices must be dropped for good (noteOffAll + flush the add ring, the active list and the IR hand-over
-  buffers of every route) - never left to play later.
-- macOS: the memory stop still reports "too many stops not loaded" while every stop seems loaded. Check exactly what
-  `/mnt/pracovni/Suchy_rejstrik/Kobrle/TestingOrgan.json` holds (rows per division, nested trees "Samply" +
-  "Samply/testy/*": a stop reachable through two trees may be counted twice or the count may include the nested tree's
-  scan) and what the dialog says when the load stops early. The user thinks it is still wrong.
-- New issues on GitHub (read them all) and the optimisation question: "rendering sleeps while the device thread does
-  not keep up - the CPU is not used fully" (two-core machines). With the 0.8.137 device-thread profile in the reports,
-  propose how to use the idle lanes: batch rendering of all routes of a device in one pool job, the device thread not
-  waiting idle, the IR task placement, the control tick. Propose, then code after the user says so.
-- Report a problem: open the browser in the LEFT half of the screen and the file manager in the RIGHT half, INSIDE the
-  report folder (macOS `revealToUser` opens the parent folder with the folder selected - open the folder itself,
-  `juce::File::startAsProcess()` / `open <folder>`), so both are visible side by side and the zip can be dragged into the
-  form; the "Report a problem" message box must not sit in the middle over them - put it small at the bottom of the
-  screen or fold it into the report dialog. Nothing centred over everything.
-- The user went to Windows; more reports come from there and he says what to do next.
+## Pending for the next session (delete when done)
+- Linux window icon at start-up "rozsypana" (scrambled) since 0.8.136 (`Main.cpp` sends `icon48_png` to `setIcon`).
+  Before: upside down for a moment while loading but crisp. Find why the 48 px image is scrambled through JUCE's X11
+  `_NET_WM_ICON` path (format/stride?) - NEVER a rescaled icon.
+- Linux: switching the route device from JACK to ALSA after a measurement plays a flood of release tails: voices of
+  routes whose device stopped stay in the ring/active list. Drop a route's voices for good when its device closes and
+  after the measurement (noteOffAll + flush add ring, active list, IR hand-over buffers).
+- Device-thread peaks (0.8.138 reports): #34 Ultra 7 155H (P+E cores): longest route callback 2616 us of which WAITING
+  FOR THE LANES 2412 us - a worker on an E core (or preempted) holds the poster; try lanes on P cores only / smaller
+  chunks at the end of a job. #35 Ryzen Windows: longest 1270 us of which OWN RENDER 1071 - the poster takes chunks
+  while the workers are busy; cap the poster's share or batch all routes of a device into one pool job (#30: 21 routes
+  x fixed cost). #29: bookkeeping 66 us per route at 44 000 voices (compaction of the active list) - speed up.
+- Issue form: the "Operating system" field is a text field filled by the program (now with the version); fine.
+- GitHub's issue list hides the number in its new UI (the user asked why "#27" is not in the row): nothing of ours.
 
 ## Pending for the next Linux session (delete when done)
 - The Linux clone `~/OrganSamplerC-linux` needs `git pull` (0.8.138 was made on Windows); the NTFS checkout `F:` is the user's (git cannot

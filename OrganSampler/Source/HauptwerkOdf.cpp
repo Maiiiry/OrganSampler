@@ -1485,7 +1485,7 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
             {
                 if (target > source) ok = true;
                 else if (target == source) ok = type == "16" || type == "4";
-                else ok = target == 1 && source == 2;
+                else ok = target >= 1 && target < source;   // the couplers downwards (I/III, II/III ...), 0.8.139
             }
             juce::String label = c.switchName.isNotEmpty() ? c.switchName : c.name;
             for (const char* head : { "Slider Coupler ", "Slider ", "Coupler " })

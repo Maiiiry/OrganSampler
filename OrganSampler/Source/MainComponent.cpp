@@ -2622,7 +2622,7 @@ void MainComponent::rebuildCouplerCatalog()
         coupler.targetManual = target;
         coupler.sourceManual = source;
         coupler.type = type;
-        coupler.visible = type == CouplerType::unison && target != source;
+        coupler.visible = type == CouplerType::unison && target != source && (target > source || (target == 1 && source == 2));
         if (auto old = previous.find(coupler.id); old != previous.end())
         {
             coupler.enabled = old->second.first;
@@ -2645,18 +2645,23 @@ void MainComponent::rebuildCouplerCatalog()
         }
         add(source, source, CouplerType::subOctave, " 16'");
         add(source, source, CouplerType::superOctave, " 4'");
-        // Common reverse exception: playing II may also pull division I.
-        if (source == 2 && manualCount >= 2)
-        {
-            add(1, 2, CouplerType::unison, "");
-            add(1, 2, CouplerType::subOctave, " 16'");
-            add(1, 2, CouplerType::superOctave, " 4'");
-            add(1, 2, CouplerType::melody, " mel.");
-            add(1, 2, CouplerType::bass, " bass");
-        }
     }
     for (int source = 1; source <= manualCount; ++source)
         add(0, source, CouplerType::bass, " bass");
+    // Couplers "downwards" (0.8.139): a keyboard pulling a LOWER manual - I/II (the
+    // usual one, Billerbeck's "i-ii"), I/III, II/III and so on, in every type.
+    // After the usual couplers in the list (used less); only I/II is shown by
+    // default, the others appear through the Couplers dialog or a Hauptwerk
+    // import that has them.
+    for (int source = 2; source <= manualCount; ++source)
+        for (int target = 1; target < source; ++target)
+        {
+            add(target, source, CouplerType::unison, "");
+            add(target, source, CouplerType::subOctave, " 16'");
+            add(target, source, CouplerType::superOctave, " 4'");
+            add(target, source, CouplerType::melody, " mel.");
+            add(target, source, CouplerType::bass, " bass");
+        }
 }
 
 void MainComponent::rebuildCouplerRail()
@@ -4575,6 +4580,76 @@ juce::File MainComponent::writeProblemReport(const juce::String& what, const juc
     return folder;
 }
 
+#if JUCE_WINDOWS
+namespace
+{
+    struct WindowSearch { juce::String titlePart; const wchar_t* className; HWND found = nullptr; };
+    BOOL CALLBACK findReportWindow(HWND hwnd, LPARAM lParam)
+    {
+        auto* search = reinterpret_cast<WindowSearch*>(lParam);
+        if (!IsWindowVisible(hwnd)) return TRUE;
+        wchar_t cls[64]{};
+        GetClassNameW(hwnd, cls, 63);
+        if (search->className != nullptr && wcscmp(cls, search->className) != 0) return TRUE;
+        wchar_t title[512]{};
+        GetWindowTextW(hwnd, title, 511);
+        if (search->titlePart.isNotEmpty() && !juce::String(title).containsIgnoreCase(search->titlePart)) return TRUE;
+        search->found = hwnd;
+        return FALSE;
+    }
+    void placeNativeWindow(HWND hwnd, const juce::Rectangle<int>& r)
+    {
+        if (hwnd == nullptr) return;
+        if (IsZoomed(hwnd)) ShowWindow(hwnd, SW_RESTORE);
+        SetWindowPos(hwnd, HWND_TOP, r.getX(), r.getY(), r.getWidth(), r.getHeight(), SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+}
+#endif
+
+// The browser on the left half of the screen, the file manager with the report
+// folder on the right half, side by side (0.8.139): the zip is dragged from one
+// into the other. Best effort: Windows through the window system (the Explorer
+// window by its title, the browser as the foreground window of another program),
+// macOS through AppleScript (Finder and the frontmost application - System Events
+// needs the accessibility permission for the latter), Linux through wmctrl when
+// it is installed. Where it fails, the windows stay as the system put them.
+void MainComponent::arrangeReportWindows(const juce::File& folder)
+{
+    auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
+    if (display == nullptr) return;
+    const auto area = display->userArea;
+    const auto left = area.withWidth(area.getWidth() / 2), right = area.withTrimmedLeft(area.getWidth() / 2);
+   #if JUCE_WINDOWS
+    RECT work{};
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);   // physical pixels, as SetWindowPos wants them
+    const juce::Rectangle<int> workArea(work.left, work.top, work.right - work.left, work.bottom - work.top);
+    const auto leftPx = workArea.withWidth(workArea.getWidth() / 2), rightPx = workArea.withTrimmedLeft(workArea.getWidth() / 2);
+    WindowSearch explorer{ folder.getFileName(), L"CabinetWClass" };
+    EnumWindows(findReportWindow, reinterpret_cast<LPARAM>(&explorer));
+    placeNativeWindow(explorer.found, rightPx);
+    HWND foreground = GetForegroundWindow();
+    DWORD pid = 0;
+    if (foreground != nullptr) GetWindowThreadProcessId(foreground, &pid);
+    if (foreground != nullptr && foreground != explorer.found && pid != GetCurrentProcessId()) placeNativeWindow(foreground, leftPx);
+    juce::ignoreUnused(left, right);
+   #elif JUCE_MAC
+    auto run = [](const juce::String& script)
+    {
+        juce::ChildProcess process;
+        if (process.start(juce::StringArray{ "osascript", "-e", script })) process.waitForProcessToFinish(3000);
+    };
+    run("tell application \"Finder\" to set bounds of front window to {" + juce::String(right.getX()) + ", " + juce::String(right.getY()) + ", "
+        + juce::String(right.getRight()) + ", " + juce::String(right.getBottom()) + "}");
+    run("tell application \"System Events\" to tell (first application process whose frontmost is true) to set {position, size} of front window to {{"
+        + juce::String(left.getX()) + ", " + juce::String(left.getY()) + "}, {" + juce::String(left.getWidth()) + ", " + juce::String(left.getHeight()) + "}}");
+   #elif JUCE_LINUX
+    if (!juce::File("/usr/bin/wmctrl").existsAsFile()) return;
+    auto run = [](const juce::StringArray& args) { juce::ChildProcess process; if (process.start(args)) process.waitForProcessToFinish(3000); };
+    run({ "wmctrl", "-r", folder.getFileName(), "-e", "0," + juce::String(right.getX()) + "," + juce::String(right.getY()) + "," + juce::String(right.getWidth()) + "," + juce::String(right.getHeight()) });
+    run({ "wmctrl", "-r", ":ACTIVE:", "-e", "0," + juce::String(left.getX()) + "," + juce::String(left.getY()) + "," + juce::String(left.getWidth()) + "," + juce::String(left.getHeight()) });
+   #endif
+}
+
 void MainComponent::showAfterReport(const juce::URL& url, const juce::File& folder)
 {
     // Stays until "Done": GitHub may ask the user to sign in (or to make a free
@@ -4590,8 +4665,8 @@ void MainComponent::showAfterReport(const juce::URL& url, const juce::File& fold
     window->addButton("Done", 0, juce::KeyPress(juce::KeyPress::escapeKey));
     window->enterModalState(true, juce::ModalCallbackFunction::create([url, folder](int result)
     {
-        if (result == 1) { url.launchInDefaultBrowser(); showAfterReport(url, folder); }
-        else if (result == 2) { folder.startAsProcess(); showAfterReport(url, folder); }
+        if (result == 1) { url.launchInDefaultBrowser(); juce::Timer::callAfterDelay(1500, [folder] { arrangeReportWindows(folder); }); showAfterReport(url, folder); }
+        else if (result == 2) { folder.startAsProcess(); juce::Timer::callAfterDelay(1500, [folder] { arrangeReportWindows(folder); }); showAfterReport(url, folder); }
     }), true);
     // At the bottom of the screen, out of the way of the browser and the file
     // manager the user drags the zip between (0.8.138: it sat in the middle over both).
@@ -4665,6 +4740,10 @@ void MainComponent::showProblemReportDialog()
                 if (auto* window = findParentComponentOfClass<juce::DialogWindow>()) window->exitModalState(0);
                 folder.startAsProcess();   // the folder itself (revealToUser opened its parent on macOS, the folder only selected)
                 url.launchInDefaultBrowser();
+                // Side by side: the browser on the left, the folder on the right (the
+                // windows exist a moment later; a second try for a slow browser start).
+                juce::Timer::callAfterDelay(1500, [folder] { MainComponent::arrangeReportWindows(folder); });
+                juce::Timer::callAfterDelay(4500, [folder] { MainComponent::arrangeReportWindows(folder); });
                 MainComponent::showAfterReport(url, folder);
             };
             addAndMakeVisible(create);
@@ -9670,7 +9749,7 @@ namespace
         static const juce::StringArray keys{ "windowX", "windowY", "windowWidth", "windowHeight", "windowMaximised", "twoWindows",
             "divisionScreen", "dialogBounds", "uiScalePercent", "copyCacheFolder", "copyCacheEnabled", "sampleStorageFloat",
             "renderThreads", "renderThreadPreset", "renderThreadsWasapi", "showUnusableAudioDevices", "configEditorCollapsed", "configurationFile",
-            "loadLastConfigurationAtStartup", "maxPolyphony", "irProcessing", "irLightAuto", "unpackArchiveShownOnce", "renderThreadPresetChosen",
+            "loadLastConfigurationAtStartup", "maxPolyphony", "measurementShareLimit", "irProcessing", "irLightAuto", "unpackArchiveShownOnce", "renderThreadPresetChosen",
             "renderKernel" };
         return keys;
     }
@@ -11029,7 +11108,7 @@ public:
     DivisionFolderLoader(SamplerEngine& engine, juce::File folder, int manual, double sampleRate,
         std::function<void(bool)> finished, bool append = false,
         std::shared_ptr<std::vector<SamplerEngine::FolderAssignment>> map = nullptr)
-        : ThreadWithProgressWindow("Loading division samples...", true, false), engine(engine),
+        : ThreadWithProgressWindow("Loading division samples...", true, true, 30000, "Cancel"), engine(engine),
           folder(std::move(folder)), manual(manual), sampleRate(sampleRate), finished(std::move(finished)),
           append(append), map(std::move(map))
     {
@@ -11041,6 +11120,7 @@ public:
             + juce::String(manual) + ": " + folder.getFullPathName() + (map != nullptr ? " (stop building map)" : ""));
         engine.loadManualFolder(folder, manual, sampleRate, [this](double value)
         {
+            if (threadShouldExit()) engine.cancelLoading();   // the dialog's Cancel (0.8.139)
             setProgress(value);
             setStatusMessage("Loading samples: " + juce::String(juce::roundToInt(value * 100.0)) + "%");
         }, append, map.get());
@@ -11089,7 +11169,7 @@ public:
     using Phase = LoadStep;
     StartupFolderLoader(SamplerEngine& engine, std::vector<Job> jobs, double sampleRate,
         std::function<void(bool)> finished, juce::Component* centreAround)
-        : ThreadWithProgressWindow("Loading saved divisions...", true, false, 10000, {}, centreAround), engine(engine),
+        : ThreadWithProgressWindow("Loading saved divisions...", true, true, 30000, "Cancel", centreAround), engine(engine),
           jobs(std::move(jobs)), sampleRate(sampleRate), finished(std::move(finished))
     {
         setStatusMessage("Preparing sample folders...");
@@ -11121,6 +11201,7 @@ public:
             engine.loadManualFolder(jobs[index].folder, juce::jmax(0, manual), sampleRate,
                 [this, index, count, who](double localProgress)
                 {
+                    if (threadShouldExit()) engine.cancelLoading();   // the dialog's Cancel (0.8.139): the engine stops at the next stop, the rest compiles as usual
                     const double overall = ((double)index + localProgress) / count;
                     setProgress(overall);
                     setStatusMessage(who + ": "
@@ -11137,7 +11218,10 @@ public:
     void threadComplete(bool cancelled) override
     {
         engine.setLoadStatusCallback(nullptr);
-        if (cancelled || phases.empty()) { commit(); if (finished) finished(cancelled); return; }
+        // A cancelled load compiles like a complete one: the engine built the
+        // instrument from the stops loaded so far (0.8.139).
+        juce::ignoreUnused(cancelled);
+        if (phases.empty()) { commit(); if (finished) finished(false); return; }
         // The progress dialog stays for the compile (JUCE hid it when the thread
         // ended: shown again, no longer modal). The window paints on the next
         // vertical blanks only, so every step runs on a later message-loop turn,
@@ -15457,6 +15541,7 @@ void MainComponent::loadSettings()
     pitchLabel.setText("Pitch: " + juce::String(globalPitch, 0) + " cents", juce::dontSendNotification);
     engine.setGlobalPitchCents((float)globalPitch);
     engine.setMaxPolyphony((int)parsed.getProperty("maxPolyphony", 30000));
+    measurementShareLimit = juce::jlimit(0.6f, 1.0f, (float)(double)parsed.getProperty("measurementShareLimit", 0.85));
 
     const double attackMinimum = parsed.getProperty("attackMinimumTimeMs", 80.0);
     attackMinimumSlider.setValue(attackMinimum, juce::dontSendNotification);
@@ -15729,6 +15814,7 @@ void MainComponent::saveSettings()
     obj->setProperty("masterVolumeDb", masterVolumeSlider.getValue());
     obj->setProperty("globalPitchCents", pitchSlider.getValue());
     obj->setProperty("maxPolyphony", engine.getMaxPolyphony());
+    obj->setProperty("measurementShareLimit", (double)measurementShareLimit);
     obj->setProperty("releaseFadeOutMs", releaseFadeOutSlider.getValue());
     obj->setProperty("releaseFadeInMs", releaseFadeInSlider.getValue());
     obj->setProperty("releaseScalingDb", releaseScalingSlider.getValue());
@@ -17988,6 +18074,7 @@ struct MainComponent::PolyphonyMeasurement
     double cpuProcessPeak = 0.0, cpuProcessSum = 0.0, cpuSystemPeak = 0.0, cpuSystemSum = 0.0; int cpuSamples = 0;
     double lastProcessCpuMs = -1.0, lastSystemBusyMs = -1.0, lastSystemTotalMs = -1.0, lastWallMs = 0.0;
     double lastProcessShare = 0.0;    // the program's share of all logical CPUs in the last second (the progress text)
+    float shareLimit = 0.85f;         // the longest callback may take this share of its period (Configuration Editor, 0.8.139)
     // The render pool: the lanes' utilisation inside the route jobs, averaged over the run and of the last second.
     double poolUtilisationSum = 0.0, lastPoolUtilisation = 0.0; int poolSamples = 0, lastPoolJobs = 0;
     // The voice profile over the run: ns per voice and block, weighted by the voices of every second.
@@ -18105,10 +18192,20 @@ int MainComponent::takeLateCallbacksOfAllRoutes()
 void MainComponent::startPolyphonyMeasurement()
 {
     if (!canMeasurePolyphony()) return;
+    // Not while the filled pipes are still being built (0.8.139, #32: a run
+    // right after the load broke at 328 voices with the cores busy building).
+    if (engine.pendingBackgroundWorkers() > 0)
+    {
+        juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, "Measure the maximum polyphony",
+            "The filled pipes are still being built in the background (the orange tracks under the stop buttons). "
+            "Measure once they are gone - a run beside the building would measure the building.");
+        return;
+    }
     auto state = std::make_shared<PolyphonyMeasurement>();
     polyphonyMeasurement = state;
     state->registration = captureCurrentState();
     state->previousLimit = engine.getMaxPolyphony();
+    state->shareLimit = juce::jlimit(0.6f, 1.0f, measurementShareLimit);
     state->previousMuted = audioMuted.load();
     engine.setMaxPolyphony(SamplerEngine::maxVoices);   // out of the way while measuring
     // The safety net: the strokes run on the message thread; should it stall
@@ -18550,12 +18647,13 @@ void MainComponent::startPolyphonyMeasurement()
         // "callback 0 %" made a limit of 93 700): it counts as nothing, never as clean.
         const bool callbacksSeen = callbackShare > 0.0f || state->lastPeakSecond == 0;
         if (!callbacksSeen) CrashHandler::note("Polyphony measurement: no driver callback measured this second - not a clean second");
-        if (late == 0 && callbacksSeen && callbackShare <= 0.85f && worst <= 0.85f) state->greySeconds = 0;
-        if (late == 0 && callbacksSeen && callbackShare <= 0.85f && worst <= 0.85f && state->secondsSinceChange >= 1 && state->second >= 2
+        if (late == 0 && callbacksSeen && callbackShare <= state->shareLimit && worst <= state->shareLimit) state->greySeconds = 0;
+        if (late == 0 && callbacksSeen && callbackShare <= state->shareLimit && worst <= state->shareLimit && state->secondsSinceChange >= 1 && state->second >= 2
             && state->lastPeakSecond > 0)
         {
             const float share = juce::jmax(callbackShare, worst);
-            const int safe = share > 0.8f ? juce::roundToInt(state->lastPeakSecond * 0.8f / share) : state->lastPeakSecond;
+            const float safeShare = state->shareLimit - 0.05f;
+            const int safe = share > safeShare ? juce::roundToInt(state->lastPeakSecond * safeShare / share) : state->lastPeakSecond;
             if (safe > state->cleanSecondSafe)
             {
                 const bool sameLevel = state->cleanSecondKeys == state->currentKeys && state->cleanSecondStrikes == state->currentStrikes
@@ -18579,7 +18677,7 @@ void MainComponent::startPolyphonyMeasurement()
         // A late driver callback while every callback stayed within its period
         // comes from outside as often as not (the system, another program): the
         // level gets one more chance; a second time it counts.
-        if (brokeUp && late > 0 && callbackShare <= 0.85f && worst <= 0.85f && !state->lateRetried && state->second >= 2)
+        if (brokeUp && late > 0 && callbackShare <= state->shareLimit && worst <= state->shareLimit && !state->lateRetried && state->second >= 2)
         {
             state->lateRetried = true;
             brokeUp = false;
@@ -18700,7 +18798,7 @@ void MainComponent::startPolyphonyMeasurement()
             state->holdLate += late;
             if (++state->secondsHeld >= 4)
             {
-                const bool clean = state->holdShare <= 0.85f && state->holdWorstBlock <= 0.85f && state->holdLate == 0;
+                const bool clean = state->holdShare <= state->shareLimit && state->holdWorstBlock <= state->shareLimit && state->holdLate == 0;
                 state->results.push_back({ state->targetVoices, state->currentKeys, state->currentStrikes, state->holdPeak, state->holdShare, state->holdWorstBlock, state->holdLate, clean });
                 CrashHandler::note("Polyphony measurement: target " + juce::String(state->targetVoices) + (clean ? " clean" : " FAILED") + " at " + describe()
                     + " (peak " + juce::String(state->holdPeak) + " voices, longest driver callback " + juce::String(juce::roundToInt(state->holdShare * 100.0f))
@@ -18708,8 +18806,8 @@ void MainComponent::startPolyphonyMeasurement()
                 if (!clean)
                 {
                     failAt(state->holdPeak, "over four seconds at that level the longest callback took " + juce::String(juce::roundToInt(state->holdShare * 100.0f))
-                        + " % of its period (85 % is the limit)" + (state->holdLate > 0 ? ", " + juce::String(state->holdLate) + " late driver callback(s)" : juce::String())
-                        + (state->holdWorstBlock > 0.85f ? ", one route alone " + juce::String(juce::roundToInt(state->holdWorstBlock * 100.0f)) + " %" : juce::String()));
+                        + " % of its period (" + juce::String(juce::roundToInt(state->shareLimit * 100.0f)) + " % is the limit)" + (state->holdLate > 0 ? ", " + juce::String(state->holdLate) + " late driver callback(s)" : juce::String())
+                        + (state->holdWorstBlock > state->shareLimit ? ", one route alone " + juce::String(juce::roundToInt(state->holdWorstBlock * 100.0f)) + " %" : juce::String()));
                     if (alive() && state->draining) juce::Timer::callAfterDelay(1000, [tick] { (*tick)(); });
                     return;
                 }
@@ -18760,13 +18858,13 @@ void MainComponent::startPolyphonyMeasurement()
             state->secondsHeld = 0;
             state->holdShare = 0.0f; state->holdWorstBlock = 0.0f; state->holdLate = 0; state->holdPeak = state->lastPeakSecond;
         }
-        else if (state->secondsSinceChange >= 2 && juce::jmax(callbackShare, worst) > 0.85f && ++state->greySeconds >= 2)
+        else if (state->secondsSinceChange >= 2 && juce::jmax(callbackShare, worst) > state->shareLimit && ++state->greySeconds >= 2)
         {
             // Not a breakup, not clean either - callbacks between 85 and 100 % of the
             // period for two seconds: this level fails, and the run narrows down
             // below it instead of climbing on into the breakup.
             failAt(juce::jmax(state->lastPeakSecond, state->peak), "the longest callback took " + juce::String(juce::roundToInt(juce::jmax(callbackShare, worst) * 100.0f))
-                + " % of its period for two seconds (85 % is the limit)");
+                + " % of its period for two seconds (" + juce::String(juce::roundToInt(state->shareLimit * 100.0f)) + " % is the limit)");
             if (alive() && state->draining) juce::Timer::callAfterDelay(1000, [tick] { (*tick)(); });
             return;
         }
@@ -18957,6 +19055,7 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
     juce::String text;
     text << state->summary << "\n\n";
     text << "Maximum polyphony set to " << newLimit << " voices";
+    if (state->exhausted) text << " - the measurement ran out of keys and strikes before the computer did (61 keys struck up to 16 times a second on every division never broke the sound): this is what was reached, not the computer's limit";
     auto levelText = [](int keysOf, int rate)
     {
         return juce::String(keysOf) + " keys struck " + juce::String(rate) + " times a second on every division";
@@ -19198,7 +19297,7 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
         {
             const auto& low = state->results.front();
             const int highPeak = state->firstFailingPeak;
-            const float highShare = juce::jmax(0.85f, state->cleanSecondShare);
+            const float highShare = juce::jmax(state->shareLimit, state->cleanSecondShare);
             if (highPeak > low.peak * 2 && low.peak > 0 && highShare > low.callbackShare)
             {
                 const double perVoiceMs = (double)(highShare - low.callbackShare) * blockMs / (double)(highPeak - low.peak);
@@ -20559,10 +20658,16 @@ void MainComponent::showConfigurationEditor()
             addSlider("Maximum polyphony", 64.0, (double)SamplerEngine::maxVoices, 1.0, " voices", engine.getMaxPolyphony(), 30000.0,
                 [&o](double value) { o.engine.setMaxPolyphony((int)value); o.saveSettings(); },
                 "Oldest voices are faded out when this many pipes sound at once.");
+            addSlider("Measurement limit", 60.0, 100.0, 1.0, " %", (double)juce::roundToInt(o.measurementShareLimit * 100.0f), 85.0,
+                [&o](double value) { o.measurementShareLimit = juce::jlimit(0.6f, 1.0f, (float)(value / 100.0)); o.saveSettings(); },
+                "How much of its period the longest driver callback may take before the measurement calls a level broken. 85 % leaves "
+                "headroom for what the computer does besides (the window, the sound server, a browser, a stroke of many stops). Raise it to "
+                "squeeze out more; at 100 % a level counts as broken only when the driver actually called late - DANGEROUS for playing: the "
+                "limit it sets breaks up on the first callback that runs a little longer. Fit for seeing how far the computer goes.");
             addButton("Measure the maximum polyphony", "Measure...", [&o] { o.startPolyphonyMeasurement(); },
                 "Finds the limit for THIS organ on THIS computer: with the loaded samples, every stop engaged and the "
                 "keys struck repeatedly on every division (heard very quietly, at -42 dB), the limit is raised step by step "
-                "until the busiest audio thread exceeds 85 % of its period or the driver calls late, then narrowed down; the "
+                "until the busiest audio thread exceeds the measurement limit above (85 % unless set otherwise) or the driver calls late, then narrowed down; the "
                 "maximum polyphony is set to the highest clean limit (lower it on the slider for more headroom, raise it if you dare). "
                 "The reachable polyphony depends on the whole configuration - the number of audio routes (every perspective "
                 "of every division renders its own voices), the auxiliary routes, the IR reverbs, the drivers and buffer "

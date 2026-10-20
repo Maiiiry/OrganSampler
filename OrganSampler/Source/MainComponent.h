@@ -368,6 +368,7 @@ private:
         const juce::Array<juce::File>& extraShots, juce::URL& issueUrl);
     // After the report: the message with "Open the GitHub form" (again) and "Open the report folder".
     static void showAfterReport(const juce::URL& url, const juce::File& folder);
+    static void arrangeReportWindows(const juce::File& folder);   // the browser on the left half of the screen, the file manager with the report folder on the right (0.8.139)
     std::shared_ptr<std::vector<SamplerEngine::FolderAssignment>> stopBuildMap(int manual) const;   // nullptr while inactive
     ManualConfig::StopBuild deriveStopBuildFromEngine(int manual) const;   // the table as the loaded stops are
     void extendStopBuildWithTree(int manual, const juce::File& tree, int treeIndex);   // a tree added to a built division
@@ -881,6 +882,9 @@ private:
         return false;
     }
     // Advanced global audio (Configuration Editor), pushed into the engine.
+    // The polyphony measurement's limit for the longest driver callback as a share
+    // of its period (0.6..1.0, default 0.85; Configuration Editor, machine-specific).
+    float measurementShareLimit = 0.85f;
     float windLevelDbPerCent = 0.2f;
     float tremulantLevelDbPerCent = 0.187f;
     float windOneStopShare = 0.2f, windOnePipeShare = 0.5f, windTwoPipesShare = 0.5f;

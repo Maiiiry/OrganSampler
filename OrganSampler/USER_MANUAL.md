@@ -540,10 +540,15 @@ configuration. The couplers of the definition (0.8.138: its KeyAction rows -
 the keys of one keyboard playing another keyboard or a division, shifted by
 0, 12 or -12 semitones, or the top note only) become the couplers of ours
 that exist for them - a keyboard pulling a higher division at 8', 16', 4' or
-as a melody coupler, itself at 16' and 4', I from II - and only those are
+as a melody coupler, itself at 16' and 4', I from II or III - and only those are
 shown on the console; a coupler of the definition OrganSampler has no
-coupler for (one to a division without a keyboard of ours, a 24' coupler) is
-named in the import's report. The general crescendo takes them too: a stage
+coupler for (one to a floating division whose stops lie in several
+divisions, a 24' coupler) is named in the import's report. The catalog of
+couplers has the "downward" ones since 0.8.139 - a keyboard pulling a lower
+manual, I/II, I/III, II/III and so on at 8', 16', 4', as a melody or bass
+coupler, listed after the usual ones and hidden until shown (Couplers
+dialog) or brought by an import; the bass couplers to the pedal are the
+"pedal from the manual" couplers (the manual's lowest key plays the pedal). The general crescendo takes them too: a stage
 that draws a coupler's drawstop switches it on in that step. A stop
 with several ranks in ONE perspective (Caen: a stereo stop recorded as a
 left and a right rank, "Quintaton 16 (L component)" and "(R component)",
@@ -805,7 +810,12 @@ instrument; a stop cut in the middle of its files, or with one perspective
 loaded and another not, is dropped whole, and every stop left out is named
 once in the message and stays in the pool of the Stop List - nothing stands
 on the grid half loaded. The polyphony report then says the loading stopped
-on purpose; it never claims the system is paging when it is not.
+on purpose; it never claims the system is paging when it is not. A stop
+whose samples the program holds already (a reload of the same organ: the
+new load adopts them, nothing is decoded) is loaded whatever the memory
+says. The loading dialog has a *Cancel* button (0.8.139): the loading stops
+at the next stop, the instrument is built from what was loaded, the rest is
+named like after a memory stop and stays in the pool.
 
 The report also profiles the device thread (0.8.137): per route callback,
 in microseconds, how much went into this thread's own rendering of voices,
@@ -817,7 +827,15 @@ for scale and the share of the time the device threads spent inside the
 callbacks, and the longest route callback of the run with its parts - the
 sound breaks on such a peak, never on the average. It is what tells, on a
 computer whose render cores are not full when the sound breaks, where the
-time goes. The "free" figure is what the
+time goes. The limit the measurement judges by - how much of its period the
+longest driver callback may take - is the *Measurement limit* of the
+Configuration Editor (0.8.139): 85 % by default, which leaves headroom for
+what the computer does besides; up to 100 %, where a level counts as broken
+only when the driver actually called late - dangerous for playing, the
+limit it sets breaks up on the first callback that runs a little longer.
+The measurement does not start while the filled pipes are still being built
+(the orange tracks under the stop buttons), and the report says when the
+run ran out of keys and strikes before the computer did. The "free" figure is what the
 system could give the program now: Windows' available physical memory,
 Linux's MemAvailable (the reclaimable cache included), macOS's free and
 inactive pages; the footprint rule is the one that bites on an 8 GB machine.
@@ -2856,7 +2874,10 @@ browser with its fields filled in from the dialog: drag `logs.zip` into
 "Logs" (the first field of the form) and the pictures into "Screenshots",
 check the text, submit. The report folder itself opens in the file manager
 beside it, and the program's own message sits at the bottom of the screen,
-out of the way: put the browser and the folder side by side and drag. The
+out of the way. The program puts the browser on the left half of the screen
+and the folder on the right half, side by side, so the zip is dragged across
+(0.8.139; Windows always, macOS through AppleScript - the browser only with
+the accessibility permission -, Linux where wmctrl is installed). The
 link carries the computer and the routes only while it stays short (0.8.138;
 GitHub answered a long one with an error after its sign-in) - the whole
 list is in `system.txt` of `logs.zip` in any case. A free

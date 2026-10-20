@@ -12,6 +12,36 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.139] - 2026-10-20
+
+### Added
+- Configuration Editor: "Measurement limit" - how much of its period the
+  longest driver callback may take before the polyphony measurement calls a
+  level broken (85 % by default, up to 100 %, with the warning that a limit
+  measured at 100 % breaks up on the first longer callback).
+- The loading dialog has a Cancel button: the loading stops at the next
+  stop, the instrument is built from the stops loaded so far, the rest is
+  named in the message and stays in the pool.
+- Report a problem puts the browser on the left half of the screen and the
+  report folder on the right half, side by side (Windows; macOS through
+  AppleScript, Linux through wmctrl where present).
+- Couplers "downwards" in the catalog: a keyboard pulling a lower manual
+  (I/III, II/III ...) at 8', 16', 4', as a melody or bass coupler, listed
+  after the usual ones and hidden until shown; the Hauptwerk import maps the
+  definition's couplers of that kind onto them.
+
+### Fixed
+- A reload of the same organ reported stops as "not loaded" for memory while
+  they were in memory all along (#33): the memory check ran before the
+  decision that the new load adopts the samples the program already holds.
+  A stop that adopts its samples is loaded whatever the memory says.
+- The measurement does not start while the filled pipes are still being
+  built (#32: a run right after the load broke at 328 voices beside the
+  building), and the building and loading worker threads run below the
+  window thread, so a message box answers while they work.
+- The report says when the measurement ran out of keys and strikes before
+  the computer did (#31, #34: the limit is what was reached).
+
 ## [0.8.138] - 2026-10-20
 
 ### Added

@@ -548,10 +548,15 @@ static const char* const kManualText_part2 =
     "the keys of one keyboard playing another keyboard or a division, shifted by\n"
     "0, 12 or -12 semitones, or the top note only) become the couplers of ours\n"
     "that exist for them - a keyboard pulling a higher division at 8', 16', 4' or\n"
-    "as a melody coupler, itself at 16' and 4', I from II - and only those are\n"
+    "as a melody coupler, itself at 16' and 4', I from II or III - and only those are\n"
     "shown on the console; a coupler of the definition OrganSampler has no\n"
-    "coupler for (one to a division without a keyboard of ours, a 24' coupler) is\n"
-    "named in the import's report. The general crescendo takes them too: a stage\n"
+    "coupler for (one to a floating division whose stops lie in several\n"
+    "divisions, a 24' coupler) is named in the import's report. The catalog of\n"
+    "couplers has the \"downward\" ones since 0.8.139 - a keyboard pulling a lower\n"
+    "manual, I/II, I/III, II/III and so on at 8', 16', 4', as a melody or bass\n"
+    "coupler, listed after the usual ones and hidden until shown (Couplers\n"
+    "dialog) or brought by an import; the bass couplers to the pedal are the\n"
+    "\"pedal from the manual\" couplers (the manual's lowest key plays the pedal). The general crescendo takes them too: a stage\n"
     "that draws a coupler's drawstop switches it on in that step. A stop\n"
     "with several ranks in ONE perspective (Caen: a stereo stop recorded as a\n"
     "left and a right rank, \"Quintaton 16 (L component)\" and \"(R component)\",\n"
@@ -601,13 +606,13 @@ static const char* const kManualText_part2 =
     "place the root is known. It is loaded at once and saved again with the\n"
     "voicing once the folders are loaded. Then check\n"
     "the Stop List, give the perspectives their audio routes and the divisions\n"
+    ;
+static const char* const kManualText_part3 =
     "their MIDI keyboards, and *Save Configuration* - as a portable one to\n"
     "publish it.\n"
     "\n"
     "### Merging another configuration into the loaded organ\n"
     "\n"
-    ;
-static const char* const kManualText_part3 =
     "Right-click *Load Configuration* > *Merge another configuration into this\n"
     "organ* adds a second configuration (an OrganSampler `.json`, or a Hauptwerk\n"
     "organ definition) to the one that is loaded, division by division: the added\n"
@@ -803,13 +808,13 @@ static const char* const kManualText_part3 =
     "measurement writes its verdict into it the moment its report opens).\n"
     "\n"
     "The loading never lets the system page: before every stop (and every 32\n"
+    ;
+static const char* const kManualText_part4 =
     "files inside a large one) the program looks at the memory and stops loading\n"
     "when any sign says it is short - less free than 512 MB or a sixteenth of the\n"
     "installed memory, its own footprint within the system's share (1.5 GB or a\n"
     "fifth; 1 GB on a computer of 4 GB and less), the program swapped out by more\n"
     "than 256 MB since the load began (Linux; on macOS the system's compressor\n"
-    ;
-static const char* const kManualText_part4 =
     "growing that much while less than twice the reserve is free - it grows as\n"
     "macOS squeezes other programs, which is what it should do), or the macOS\n"
     "kernel reporting memory pressure. The stops loaded so far make the\n"
@@ -817,7 +822,12 @@ static const char* const kManualText_part4 =
     "loaded and another not, is dropped whole, and every stop left out is named\n"
     "once in the message and stays in the pool of the Stop List - nothing stands\n"
     "on the grid half loaded. The polyphony report then says the loading stopped\n"
-    "on purpose; it never claims the system is paging when it is not.\n"
+    "on purpose; it never claims the system is paging when it is not. A stop\n"
+    "whose samples the program holds already (a reload of the same organ: the\n"
+    "new load adopts them, nothing is decoded) is loaded whatever the memory\n"
+    "says. The loading dialog has a *Cancel* button (0.8.139): the loading stops\n"
+    "at the next stop, the instrument is built from what was loaded, the rest is\n"
+    "named like after a memory stop and stays in the pool.\n"
     "\n"
     "The report also profiles the device thread (0.8.137): per route callback,\n"
     "in microseconds, how much went into this thread's own rendering of voices,\n"
@@ -829,7 +839,15 @@ static const char* const kManualText_part4 =
     "callbacks, and the longest route callback of the run with its parts - the\n"
     "sound breaks on such a peak, never on the average. It is what tells, on a\n"
     "computer whose render cores are not full when the sound breaks, where the\n"
-    "time goes. The \"free\" figure is what the\n"
+    "time goes. The limit the measurement judges by - how much of its period the\n"
+    "longest driver callback may take - is the *Measurement limit* of the\n"
+    "Configuration Editor (0.8.139): 85 % by default, which leaves headroom for\n"
+    "what the computer does besides; up to 100 %, where a level counts as broken\n"
+    "only when the driver actually called late - dangerous for playing, the\n"
+    "limit it sets breaks up on the first callback that runs a little longer.\n"
+    "The measurement does not start while the filled pipes are still being built\n"
+    "(the orange tracks under the stop buttons), and the report says when the\n"
+    "run ran out of keys and strikes before the computer did. The \"free\" figure is what the\n"
     "system could give the program now: Windows' available physical memory,\n"
     "Linux's MemAvailable (the reclaimable cache included), macOS's free and\n"
     "inactive pages; the footprint rule is the one that bites on an 8 GB machine.\n"
@@ -992,6 +1010,8 @@ static const char* const kManualText_part4 =
     "  frequency set in *Treble per key: shelf start frequency* (default 1800 Hz).\n"
     "- A *Reset to 0 dB* button sits beside each header; dragging with the right\n"
     "  mouse button paints one value across a row of sliders.\n"
+    ;
+static const char* const kManualText_part5 =
     "- The sliders light up while the key sounds. A **green thumb** marks a filled\n"
     "  pipe (hover it: the tooltip names the stop, the sample file and the shift it\n"
     "  was made with, \"HW Tromp 16', sample 039-D#.wav, -12 st (from key 51)\"). An\n"
@@ -1010,8 +1030,6 @@ static const char* const kManualText_part4 =
     "  stop, +12 a 4' one; the button caption follows: \"Principal 16' (Ext.)\" in\n"
     "  the stop's own division, \"Principal 16' (Trsm.)\" in another division.\n"
     "  The shifted pipe is retuned so that the new footage is a pure interval of\n"
-    ;
-static const char* const kManualText_part5 =
     "  the played key (a 2 2/3' shifted by +5 gives an exact 2'), the temperament\n"
     "  follows the played key, wind, tremulant and detune stay with the pipe.\n"
     "- **Taken from** - the source stop, its division and footage.\n"
@@ -1194,6 +1212,8 @@ static const char* const kManualText_part5 =
     "*Settings* in a division header opens the dialog at that division; the\n"
     "division is chosen at the top. The settings of a division are the same as in\n"
     "its section of the Configuration Editor (\"Division sections (Pedal, Manual I\n"
+    ;
+static const char* const kManualText_part6 =
     "... Manual VII)\" describes every one of them); the dialog adds the keyboard\n"
     "drawing, the coupler and swell learning, and the audio tabs.\n"
     "\n"
@@ -1212,8 +1232,6 @@ static const char* const kManualText_part5 =
     "  (defaults: pedal 36 to 67, manuals 36 to 96). Keys outside are silent on\n"
     "  every stop and transmission of the division; the per-key voicing sliders\n"
     "  cover exactly this range. An extension ends with the compass.\n"
-    ;
-static const char* const kManualText_part6 =
     "- *MIDI transposition* (the last line of the MIDI column, default 0): the\n"
     "  keys of the MIDI keyboard play this many semitones away. With -12 the key 036 plays the\n"
     "  samples of 024, with +12 those of 048. For a keyboard whose keys send the\n"
@@ -1396,6 +1414,8 @@ static const char* const kManualText_part6 =
     "  packet into shorter deadlines - an IR's tail FFT alone can exceed a block\n"
     "  of 256 - without lowering the latency at all.\n"
     "\n"
+    ;
+static const char* const kManualText_part7 =
     "The price of mixing drivers (ASIO beside WASAPI in one organ) - read this\n"
     "before you do it:\n"
     "\n"
@@ -1414,8 +1434,6 @@ static const char* const kManualText_part6 =
     "### Audio on Linux\n"
     "\n"
     "**What Linux does with your sound cards.** Every current distribution runs\n"
-    ;
-static const char* const kManualText_part7 =
     "the sound server PipeWire. It takes every sound card for itself and offers\n"
     "the programs a stereo \"default\" output - the desktop's mixer, in which every\n"
     "card is reduced to a single stereo pair (the profile \"Analog Stereo Output\",\n"
@@ -1598,6 +1616,8 @@ static const char* const kManualText_part7 =
     "  entirely.\n"
     "- **ASIO.** All routes on one ASIO driver are rendered by one audio thread\n"
     "  and the render workers behind it (*Render threads* in the Configuration\n"
+    ;
+static const char* const kManualText_part8 =
     "  Editor): the voices of every route are shared out over all the processor's\n"
     "  cores. This is the layout with the highest polyphony. The buffer size sets\n"
     "  how much time each block of audio may take: a buffer of 512 samples allows\n"
@@ -1616,8 +1636,6 @@ static const char* const kManualText_part7 =
     "  an Aggregated WASAPI route is rendered by its own thread (*Render threads\n"
     "  for Aggregated WASAPI*).\n"
     "- **Mixed ASIO and Windows Audio.** Works; the ASIO workers leave processor\n"
-    ;
-static const char* const kManualText_part8 =
     "  time to the WASAPI threads. But see \"Audio drivers: many sound cards at\n"
     "  once\" for the price.\n"
     "- **Several devices against one.** Every open device - an ASIO driver, a\n"
@@ -1800,6 +1818,8 @@ static const char* const kManualText_part8 =
     "\n"
     "**Phase vocoder (Signalsmith Stretch).** Keeps every length and every loop\n"
     "point: the pipe speaks at its real speed and the room decays in its real time.\n"
+    ;
+static const char* const kManualText_part9 =
     "The analysis block is sized from the pitch, so deep pipes keep their harmonics.\n"
     "Excellent within an octave either way. Weaknesses: upwards the vocoder\n"
     "slightly wobbles the pitch (a gentle unsteadiness of the tone); two octaves\n"
@@ -1818,8 +1838,6 @@ static const char* const kManualText_part8 =
     "perfect. The loop crossfade helps there too; listen to a held note of the\n"
     "lowest extension pipes and raise it when the loop is heard.\n"
     "\n"
-    ;
-static const char* const kManualText_part9 =
     "Practical advice: stay with the default, *Pitch shift + time stretch*, unless a\n"
     "stop sounds wrong with it; then try the plain pitch shift (no frayed attack)\n"
     "or, for shifts within an octave, the phase vocoder (the speaking at its real\n"
@@ -2002,6 +2020,8 @@ static const char* const kManualText_part9 =
     "every such device is one stream with one callback, and all its routes are\n"
     "rendered by the whole pool of *Render threads* (since 0.8.47 for Windows\n"
     "Audio too - before, every Windows Audio route had a stream and a thread of\n"
+    ;
+static const char* const kManualText_part10 =
     "its own, so a big division on one route was bound to a single core).\n"
     "\n"
     "### Sample storage in RAM\n"
@@ -2020,8 +2040,6 @@ static const char* const kManualText_part9 =
     "\n"
     "### IR processing\n"
     "\n"
-    ;
-static const char* const kManualText_part10 =
     "How the IR reverbs of the routes are convolved. *Full* convolves every route\n"
     "with its impulse response as it is. That is heavy on memory traffic rather\n"
     "than on arithmetic: a true stereo IR of 7 s on six routes (three divisions,\n"
@@ -2204,6 +2222,8 @@ static const char* const kManualText_part10 =
     "   cores and the lane utilisation every second. The measurement is also\n"
     "   started from the audio tab of a division's Settings (*Measure polyphony*,\n"
     "   beside *Reopen device*).\n"
+    ;
+static const char* const kManualText_part11 =
     "\n"
     "Then save the configuration: the value belongs to this organ. Measure again\n"
     "after changing the audio routes, the IRs, the buffer size or the samples.\n"
@@ -2222,8 +2242,6 @@ static const char* const kManualText_part10 =
     "the balance below it.\n"
     "\n"
     "### Global pitch\n"
-    ;
-static const char* const kManualText_part11 =
     "\n"
     "Shifts the whole organ by -200 to +200 cents (default 0) on top of the\n"
     "temperament, for playing with instruments tuned elsewhere than a1 = 440 Hz.\n"
@@ -2406,6 +2424,8 @@ static const char* const kManualText_part11 =
     "copies.\n"
     "\n"
     "### Filled pipes: time stretch of the release\n"
+    ;
+static const char* const kManualText_part12 =
     "\n"
     "Pitch shift + time stretch: how far the release is stretched back from the\n"
     "resampled length towards the source's, in both directions (0 to 100 %, default\n"
@@ -2424,8 +2444,6 @@ static const char* const kManualText_part11 =
     "that does not follow the sustain. Applied when the key is released: nothing is\n"
     "rebuilt, the change is heard at once. Lower it if the releases of an extension\n"
     "start too late or too softly, raise it if they begin with a bump.\n"
-    ;
-static const char* const kManualText_part12 =
     "\n"
     "### Filled pipes: release level matched to the source\n"
     "\n"
@@ -2608,6 +2626,8 @@ static const char* const kManualText_part12 =
     "\n"
     "### Top bar: Shut down PC\n"
     "\n"
+    ;
+static const char* const kManualText_part13 =
     "Shows or hides the Shut down PC button (see \"Top bar buttons\"): save, quit and shut the\n"
     "computer down without any question. Hidden by default. A hidden button still\n"
     "fires from its learned MIDI control, which is how a headless console uses it.\n"
@@ -2626,8 +2646,6 @@ static const char* const kManualText_part12 =
     "### Melody/bass couplers: new extreme key only\n"
     "\n"
     "On: a melody (bass) coupler couples a key only when it becomes the new highest\n"
-    ;
-static const char* const kManualText_part13 =
     "(lowest) key held; when that key is released the coupler does not fall back to\n"
     "the next one. Off (default): the coupled note always follows the highest\n"
     "(lowest) key currently held.\n"
@@ -2810,6 +2828,8 @@ static const char* const kManualText_part13 =
     "\n"
     "On: pipes of the same pitch sounding together pull each other into tune a\n"
     "little, as neighbouring pipes on one chest do. Off: every pipe keeps its own\n"
+    ;
+static const char* const kManualText_part14 =
     "detune.\n"
     "\n"
     "### Tremulant rate\n"
@@ -2828,8 +2848,6 @@ static const char* const kManualText_part13 =
     "360 degrees, default 260): with 0 every stop dips at the same moment, with a\n"
     "large value the stops of a full registration shimmer rather than pulse.\n"
     "\n"
-    ;
-static const char* const kManualText_part14 =
     "### Wind: depth (maximum pitch sag)\n"
     "\n"
     "How far the pitch sags with the wind at its lowest (0 to 50 cents, default 8).\n"
@@ -2888,7 +2906,10 @@ static const char* const kManualText_part14 =
     "\"Logs\" (the first field of the form) and the pictures into \"Screenshots\",\n"
     "check the text, submit. The report folder itself opens in the file manager\n"
     "beside it, and the program's own message sits at the bottom of the screen,\n"
-    "out of the way: put the browser and the folder side by side and drag. The\n"
+    "out of the way. The program puts the browser on the left half of the screen\n"
+    "and the folder on the right half, side by side, so the zip is dragged across\n"
+    "(0.8.139; Windows always, macOS through AppleScript - the browser only with\n"
+    "the accessibility permission -, Linux where wmctrl is installed). The\n"
     "link carries the computer and the routes only while it stays short (0.8.138;\n"
     "GitHub answered a long one with an error after its sign-in) - the whole\n"
     "list is in `system.txt` of `logs.zip` in any case. A free\n"
