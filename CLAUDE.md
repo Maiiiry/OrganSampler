@@ -339,7 +339,9 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   "Packed samples: ... -> OK/MISMATCH" (windows + a packed-vs-raw render over splices and cubic; MISMATCH fails CI).
   Linux: `LinuxWindowPlacement.{h,cpp}` is JUCE-FREE (std::string, `Box`) - Xlib's Font/Time/Drawable typedefs are
   ambiguous under JuceHeader's `using namespace juce` (the 0.8.144 CI Linux build failed on it); never include
-  JuceHeader.h and Xlib.h in one translation unit.
+  JuceHeader.h and Xlib.h in one translation unit. CMakeLists links `${X11_LIBRARIES}` on Linux (find_package(X11)):
+  JUCE itself dlopens libX11, so nothing linked it and the first v0.8.145 tag failed with "undefined reference to
+  XOpenDisplay" - the tag was moved onto the CMake fix (the Windows exe is the same build).
   0.8.144 - LESSON: the 0.8.143 wake-ahead used `periodTicks` (the smoothed gap between CONSECUTIVE JOBS = the gap
   between the routes of one callback, ~0.3 ms with 8 routes) as the period -> workers woke every few hundred us and
   spun: #48 Core 2 Duo Linux 2900 (was 2500-2600 ok), #49 Mac 5000 but kernel 9.7 us/voice (3x), #50 Ultra 7 8 routes

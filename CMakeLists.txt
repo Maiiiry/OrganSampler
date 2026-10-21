@@ -112,7 +112,10 @@ endif()
 # of every card; the ALSA list is filtered of the template PCMs (PlatformAudio.h).
 if(UNIX AND NOT APPLE)
     target_compile_definitions(OrganSampler PRIVATE JUCE_JACK=1)
-    target_link_libraries(OrganSampler PRIVATE ${CMAKE_DL_LIBS})
+    # libX11 itself: JUCE loads X11 through dlopen (nothing of ours links it), but
+    # LinuxWindowPlacement.cpp calls Xlib directly (0.8.145: undefined XOpenDisplay at link time).
+    find_package(X11 REQUIRED)
+    target_link_libraries(OrganSampler PRIVATE ${CMAKE_DL_LIBS} ${X11_LIBRARIES})
 endif()
 
 target_compile_definitions(OrganSampler PRIVATE
