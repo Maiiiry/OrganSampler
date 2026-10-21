@@ -2560,6 +2560,23 @@ namespace
                         periodTicks.store(previous > 0 ? (previous * 7 + interval) / 8 : interval, std::memory_order_relaxed);
                     }
                 }
+                // The DEVICE period (0.8.144): a job after a gap of more than 0.3 ms starts a
+                // new period; the interval between such starts is what the wake-ahead
+                // counts with. The job cadence above is the gap between the routes of one
+                // callback when a device carries several - 0.8.143 took it for the period
+                // and woke the workers every few hundred microseconds, which cost a third
+                // of the polyphony on the two-core laptops and four fifths on a notebook
+                // with eight routes (#48-#50).
+                if (last <= 0 || now - last > juce::Time::getHighResolutionTicksPerSecond() * 3 / 10000)
+                {
+                    const int64_t start = periodStartTicks.load(std::memory_order_relaxed);
+                    if (start > 0 && now - start < juce::Time::getHighResolutionTicksPerSecond() / 20)
+                    {
+                        const int64_t previous = devicePeriodTicks.load(std::memory_order_relaxed);
+                        devicePeriodTicks.store(previous > 0 ? (previous * 7 + (now - start)) / 8 : now - start, std::memory_order_relaxed);
+                    }
+                    periodStartTicks.store(now, std::memory_order_relaxed);
+                }
                 // Spin across the whole gap only for short periods (small ASIO
                 // buffers). For long periods (WASAPI, large buffers) the workers
                 // sleep between blocks so the Windows audio engine and the GUI
@@ -2914,15 +2931,18 @@ namespace
                 // of #46/#47 on 10 ms periods).
                 const int64_t ticksPerSecond = juce::Time::getHighResolutionTicksPerSecond();
                 int64_t waitTicks = ticksPerSecond / 50;   // 20 ms
+                // The wake-ahead needs a spare core: with one worker on a two-core
+                // computer it would only wake into the poster's core.
+                if (numWorkers >= 2)
                 {
-                    const int64_t period = periodTicks.load(std::memory_order_relaxed), last = lastJobTicks.load(std::memory_order_relaxed);
-                    if (period > 0 && last > 0)
+                    const int64_t period = devicePeriodTicks.load(std::memory_order_relaxed), start = periodStartTicks.load(std::memory_order_relaxed);
+                    if (period > ticksPerSecond / 1000 && start > 0)   // a period of a millisecond or more, known
                     {
                         const int64_t lead = ticksPerSecond * 3 / 2000;   // 1.5 ms before the period is due
-                        int64_t next = last + period - lead;
+                        int64_t next = start + period - lead;
                         const int64_t sleepFrom = juce::Time::getHighResolutionTicks();
                         while (next <= sleepFrom) next += period;
-                        waitTicks = juce::jlimit(ticksPerSecond / 10000, waitTicks, next - sleepFrom);
+                        waitTicks = juce::jlimit(ticksPerSecond / 5000, waitTicks, next - sleepFrom);   // at least 0.2 ms
                     }
                 }
                 bool wokeAhead = false;
@@ -2986,6 +3006,7 @@ namespace
         std::condition_variable sleepCv;
         std::atomic<int> sleepers{ 0 };
         std::atomic<int64_t> hotUntilTicks{ 0 };
+        std::atomic<int64_t> periodStartTicks{ 0 }, devicePeriodTicks{ 0 };   // the device callbacks' cadence (the wake-ahead, 0.8.144)
         std::atomic<int64_t> lastJobTicks{ 0 };
         std::atomic<int64_t> periodTicks{ 0 };
         const int64_t hotWindowTicks = juce::Time::getHighResolutionTicksPerSecond() / 1000;   // 1 ms

@@ -322,6 +322,25 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   runWhenLoaded ("Nested folder trees"). Caen like-for-like (#46 Ryzen 54 400 / #47 Ultra 7 54 800): same peak on
   both = the poster rendering alone (2.3-2.5 ms) while the workers wake - this build's wake-ahead + poster tail is
   the fix to be measured; the review is posted on #46/#47.
+  0.8.144 - LESSON: the 0.8.143 wake-ahead used `periodTicks` (the smoothed gap between CONSECUTIVE JOBS = the gap
+  between the routes of one callback, ~0.3 ms with 8 routes) as the period -> workers woke every few hundred us and
+  spun: #48 Core 2 Duo Linux 2900 (was 2500-2600 ok), #49 Mac 5000 but kernel 9.7 us/voice (3x), #50 Ultra 7 8 routes
+  10 700 (was 54 800) with callbacks at 131-145 %. Now `periodStartTicks`/`devicePeriodTicks` (a job after a gap >
+  0.3 ms starts a period), wake-ahead only with >= 2 workers, min wait 0.2 ms. NEVER derive the period from the job
+  cadence. Unison off: `conditionOfKeyboardDivision` (keyboard -> division -> the condition switch of the conditional
+  key links) -> a `Coupler{unisonOff}` for a keyboard whose primary division has no unconditional keys -> id
+  "N-N-uoff". Empty stop folders (children skipped) are left off the grid in `Voicer::rebuildUI` items. Every
+  configuration file keeps this machine's keys (`applyPortableConfiguration`: the machineSpecificKeys override runs for
+  non-portable files too; "resampleOnLoad", "storageSampleRate", "releaseHalfRate" added to the list). ParseJob plans
+  on its thread (status text). `nestedTreesNoticed` dedupes the notice per session. `Source/LinuxWindowPlacement.{h,cpp}`
+  (X11: _NET_CLIENT_LIST, _NET_WM_NAME/WM_NAME, WM_CLASS; _NET_WM_STATE remove maximised + _NET_MOVERESIZE_WINDOW +
+  XMoveResizeWindow + XRaiseWindow; in the jucer as LxWpl1/LxWpl2 and in CMakeLists). #52: Aggregated WASAPI 20 routes
+  x 1 lane per endpoint thread = 62 900 > the shared pool - route-level parallelism beats lane-level; keep default 1.
+  Ashton: the user's ODF ("Ashton-under-Lyne, Albion Church, Lewis Organ, Surround", 34 KeyActions incl. "Choir to pedal
+  sub/oct") - the couplers are right; only the unison off was missing (now a coupler). The "Save, then load reloaded
+  the organ" report: the log shows the chooser opened and the same ODF was imported again at 15:36 - the chooser starts
+  in lastSettingsDirectory with no file preselected; nothing of ours reloads. NEXT (0.8.145): the FLAC-like lossless
+  RAM compression (default OFF, Config Editor, loops kept, the cost explained: half the polyphony or worse).
 - A route without a device ("none") gets NO voices (0.8.126, `Route::hasDevice` set by `setPerspectiveDeviceKey`,
   checked in `publishVoice`: the voice is finished at once). Before, every pipe was published to its perspective's
   route whatever the device and sat there unrendered until `cleanStaleRoutes` flushed it after ~1 s, counted as

@@ -553,6 +553,7 @@ private:
     double storageSampleRate = 48000.0;   // the rate the samples are stored at when resampled (48 000 / 36 000 / 32 000; 0.8.143)
     bool releaseHalfRate = false;         // release samples at half the storage rate (0.8.143)
     juce::StringArray nestedTreesDropped; // folder trees dropped from the pool for lying inside another (the notice after the load)
+    juce::StringArray nestedTreesNoticed; // the ones the user was told about in this session (settings.json and the configuration file both carried the tree: two boxes, 0.8.144)
     // IR processing (Configuration Editor > Engine): "automatic" (Light on a
     // computer that cannot afford Full, see applyIrProcessing), "full", "light".
     // irLightAuto: the automatic choice made on this computer, kept over starts.

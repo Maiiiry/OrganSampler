@@ -12,6 +12,38 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.144] - 2026-10-21
+
+### Fixed
+- The polyphony fell by a third on the two-core laptops and by four fifths
+  on a notebook with eight routes (#48-#50): the workers' wake-ahead of
+  0.8.143 took the gap between the routes of one callback for the period and
+  woke the workers every few hundred microseconds. The period is now the
+  device's own (a job after a gap of more than 0.3 ms starts a new one), and
+  a two-core computer does not wake ahead at all.
+- A stop folder with nothing under it (its children left out of the load
+  for memory) stood on the grid as an empty button: not on the grid, its row
+  stays in the Stop List.
+- Every configuration file, portable or not, leaves the settings of this
+  computer alone (render threads, sample storage and its rate, window
+  places, the measurement limit): a file saved with other ones switched them
+  back behind the user's back, and the notebook refused Caen for memory.
+- Hauptwerk import: a keyboard whose own division its keys reach only under
+  a condition switch gets that switch as its Unison Off coupler (Ashton).
+- Hauptwerk import: the window stays while the organ is worked out
+  (divisions, stops, folders, couplers, the jamb) - it reads the sample
+  folders from the disk, seconds on a big library, and the program looked
+  stuck meanwhile. The import's report no longer says the couplers were
+  ignored.
+- The "Nested folder trees" notice comes once per tree and session, not
+  from settings.json and the configuration file both.
+- Linux: the report's file manager and browser are placed side by side
+  through X11 itself (wmctrl is rarely installed): the file manager on the
+  right half of the work area, the browser on the left, both un-maximised
+  and raised.
+- "Render threads for Aggregated WASAPI" says what it is: the lanes of each
+  endpoint thread; 1 lets the threads render their routes in parallel.
+
 ## [0.8.143] - 2026-10-21
 
 ### Added

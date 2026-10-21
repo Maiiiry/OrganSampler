@@ -973,6 +973,9 @@
     <ClCompile Include="..\..\Source\MainComponentMerge.cpp">
       <Filter>OrganSampler\Source</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\Source\LinuxWindowPlacement.cpp">
+      <Filter>OrganSampler\Source</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\Source\Main.cpp">
       <Filter>OrganSampler\Source</Filter>
     </ClCompile>
@@ -5176,6 +5179,9 @@
       <Filter>OrganSampler\Source</Filter>
     </ClInclude>
     <ClInclude Include="..\..\Source\HauptwerkOdf.h">
+      <Filter>OrganSampler\Source</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Source\LinuxWindowPlacement.h">
       <Filter>OrganSampler\Source</Filter>
     </ClInclude>
     <ClInclude Include="..\..\Source\MainComponent.h">

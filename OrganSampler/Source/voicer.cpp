@@ -2355,6 +2355,10 @@ void Voicer::layoutScreen(int screen, juce::Component& container, juce::Viewport
         {
             if (isStopHidden(manual, stop->name)) continue;   // in the stop pool, not on the grid
             if (stop->groupMaster.isNotEmpty()) continue;      // a stop folder's child: under its master's voicing
+            // A stop folder with nothing under it (its children left out of the load
+            // for memory, 0.8.144): not on the grid - an empty button is a stop that
+            // seems loaded. Its row stays in the Stop List.
+            if (stop->container && groupChildren(stop).empty() && groupChildTransmissions(stop).empty()) continue;
             items.push_back({ stop, false, stop->name });
         }
         for (auto* stop : engine.getStops())

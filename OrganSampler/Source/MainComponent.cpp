@@ -51,6 +51,7 @@ namespace
 #include "CrashHandler.h"
 #include "MemoryInfo.h"
 #include "CpuInfo.h"
+#include "LinuxWindowPlacement.h"
 #include "TemperamentsData.h"   // temperaments.csv embedded by the pre-build step
 #include "LicencesData.h"       // the licence texts embedded (GenerateLicencesData.ps1)
 #include "ManualData.h"         // the user manual embedded (GenerateManualData.ps1)
@@ -4679,6 +4680,7 @@ void MainComponent::arrangeReportWindows(const juce::File& folder)
         run("tell application \"System Events\" to tell (first application process whose frontmost is true) to set {position, size} of front window to {{"
             + juce::String(left.getX()) + ", " + juce::String(left.getY()) + "}, {" + juce::String(left.getWidth()) + ", " + juce::String(left.getHeight()) + "}}");
    #elif JUCE_LINUX
+    if (LinuxWindowPlacement::placeSideBySide(folder.getFileName(), left, right)) return;   // X11 itself (0.8.144)
     if (!juce::File("/usr/bin/wmctrl").existsAsFile()) return;
     auto run = [](const juce::StringArray& args) { juce::ChildProcess process; if (process.start(args)) process.waitForProcessToFinish(3000); };
     run({ "wmctrl", "-r", folder.getFileName(), "-e", "0," + juce::String(right.getX()) + "," + juce::String(right.getY()) + "," + juce::String(right.getWidth()) + "," + juce::String(right.getHeight()) });
@@ -9789,6 +9791,7 @@ namespace
             "divisionScreen", "dialogBounds", "uiScalePercent", "copyCacheFolder", "copyCacheEnabled", "sampleStorageFloat",
             "renderThreads", "renderThreadPreset", "renderThreadsWasapi", "showUnusableAudioDevices", "configEditorCollapsed", "configurationFile",
             "loadLastConfigurationAtStartup", "maxPolyphony", "measurementShareLimit", "irProcessing", "irLightAuto", "unpackArchiveShownOnce", "renderThreadPresetChosen",
+            "resampleOnLoad", "storageSampleRate", "releaseHalfRate",
             "renderKernel" };
         return keys;
     }
@@ -10135,9 +10138,20 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
         {
             setStatusMessage("Reading the Hauptwerk organ definition...");
             odf = std::make_shared<HauptwerkOdf>(HauptwerkOdf::parse(file, [this](double share) { setProgress(share); return !threadShouldExit(); }));
+            if (odf == nullptr || threadShouldExit()) return;
+            // The plan on this thread as well (0.8.144): it reads the sample folders of
+            // every rank from the disk, seconds on a big library, and the window said
+            // nothing meanwhile - the program looked stuck.
+            setProgress(-1.0);
+            setStatusMessage("Working out the organ: divisions, stops and their folders, perspectives, couplers, the crescendo, the jamb...");
+            root = HauptwerkOdf::hauptwerkRootFor(file);
+            plan = odf->plan(root);
+            planned = true;
         }
-        juce::File file;
+        juce::File file, root;
         std::shared_ptr<HauptwerkOdf> odf;
+        HauptwerkOdf::Plan plan;
+        bool planned = false;
     };
     juce::Component::SafePointer<MainComponent> safeThis(this);
     auto job = std::make_shared<ParseJob>(odfFile, this);
@@ -10149,10 +10163,10 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
         // This lambda lives in *poll: it is cleared only after this call has
         // returned (clearing it here destroyed the captures while in use).
         juce::MessageManager::callAsync([keep = poll] { *keep = nullptr; });
-        if (safeThis == nullptr || job->odf == nullptr) return;
+        if (safeThis == nullptr || job->odf == nullptr || !job->planned) return;
         auto odf = job->odf;
-        const auto root = HauptwerkOdf::hauptwerkRootFor(odfFile);
-        auto plan = odf->plan(root);
+        const auto root = job->root;
+        auto plan = job->plan;
         CrashHandler::note("Hauptwerk import: " + odfFile.getFullPathName() + " - " + (odf->compacted ? "compacted, " : "") + juce::String((int)odf->stops.size())
             + " stops, " + juce::String((int)odf->ranks.size()) + " ranks, " + juce::String((int)odf->keyboards.size()) + " keyboards, " + juce::String(odf->sampleCount)
             + " pipe samples (" + juce::String(odf->encryptedSamples) + " encrypted), packages " + [&] { juce::StringArray p; for (int id : odf->packageIds) p.add(juce::String(id)); return p.joinIntoString(", "); }()
@@ -10671,7 +10685,7 @@ void MainComponent::applyHauptwerkVoicing(std::shared_ptr<HauptwerkOdf> odf, con
         text << "\nExtensions/transmissions made: " << extensionsMade << (extensionsMissed.isEmpty() ? juce::String(".") : " (not made: " + extensionsMissed.joinIntoString(", ") + ").");
     text
          << "\n\nThe configuration is saved as\n" << configurationFile.getFullPathName()
-         << "\n\nEverything else of the organ definition (couplers, combinations, displays, tremulants, wind) was ignored: the folder structure decides the organ in OrganSampler. "
+         << "\n\nEverything else of the organ definition (combinations, displays, wind, noises) was ignored: the folder structure decides the organ in OrganSampler. "
             "Check the Stop List, the audio routes of the perspectives and the MIDI keyboards, then Save Configuration.";
     showLongMessage("Hauptwerk organ definition imported", text);   // longer than an alert box shows (0.8.136)
 }
@@ -10967,16 +10981,18 @@ void MainComponent::applyPortableConfiguration(juce::var configuration,
     // A portable configuration (from another computer) carries the organ only:
     // this computer keeps its own interface size, threads, windows, cache and
     // polyphony limit, and a message says what to set up once the organ is loaded.
+    // This computer's own settings win over anything the file carries - every
+    // configuration file, portable or not (0.8.144): the render threads, the
+    // sample storage and its rate, the window places belong to the computer,
+    // and a file saved with other ones switched them back behind the user's
+    // back (the notebook lost its 36 kHz / half-rate releases and refused Caen).
+    for (const auto& key : machineSpecificKeys())
+    {
+        if (localConfiguration.hasProperty(key)) root->setProperty(key, localConfiguration.getProperty(key, juce::var()));
+        else root->removeProperty(key);
+    }
     if ((bool)root->getProperty("portable"))
     {
-        // This computer's own settings win over anything the file carries: a
-        // portable file of an older version could hold its maker's render
-        // threads ("All logical CPUs - 1") and window places.
-        for (const auto& key : machineSpecificKeys())
-        {
-            if (localConfiguration.hasProperty(key)) root->setProperty(key, localConfiguration.getProperty(key, juce::var()));
-            else root->removeProperty(key);
-        }
         root->removeProperty("portable");   // the settings of this computer from now on
         // The "from another computer" notice: not for a configuration made here
         // and now (a Hauptwerk import), whose own report follows the load.
@@ -12129,8 +12145,13 @@ void MainComponent::dropNestedTrees()
             }
     }
     if (nestedTreesDropped.isEmpty()) return;
-    const juce::String list = nestedTreesDropped.joinIntoString("\n  - ");
+    // Once per tree and session: the same tree comes back from settings.json
+    // and from the configuration file until the configuration is saved.
+    juce::StringArray fresh;
+    for (const auto& item : nestedTreesDropped) if (!nestedTreesNoticed.contains(item)) { fresh.add(item); nestedTreesNoticed.add(item); }
     nestedTreesDropped.clear();
+    if (fresh.isEmpty()) return;
+    const juce::String list = fresh.joinIntoString("\n  - ");
     runWhenLoaded([this, list]
     {
         juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Nested folder trees",
@@ -20783,8 +20804,10 @@ void MainComponent::showConfigurationEditor()
                     o.renderThreadsWasapi = index + 1;
                     o.wasapiRenderLanes.store(o.renderThreadsWasapi);
                     o.saveSettings();
-                }, "Used by divisions/perspectives on Windows Audio or Aggregated WASAPI devices. "
-                   "Their large buffers need few threads; more threads only add crackle. ASIO uses the setting above.");
+                }, "Lanes of every endpoint thread of an Aggregated WASAPI device (one thread per sound card, each rendering its "
+                   "own routes). 1 = each thread renders its routes alone and the threads run in parallel - with twenty routes on "
+                   "sixteen cores that gave 62 900 voices (#52), more than the shared pool; more lanes make the threads compete for "
+                   "the pool. Keep 1 unless a measurement says otherwise. ASIO and a single Windows Audio device use the setting above.");
             }
 #endif
             addCombo("Sample storage in RAM", { "32-bit float (less polyphony, full fidelity)",

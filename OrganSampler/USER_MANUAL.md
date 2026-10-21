@@ -534,7 +534,10 @@ division; a FLOATING division - one no keyboard reaches without a coupler
 (Bellevue's "Chamade", played from every keyboard through "Bom-Ped/Gt/Pos/Rec
 8") - is placed stop by stop where the name says ("GO. Trompette en chamade
 8" on the Great, "Ped. Clairon en chamade" on the Pedal, "5. Tuba 16" on V).
-A stop none of whose ranks has release samples (a carillon, chimes) is a
+A keyboard whose own division its keys reach only under a condition switch
+(Ashton: "1. unison off" conditions the link from the keys of 1. manual to
+the Choir) gets that switch as its Unison Off coupler (0.8.144). A stop
+none of whose ranks has release samples (a carillon, chimes) is a
 one-shot stop: its folder names join the One-shot Patterns of the
 configuration. The couplers of the definition (0.8.138: its KeyAction rows -
 the keys of one keyboard playing another keyboard or a division, shifted by
@@ -652,7 +655,10 @@ polyphony. Loaded on another computer, every route that had a device - the
 auxiliary routes with their reverbs included - plays through that
 computer's default sound device at once; the computer keeps its own
 interface size and thread settings, and the activity log notes it (no
-message box since 0.8.135). What to set up:
+message box since 0.8.135). Since 0.8.144 every configuration file, portable
+or not, leaves the settings of this computer alone: render threads, the
+sample storage and its rate, the window places, the measurement limit - a
+file saved with other ones never switches them behind your back. What to set up:
 the MIDI keyboard of every division (*Settings* in the division header,
 right-click the keyboard icon for *MIDI Learn*), the sound card, buffer and
 output channels of every route in the audio tabs, then *Measure the maximum

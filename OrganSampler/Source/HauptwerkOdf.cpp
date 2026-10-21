@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstring>
 #include <set>
+#include <tuple>
 
 namespace
 {
@@ -637,6 +638,7 @@ HauptwerkOdf HauptwerkOdf::parse(const juce::File& file, const std::function<boo
     {
         struct Reach { int unconditional = 0, total = 0; };
         std::map<int, std::map<int, Reach>> reachOfKeyboard;   // keyboard -> division -> keys reaching it
+        std::map<int, std::map<int, int>> conditionOfKeyboardDivision;   // keyboard -> division -> the condition switch of the conditional links (0.8.144)
         for (const auto& k : odf.keyboards)
         {
             const auto keys = keyboardKeySwitches.find(k.id);
@@ -647,10 +649,10 @@ HauptwerkOdf HauptwerkOdf::parse(const juce::File& file, const std::function<boo
                 // some link on the way was conditional.
                 std::set<int> seen;
                 std::map<int, bool> conditionalArrival;   // division -> arrived only through a condition
-                std::vector<std::pair<int, bool>> stack{ { keySwitch, false } };
+                std::vector<std::tuple<int, bool, int>> stack{ { keySwitch, false, 0 } };   // switch, conditional so far, the condition switch
                 while (!stack.empty())
                 {
-                    const auto [sw, conditional] = stack.back(); stack.pop_back();
+                    const auto [sw, conditional, conditionId] = stack.back(); stack.pop_back();
                     if (!seen.insert(sw).second) continue;
                     if (sw != keySwitch)
                     {
@@ -660,11 +662,14 @@ HauptwerkOdf HauptwerkOdf::parse(const juce::File& file, const std::function<boo
                             auto arrived = conditionalArrival.find(input->second);
                             if (arrived == conditionalArrival.end()) conditionalArrival[input->second] = conditional;
                             else arrived->second = arrived->second && conditional;
+                            // The condition the keys reach the division under (a unison off: the
+                            // keyboard's own division plays only while that switch is off).
+                            if (conditional && conditionId > 0 && conditionOfKeyboardDivision[k.id].count(input->second) == 0) conditionOfKeyboardDivision[k.id][input->second] = conditionId;
                         }
                     }
                     const auto links = switchLinks.find(sw);
                     if (links == switchLinks.end() || seen.size() > 4096) continue;
-                    for (const auto& [dest, condition] : links->second) stack.push_back({ dest, conditional || condition != 0 });
+                    for (const auto& [dest, condition] : links->second) stack.push_back({ dest, conditional || condition != 0, conditionId != 0 ? conditionId : condition });
                 }
                 for (const auto& [division, conditional] : conditionalArrival)
                 {
@@ -703,6 +708,19 @@ HauptwerkOdf HauptwerkOdf::parse(const juce::File& file, const std::function<boo
             });
             int primary = mine.front().second;
             for (const auto& m : mine) if (m.second == k.divisionId) primary = k.divisionId;
+            // The keyboard's own division reached only under a condition switch: that
+            // switch is its unison off (Ashton: "1. unison off" conditions the link from
+            // the keys of 1. manual to the Choir), a coupler of ours (0.8.144).
+            for (const auto& m : mine)
+                if (m.second == primary && m.first.unconditional == 0)
+                    if (const auto conds = conditionOfKeyboardDivision.find(k.id); conds != conditionOfKeyboardDivision.end())
+                        if (const auto c = conds->second.find(primary); c != conds->second.end())
+                        {
+                            Coupler off;
+                            off.sourceKeyboardId = k.id; off.destKeyboardId = k.id; off.switchId = c->second; off.unisonOff = true;
+                            off.name = k.name + " unison off";
+                            odf.couplers.push_back(off);
+                        }
             k.divisionIds.clear();
             k.unconditionalDivisionIds.clear();
             for (const auto& m : mine) if (m.first.unconditional > 0) k.unconditionalDivisionIds.insert(m.second);
@@ -1579,7 +1597,8 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
                 else target = indexOfDivision(c.destDivisionId);   // no stop of it loaded: the keyboard playing it
             }
             juce::String type;
-            if (c.melody) type = "mel";
+            if (c.unisonOff) type = "uoff";
+            else if (c.melody) type = "mel";
             else if (c.bass) type = "bass";
             else if (c.shift == 0) type = "8";
             else if (c.shift == 12) type = "4";
@@ -1588,7 +1607,7 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
             if (ok)
             {
                 if (target > source) ok = true;
-                else if (target == source) ok = type == "16" || type == "4";
+                else if (target == source) ok = type == "16" || type == "4" || type == "uoff";
                 else ok = (target >= 1 && target < source) || (target == 0 && type == "bass");   // the couplers downwards (I/III, II/III ...), 0.8.139; the pedal from a manual: its bass coupler (Doesburg "bass_1", 0.8.140)
             }
             juce::String label = c.switchName.isNotEmpty() ? c.switchName : c.name;
