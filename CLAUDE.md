@@ -293,6 +293,21 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   device': no device`, then "Audio devices still missing after the wait: ASIO default") = a route on the ASIO TYPE
   without a driver name; 0.8.141 `sharedHostFor`: ASIO + empty name -> the driver running in another host of ours,
   else `defaultDeviceNameOfType` (a scan, no open), logged "ASIO without a driver name: X taken".
+  0.8.142: `DisplayPage` (a id, b name) + `ImageSetInstance` (b name "2. clairon 4 (StopPage)", e page, g x, h y) ->
+  `HauptwerkOdf::stopPositions` (the page with the most stop-named images, name = the stop name minus trailing
+  parentheses; Ashton "Simple Jamb" 47/47) -> `PlanStop.gridColumn/gridRow` = ranks of x / y within the division of
+  ours (skipped when > 6 columns or > 24 rows, noted "Grid: N stop(s) placed...") -> the import writes
+  voicingSettings "stopGrid" {manual: {rowName: "c,r"}} (the voicer's own format) and `HauptwerkExtension.column/row`
+  -> `voicer->setGridCell(manual, Voicer::transmissionKey(owner, index), ...)` after addTransmission. "couplersExclusive":
+  true in the import -> the settings loader hides every coupler first. `transmissionCaption` = `t.alias` when set
+  (never shown before!), else `transposedStopName`, which now skips a division prefix ("4. Tuba 8": the "4." was taken
+  for the footage -> "2'. Tuba 8"). Pool (#44): `readyStopsNotIn` counts a row's folders as used only when the engine
+  holds the stop (`stopLoaded`); `addReadyStopToDivision` with a row of the same folders present -> no new row,
+  `reloadDivisionTrees(manual)`. Measurements 0.8.138-0.8.141 (#40-#45): Ultra 7 P-cores-only 37 600 < all 16
+  cores 42 200 (#45: both together better - keep the default; the E-core wait peak 2.2 ms stays, #44), Ryzen
+  Windows longest callback 2.1 ms of which OWN render 1.9 ms (#40), Core 2 Duo longest 3-5 ms own render 3 ms
+  (#41/#42: the poster is half the lanes), Ryzen Linux 0.4 ms (#43, fine). Verbal recommendation given: cap the
+  poster's chunk share at the tail of a job + smaller tail chunks for slow lanes; nothing large left.
 - A route without a device ("none") gets NO voices (0.8.126, `Route::hasDevice` set by `setPerspectiveDeviceKey`,
   checked in `publishVoice`: the voice is finished at once). Before, every pipe was published to its perspective's
   route whatever the device and sat there unrendered until `cleanStaleRoutes` flushed it after ~1 s, counted as

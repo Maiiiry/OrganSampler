@@ -9329,10 +9329,21 @@ juce::String SamplerEngine::transposedStopName(const Stop* stop, int shift)
     if (shift == 0) return name;
     // The transposition counts from the footage the Transposition box counts from.
     const juce::String newFootage = footageLabel(displayedFootageSemitones(stop) + shift);   // always with the foot mark
+    // A division prefix ("4. Tuba 8", "P. tuba 4", "Rec: Hautbois 8") carries no
+    // footage: the search starts after it (0.8.142: "4. Tuba 8" shifted an
+    // octave came out as "2'. Tuba 8" - the "4." taken for the footage).
+    int skip = 0;
+    {
+        int i = 0;
+        while (i < name.length() && name[i] == ' ') ++i;
+        int j = i;
+        while (j < name.length() && name[j] != ' ' && name[j] != '.' && name[j] != ':') ++j;
+        if (j < name.length() && (name[j] == '.' || name[j] == ':') && j - i >= 1 && j - i <= 5 && j + 1 < name.length() && name[j + 1] == ' ') skip = j + 1;
+    }
     int start = 0, end = 0;
     double feet = 0.0;
-    if (findFootageToken(name, start, end, feet))
-        return name.substring(0, start) + newFootage + name.substring(end);
+    if (findFootageToken(name.substring(skip), start, end, feet))
+        return name.substring(0, skip + start) + newFootage + name.substring(skip + end);
     return name + " " + newFootage;
 }
 
@@ -9343,7 +9354,10 @@ juce::String SamplerEngine::transmissionSuffix(const Stop* stop, const Stop::Tra
 
 juce::String SamplerEngine::transmissionCaption(const Stop* stop, const Stop::Transmission& t)
 {
-    return transposedStopName(stop, t.shift) + transmissionSuffix(stop, t);
+    // The transmission's own alias when it has one (a Hauptwerk import gives the
+    // definition's stop name, "P. tuba 4"), else the owner's name with its footage
+    // shifted (0.8.142: the alias was never shown on the button).
+    return (t.alias.isNotEmpty() ? t.alias : transposedStopName(stop, t.shift)) + transmissionSuffix(stop, t);
 }
 
 //------------------------------------------------------------------------------

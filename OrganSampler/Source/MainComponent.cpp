@@ -10181,6 +10181,15 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
             for (const auto& assignment : safeThis->engine.scanTreeAssignments(tree, false))
                 automaticNameOfFolder[assignment.folder.getFullPathName().toLowerCase()] = assignment.stopName;
         std::map<int, std::pair<int, juce::String>> rowOfStop;   // ODF stop id -> division, row name
+    // The grid cells from the jamb page (0.8.142): per division, row name -> "column,row" (the voicer's stopGrid).
+    std::map<int, juce::DynamicObject::Ptr> gridOf;
+    auto gridCell = [&gridOf](int manual, const juce::String& key, const HauptwerkOdf::PlanStop& s)
+    {
+        if (s.gridColumn < 0 || key.isEmpty()) return;
+        auto& cells = gridOf[manual];
+        if (cells == nullptr) cells = new juce::DynamicObject();
+        cells->setProperty(juce::Identifier(key), juce::String(s.gridColumn) + "," + juce::String(s.gridRow));
+    };
         std::map<int, juce::StringArray> childRowsOfStop;        // ODF stop id -> the row names of its children (a stop folder)
         for (size_t d = 0; d < plan.divisions.size(); ++d)
         {
@@ -10261,7 +10270,7 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
                         // (applyHauptwerkVoicing), as a transmission into this division.
                         const auto owner = rowOfStop.find(stop.extensionOfStopId);
                         if (owner != rowOfStop.end())
-                            safeThis->hauptwerkExtensions.push_back({ i, owner->second.first, owner->second.second, stop.shift, stop.name });
+                            safeThis->hauptwerkExtensions.push_back({ i, owner->second.first, owner->second.second, stop.shift, stop.name, stop.gridColumn, stop.gridRow });
                         continue;
                     }
                     // The folders of a row: one per perspective, from the ranks.
@@ -10313,6 +10322,7 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
                         if (childEntries.isEmpty()) continue;
                         juce::DynamicObject::Ptr master = new juce::DynamicObject();
                         master->setProperty("name", row != rowOfStop.end() ? row->second.second : stop.name);
+                        gridCell((int)i, row != rowOfStop.end() ? row->second.second : stop.name, stop);
                         master->setProperty("alias", juce::String());
                         master->setProperty("customName", true);
                         master->setProperty("child", false);
@@ -10325,6 +10335,7 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
                     if (folders.isEmpty()) continue;
                     juce::DynamicObject::Ptr entry = new juce::DynamicObject();
                     entry->setProperty("name", row != rowOfStop.end() ? row->second.second : stop.name);
+                    gridCell((int)i, row != rowOfStop.end() ? row->second.second : stop.name, stop);
                     entry->setProperty("alias", stop.name);           // the Hauptwerk stop name on the button
                     entry->setProperty("customName", false);
                     entry->setProperty("child", false);
@@ -10437,6 +10448,7 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
                 couplerList.add(juce::var(item.get()));
             }
             rootObject->setProperty("couplers", couplerList);
+            rootObject->setProperty("couplersExclusive", true);   // every coupler not listed is hidden (0.8.142: the others kept the visibility of the organ before)
         }
         {
             // An empty voicing state: a new organ, nothing of the previous one's
@@ -10444,6 +10456,10 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
             // between loads of the SAME organ - not across organs).
             juce::DynamicObject::Ptr voicing = new juce::DynamicObject();
             voicing->setProperty("stops", juce::Array<juce::var>());
+            // The grid as on the definition's jamb page (0.8.142), where the plan found one.
+            juce::DynamicObject::Ptr stopGrid = new juce::DynamicObject();
+            for (auto& [manual, cells] : gridOf) if (cells != nullptr) stopGrid->setProperty(juce::Identifier(juce::String(manual)), juce::var(cells.get()));
+            voicing->setProperty("stopGrid", juce::var(stopGrid.get()));
             rootObject->setProperty("voicingSettings", juce::var(voicing.get()));
         }
         juce::var configuration(rootObject.get());
@@ -10631,6 +10647,7 @@ void MainComponent::applyHauptwerkVoicing(std::shared_ptr<HauptwerkOdf> odf, con
         std::vector<Stop::Transmission> list = owner->transmissions;
         list[(size_t)index].alias = extension.alias;
         engine.replaceTransmissions(owner, list);
+        if (voicer != nullptr && extension.column >= 0) voicer->setGridCell(extension.manual, Voicer::transmissionKey(owner, index), extension.column, extension.row);   // its cell from the jamb page
         ++extensionsMade;
     }
     hauptwerkExtensions.clear();
@@ -12780,11 +12797,21 @@ std::vector<MainComponent::ReadyStop> MainComponent::readyStopsNotIn(const std::
         const auto relative = juce::String(ref.relativePath).replaceCharacter('/', juce::File::getSeparatorChar());
         return (relative.isEmpty() || relative == "." ? tree : tree.getChildFile(relative)).getFullPathName().toLowerCase();
     };
+    // A row whose stop the engine does not hold (left out of the load for memory,
+    // #44) does not use its folders: the pool offers the stop, and taking it
+    // reloads the row instead of adding a second one (addReadyStopToDivision).
+    auto stopLoaded = [&](int manual, const juce::String& name)
+    {
+        for (auto* stop : engine.getStops())
+            if (stop != nullptr && stop->primaryManual == manual && stopBuildKey(stop->name) == stopBuildKey(name)) return true;
+        return false;
+    };
     std::set<juce::String> usedPlaces;
-    for (const auto& entries : allEntries)
-        for (const auto& entry : entries)
+    for (size_t manual = 0; manual < allEntries.size(); ++manual)
+        for (const auto& entry : allEntries[manual])
         {
             if (entry.isTransmission()) continue;
+            if (!entry.folders.empty() && (int)manual <= manualCount && !stopLoaded((int)manual, entry.name)) continue;
             for (const auto& [perspective, used] : entry.folders)
                 if (const auto place = placeOf(used); place.isNotEmpty()) usedPlaces.insert(place);
         }
@@ -12810,6 +12837,22 @@ void MainComponent::addReadyStopToDivision(int manual, const ReadyStop& stop, in
     if (manual < 0 || manual > manualCount || activeFolderLoader != nullptr || stop.folders.empty()) return;
     auto& config = manualConfigs[(size_t)manual];
     if (!config.stopBuild.active) { config.stopBuild = deriveStopBuildFromEngine(manual); config.stopBuild.active = true; }
+    // A row of this division has these folders already (its stop was left out of
+    // the load, #44): no second row - the division is reloaded, the row with it.
+    for (const auto& existing : config.stopBuild.entries)
+    {
+        if (existing.isTransmission()) continue;
+        bool same = false;
+        for (const auto& [perspective, ref] : existing.folders)
+            for (const auto& [wantedPerspective, wanted] : stop.folders)
+                if (ref.tree == wanted.tree && ref.relativePath.equalsIgnoreCase(wanted.relativePath)) same = true;
+        if (!same) continue;
+        if (voicer != nullptr && column >= 0 && row >= 0) voicer->setGridCell(manual, existing.name, column, row);
+        CrashHandler::note("Stop \"" + existing.name + "\" of division " + juce::String(manual) + " loaded again from the pool (its row was there, its samples were not)");
+        saveSettings();
+        reloadDivisionTrees(manual);
+        return;
+    }
     ManualConfig::StopBuild::Entry entry;
     entry.name = uniqueStopBuildName(config.stopBuild.entries, stop.name, nullptr);
     entry.folders = stop.folders;
@@ -15756,6 +15799,10 @@ void MainComponent::loadSettings()
     }
 
     auto couplerSettings = parsed.getProperty("couplers", juce::var());
+    // A configuration that names its couplers exclusively (a Hauptwerk import):
+    // every other coupler of the catalog is hidden, whatever it was before.
+    if ((bool)parsed.getProperty("couplersExclusive", false))
+        for (auto& coupler : couplers) coupler.visible = false;
     if (couplerSettings.isArray())
         for (const auto& item : *couplerSettings.getArray())
             if (item.isObject())

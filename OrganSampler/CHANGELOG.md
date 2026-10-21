@@ -12,6 +12,28 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.142] - 2026-10-21
+
+### Added
+- Hauptwerk import: the stops take their places on the grid from the
+  definition's jamb page (the page with the most drawknobs, "Simple Jamb"):
+  within every division its drawknob columns and rows become the grid's
+  columns and rows. A division laid out too wide or too tall stays in the
+  table's order.
+
+### Fixed
+- Hauptwerk import: the console shows exactly the definition's couplers -
+  every other coupler of the catalog is hidden (before, the ones not listed
+  kept the visibility of the organ loaded before: Ashton showed I/P 16', 4'
+  and others it does not have).
+- An extension's button carries the definition's name of it ("P. tuba 4");
+  before, the owner's name was shown with its footage shifted, and a
+  division prefix ("4. Tuba 8") was taken for the footage, so the caption
+  came out wrong.
+- A stop left out of the load for memory keeps its row and is offered in
+  the pool of its division (#44); taking it reloads the division with that
+  row, no second row is made.
+
 ## [0.8.141] - 2026-10-20
 
 ### Fixed

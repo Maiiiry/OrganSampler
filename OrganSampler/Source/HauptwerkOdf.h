@@ -70,6 +70,12 @@ struct HauptwerkOdf
     // melody = the top note only (Billerbeck "ii-ped cantus firmus").
     struct Coupler { int sourceKeyboardId = 0, destKeyboardId = 0, destDivisionId = 0, switchId = 0, shift = 0; bool melody = false, bass = false; juce::String name, switchName; };   // bass: the lowest key only (Doesburg "bass_1": the manual's lowest key plays the pedal)
     std::vector<Coupler> couplers;                  // in file order
+    // The drawknobs on the definition's jamb page (0.8.142): the display page
+    // holding the most stops (Ashton: "Simple Jamb", every division a band of
+    // columns), each stop's pixel position - the plan turns them into grid cells.
+    struct StopPosition { int x = 0, y = 0; };
+    std::map<int, StopPosition> stopPositions;      // ODF stop id -> position on that page
+    juce::String jambPageName;
     // A keyboard and the divisions its keys play: every division whose inputs
     // the key switches reach through the switch linkages, with or without a
     // condition switch (Caen: the Pedal keyboard plays "Pedal" always and
@@ -139,6 +145,10 @@ struct HauptwerkOdf
         // a transmission of the owner into this division with that shift.
         int extensionOfStopId = 0;
         int shift = 0;
+        // The cell on our grid from the jamb page (0.8.142): the rank of the
+        // drawknob's x among the division's columns and of its y among its rows;
+        // -1 = none (no page, or a layout too wide or too tall to copy).
+        int gridColumn = -1, gridRow = -1;
         // A stop with several ranks in ONE perspective (Caen: "Quintaton 16 (L
         // component)" and "(R component)", two folders side by side for the
         // same perspective) becomes a stop folder: this row has no folders of

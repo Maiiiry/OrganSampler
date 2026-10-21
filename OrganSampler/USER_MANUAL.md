@@ -549,7 +549,16 @@ manual, I/II, I/III, II/III and so on at 8', 16', 4', as a melody or bass
 coupler, listed after the usual ones and hidden until shown (Couplers
 dialog) or brought by an import; the bass couplers to the pedal are the
 "pedal from the manual" couplers (the manual's lowest key plays the pedal) -
-Doesburg's "bass_1" to "bass_4" become them (0.8.140). The general crescendo takes them too: a stage
+Doesburg's "bass_1" to "bass_4" become them (0.8.140). After an import the
+console shows exactly the definition's couplers: every other coupler of the
+catalog is hidden, whatever the organ before had shown (0.8.142). The
+stops take their places on the grid from the definition's jamb page - the
+page holding the most drawknobs ("Simple Jamb"): within every division,
+the drawknobs' columns and rows become the grid's columns and rows, the
+picture copied; a division laid out too wide or too tall to be ours stays
+in the table's order (0.8.142). An extension's button carries the
+definition's name of it ("P. tuba 4"), not the owner's name with the
+footage shifted. The general crescendo takes them too: a stage
 that draws a coupler's drawstop switches it on in that step. A stop
 with several ranks in ONE perspective (Caen: a stereo stop recorded as a
 left and a right rank, "Quintaton 16 (L component)" and "(R component)",
@@ -816,7 +825,10 @@ whose samples the program holds already (a reload of the same organ: the
 new load adopts them, nothing is decoded) is loaded whatever the memory
 says. The loading dialog has a *Cancel* button (0.8.139): the loading stops
 at the next stop, the instrument is built from what was loaded, the rest is
-named like after a memory stop and stays in the pool.
+named like after a memory stop and stays in the pool. A stop left out of
+the load keeps its row in the Stop List and is offered in the pool of its
+division ("Add stop" on the grid, 0.8.142): taking it reloads the division
+with that row, no second row is made.
 
 The report also profiles the device thread (0.8.137): per route callback,
 in microseconds, how much went into this thread's own rendering of voices,

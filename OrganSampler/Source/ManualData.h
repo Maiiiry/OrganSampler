@@ -557,7 +557,16 @@ static const char* const kManualText_part2 =
     "coupler, listed after the usual ones and hidden until shown (Couplers\n"
     "dialog) or brought by an import; the bass couplers to the pedal are the\n"
     "\"pedal from the manual\" couplers (the manual's lowest key plays the pedal) -\n"
-    "Doesburg's \"bass_1\" to \"bass_4\" become them (0.8.140). The general crescendo takes them too: a stage\n"
+    "Doesburg's \"bass_1\" to \"bass_4\" become them (0.8.140). After an import the\n"
+    "console shows exactly the definition's couplers: every other coupler of the\n"
+    "catalog is hidden, whatever the organ before had shown (0.8.142). The\n"
+    "stops take their places on the grid from the definition's jamb page - the\n"
+    "page holding the most drawknobs (\"Simple Jamb\"): within every division,\n"
+    "the drawknobs' columns and rows become the grid's columns and rows, the\n"
+    "picture copied; a division laid out too wide or too tall to be ours stays\n"
+    "in the table's order (0.8.142). An extension's button carries the\n"
+    "definition's name of it (\"P. tuba 4\"), not the owner's name with the\n"
+    "footage shifted. The general crescendo takes them too: a stage\n"
     "that draws a coupler's drawstop switches it on in that step. A stop\n"
     "with several ranks in ONE perspective (Caen: a stereo stop recorded as a\n"
     "left and a right rank, \"Quintaton 16 (L component)\" and \"(R component)\",\n"
@@ -597,6 +606,8 @@ static const char* const kManualText_part2 =
     "The samples must lie where Hauptwerk keeps them: the definition in\n"
     "`OrganDefinitions`, the packages in `OrganInstallationPackages/<six-digit\n"
     "id>` beside it (`D:\\Hauptwerk\\HauptwerkSampleSetsAndComponents\\...` on a\n"
+    ;
+static const char* const kManualText_part3 =
     "usual installation). The configuration is written as `<organ name>.json`\n"
     "into an `OrganConfigurations` folder beside `OrganDefinitions` and\n"
     "`OrganInstallationPackages` (made when it is not there; 0.8.125 - before,\n"
@@ -606,8 +617,6 @@ static const char* const kManualText_part2 =
     "by a relative path, so the file works from that folder and from any other\n"
     "place the root is known. It is loaded at once and saved again with the\n"
     "voicing once the folders are loaded. Then check\n"
-    ;
-static const char* const kManualText_part3 =
     "the Stop List, give the perspectives their audio routes and the divisions\n"
     "their MIDI keyboards, and *Save Configuration* - as a portable one to\n"
     "publish it.\n"
@@ -799,6 +808,8 @@ static const char* const kManualText_part3 =
     "sustain fade-out, release fade-in, release volume, release cutting, attack\n"
     "minimum time and delay: all are described in \"Global sound\". Every one of\n"
     "them is MIDI-learnable (right-click). The polyphony display shows the voices\n"
+    ;
+static const char* const kManualText_part4 =
     "sounding now (*NOW*), the most at once over the last seconds (*PEAK*), the\n"
     "*DSP* load - the time the busiest audio thread needed for its last block as a\n"
     "share of the block's duration; above 100 % that thread could not deliver in\n"
@@ -808,8 +819,6 @@ static const char* const kManualText_part3 =
     "block stalls on reading them back), and the polyphony *LIMIT* (editable; the\n"
     "measurement writes its verdict into it the moment its report opens).\n"
     "\n"
-    ;
-static const char* const kManualText_part4 =
     "The loading never lets the system page: before every stop (and every 32\n"
     "files inside a large one) the program looks at the memory and stops loading\n"
     "when any sign says it is short - less free than 512 MB or a sixteenth of the\n"
@@ -828,7 +837,10 @@ static const char* const kManualText_part4 =
     "new load adopts them, nothing is decoded) is loaded whatever the memory\n"
     "says. The loading dialog has a *Cancel* button (0.8.139): the loading stops\n"
     "at the next stop, the instrument is built from what was loaded, the rest is\n"
-    "named like after a memory stop and stays in the pool.\n"
+    "named like after a memory stop and stays in the pool. A stop left out of\n"
+    "the load keeps its row in the Stop List and is offered in the pool of its\n"
+    "division (\"Add stop\" on the grid, 0.8.142): taking it reloads the division\n"
+    "with that row, no second row is made.\n"
     "\n"
     "The report also profiles the device thread (0.8.137): per route callback,\n"
     "in microseconds, how much went into this thread's own rendering of voices,\n"
@@ -998,6 +1010,8 @@ static const char* const kManualText_part4 =
     "  (a1 = ... Hz), the footage read from the samples (with the sounding footage\n"
     "  of a mixture or mutation in brackets, and the breaks), and the temperament\n"
     "  the recording was found to be in.\n"
+    ;
+static const char* const kManualText_part5 =
     "\n"
     "Under the sliders are two folding rows of per-key sliders (orange headers;\n"
     "each stop remembers its own folding):\n"
@@ -1010,8 +1024,6 @@ static const char* const kManualText_part4 =
     "- **Treble per key** (-9 to +9 dB) - a high shelf per pipe, above the\n"
     "  frequency set in *Treble per key: shelf start frequency* (default 1800 Hz).\n"
     "- A *Reset to 0 dB* button sits beside each header; dragging with the right\n"
-    ;
-static const char* const kManualText_part5 =
     "  mouse button paints one value across a row of sliders.\n"
     "- The sliders light up while the key sounds. A **green thumb** marks a filled\n"
     "  pipe (hover it: the tooltip names the stop, the sample file and the shift it\n"
@@ -1200,6 +1212,8 @@ static const char* const kManualText_part5 =
     "read per division and in total, then *Compiling the Stop List*, the steps that\n"
     "build the console, each with its percentage. Opening an ASIO driver is a step\n"
     "of its own and can take a few seconds. Only when the dialog closes are the\n"
+    ;
+static const char* const kManualText_part6 =
     "copies of the filled pipes (see \"The transposition methods\") built in the\n"
     "background: a dark track\n"
     "along the bottom of a stop button means the stop still waits, an orange fill\n"
@@ -1212,8 +1226,6 @@ static const char* const kManualText_part5 =
     "\n"
     "*Settings* in a division header opens the dialog at that division; the\n"
     "division is chosen at the top. The settings of a division are the same as in\n"
-    ;
-static const char* const kManualText_part6 =
     "its section of the Configuration Editor (\"Division sections (Pedal, Manual I\n"
     "... Manual VII)\" describes every one of them); the dialog adds the keyboard\n"
     "drawing, the coupler and swell learning, and the audio tabs.\n"
@@ -1402,6 +1414,8 @@ static const char* const kManualText_part6 =
     "  one card has. Every Windows sound device appears as a stereo pair in the\n"
     "  channel list of the tab; the ticked channels are the devices the route\n"
     "  opens - exactly those, on every path (loading a configuration, *Set for\n"
+    ;
+static const char* const kManualText_part7 =
     "  all*, a switch of the type, a reopen). A device that cannot be opened (an\n"
     "  unplugged interface, a digital output with no cable) is refused: its\n"
     "  channels are set to none, the list shows them unticked with the reason\n"
@@ -1414,8 +1428,6 @@ static const char* const kManualText_part6 =
     "  packets of 480 samples at 48 kHz, so a smaller buffer only splits each\n"
     "  packet into shorter deadlines - an IR's tail FFT alone can exceed a block\n"
     "  of 256 - without lowering the latency at all.\n"
-    ;
-static const char* const kManualText_part7 =
     "\n"
     "The price of mixing drivers (ASIO beside WASAPI in one organ) - read this\n"
     "before you do it:\n"
@@ -1604,6 +1616,8 @@ static const char* const kManualText_part7 =
     "- **The auxiliary route.** With a device it renders every pipe once more and\n"
     "  halves the polyphony. Set it to *none* unless you need it (see \"The\n"
     "  auxiliary route\").\n"
+    ;
+static const char* const kManualText_part8 =
     "- **IR reverb.** The convolution of an impulse response is heavy and its\n"
     "  cost does not depend on how many pipes sound: it is paid on every route\n"
     "  that has an IR, at every audio period. The convolutions run on the render\n"
@@ -1616,8 +1630,6 @@ static const char* const kManualText_part7 =
     "  perspectives cost nothing. Dry/wet at 0 %, or *Clear*, removes the cost\n"
     "  entirely.\n"
     "- **ASIO.** All routes on one ASIO driver are rendered by one audio thread\n"
-    ;
-static const char* const kManualText_part8 =
     "  and the render workers behind it (*Render threads* in the Configuration\n"
     "  Editor): the voices of every route are shared out over all the processor's\n"
     "  cores. This is the layout with the highest polyphony. The buffer size sets\n"
@@ -1806,6 +1818,8 @@ static const char* const kManualText_part8 =
     "source, and the release's decay laid out again to the source's duration\n"
     "(*Filled pipes: release length*). Nothing in the copy varies with time, so\n"
     "nothing modulates or hisses. Weakness: the attack still speaks at the\n"
+    ;
+static const char* const kManualText_part9 =
     "resampled speed - slow downwards, fast upwards.\n"
     "\n"
     "**Pitch shift + time stretch (attack and release).** The same copy, and the\n"
@@ -1818,8 +1832,6 @@ static const char* const kManualText_part8 =
     "stretch.\n"
     "\n"
     "**Phase vocoder (Signalsmith Stretch).** Keeps every length and every loop\n"
-    ;
-static const char* const kManualText_part9 =
     "point: the pipe speaks at its real speed and the room decays in its real time.\n"
     "The analysis block is sized from the pitch, so deep pipes keep their harmonics.\n"
     "Excellent within an octave either way. Weaknesses: upwards the vocoder\n"
@@ -2008,6 +2020,8 @@ static const char* const kManualText_part9 =
     "(\"Render kernel: ...\").\n"
     "\n"
     "### Currently active\n"
+    ;
+static const char* const kManualText_part10 =
     "\n"
     "The threads really rendering now and the interpolation kernel in use.\n"
     "Information only.\n"
@@ -2020,8 +2034,6 @@ static const char* const kManualText_part9 =
     "routes already renders on ten threads beside each other; the default of 1\n"
     "(the device thread alone, no workers) is right for that layout, and more\n"
     "threads per route only fight each other there. Raise it when one or two\n"
-    ;
-static const char* const kManualText_part10 =
     "aggregated routes carry the whole organ (a big division on a single route is\n"
     "otherwise bound to one core): the route then shares its pipes out over the\n"
     "set number of threads, like a route on ASIO does over all *Render threads*.\n"
@@ -2210,6 +2222,8 @@ static const char* const kManualText_part10 =
     "     job per route and block);\n"
     "   - the kernel of this processor (AVX2, SSE2, NEON or scalar): nanoseconds\n"
     "     per voice and frame with the sample in the cache and streaming from RAM,\n"
+    ;
+static const char* const kManualText_part11 =
     "     measured right then (about a second), and the ceiling that gives at this\n"
     "     buffer with these render cores - the measured limit as a share of it;\n"
     "   - what one voice cost a lane per block during the run, in its parts:\n"
@@ -2222,8 +2236,6 @@ static const char* const kManualText_part10 =
     "     doubled buffer gave 17 % more voices, on a Ryzen a quarter of the\n"
     "     buffer still gave 62 % of the voices - no model fits, the buffer is\n"
     "     cheap to try and the measurement tells. A buffer below 256 samples\n"
-    ;
-static const char* const kManualText_part11 =
     "     gets a recommendation to try 256 or 512, nothing more.\n"
     "   On Linux the report names the CPU governor (\"performance\" keeps the\n"
     "   clock up), on Windows the power plan; when the CPU clocks cannot be read\n"
@@ -2412,6 +2424,8 @@ static const char* const kManualText_part11 =
     "as a share of its source's duration (25 to 200 %, default 100). Resampling\n"
     "alone would make a release shifted two octaves down four times as long and one\n"
     "shifted two octaves up a quarter, but the room does not grow or shrink with the\n"
+    ;
+static const char* const kManualText_part12 =
     "pipe, so the decay is laid out again to this length in both directions (100 % =\n"
     "exactly the source's duration). Longer than 100 % gives a bigger room to the\n"
     "extension than to the stop; shorter dries it. Changing it rebuilds the release\n"
@@ -2424,8 +2438,6 @@ static const char* const kManualText_part11 =
     "(0 to 100 %, default 50). 0 % leaves it as resampled - two octaves down the\n"
     "attack is four times as slow; 100 % gives it the source's duration; 50 % is\n"
     "half way on a logarithmic scale (two octaves down: twice as slow, which the ear\n"
-    ;
-static const char* const kManualText_part12 =
     "accepts where four times is too much). Applies to shifts downwards; upwards the\n"
     "attack stays as resampled. Higher values fray the attack more (see \"The\n"
     "transposition methods\"); lower\n"
@@ -2614,6 +2626,8 @@ static const char* const kManualText_part12 =
     "\n"
     "### Top bar: Load Voicing\n"
     "\n"
+    ;
+static const char* const kManualText_part13 =
     "Shows or hides the Load Voicing button (the voicing from a file). Hidden by\n"
     "default.\n"
     "\n"
@@ -2626,8 +2640,6 @@ static const char* const kManualText_part12 =
     "Shows or hides the Load Configuration button (an OrganSampler `.json`, or a\n"
     "Hauptwerk organ definition - see \"Loading a Hauptwerk organ definition\").\n"
     "Right-click: merge another configuration into the loaded organ.\n"
-    ;
-static const char* const kManualText_part13 =
     "\n"
     "### Top bar: Save Configuration\n"
     "\n"
@@ -2816,6 +2828,8 @@ static const char* const kManualText_part13 =
     "\n"
     "### Perspective volume\n"
     "\n"
+    ;
+static const char* const kManualText_part14 =
     "The level of one perspective of this division (-31 to +6 dB, default 0); -31\n"
     "dB switches the perspective off completely and saves its voices.\n"
     "\n"
@@ -2828,8 +2842,6 @@ static const char* const kManualText_part13 =
     "### Random tuning error of pipes\n"
     "\n"
     "On: the pipes of this division get the small random detune set per stop\n"
-    ;
-static const char* const kManualText_part14 =
     "(*Random pitch error* in the voicing). Off: every pipe speaks exactly at its\n"
     "pitch.\n"
     "\n"

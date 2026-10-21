@@ -736,7 +736,7 @@ private:
     std::shared_ptr<HauptwerkOdf> hauptwerkImport;   // the organ definition being imported (until its voicing is applied)
     // The extensions/transmissions of the definition (stops playing another
     // stop's ranks shifted): made as transmissions once the owner stops are loaded.
-    struct HauptwerkExtension { int manual = 0, ownerManual = 0; juce::String ownerName; int shift = 0; juce::String alias; };
+    struct HauptwerkExtension { int manual = 0, ownerManual = 0; juce::String ownerName; int shift = 0; juce::String alias; int column = -1, row = -1; };   // column/row: the grid cell from the jamb page (0.8.142), -1 none
     std::vector<HauptwerkExtension> hauptwerkExtensions;
     std::unique_ptr<juce::FileChooser> configurationRootChooser;
     juce::File lastSettingsDirectory;

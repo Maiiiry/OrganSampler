@@ -347,6 +347,9 @@ HauptwerkOdf HauptwerkOdf::parse(const juce::File& file, const std::function<boo
     // element = a switch the combination sets, on (Y) or off.
     std::map<int, juce::String> combinationNames;                    // CombinationID -> name
     std::map<int, juce::String> switchNames;                         // SwitchID -> name (the couplers' drawstops)
+    std::map<int, juce::String> pageNames;                           // DisplayPageID -> name
+    struct DrawknobRow { int page = 0, x = 0, y = 0; juce::String name; };
+    std::vector<DrawknobRow> drawknobs;                              // ImageSetInstance rows (every image on every page; the stops are picked by name)
     struct ElementRow { int combinationId = 0, switchId = 0; bool on = false; };
     std::vector<ElementRow> combinationElements;
     int rows = 0;
@@ -413,6 +416,28 @@ HauptwerkOdf HauptwerkOdf::parse(const juce::File& file, const std::function<boo
             {
                 const int division = row.integer("DivisionID", "a"), inputSwitch = row.integer("SwitchID", "b");
                 if (division > 0 && inputSwitch > 0) divisionOfInputSwitch[inputSwitch] = division;
+            }
+        }
+        else if (lower == "displaypage")
+        {
+            while (scanner.nextRow(row))
+            {
+                const int id = row.integer("PageID", "a");
+                if (id > 0) pageNames[id] = row.text("Name", "b");
+            }
+        }
+        else if (lower == "imagesetinstance")
+        {
+            // Every image on every page: b = name ("2. clairon 4 (StopPage)"), e = the
+            // page, g/h = its position in pixels. The stops are picked by name below.
+            while (scanner.nextRow(row))
+            {
+                DrawknobRow d;
+                d.name = row.text("Name", "b");
+                d.page = row.integer("DisplayPageID", "e");
+                d.x = row.integer("LeftXPosPixels", "g");
+                d.y = row.integer("TopYPosPixels", "h");
+                if (d.page > 0 && d.name.isNotEmpty()) drawknobs.push_back(d);
             }
         }
         else if (lower == "switch")
@@ -834,6 +859,32 @@ HauptwerkOdf HauptwerkOdf::parse(const juce::File& file, const std::function<boo
     }
     for (auto& c : odf.couplers)
         if (const auto name = switchNames.find(c.switchId); name != switchNames.end()) c.switchName = name->second;
+    // The jamb page: the images named like a stop (the name without its trailing
+    // parentheses - "(StopPage)", "(NonPhoto)"), on the page holding the most of
+    // them (Ashton: "Simple Jamb" with all 47; the Left/Right Jamb pages hold a
+    // part each).
+    {
+        std::map<juce::String, int> stopByName;
+        for (const auto& [id, stop] : odf.stops) stopByName[stop.name.trim().toLowerCase()] = id;
+        std::map<int, std::map<int, StopPosition>> byPage;
+        for (const auto& d : drawknobs)
+        {
+            juce::String base = d.name.trim();
+            while (base.endsWithChar(')') && base.lastIndexOfChar('(') > 0) base = base.upToLastOccurrenceOf("(", false, false).trim();
+            const auto stop = stopByName.find(base.toLowerCase());
+            if (stop == stopByName.end()) continue;
+            auto& page = byPage[d.page];
+            if (page.count(stop->second) == 0) page[stop->second] = { d.x, d.y };
+        }
+        int bestPage = 0; size_t bestCount = 0;
+        for (const auto& [page, stops] : byPage)
+            if (stops.size() > bestCount) { bestCount = stops.size(); bestPage = page; }
+        if (bestPage > 0)
+        {
+            odf.stopPositions = byPage[bestPage];
+            odf.jambPageName = pageNames.count(bestPage) > 0 ? pageNames[bestPage] : juce::String("page " + juce::String(bestPage));
+        }
+    }
     // The crescendo: every combination whose name says "cresc" is one stage
     // (the number at the end of the name: "Cresc.Comb.12"); its elements set
     // switches, which reach the stops' own switches through the switch
@@ -1435,6 +1486,33 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
     for (const auto& division : result.divisions)
         for (const auto& tree : division.trees)
             if (std::find(result.allTrees.begin(), result.allTrees.end(), tree) == result.allTrees.end()) result.allTrees.push_back(tree);
+    // The grid cells from the jamb page (0.8.142): within a division of ours, the
+    // drawknobs' distinct x values are its columns and the distinct y values its
+    // rows - the picture copied, relative to the division (the definitions put
+    // the divisions in any order). A layout too wide or too tall to be ours
+    // (more than 6 columns or 24 rows: several bands side by side) is left alone.
+    if (!stopPositions.empty())
+    {
+        int placed = 0, skippedDivisions = 0;
+        for (auto& division : result.divisions)
+        {
+            std::set<int> xs, ys;
+            for (const auto& stop : division.stops)
+                if (const auto p = stopPositions.find(stop.stopId); p != stopPositions.end()) { xs.insert(p->second.x); ys.insert(p->second.y); }
+            if (xs.empty()) continue;
+            if (xs.size() > 6 || ys.size() > 24) { ++skippedDivisions; continue; }
+            for (auto& stop : division.stops)
+            {
+                const auto p = stopPositions.find(stop.stopId);
+                if (p == stopPositions.end()) continue;
+                stop.gridColumn = (int)std::distance(xs.begin(), xs.find(p->second.x));
+                stop.gridRow = (int)std::distance(ys.begin(), ys.find(p->second.y));
+                ++placed;
+            }
+        }
+        if (placed > 0) result.notes.add("Grid: " + juce::String(placed) + " stop(s) placed as on the definition's page \"" + jambPageName + "\""
+            + (skippedDivisions > 0 ? " (" + juce::String(skippedDivisions) + " division(s) left in the table's order: a layout too wide or too tall)" : juce::String()));
+    }
     // The couplers of the definition as couplers of ours (0.8.138): the keyboard
     // played = our source division, the keyboard or division pulled = our
     // target; the type from the semitones (0 unison, 12 the 4', -12 the 16') or
