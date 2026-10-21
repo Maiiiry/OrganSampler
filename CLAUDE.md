@@ -359,8 +359,8 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   Ashton: the user's ODF ("Ashton-under-Lyne, Albion Church, Lewis Organ, Surround", 34 KeyActions incl. "Choir to pedal
   sub/oct") - the couplers are right; only the unison off was missing (now a coupler). The "Save, then load reloaded
   the organ" report: the log shows the chooser opened and the same ODF was imported again at 15:36 - the chooser starts
-  in lastSettingsDirectory with no file preselected; nothing of ours reloads. NEXT (0.8.145): the FLAC-like lossless
-  RAM compression (default OFF, Config Editor, loops kept, the cost explained: half the polyphony or worse).
+  in lastSettingsDirectory with no file preselected; nothing of ours reloads. 0.8.145 = the packed samples above
+  (measured: Rural Organ 25-42 % saved per stop, the self-test tutti +40 % per block, kerneltest unpack 1.5 ns/frame).
 - A route without a device ("none") gets NO voices (0.8.126, `Route::hasDevice` set by `setPerspectiveDeviceKey`,
   checked in `publishVoice`: the voice is finished at once). Before, every pipe was published to its perspective's
   route whatever the device and sat there unrendered until `cleanStaleRoutes` flushed it after ~1 s, counted as
@@ -508,7 +508,7 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
 - GitHub's issue list hides the number in its new UI (the user asked why "#27" is not in the row): nothing of ours.
 
 ## Pending for the next Linux session (delete when done)
-- The Linux clone `~/OrganSamplerC-linux` needs `git pull` (0.8.138 was made on Windows); the NTFS checkout `F:` is the user's (git cannot
+- The Linux clone `~/OrganSamplerC-linux` needs `git pull` (0.8.138-0.8.145 were made on Windows); the NTFS checkout `F:` is the user's (git cannot
   run there from Linux: "expected submodule path 'JUCE' not to be a symbolic link"). After each release copy the Linux
   binary to `~/Downloads/OrganSampler`.
 - Windows builds: never run two MSBuilds of the solution at once - the second fails with C1041 (PDB) and can
