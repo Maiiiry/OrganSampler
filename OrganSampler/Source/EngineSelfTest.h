@@ -278,6 +278,14 @@ namespace EngineSelfTest
         engine.setSampleStorageFloat(true);
         if (const char* env = std::getenv("ORGAN_SELFTEST_INT16"))
             engine.setSampleStorageFloat(juce::String(env).getIntValue() == 0);
+        // ORGAN_COMPRESS_SAMPLES=1: the 16-bit samples packed in RAM (0.8.145) - the
+        // same test, rendered through the unpacking path; the figures must not move.
+        if (const char* env = std::getenv("ORGAN_COMPRESS_SAMPLES"); env != nullptr && juce::String(env).getIntValue() != 0)
+        {
+            engine.setSampleStorageFloat(false);
+            engine.setCompressSamples(true);
+            report << "Samples packed in RAM (ORGAN_COMPRESS_SAMPLES=1, 16-bit storage).\n";
+        }
         engine.setPerspectivePatterns(perspectivePatterns);
         engine.setIgnoredPatterns(ignoredPatterns);
         engine.setMaxPolyphony(100000);
@@ -1020,12 +1028,16 @@ namespace EngineSelfTest
                                 {
                                     const int64_t a = (int64_t)(from * (double)s.numFrames), b = juce::jmax(a + 1, (int64_t)(to * (double)s.numFrames));
                                     double power = 0.0;
+                                    std::vector<int16_t> scratch;
                                     for (int ch = 0; ch < s.numChannels; ++ch)
+                                    {
+                                        const int16_t* x16 = s.storesFloat ? nullptr : s.read16(ch, scratch);
                                         for (int64_t i = a; i < juce::jmin(b, s.numFrames); ++i)
                                         {
-                                            const double v = s.storesFloat ? s.channel32(ch)[i] : (double)s.channel16(ch)[i] / 32768.0;
+                                            const double v = s.storesFloat ? s.channel32(ch)[i] : (double)x16[i] / 32768.0;
                                             power += v * v;
                                         }
+                                    }
                                     return 10.0 * std::log10(juce::jmax(1.0e-12, power / (double)juce::jmax<int64_t>(1, (b - a) * s.numChannels)));
                                 };
                                 const double head = rmsDb(0.0, juce::jmin(1.0, 0.1 * s.sampleRate / (double)juce::jmax<int64_t>(1, s.numFrames)));
@@ -1051,11 +1063,14 @@ namespace EngineSelfTest
                     const int start = juce::jlimit(0, frames - n, (int)(frames * 0.3));
                     std::vector<float> data((size_t)n * 2, 0.0f);
                     double power = 0.0;
+                    std::vector<std::vector<int16_t>> scratch16((size_t)sample.numChannels);
+                    std::vector<const int16_t*> x16((size_t)sample.numChannels, nullptr);
+                    if (!sample.storesFloat) for (int ch = 0; ch < sample.numChannels; ++ch) x16[(size_t)ch] = sample.read16(ch, scratch16[(size_t)ch]);
                     for (int i = 0; i < n; ++i)
                     {
                         float v = 0.0f;
                         for (int ch = 0; ch < sample.numChannels; ++ch)
-                            v += sample.storesFloat ? sample.channel32(ch)[start + i] : (float)sample.channel16(ch)[start + i] / 32768.0f;
+                            v += sample.storesFloat ? sample.channel32(ch)[start + i] : (float)x16[(size_t)ch][start + i] / 32768.0f;
                         v /= (float)juce::jmax(1, sample.numChannels);
                         power += (double)v * v;
                         const float window = 0.5f - 0.5f * std::cos(2.0f * juce::MathConstants<float>::pi * (float)i / (float)(n - 1));
@@ -1094,12 +1109,16 @@ namespace EngineSelfTest
                         {
                             double power = 0.0;
                             const int frames = (int)sample.numFrames;
+                            std::vector<int16_t> scratch;
                             for (int ch = 0; ch < sample.numChannels; ++ch)
+                            {
+                                const int16_t* x16 = sample.storesFloat ? nullptr : sample.read16(ch, scratch);
                                 for (int i = 0; i < frames; ++i)
                                 {
-                                    const double v = sample.storesFloat ? sample.channel32(ch)[i] : (double)sample.channel16(ch)[i] / 32768.0;
+                                    const double v = sample.storesFloat ? sample.channel32(ch)[i] : (double)x16[i] / 32768.0;
                                     power += v * v;
                                 }
+                            }
                             return std::sqrt(power / juce::jmax(1, frames * sample.numChannels));
                         };
                         const double wholeDb = 20.0 * std::log10(juce::jmax(1.0e-9, wholeRms(*it->second[0])) / juce::jmax(1.0e-9, wholeRms(*sourceSample)));
@@ -1169,14 +1188,18 @@ namespace EngineSelfTest
                         const int64_t window = juce::jmin<int64_t>(loop.start, length - 1, (int64_t)4096);
                         if (window < 8) return 0.0;
                         double dot = 0.0, energyA = 0.0, energyB = 0.0;
+                        std::vector<int16_t> scratch;
                         for (int ch = 0; ch < sample.numChannels; ++ch)
+                        {
+                            const int16_t* x16 = sample.storesFloat ? nullptr : sample.read16(ch, scratch);
                             for (int64_t k = 0; k < window; ++k)
                             {
                                 const int64_t ia = loop.start - window + k, ib = loop.end - window + k;
-                                const double a = sample.storesFloat ? sample.channel32(ch)[ia] : (double)sample.channel16(ch)[ia] / 32768.0;
-                                const double b = sample.storesFloat ? sample.channel32(ch)[ib] : (double)sample.channel16(ch)[ib] / 32768.0;
+                                const double a = sample.storesFloat ? sample.channel32(ch)[ia] : (double)x16[ia] / 32768.0;
+                                const double b = sample.storesFloat ? sample.channel32(ch)[ib] : (double)x16[ib] / 32768.0;
                                 dot += a * b; energyA += a * a; energyB += b * b;
                             }
+                        }
                         return energyA > 1.0e-12 && energyB > 1.0e-12 ? dot / std::sqrt(energyA * energyB) : 0.0;
                     };
                     int64_t sourceLength = 0, copyLength = 0;
@@ -1317,8 +1340,12 @@ namespace EngineSelfTest
                     {
                         from = juce::jlimit<int64_t>(0, s.numFrames, from); to = juce::jlimit<int64_t>(from, s.numFrames, to);
                         double power = 0.0;
+                        std::vector<int16_t> scratch;
                         for (int ch = 0; ch < s.numChannels; ++ch)
-                            for (int64_t i = from; i < to; ++i) { const double v = s.storesFloat ? (double)s.channel32(ch)[i] : (double)s.channel16(ch)[i] / 32768.0; power += v * v; }
+                        {
+                            const int16_t* x16 = s.storesFloat ? nullptr : s.read16(ch, scratch);
+                            for (int64_t i = from; i < to; ++i) { const double v = s.storesFloat ? (double)s.channel32(ch)[i] : (double)x16[i] / 32768.0; power += v * v; }
+                        }
                         return std::sqrt(power / (double)juce::jmax<int64_t>(1, (to - from) * juce::jmax(1, s.numChannels)));
                     };
                     int64_t from = attack->numFrames * 7 / 10, to = attack->numFrames;
@@ -1531,8 +1558,10 @@ namespace EngineSelfTest
                     {
                         const auto& s = *it->second[0];
                         frames = s.numFrames;
+                        std::vector<int16_t> scratch;
+                        const int16_t* x16 = s.storesFloat ? nullptr : s.read16(0, scratch);
                         for (int64_t i = 0; i < juce::jmin<int64_t>(4000, s.numFrames); ++i)
-                            head.push_back(s.storesFloat ? s.channel32(0)[i] : (float)s.channel16(0)[i]);
+                            head.push_back(s.storesFloat ? s.channel32(0)[i] : (float)x16[i]);
                     }
                     engine.copyCacheHits = 0;
                     const double c1 = juce::Time::getMillisecondCounterHiRes();
@@ -1545,8 +1574,10 @@ namespace EngineSelfTest
                     {
                         const auto& s = *it->second[0];
                         identical = s.numFrames == frames && !head.empty();
+                        std::vector<int16_t> scratch;
+                        const int16_t* x16 = s.storesFloat ? nullptr : s.read16(0, scratch);
                         for (size_t i = 0; identical && i < head.size(); ++i)
-                            if ((s.storesFloat ? s.channel32(0)[(int64_t)i] : (float)s.channel16(0)[(int64_t)i]) != head[i]) identical = false;
+                            if ((s.storesFloat ? s.channel32(0)[(int64_t)i] : (float)x16[(int64_t)i]) != head[i]) identical = false;
                     }
                     report << "Copy cache: switched on with the copies built -> " << exported << " set file(s) exported for every stop (" << exportedFiles
                            << " on disk, " << juce::File::descriptionOfSizeInBytes(exportedBytes) << "); " << filledStop->name << " built again from nothing in "

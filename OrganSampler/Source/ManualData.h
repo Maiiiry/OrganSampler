@@ -2071,24 +2071,32 @@ static const char* const kManualText_part10 =
     "the tail stays as recorded. Takes effect the next time a division's folders\n"
     "are loaded.\n"
     "\n"
-    "### Sample rate on loading\n"
+    "### Compress samples in RAM (lossless)\n"
     "\n"
-    "*48 kHz* resamples every file to the base rate (as ever). *36 kHz* and\n"
-    "*32 kHz* (0.8.143) store every file at that rate: what lies above 17 or\n"
-    "15 kHz goes - organ pipes carry next to nothing there - and the RAM drops by\n"
-    "a quarter or a third; the kernel interpolates from the coarser grid at the\n"
-    "same cost, so more stops fit and the polyphony stays. *Keep each file's own\n"
-    "rate* loads faster and plays by interpolation. A filter alone would save\n"
-    "nothing: a 16-bit sample is 16 bits whatever it holds; only the coarser grid\n"
-    "saves.\n"
+    "Off by default (0.8.145). On, the 16-bit samples are packed in RAM the way\n"
+    "FLAC packs a file: a predictor per block of 256 frames and the residuals\n"
+    "with the bits they need. Every frame comes back exactly - loops, pitch and\n"
+    "voicing are untouched - and a set takes about a third less RAM; the log\n"
+    "says how much (\"Packed samples: ...\"). **The price:** every voice unpacks\n"
+    "the piece it plays before every block, about as much work again as the\n"
+    "interpolation itself, so a third to a half of the polyphony is gone (the\n"
+    "self-test's tutti took 40 % longer per block) - measure it, the report shows\n"
+    "the unpacking as its own figure. Use it only when an organ\n"
+    "does not fit the memory otherwise; 32-bit float storage is not packed.\n"
+    "Takes effect the next time a division's folders are loaded.\n"
     "\n"
     "### Sample rate on loading\n"
     "\n"
     "*Resample everything to 48 kHz* (default): files recorded at 96, 88.2 or 44.1\n"
     "kHz are converted once while loading with a high-quality filter, so every set\n"
     "plays exactly like a 48 kHz one and a 96 kHz set needs half the RAM it would\n"
-    "otherwise. Loading takes longer. *Keep each file's own rate* loads faster and\n"
-    "plays the files by interpolation. Takes effect at the next load.\n"
+    "otherwise; loading takes longer. *36 kHz* and *32 kHz* (0.8.143) store every\n"
+    "file at that rate: what lies above 17 or 15 kHz goes - organ pipes carry next\n"
+    "to nothing there - and the RAM drops by a quarter or a third; the kernel\n"
+    "interpolates from the coarser grid at the same cost, so more stops fit and\n"
+    "the polyphony stays. *Keep each file's own rate* loads faster and plays by\n"
+    "interpolation. A filter alone would save nothing: a 16-bit sample is 16 bits\n"
+    "whatever it holds; only the coarser grid saves. Takes effect at the next load.\n"
     "\n"
     "### IR processing\n"
     "\n"
@@ -2214,6 +2222,8 @@ static const char* const kManualText_part10 =
     "   callback more than half a period behind its time is a dropout). The first\n"
     "   breakup ends the climb; the run then narrows down between the last clean\n"
     "   and the failing number of keys - twice, up to five times while the\n"
+    ;
+static const char* const kManualText_part11 =
     "   failing level still lies more than a tenth above the clean one - letting\n"
     "   the tails die away in between. When the keys cannot be split any further\n"
     "   and the gap is still wide (a weak computer: clean at 474 voices, broken at\n"
@@ -2222,8 +2232,6 @@ static const char* const kManualText_part10 =
     "   transmissions and extensions included - halved towards the clean side, up\n"
     "   to four times, so that the result is what the computer really renders, not\n"
     "   the last coarse step below it. When the clean and the failing level differ\n"
-    ;
-static const char* const kManualText_part11 =
     "   in the rate (every key was down already), the rate between them is split\n"
     "   first. A level whose callbacks stay between 85 and 100 % of the period for\n"
     "   two seconds is neither clean nor a breakup: it counts as a failure, and the\n"
@@ -2416,6 +2424,8 @@ static const char* const kManualText_part11 =
     "1, less for firmer strokes, none at 127 (default 9 dB). The level itself stays\n"
     "normal. Stops with velocity layers are not touched.\n"
     "\n"
+    ;
+static const char* const kManualText_part12 =
     "### Key velocity: treble cut opens over\n"
     "\n"
     "How long the treble cut of a gentle key takes to open fully after the key goes\n"
@@ -2424,8 +2434,6 @@ static const char* const kManualText_part11 =
     "### Tremulant: volume change per cent of pitch\n"
     "\n"
     "The tremulant modulates pitch (the division's *Tremulant depth*) and level;\n"
-    ;
-static const char* const kManualText_part12 =
     "this is the level modulation per cent of pitch modulation (default 0.187 dB\n"
     "per cent). Higher values give a tremulant that is more heard in the loudness\n"
     "than in the pitch.\n"
@@ -2618,6 +2626,8 @@ static const char* const kManualText_part12 =
     "\n"
     "Shows or hides the PANIC button, which silences every sounding pipe at once.\n"
     "\n"
+    ;
+static const char* const kManualText_part13 =
     "### Top bar: Record\n"
     "\n"
     "Shows or hides the Record button (the stereo mix to a WAV file).\n"
@@ -2626,8 +2636,6 @@ static const char* const kManualText_part12 =
     "\n"
     "Shows or hides the Stop List button (see \"4. The Stop List (building the\n"
     "organ)\").\n"
-    ;
-static const char* const kManualText_part13 =
     "\n"
     "### Top bar: Couplers\n"
     "\n"
@@ -2820,6 +2828,8 @@ static const char* const kManualText_part13 =
     "or for playing a part transposed. Keys that land outside the MIDI range are\n"
     "silent. In the Divisions dialog the box is the last line of the MIDI column.\n"
     "\n"
+    ;
+static const char* const kManualText_part14 =
     "### Swell pedal controller\n"
     "\n"
     "The MIDI controller learned for this division's swell (right-click the swell\n"
@@ -2828,8 +2838,6 @@ static const char* const kManualText_part13 =
     "### Swell: maximum attenuation when closed\n"
     "\n"
     "How much quieter the division is with the swell box fully closed (0 to 60 dB,\n"
-    ;
-static const char* const kManualText_part14 =
     "default 13). The harmonic filter (*Swell: harmonic filter*) dulls the tone at\n"
     "the same time.\n"
     "\n"

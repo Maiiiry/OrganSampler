@@ -41,9 +41,9 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   a BOM to the subject line. Tag only after `git log -1` shows the new commit.
 - Windows: `git` is not on PATH - use Visual Studio's
   (`C:\Program Files\Microsoft Visual Studio\18\Community\...\Team Explorer\Git\cmd\git.exe`); after pulling,
-  run `C:\JUCE9\Projucer.exe --resave OrganSampler\OrganSampler.jucer` and copy the .ico (above)
-  (the first `--resave` after a change sometimes prints nothing and writes nothing - check `versionString` in
-  `JuceLibraryCode/JuceHeader.h` and run it again until it prints "Finished saving"), commit the regenerated
+  run `C:\JUCE9\Projucer.exe --resave "F:\JUCE_PROJEKTY\OrganSamplerC\OrganSampler\OrganSampler.jucer"` with the
+  ABSOLUTE path and copy the .ico (above) (with a relative path the resave prints nothing and writes nothing - four
+  tries in 0.8.145; check `versionString` in `JuceLibraryCode/JuceHeader.h`, it must print "Finished saving"), commit the regenerated
   `Builds/VisualStudio2026` and `JuceLibraryCode`. Linux clone: `~/OrganSamplerC-linux` (git cannot run on the NTFS
   checkout from Linux); Linux builds come from CI only: `OrganSampler-linux-x86_64.tar.gz`, unpacked to
   `~/Downloads/OrganSampler`. Releases carry the native archive of each system, never a bare executable (0.8.110):
@@ -322,6 +322,24 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   runWhenLoaded ("Nested folder trees"). Caen like-for-like (#46 Ryzen 54 400 / #47 Ultra 7 54 800): same peak on
   both = the poster rendering alone (2.3-2.5 ms) while the workers wake - this build's wake-ahead + poster tail is
   the fix to be measured; the review is posted on #46/#47.
+  0.8.145 packed samples (`Sample::compress16/decode16/read16`, SamplerEngine.cpp after `finaliseLoops`): FLAC-like,
+  blocks of 256 frames, header byte (order 0/1/2 in bits 0-1, residual width in bits 2-6), `order` warm-up int16,
+  residuals of w bits LSB-first as r + 2^(w-1), w = 0 = all zero; `blockOffsets` for random access; verified frame by
+  frame at pack time (a mismatch keeps the raw data). `pcm16` is FREED when packed: every reader outside the render
+  path goes through `read16(ch, scratch)` (copy builds, the cache file, rmsOf, the spectrum analysis, MainComponent's
+  sample export, the self-test) - never `channel16` on a sample that may be packed. The render (`renderVoiceSpans
+  <int16_t>`) decodes a window per span into `tlPackedWindow` (2 channels x main/head x 4096 frames; kept while the next
+  spans of the voice read inside it; the span is capped to `kPackedSpanFrames`), positions made relative to the window
+  (`posBase`), the splice head decoded a loop length away into the second region (`headOffset = kPackedWindow << 32`).
+  Float storage is never packed. Packing happens where a sample is finished: `packIfEnabled` after `decodeSampleFile`
+  in loadSamplesIntoStop (on the loader threads, before the memory count), after the cache hit and after the copies
+  in the copy build; `notePackStats` logs "Packed samples: ..." per tree / per copy build. Setting `compressSamples`
+  (machine-specific key), engine `setCompressSamples`, editor toggle "Compress samples in RAM (lossless)" with the
+  price in its text; the voice profile has `unpack` (report "unpacking the packed samples N"). `--kerneltest` prints
+  "Packed samples: ... -> OK/MISMATCH" (windows + a packed-vs-raw render over splices and cubic; MISMATCH fails CI).
+  Linux: `LinuxWindowPlacement.{h,cpp}` is JUCE-FREE (std::string, `Box`) - Xlib's Font/Time/Drawable typedefs are
+  ambiguous under JuceHeader's `using namespace juce` (the 0.8.144 CI Linux build failed on it); never include
+  JuceHeader.h and Xlib.h in one translation unit.
   0.8.144 - LESSON: the 0.8.143 wake-ahead used `periodTicks` (the smoothed gap between CONSECUTIVE JOBS = the gap
   between the routes of one callback, ~0.3 ms with 8 routes) as the period -> workers woke every few hundred us and
   spun: #48 Core 2 Duo Linux 2900 (was 2500-2600 ok), #49 Mac 5000 but kernel 9.7 us/voice (3x), #50 Ultra 7 8 routes

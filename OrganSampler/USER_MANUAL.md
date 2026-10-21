@@ -2047,24 +2047,32 @@ a quarter of the RAM they would; nothing is requantised, the room noise of
 the tail stays as recorded. Takes effect the next time a division's folders
 are loaded.
 
-### Sample rate on loading
+### Compress samples in RAM (lossless)
 
-*48 kHz* resamples every file to the base rate (as ever). *36 kHz* and
-*32 kHz* (0.8.143) store every file at that rate: what lies above 17 or
-15 kHz goes - organ pipes carry next to nothing there - and the RAM drops by
-a quarter or a third; the kernel interpolates from the coarser grid at the
-same cost, so more stops fit and the polyphony stays. *Keep each file's own
-rate* loads faster and plays by interpolation. A filter alone would save
-nothing: a 16-bit sample is 16 bits whatever it holds; only the coarser grid
-saves.
+Off by default (0.8.145). On, the 16-bit samples are packed in RAM the way
+FLAC packs a file: a predictor per block of 256 frames and the residuals
+with the bits they need. Every frame comes back exactly - loops, pitch and
+voicing are untouched - and a set takes about a third less RAM; the log
+says how much ("Packed samples: ..."). **The price:** every voice unpacks
+the piece it plays before every block, about as much work again as the
+interpolation itself, so a third to a half of the polyphony is gone (the
+self-test's tutti took 40 % longer per block) - measure it, the report shows
+the unpacking as its own figure. Use it only when an organ
+does not fit the memory otherwise; 32-bit float storage is not packed.
+Takes effect the next time a division's folders are loaded.
 
 ### Sample rate on loading
 
 *Resample everything to 48 kHz* (default): files recorded at 96, 88.2 or 44.1
 kHz are converted once while loading with a high-quality filter, so every set
 plays exactly like a 48 kHz one and a 96 kHz set needs half the RAM it would
-otherwise. Loading takes longer. *Keep each file's own rate* loads faster and
-plays the files by interpolation. Takes effect at the next load.
+otherwise; loading takes longer. *36 kHz* and *32 kHz* (0.8.143) store every
+file at that rate: what lies above 17 or 15 kHz goes - organ pipes carry next
+to nothing there - and the RAM drops by a quarter or a third; the kernel
+interpolates from the coarser grid at the same cost, so more stops fit and
+the polyphony stays. *Keep each file's own rate* loads faster and plays by
+interpolation. A filter alone would save nothing: a 16-bit sample is 16 bits
+whatever it holds; only the coarser grid saves. Takes effect at the next load.
 
 ### IR processing
 

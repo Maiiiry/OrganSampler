@@ -4680,7 +4680,14 @@ void MainComponent::arrangeReportWindows(const juce::File& folder)
         run("tell application \"System Events\" to tell (first application process whose frontmost is true) to set {position, size} of front window to {{"
             + juce::String(left.getX()) + ", " + juce::String(left.getY()) + "}, {" + juce::String(left.getWidth()) + ", " + juce::String(left.getHeight()) + "}}");
    #elif JUCE_LINUX
-    if (LinuxWindowPlacement::placeSideBySide(folder.getFileName(), left, right)) return;   // X11 itself (0.8.144)
+    {
+        // X11 itself (0.8.144); the placement code is JUCE-free (0.8.145: Xlib's Font/Time clash with juce's).
+        auto box = [](juce::Rectangle<int> r) { LinuxWindowPlacement::Box b; b.x = r.getX(); b.y = r.getY(); b.width = r.getWidth(); b.height = r.getHeight(); return b; };
+        std::string note;
+        const bool placed = LinuxWindowPlacement::placeSideBySide(folder.getFileName().toStdString(), box(left), box(right), note);
+        if (!note.empty()) CrashHandler::note(juce::String(note));
+        if (placed) return;
+    }
     if (!juce::File("/usr/bin/wmctrl").existsAsFile()) return;
     auto run = [](const juce::StringArray& args) { juce::ChildProcess process; if (process.start(args)) process.waitForProcessToFinish(3000); };
     run({ "wmctrl", "-r", folder.getFileName(), "-e", "0," + juce::String(right.getX()) + "," + juce::String(right.getY()) + "," + juce::String(right.getWidth()) + "," + juce::String(right.getHeight()) });
@@ -8838,11 +8845,12 @@ public:
             if (s == nullptr || s->numFrames <= 0) return false;
             const int frames = (int)s->numFrames;
             out.setSize(s->numChannels, frames);
+            std::vector<int16_t> scratch;
             for (int ch = 0; ch < s->numChannels; ++ch)
             {
                 float* d = out.getWritePointer(ch);
                 if (s->storesFloat) std::memcpy(d, s->channel32(ch), (size_t)frames * sizeof(float));
-                else { const int16_t* p = s->channel16(ch); for (int i = 0; i < frames; ++i) d[i] = (float)p[i] / 32768.0f; }
+                else { const int16_t* p = s->read16(ch, scratch); for (int i = 0; i < frames; ++i) d[i] = (float)p[i] / 32768.0f; }
             }
             rate = s->sampleRate;
             loops = s->loops;
@@ -9791,7 +9799,7 @@ namespace
             "divisionScreen", "dialogBounds", "uiScalePercent", "copyCacheFolder", "copyCacheEnabled", "sampleStorageFloat",
             "renderThreads", "renderThreadPreset", "renderThreadsWasapi", "showUnusableAudioDevices", "configEditorCollapsed", "configurationFile",
             "loadLastConfigurationAtStartup", "maxPolyphony", "measurementShareLimit", "irProcessing", "irLightAuto", "unpackArchiveShownOnce", "renderThreadPresetChosen",
-            "resampleOnLoad", "storageSampleRate", "releaseHalfRate",
+            "resampleOnLoad", "storageSampleRate", "releaseHalfRate", "compressSamples",
             "renderKernel" };
         return keys;
     }
@@ -15491,6 +15499,8 @@ void MainComponent::loadSettings()
     engine.setStorageSampleRate(storageSampleRate);
     releaseHalfRate = (bool)parsed.getProperty("releaseHalfRate", false);
     engine.setReleaseHalfRate(releaseHalfRate);
+    compressSamples = (bool)parsed.getProperty("compressSamples", false);
+    engine.setCompressSamples(compressSamples);
     irProcessing = parsed.getProperty("irProcessing", "automatic").toString();
     if (irProcessing != "full" && irProcessing != "light") irProcessing = "automatic";
     irLightAuto = parsed.getProperty("irLightAuto", false);
@@ -16075,6 +16085,7 @@ void MainComponent::saveSettings()
     obj->setProperty("resampleOnLoad", resampleOnLoad);
     obj->setProperty("storageSampleRate", storageSampleRate);
     obj->setProperty("releaseHalfRate", releaseHalfRate);
+    obj->setProperty("compressSamples", compressSamples);
     obj->setProperty("irProcessing", irProcessing);
     obj->setProperty("irLightAuto", irLightAuto);
     obj->setProperty("stopListShowTransmissions", stopListShowTransmissions);
@@ -18248,7 +18259,7 @@ struct MainComponent::PolyphonyMeasurement
     // The render pool: the lanes' utilisation inside the route jobs, averaged over the run and of the last second.
     double poolUtilisationSum = 0.0, lastPoolUtilisation = 0.0; int poolSamples = 0, lastPoolJobs = 0;
     // The voice profile over the run: ns per voice and block, weighted by the voices of every second.
-    double profHeaderSum = 0.0, profSpansSum = 0.0, profKernelSum = 0.0, profPostSum = 0.0; double profVoicesSum = 0.0;
+    double profHeaderSum = 0.0, profSpansSum = 0.0, profKernelSum = 0.0, profPostSum = 0.0, profUnpackSum = 0.0; double profVoicesSum = 0.0;
     // The device thread's profile over the run (0.8.137): ns per route callback in its phases, weighted by the callbacks of every second,
     // and the share of the time the device threads spent inside the route callbacks (callbacks x their length per second).
     double devCalls = 0.0, devTake = 0.0, devOwn = 0.0, devWait = 0.0, devMix = 0.0, devCompact = 0.0, devSeparation = 0.0, devReverb = 0.0, devReverbWait = 0.0,
@@ -18752,6 +18763,7 @@ void MainComponent::startPolyphonyMeasurement()
                 const double w = (double)pool.profiledVoices;
                 state->profHeaderSum += pool.voiceHeaderNs * w; state->profSpansSum += pool.voiceSpansNs * w;
                 state->profKernelSum += pool.voiceKernelNs * w; state->profPostSum += pool.voicePostNs * w;
+                state->profUnpackSum += pool.voiceUnpackNs * w;
                 state->profVoicesSum += w;
             }
         }
@@ -18799,6 +18811,7 @@ void MainComponent::startPolyphonyMeasurement()
             + " % (" + safeThis->engine.routeLabel(worstRouteIndex) + "), lanes busy " + juce::String(juce::roundToInt(pool.laneUtilisation * 100.0)) + " % of "
             + juce::String(pool.jobs) + " route job(s) on " + juce::String(pool.lanes) + " lanes, per voice and block: header " + juce::String(juce::roundToInt(pool.voiceHeaderNs))
             + " ns, spans " + juce::String(juce::roundToInt(pool.voiceSpansNs)) + " ns, kernel " + juce::String(juce::roundToInt(pool.voiceKernelNs)) + " ns, post " + juce::String(juce::roundToInt(pool.voicePostNs))
+            + (pool.voiceUnpackNs > 0.5 ? " ns, unpack " + juce::String(juce::roundToInt(pool.voiceUnpackNs)) : juce::String())
             + " ns (" + juce::String(pool.profiledVoices) + " voice renders), device thread per route callback: " + juce::String(juce::roundToInt(pool.routeTotalNs() / 1000.0))
             + " us = own render " + juce::String(juce::roundToInt(pool.routePoolOwnNs / 1000.0)) + " + wait for lanes " + juce::String(juce::roundToInt(pool.routePoolWaitNs / 1000.0))
             + " + mix " + juce::String(juce::roundToInt((pool.routeMixNs + pool.routeSeparationNs + pool.routeClipNs) / 1000.0)) + " + IR hand-over " + juce::String(juce::roundToInt(pool.routeReverbNs / 1000.0))
@@ -19433,10 +19446,12 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
             // The voice profile of the run: what one voice costs a lane per block, in its parts.
             const double header = state->profHeaderSum / state->profVoicesSum, spans = state->profSpansSum / state->profVoicesSum;
             const double kernel = state->profKernelSum / state->profVoicesSum, post = state->profPostSum / state->profVoicesSum;
-            const double total = header + spans + kernel + post;
+            const double unpack = state->profUnpackSum / state->profVoicesSum;
+            const double total = header + spans + kernel + post + unpack;
             advice << " A voice cost a lane " << juce::roundToInt(total) << " ns per block in this run: bookkeeping " << juce::roundToInt(header)
                    << ", span logic " << juce::roundToInt(spans) << ", kernel " << juce::roundToInt(kernel)
-                   << (post > 0.5 ? ", per-key tone " + juce::String(juce::roundToInt(post)) : juce::String()) << ".";
+                   << (post > 0.5 ? ", per-key tone " + juce::String(juce::roundToInt(post)) : juce::String())
+                   << (unpack > 0.5 ? ", unpacking the packed samples " + juce::String(juce::roundToInt(unpack)) + " (Compress samples in RAM is on: that is its price)" : juce::String()) << ".";
         }
         const double nsBest = state->kernelBench.nsBest();
         const double blockMs = 1000.0 * blockFrames / juce::jmax(1000.0, blockRate);
@@ -20823,6 +20838,18 @@ void MainComponent::showConfigurationEditor()
             }, "The releases are a large part of a set and a decaying tail: stored at half the rate (24 kHz at the 48 kHz base) "
                "they lose what lies above 12 kHz and take a quarter of the RAM they would; nothing is requantised, the room noise "
                "of the tail stays as recorded. Takes effect the next time a division folder is loaded.");
+            addToggle("Compress samples in RAM (lossless)", o.compressSamples, [&o](bool state)
+            {
+                o.compressSamples = state;
+                o.engine.setCompressSamples(state);
+                o.saveSettings();
+            }, "Packs the 16-bit samples the way FLAC does (a predictor per block of 256 frames, the residuals with the bits they need): "
+               "every frame comes back exactly, loops, pitch and voicing are untouched, and a set takes about a third less RAM "
+               "(the log says how much: \"Packed samples: ...\"). THE PRICE: every voice unpacks the piece it plays before every "
+               "block, about as much work again as the interpolation itself - a third to a half of the polyphony is gone "
+               "(the self-test's tutti took 40 % longer per block); measure it, the report shows the unpacking as its own figure. "
+               "Use it only when an organ does not fit the memory otherwise; 32-bit float storage is not packed. "
+               "Takes effect the next time a division folder is loaded.");
             addCombo("Sample rate on loading", { "Resample everything to 48 kHz (the base rate, windowed sinc)  [default]",
                 "Resample everything to 36 kHz (content up to 17 kHz; a quarter less RAM)",
                 "Resample everything to 32 kHz (content up to 15 kHz; a third less RAM)",

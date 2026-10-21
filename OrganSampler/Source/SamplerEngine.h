@@ -92,6 +92,35 @@ struct Sample
     int16_t* writable16(int c) noexcept { return pcm16.get() + (size_t)c * (size_t)stride; }
     float* writable32(int c) noexcept { return pcm32.get() + (size_t)c * (size_t)stride; }
 
+    // Lossless packing of 16-bit samples in RAM (0.8.145, optional, off by
+    // default): FLAC-like fixed predictors (order 0, 1 or 2) per block of
+    // kPackBlock frames, the residuals stored with the bit width the block
+    // needs. Loops, pitch and everything else stay as they are; the player
+    // unpacks the window it reads before every span (SamplerEngine.cpp,
+    // renderVoiceSpans) - several times the per-voice cost, hence the option.
+    static constexpr int kPackBlock = 256;
+    struct PackedChannel
+    {
+        std::vector<uint8_t> data;
+        std::vector<uint32_t> blockOffsets;   // byte offset of every block in data (+ one past the end)
+    };
+    std::vector<PackedChannel> packed;
+    bool compressed = false;                  // pcm16 freed, the frames live in packed[]
+    // Packs pcm16 and frees it; returns the packed bytes of all channels. Checks
+    // every frame against the original first - a mismatch keeps the raw data
+    // (returns 0). Float samples and tiny ones are left alone (returns 0).
+    size_t compress16();
+    // Frames [from, to) of a channel as plain 16-bit; zeros outside 0..numFrames
+    // (the guard frames the kernels may read past the end). Works on packed and
+    // raw samples alike. Real-time safe: no allocation.
+    void decode16(int c, int64_t from, int64_t to, int16_t* out) const noexcept;
+    // A whole channel as plain 16-bit (stride frames, the guard zeroed): the pcm16
+    // pointer of a raw sample, else decoded into the scratch given. For the readers
+    // outside the render path (copy builds, cache files, analyses, the self-test).
+    const int16_t* read16(int c, std::vector<int16_t>& scratch) const;
+    // Bytes the frames take in RAM now (packed or raw, every channel).
+    size_t frameBytes() const noexcept;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(Sample)
 };
 
@@ -626,6 +655,20 @@ public:
     // quantisation noise. Call before loading; affects subsequently loaded divisions.
     void setSampleStorageFloat(bool useFloat) noexcept { storeSamplesAsFloat = useFloat; }
     bool getSampleStorageFloat() const noexcept { return storeSamplesAsFloat; }
+    // Lossless packing of the 16-bit samples in RAM (0.8.145, Sample::compress16):
+    // every sample decoded or copied from now on is packed. Off by default - the
+    // player unpacks every span it plays, several times the per-voice cost.
+    void setCompressSamples(bool on) noexcept { compressSamples = on; }
+    bool getCompressSamples() const noexcept { return compressSamples; }
+    // Packing statistics since the last call: raw bytes in, packed bytes out,
+    // samples packed, samples left raw because the check failed.
+    struct PackStats { int64_t rawBytes = 0, packedBytes = 0; int samples = 0, failed = 0; };
+    PackStats takePackStats() noexcept;
+    // Logs the statistics taken ("Packed samples: <what>: N samples, X -> Y (Z % saved)"), nothing when none.
+    void notePackStats(const juce::String& what);
+    // Packs a sample when the option is on (and counts it); the loaders, the copy
+    // builds and the cache import call it on every finished sample.
+    void packIfEnabled(Sample& sample) noexcept;
     // Samples recorded at another rate are resampled to the 48 kHz base rate
     // while they load (windowed sinc); off = they keep their rate and the
     // player reads them at the right speed (linear interpolation). Affects
@@ -978,6 +1021,7 @@ public:
         // The voice profile (while setVoiceProfiling is on): ns per voice and block
         // in the voice header (bookkeeping), the span logic, the kernels, the tone post-processing.
         juce::int64 profiledVoices = 0; double voiceHeaderNs = 0.0, voiceSpansNs = 0.0, voiceKernelNs = 0.0, voicePostNs = 0.0;
+        double voiceUnpackNs = 0.0;   // unpacking the windows of packed samples (0.8.145; 0 without the option)
         // The device thread's profile (0.8.137, while setVoiceProfiling is on): ns per
         // route callback in its phases - the voices taken in, the pool (this thread's own
         // rendering, the wait for the other lanes with the hand-over), the mixing
@@ -1380,6 +1424,9 @@ private:
     bool resampleOnLoad = true;
     double storageSampleRate = 48000.0;
     bool releaseHalfRate = false;
+    bool compressSamples = false;   // 0.8.145: pack the 16-bit samples in RAM (Sample::compress16)
+    std::atomic<int64_t> packRawBytes{ 0 }, packPackedBytes{ 0 };
+    std::atomic<int> packSamples{ 0 }, packFailed{ 0 };
     std::function<void(const juce::String&)> loadStatusCallback;
     bool tuneAllTo440 = false;
 

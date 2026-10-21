@@ -210,8 +210,33 @@ namespace
     // the interpolation kernels, and the tone/shelf post-processing. Thread-local
     // sums, folded into the pool's statistics after every chunk. Off: one load.
     std::atomic<bool> gVoiceProfiling{ false };
-    struct VoiceProfile { int64_t header = 0, spans = 0, kernel = 0, post = 0; int64_t voices = 0; };
+    struct VoiceProfile { int64_t header = 0, spans = 0, kernel = 0, post = 0, unpack = 0; int64_t voices = 0; };
     thread_local VoiceProfile tlVoiceProfile;
+
+    // Packed samples (Sample::compress16, 0.8.145): the window a lane decodes
+    // before a span - the main region and, for a splice, the head region a loop
+    // length away - per thread, kept while the next spans of the voice read
+    // inside it. kPackedWindow frames a region, 24 of them the SIMD guard.
+    constexpr int kPackedWindow = 4096;
+    constexpr int kPackedGuard = 24;
+    constexpr int kPackedSpanFrames = kPackedWindow - 40;   // what a span may advance within one window
+   #if defined(_MSC_VER)
+    #pragma warning(push)
+    #pragma warning(disable: 4324)   // padded for the aligned buffer on purpose
+   #endif
+    struct PackedWindow
+    {
+        const Sample* sample = nullptr;
+        int64_t from = 0, to = 0;      // sample frames of the main region
+        int channels = 0;
+        bool headValid = false;
+        int64_t headFrames = 0;        // the head region = main region + headFrames
+        alignas(32) int16_t buf[2][2][kPackedWindow];   // [channel][main/head][frame]
+    };
+   #if defined(_MSC_VER)
+    #pragma warning(pop)
+   #endif
+    thread_local PackedWindow tlPackedWindow;
     // The device thread's profile (0.8.137): inside pool->render, this thread's own
     // rendering and the rest (waiting for the other lanes, the hand-over, merging
     // their scratch); inside the IR hand-over, the wait for the convolution task.
@@ -591,6 +616,254 @@ void Sample::finaliseLoops(std::vector<LoopPoints> lp)
         crossfadeFrames[i] = juce::jmax<int64_t>(1, xf);
         maxLoopEnd = juce::jmax(maxLoopEnd, loops[i].end);
     }
+}
+
+//==============================================================================
+// Lossless packing of 16-bit samples (0.8.145). A block of kPackBlock frames:
+// one header byte (bits 0-1 the predictor order 0/1/2, bits 2-6 the residual
+// width w), `order` warm-up frames as plain int16, then one residual of w bits
+// per remaining frame, LSB first, stored as residual + 2^(w-1) (w = 0: every
+// residual is zero - digital silence, the guard tail). The order with the
+// fewest bits wins; w may reach 18 (an order-2 residual of a full-scale step).
+// A table of block offsets gives random access: the player decodes only the
+// window a span reads.
+//==============================================================================
+namespace
+{
+    constexpr int kPackHeaderOrderMask = 3;
+
+    inline int bitLength(uint32_t m) noexcept
+    {
+        int bits = 0;
+        while (m != 0) { ++bits; m >>= 1; }
+        return bits;
+    }
+
+    // Residual of frame i for the predictor order (the warm-up frames excluded by the caller).
+    inline int32_t packResidual(const int16_t* x, int i, int order) noexcept
+    {
+        if (order == 0) return x[i];
+        if (order == 1) return (int32_t)x[i] - (int32_t)x[i - 1];
+        return (int32_t)x[i] - 2 * (int32_t)x[i - 1] + (int32_t)x[i - 2];
+    }
+
+    // Residuals of w bits need -2^(w-1) <= r < 2^(w-1): the width of a residual.
+    inline int residualWidth(int32_t r) noexcept
+    {
+        const uint32_t m = r < 0 ? (uint32_t)(-(int64_t)r - 1) : (uint32_t)r;
+        return bitLength(m) + 1;
+    }
+
+    struct BitWriter
+    {
+        std::vector<uint8_t>& out;
+        uint64_t acc = 0;
+        int bits = 0;
+        explicit BitWriter(std::vector<uint8_t>& o) noexcept : out(o) {}
+        void put(uint32_t value, int width) noexcept
+        {
+            acc |= (uint64_t)value << bits;
+            bits += width;
+            while (bits >= 8) { out.push_back((uint8_t)(acc & 0xff)); acc >>= 8; bits -= 8; }
+        }
+        void flush() noexcept
+        {
+            if (bits > 0) { out.push_back((uint8_t)(acc & 0xff)); acc = 0; bits = 0; }
+        }
+    };
+
+    // Decodes one block of n frames at `in` into out. Returns false on a corrupt header.
+    inline bool unpackBlock(const uint8_t* in, int n, int16_t* out) noexcept
+    {
+        const int order = in[0] & kPackHeaderOrderMask;
+        const int width = (in[0] >> 2) & 31;
+        if (order > 2 || width > 24 || n <= 0) return false;
+        const uint8_t* p = in + 1;
+        int i = 0;
+        for (; i < order && i < n; ++i)
+        {
+            out[i] = (int16_t)(uint16_t)(p[0] | (p[1] << 8));
+            p += 2;
+        }
+        if (width == 0)
+        {
+            // Every residual zero: the prediction continues (silence for order 0,
+            // a constant for order 1, a straight line for order 2).
+            for (; i < n; ++i)
+                out[i] = order == 0 ? (int16_t)0 : order == 1 ? out[i - 1] : (int16_t)(2 * (int32_t)out[i - 1] - (int32_t)out[i - 2]);
+            return true;
+        }
+        uint64_t acc = 0;
+        int bits = 0;
+        const uint32_t mask = (1u << width) - 1u;
+        const int32_t bias = 1 << (width - 1);
+        if (order == 0)
+        {
+            for (; i < n; ++i)
+            {
+                while (bits < width) { acc |= (uint64_t)*p++ << bits; bits += 8; }
+                out[i] = (int16_t)((int32_t)(acc & mask) - bias);
+                acc >>= width; bits -= width;
+            }
+        }
+        else if (order == 1)
+        {
+            int32_t x1 = out[0];
+            for (; i < n; ++i)
+            {
+                while (bits < width) { acc |= (uint64_t)*p++ << bits; bits += 8; }
+                const int32_t x = (int32_t)(acc & mask) - bias + x1;
+                acc >>= width; bits -= width;
+                out[i] = (int16_t)x;
+                x1 = x;
+            }
+        }
+        else
+        {
+            int32_t x1 = out[1], x2 = out[0];
+            for (; i < n; ++i)
+            {
+                while (bits < width) { acc |= (uint64_t)*p++ << bits; bits += 8; }
+                const int32_t x = (int32_t)(acc & mask) - bias + 2 * x1 - x2;
+                acc >>= width; bits -= width;
+                out[i] = (int16_t)x;
+                x2 = x1; x1 = x;
+            }
+        }
+        return true;
+    }
+
+    void packChannel(const int16_t* x, int64_t numFrames, Sample::PackedChannel& packed)
+    {
+        const int64_t blocks = (numFrames + Sample::kPackBlock - 1) / Sample::kPackBlock;
+        packed.data.clear();
+        packed.data.reserve((size_t)numFrames * 2 + 16);
+        packed.blockOffsets.clear();
+        packed.blockOffsets.reserve((size_t)blocks + 1);
+        BitWriter writer(packed.data);
+        for (int64_t b = 0; b < blocks; ++b)
+        {
+            const int16_t* block = x + b * Sample::kPackBlock;
+            const int n = (int)juce::jmin<int64_t>(Sample::kPackBlock, numFrames - b * Sample::kPackBlock);
+            // The best order: the fewest bits for the block.
+            int bestOrder = 0, bestWidth = 32;
+            int64_t bestBits = std::numeric_limits<int64_t>::max();
+            for (int order = 0; order <= 2; ++order)
+            {
+                if (n <= order) break;
+                int width = 0;
+                bool allZero = true;
+                for (int i = order; i < n; ++i)
+                {
+                    const int32_t r = packResidual(block, i, order);
+                    if (r != 0) { allZero = false; width = juce::jmax(width, residualWidth(r)); }
+                }
+                if (allZero) width = 0;
+                const int64_t bits = 8 + 16 * order + (int64_t)(n - order) * width;
+                if (bits < bestBits) { bestBits = bits; bestOrder = order; bestWidth = width; }
+            }
+            packed.blockOffsets.push_back((uint32_t)packed.data.size());
+            packed.data.push_back((uint8_t)(bestOrder | (bestWidth << 2)));
+            for (int i = 0; i < bestOrder; ++i)
+            {
+                const uint16_t u = (uint16_t)block[i];
+                packed.data.push_back((uint8_t)(u & 0xff));
+                packed.data.push_back((uint8_t)(u >> 8));
+            }
+            if (bestWidth > 0)
+            {
+                const int32_t bias = 1 << (bestWidth - 1);
+                for (int i = bestOrder; i < n; ++i)
+                    writer.put((uint32_t)(packResidual(block, i, bestOrder) + bias), bestWidth);
+                writer.flush();
+            }
+        }
+        packed.blockOffsets.push_back((uint32_t)packed.data.size());
+        for (int i = 0; i < 8; ++i) packed.data.push_back(0);   // the bit reader may fetch a few bytes past a block
+        packed.data.shrink_to_fit();
+    }
+}
+
+size_t Sample::compress16()
+{
+    if (compressed || storesFloat || numFrames < kPackBlock || numChannels < 1) return 0;
+    if (numFrames > (int64_t)0x7fffffff / 4) return 0;   // the offsets are 32-bit (2 bytes a frame at most)
+    std::vector<PackedChannel> result((size_t)numChannels);
+    std::vector<int16_t> check((size_t)numFrames);
+    for (int c = 0; c < numChannels; ++c)
+    {
+        const int16_t* x = channel16(c);
+        packChannel(x, numFrames, result[(size_t)c]);
+        // Every frame back as it was, else the raw data stays.
+        const auto& pc = result[(size_t)c];
+        const int64_t blocks = (numFrames + kPackBlock - 1) / kPackBlock;
+        for (int64_t b = 0; b < blocks; ++b)
+        {
+            const int n = (int)juce::jmin<int64_t>(kPackBlock, numFrames - b * kPackBlock);
+            if (!unpackBlock(pc.data.data() + pc.blockOffsets[(size_t)b], n, check.data() + b * kPackBlock)) return 0;
+        }
+        if (std::memcmp(check.data(), x, (size_t)numFrames * sizeof(int16_t)) != 0) return 0;
+    }
+    size_t bytes = 0;
+    for (const auto& pc : result) bytes += pc.data.size() + pc.blockOffsets.size() * sizeof(uint32_t);
+    packed = std::move(result);
+    compressed = true;
+    pcm16.free();
+    return bytes;
+}
+
+void Sample::decode16(int c, int64_t from, int64_t to, int16_t* out) const noexcept
+{
+    if (to <= from) return;
+    if (!compressed)
+    {
+        // Raw: the frames as stored (the guard up to stride is zero), zeros beyond.
+        const int16_t* x = storesFloat ? nullptr : channel16(c);
+        for (int64_t i = from; i < to; ++i)
+            out[i - from] = x != nullptr && i >= 0 && i < stride ? x[i] : (int16_t)0;
+        return;
+    }
+    if (c < 0 || c >= (int)packed.size()) { std::memset(out, 0, (size_t)(to - from) * sizeof(int16_t)); return; }
+    const auto& pc = packed[(size_t)c];
+    const int64_t blocks = (int64_t)pc.blockOffsets.size() - 1;
+    int16_t temp[kPackBlock];
+    for (int64_t i = from; i < to;)
+    {
+        if (i < 0) { const int64_t n = juce::jmin<int64_t>(-i, to - i); std::memset(out + (i - from), 0, (size_t)n * sizeof(int16_t)); i += n; continue; }
+        if (i >= numFrames) { std::memset(out + (i - from), 0, (size_t)(to - i) * sizeof(int16_t)); break; }
+        const int64_t b = i / kPackBlock;
+        const int64_t blockStart = b * kPackBlock;
+        const int n = (int)juce::jmin<int64_t>(kPackBlock, numFrames - blockStart);
+        const int64_t take = juce::jmin<int64_t>(to, blockStart + n) - i;
+        if (b >= blocks) { std::memset(out + (i - from), 0, (size_t)take * sizeof(int16_t)); i += take; continue; }
+        const uint8_t* in = pc.data.data() + pc.blockOffsets[(size_t)b];
+        if (i == blockStart && take == n)
+        {
+            if (!unpackBlock(in, n, out + (i - from))) std::memset(out + (i - from), 0, (size_t)n * sizeof(int16_t));
+        }
+        else
+        {
+            if (!unpackBlock(in, n, temp)) std::memset(temp, 0, sizeof(temp));
+            std::memcpy(out + (i - from), temp + (i - blockStart), (size_t)take * sizeof(int16_t));
+        }
+        i += take;
+    }
+}
+
+const int16_t* Sample::read16(int c, std::vector<int16_t>& scratch) const
+{
+    if (!compressed) return channel16(c);
+    scratch.assign((size_t)juce::jmax<int64_t>(stride, numFrames), 0);
+    decode16(c, 0, numFrames, scratch.data());
+    return scratch.data();
+}
+
+size_t Sample::frameBytes() const noexcept
+{
+    if (!compressed) return (size_t)stride * (size_t)numChannels * (storesFloat ? sizeof(float) : sizeof(int16_t));
+    size_t bytes = 0;
+    for (const auto& pc : packed) bytes += pc.data.size() + pc.blockOffsets.size() * sizeof(uint32_t);
+    return bytes;
 }
 
 //==============================================================================
@@ -1805,6 +2078,13 @@ namespace
         const T* src0 = s.storesFloat ? (const T*)s.channel32(0) : (const T*)s.channel16(0);
         const T* src1 = sampleChans > 1 ? (s.storesFloat ? (const T*)s.channel32(1) : (const T*)s.channel16(1)) : src0;
         constexpr float scale = SampleScale<T>::value;
+        // A packed sample (Sample::compress16, 0.8.145): every span is rendered
+        // from a window decoded into the thread's scratch, the positions made
+        // relative to the window's first frame (posBase); the splice head goes
+        // into the second half of the scratch, kPackedWindow frames on.
+        constexpr bool packable = std::is_same<T, int16_t>::value;
+        const bool packedSample = packable && s.compressed;
+        uint64_t posBase = 0;
 
         const int64_t incStepF = n > 0 ? (incEndF - incStartF) / n : 0;
         const uint64_t endPosF = (uint64_t)(s.numFrames - 3) << 32;
@@ -1965,6 +2245,13 @@ namespace
                 span = 1;
             }
             else span = (int)std::min<uint64_t>((uint64_t)span, dist);
+            if (packedSample)
+            {
+                // The span must fit the decode window (fast playback of a transposed pipe).
+                const uint64_t spanFrames = ((uint64_t)span * (uint64_t)maxInc) >> 32;
+                if (spanFrames + 2 > (uint64_t)kPackedSpanFrames)
+                    span = (int)juce::jmax<uint64_t>(1, ((uint64_t)kPackedSpanFrames << 32) / (uint64_t)maxInc);
+            }
 
             // --- envelope values at span start/end
             float e0 = 1.0f, e1 = 1.0f;
@@ -2017,9 +2304,49 @@ namespace
             // loop length back (mix 0 -> 1); after a jump they blend from the
             // continuation a loop length ahead into the loop (mix 1 -> 0).
             const bool blend = eventKind == 2 || eventKind == 4;
-            const int64_t headOffset = eventKind == 4 ? (int64_t)v.tailLoopLenF : -(int64_t)loopLenF;
+            int64_t headOffset = eventKind == 4 ? (int64_t)v.tailLoopLenF : -(int64_t)loopLenF;
             const float bt = eventKind == 4 ? 1.0f - xfT : xfT;
             const float bdt = eventKind == 4 ? -xfDt : xfDt;
+            if constexpr (packable)
+            {
+                if (packedSample && sampleChans <= 2)
+                {
+                    // The window this span reads: from four frames before the position
+                    // (the cubic kernel's idx - 1) to the span's end plus the SIMD guard;
+                    // the rest of the block ahead is decoded too when it fits, so the
+                    // next spans of this block find it there.
+                    const int64_t posFrame = (int64_t)(v.pos >> 32);
+                    const int64_t spanFrames = (int64_t)(((uint64_t)span * (uint64_t)maxInc) >> 32) + 2;
+                    const int64_t blockFrames = (int64_t)(((uint64_t)remaining * (uint64_t)maxInc) >> 32) + 2;
+                    const int64_t from = posFrame - 4;
+                    const int64_t toSpan = posFrame + spanFrames + kPackedGuard;
+                    const int64_t toBlock = posFrame + blockFrames + kPackedGuard;
+                    const int64_t to = toBlock - from <= kPackedWindow ? toBlock : juce::jmin(toSpan, from + kPackedWindow);
+                    const int64_t headFrames = blend ? headOffset / ((int64_t)1 << 32) : 0;   // whole frames (a loop length)
+                    auto& win = tlPackedWindow;
+                    const bool haveMain = win.sample == &s && win.from <= from && win.to >= to && win.channels >= sampleChans;
+                    const int64_t unpackStart = prof ? profileTicks() : 0;
+                    if (!haveMain)
+                    {
+                        for (int ch = 0; ch < sampleChans; ++ch) s.decode16(ch, from, to, win.buf[(size_t)ch][0]);
+                        win.sample = &s; win.from = from; win.to = to; win.channels = sampleChans;
+                        win.headValid = false;
+                    }
+                    if (blend && (!win.headValid || win.headFrames != headFrames))
+                    {
+                        // The head region: the window a loop length back (or ahead), frame
+                        // k of it pairing with frame k of the main region.
+                        for (int ch = 0; ch < sampleChans; ++ch) s.decode16(ch, win.from + headFrames, win.to + headFrames, win.buf[(size_t)ch][1]);
+                        win.headValid = true; win.headFrames = headFrames;
+                    }
+                    if (prof) tlVoiceProfile.unpack += profileDelta(unpackStart, profileTicks());
+                    posBase = (uint64_t)win.from << 32;
+                    src0 = (const T*)win.buf[0][0];
+                    src1 = sampleChans > 1 ? (const T*)win.buf[1][0] : src0;
+                    if (blend) headOffset = (int64_t)kPackedWindow << 32;   // the head region lies kPackedWindow frames on
+                }
+            }
+            uint64_t pos = v.pos - posBase;
             // The dynamic tone shelf over this span: its mix at the span's start
             // and end (the block's ramp cut to the span). The plain kernels fold
             // it in; a splice or cubic kernel renders the span into a private
@@ -2041,26 +2368,29 @@ namespace
                 // A filled pipe resampled by semitones: cubic interpolation.
                 if (sampleChans == 1)
                 {
-                    if (blend) kernelMonoXfCubic<T>(src0, o0, span, v.pos, inc, incStepF, g0, gStep, headOffset, bt, bdt);
-                    else kernelMonoCubic<T>(src0, o0, span, v.pos, inc, incStepF, g0, gStep);
+                    if (blend) kernelMonoXfCubic<T>(src0, o0, span, pos, inc, incStepF, g0, gStep, headOffset, bt, bdt);
+                    else kernelMonoCubic<T>(src0, o0, span, pos, inc, incStepF, g0, gStep);
                 }
                 else
                 {
-                    if (blend) kernelStereoXfCubic<T>(src0, src1, o0, o1, span, v.pos, inc, incStepF, g0, gStep, headOffset, bt, bdt);
-                    else kernelStereoCubic<T>(src0, src1, o0, o1, span, v.pos, inc, incStepF, g0, gStep);
+                    if (blend) kernelStereoXfCubic<T>(src0, src1, o0, o1, span, pos, inc, incStepF, g0, gStep, headOffset, bt, bdt);
+                    else kernelStereoCubic<T>(src0, src1, o0, o1, span, pos, inc, incStepF, g0, gStep);
                 }
+                v.pos = pos + posBase;
             }
             else if (sampleChans == 1)
             {
-                if (blend) kernelMonoXf<T>(src0, o0, span, v.pos, inc, incStepF, g0, gStep, headOffset, bt, bdt);
-                else if (shelfActive) dispatchMonoShelf<T>(src0, o0, wet0 + produced, span, v.pos, inc, incStepF, g0, gStep, k0, kStep, kernel);
-                else dispatchMono<T>(src0, o0, span, v.pos, inc, incStepF, g0, gStep, kernel);
+                if (blend) kernelMonoXf<T>(src0, o0, span, pos, inc, incStepF, g0, gStep, headOffset, bt, bdt);
+                else if (shelfActive) dispatchMonoShelf<T>(src0, o0, wet0 + produced, span, pos, inc, incStepF, g0, gStep, k0, kStep, kernel);
+                else dispatchMono<T>(src0, o0, span, pos, inc, incStepF, g0, gStep, kernel);
+                v.pos = pos + posBase;
             }
             else if (sampleChans == 2)
             {
-                if (blend) kernelStereoXf<T>(src0, src1, o0, o1, span, v.pos, inc, incStepF, g0, gStep, headOffset, bt, bdt);
-                else if (shelfActive) dispatchStereoShelf<T>(src0, src1, o0, o1, wet0 + produced, wet1 + produced, span, v.pos, inc, incStepF, g0, gStep, k0, kStep, kernel);
-                else dispatchStereo<T>(src0, src1, o0, o1, span, v.pos, inc, incStepF, g0, gStep, kernel);
+                if (blend) kernelStereoXf<T>(src0, src1, o0, o1, span, pos, inc, incStepF, g0, gStep, headOffset, bt, bdt);
+                else if (shelfActive) dispatchStereoShelf<T>(src0, src1, o0, o1, wet0 + produced, wet1 + produced, span, pos, inc, incStepF, g0, gStep, k0, kStep, kernel);
+                else dispatchStereo<T>(src0, src1, o0, o1, span, pos, inc, incStepF, g0, gStep, kernel);
+                v.pos = pos + posBase;
             }
             else
             {
@@ -2070,15 +2400,38 @@ namespace
                     uint64_t p = v.pos;
                     int64_t ic = inc0;
                     const T* src = s.storesFloat ? (const T*)s.channel32(ch) : (const T*)s.channel16(ch);
+                    int64_t head = headOffset;
+                    if constexpr (packable)
+                    {
+                        if (packedSample)
+                        {
+                            // More than two channels (rare): the window of this channel decoded
+                            // on the spot, the shared window cache left invalid.
+                            const int64_t posFrame = (int64_t)(v.pos >> 32);
+                            const int64_t from = posFrame - 4;
+                            const int64_t to = juce::jmin(from + (int64_t)kPackedWindow, posFrame + (int64_t)(((uint64_t)span * (uint64_t)maxInc) >> 32) + 2 + kPackedGuard);
+                            auto& win = tlPackedWindow;
+                            win.sample = nullptr; win.headValid = false;
+                            s.decode16(ch, from, to, win.buf[0][0]);
+                            if (blend)
+                            {
+                                const int64_t headFrames = headOffset / ((int64_t)1 << 32);
+                                s.decode16(ch, from + headFrames, to + headFrames, win.buf[0][1]);
+                                head = (int64_t)kPackedWindow << 32;
+                            }
+                            src = (const T*)win.buf[0][0];
+                            p = v.pos - ((uint64_t)from << 32);
+                        }
+                    }
                     float* out = lanes.sink;
                     if (c.outCount > 0)
                     {
                         const int och = c.outChannels[(firstSlot + ch) % c.outCount];
                         out = (och >= 0 && och < lanes.numOuts) ? lanes.out[och] : lanes.sink;
                     }
-                    if (blend) kernelMonoXf<T>(src, out + produced, span, p, ic, incStepF, g0, gStep, headOffset, bt, bdt);
+                    if (blend) kernelMonoXf<T>(src, out + produced, span, p, ic, incStepF, g0, gStep, head, bt, bdt);
                     else dispatchMono<T>(src, out + produced, span, p, ic, incStepF, g0, gStep, kernel);
-                    finalPos = p;
+                    finalPos = packedSample ? p + ((uint64_t)((int64_t)(v.pos >> 32) - 4) << 32) : p;
                 }
                 v.pos = finalPos;
             }
@@ -2202,6 +2555,7 @@ namespace
             prefetchLine(&v.stop->linearGain);
             prefetchLine(&v.stop->perNoteGain[v.note]);
         }
+        if (s->compressed) return;   // packed: the window is decoded into the lane's scratch, nothing to pull in
         const uint32_t idx = (uint32_t)(v.pos >> 32);
         const int channels = juce::jmin(2, s->numChannels);
         for (int c = 0; c < channels; ++c)
@@ -2407,6 +2761,7 @@ namespace
         // lanes as before (no extra cost).
         const int64_t profHeaderEnd = prof ? profileTicks() : 0;
         const int64_t profKernelBefore = prof ? tlVoiceProfile.kernel : 0;
+        const int64_t profUnpackBefore = prof ? tlVoiceProfile.unpack : 0;
         if (prof) tlVoiceProfile.header += profileDelta(profStart, profHeaderEnd);
         const int sampleChans = s->numChannels;
         const bool dynamicShelf = shelfStart > 0.002f || shelfEnd > 0.002f;
@@ -2432,7 +2787,7 @@ namespace
             else renderVoiceSpans<int16_t>(v, *s, c, lanes, incStartF, incEndF, gainStart, gainEnd, shelf0, shelf1);
             if (prof)
             {
-                tlVoiceProfile.spans += juce::jmax<int64_t>(0, profileDelta(profHeaderEnd, profileTicks()) - (tlVoiceProfile.kernel - profKernelBefore));
+                tlVoiceProfile.spans += juce::jmax<int64_t>(0, profileDelta(profHeaderEnd, profileTicks()) - (tlVoiceProfile.kernel - profKernelBefore) - (tlVoiceProfile.unpack - profUnpackBefore));
                 ++tlVoiceProfile.voices;
             }
             return !v.finished;
@@ -2445,7 +2800,7 @@ namespace
         if (s->storesFloat) renderVoiceSpans<float>(v, *s, c, filtered, incStartF, incEndF, gainStart, gainEnd);
         else renderVoiceSpans<int16_t>(v, *s, c, filtered, incStartF, incEndF, gainStart, gainEnd);
         const int64_t profSpansEnd = prof ? profileTicks() : 0;
-        if (prof) tlVoiceProfile.spans += juce::jmax<int64_t>(0, profileDelta(profHeaderEnd, profSpansEnd) - (tlVoiceProfile.kernel - profKernelBefore));
+        if (prof) tlVoiceProfile.spans += juce::jmax<int64_t>(0, profileDelta(profHeaderEnd, profSpansEnd) - (tlVoiceProfile.kernel - profKernelBefore) - (tlVoiceProfile.unpack - profUnpackBefore));
         if (toneActive)
         {
             if (ch0 >= 0) applyBiquadInPlace(tmp0, n, v.toneCoeff, v.toneState[0]);
@@ -2958,7 +3313,7 @@ namespace
         // lanes x wall ("slots"), the poster's own share.
         std::atomic<int64_t> statJobs{ 0 }, statWallTicks{ 0 }, statBusyTicks{ 0 }, statSlotTicks{ 0 }, statPosterTicks{ 0 }, statJoinDelayMax{ 0 };
         // The voice profile (gVoiceProfiling): the lanes' thread-local sums, folded here after every chunk.
-        std::atomic<int64_t> statProfHeader{ 0 }, statProfSpans{ 0 }, statProfKernel{ 0 }, statProfPost{ 0 }, statProfVoices{ 0 };
+        std::atomic<int64_t> statProfHeader{ 0 }, statProfSpans{ 0 }, statProfKernel{ 0 }, statProfPost{ 0 }, statProfUnpack{ 0 }, statProfVoices{ 0 };
         void foldVoiceProfile() noexcept
         {
             auto& p = tlVoiceProfile;
@@ -2967,12 +3322,13 @@ namespace
             statProfSpans.fetch_add(p.spans, std::memory_order_relaxed);
             statProfKernel.fetch_add(p.kernel, std::memory_order_relaxed);
             statProfPost.fetch_add(p.post, std::memory_order_relaxed);
+            statProfUnpack.fetch_add(p.unpack, std::memory_order_relaxed);
             statProfVoices.fetch_add(p.voices, std::memory_order_relaxed);
             p = VoiceProfile{};
         }
     public:
         void takeStats(int& jobs, double& laneUtilisation, double& posterShare, double& jobSeconds,
-            juce::int64& profVoices, double& headerNs, double& spansNs, double& kernelNs, double& postNs, double& joinDelayMaxNs) noexcept   // juce::int64: long long on Linux too
+            juce::int64& profVoices, double& headerNs, double& spansNs, double& kernelNs, double& postNs, double& unpackNs, double& joinDelayMaxNs) noexcept   // juce::int64: long long on Linux too
         {
             joinDelayMaxNs = (double)statJoinDelayMax.exchange(0, std::memory_order_relaxed) * 1.0e9 / (double)juce::Time::getHighResolutionTicksPerSecond();
             jobs = (int)statJobs.exchange(0, std::memory_order_relaxed);
@@ -2991,6 +3347,7 @@ namespace
             spansNs = (double)statProfSpans.exchange(0, std::memory_order_relaxed) * per;
             kernelNs = (double)statProfKernel.exchange(0, std::memory_order_relaxed) * per;
             postNs = (double)statProfPost.exchange(0, std::memory_order_relaxed) * per;
+            unpackNs = (double)statProfUnpack.exchange(0, std::memory_order_relaxed) * per;
         }
     private:
 
@@ -6011,7 +6368,7 @@ SamplerEngine::RenderPoolStats SamplerEngine::takeRenderPoolStats() noexcept
     RenderPoolStats stats;
     if (impl != nullptr && impl->pool != nullptr)
         impl->pool->takeStats(stats.jobs, stats.laneUtilisation, stats.posterShare, stats.jobSeconds,
-            stats.profiledVoices, stats.voiceHeaderNs, stats.voiceSpansNs, stats.voiceKernelNs, stats.voicePostNs, stats.laneJoinDelayMaxNs);
+            stats.profiledVoices, stats.voiceHeaderNs, stats.voiceSpansNs, stats.voiceKernelNs, stats.voicePostNs, stats.voiceUnpackNs, stats.laneJoinDelayMaxNs);
     stats.lanes = getRenderWorkerCount() + 1;
     if (impl != nullptr)
     {
@@ -6230,6 +6587,111 @@ juce::String SamplerEngine::runKernelSelfCheck()
     }
     const auto bench = benchmarkKernel(n, 256 << 20);
     result << bench.describe() << "\n";
+    {
+        // Packed samples (0.8.145): a stereo sample with two loops - a silent
+        // stretch, a full-scale step and a quiet tail among the blocks - packed
+        // and unpacked: every window back as it was (negative starts and reads past
+        // the end included), and a voice rendered through the packed path equal to
+        // the raw one over plain spans, both splices and the cubic kernel.
+        constexpr int64_t pf = 120000;
+        auto raw = std::make_unique<Sample>(2, pf, 48000.0, false);
+        auto packedS = std::make_unique<Sample>(2, pf, 48000.0, false);
+        {
+            const auto t0 = testSignal<int16_t>((size_t)pf, 7, 1.0f), t1 = testSignal<int16_t>((size_t)pf, 13, 0.7f);
+            for (int64_t i = 0; i < pf; ++i)
+            {
+                int16_t a = t0[(size_t)i], b = t1[(size_t)i];
+                if (i >= 20000 && i < 21000) { a = 0; b = 0; }
+                if (i == 30000) { a = 32767; b = -32768; }
+                if (i >= 90000) { a = (int16_t)(a / 64); b = (int16_t)(b / 64); }
+                raw->writable16(0)[i] = a; raw->writable16(1)[i] = b;
+                packedS->writable16(0)[i] = a; packedS->writable16(1)[i] = b;
+            }
+            const std::vector<LoopPoints> loops{ { 40000, 80000 }, { 50000, 85000 } };
+            for (Sample* s : { raw.get(), packedS.get() })
+            {
+                s->finaliseLoops(loops);
+                applyCopyLoopCrossfade(*s, 0.3);   // the splice after the jump on both loops ...
+                s->crossfadeAfterJump[0] = 0; s->crossfadeFrames[0] = 2400;   // ... the first one spliced before its end instead
+            }
+        }
+        const double packStart = juce::Time::getMillisecondCounterHiRes();
+        const size_t packedBytes = packedS->compress16();
+        const double packMs = juce::Time::getMillisecondCounterHiRes() - packStart;
+        bool ok = packedBytes > 0 && packedS->compressed;
+        int64_t windowsChecked = 0;
+        {
+            std::vector<int16_t> a(5000), b(5000);
+            uint32_t st = 99;
+            for (int t = 0; t < 400 && ok; ++t)
+            {
+                st = st * 1664525u + 1013904223u; const int64_t from = (int64_t)(st % 130000u) - 5000;
+                st = st * 1664525u + 1013904223u; const int64_t len = 1 + (int64_t)(st % 4999u);
+                const int ch = t & 1;
+                raw->decode16(ch, from, from + len, a.data());
+                packedS->decode16(ch, from, from + len, b.data());
+                if (std::memcmp(a.data(), b.data(), (size_t)len * sizeof(int16_t)) != 0) ok = false;
+                ++windowsChecked;
+            }
+        }
+        // Unpacking speed: the whole sample in windows of 1048 frames (a block of 1024 plus the guard).
+        double unpackNsPerFrame = 0.0;
+        {
+            std::vector<int16_t> w(1048);
+            const double t0 = juce::Time::getMillisecondCounterHiRes();
+            int64_t decodedFrames = 0;
+            for (int rep = 0; rep < 5; ++rep)
+                for (int64_t from = -4; from < pf; from += 1024) { packedS->decode16(0, from, from + 1048, w.data()); decodedFrames += 1048; }
+            unpackNsPerFrame = (juce::Time::getMillisecondCounterHiRes() - t0) * 1.0e6 / (double)juce::jmax<int64_t>(1, decodedFrames);
+        }
+        float worstRender = 0.0f;
+        bool positionsSame = true;
+        if (ok)
+        {
+            auto renderWith = [&](const Sample& s, bool cubic, double ratio, std::vector<float>& out0, std::vector<float>& out1, uint64_t& endPos)
+            {
+                auto v = std::make_unique<Voice>();
+                v->sample = &s; v->note = 0; v->cubic = cubic; v->loopEnabled = true; v->rng = 12345;
+                v->pos = (uint64_t)(100.0 * kFixedOne);
+                BlockContext c; c.numSamples = 480; c.outCount = 2; c.outChannels[0] = 0; c.outChannels[1] = 1; c.kernel = (int)bestKernel();
+                std::vector<float> sink((size_t)kMaxBlockFrames, 0.0f);
+                LaneOutputs lanes; lanes.numOuts = 2; lanes.sink = sink.data();
+                const int64_t inc = (int64_t)(ratio * kFixedOne);
+                std::vector<float> o0(480), o1(480);
+                for (int block = 0; block < 500 && !v->finished; ++block)
+                {
+                    std::fill(o0.begin(), o0.end(), 0.0f); std::fill(o1.begin(), o1.end(), 0.0f);
+                    lanes.out[0] = o0.data(); lanes.out[1] = o1.data();
+                    renderVoiceSpans<int16_t>(*v, s, c, lanes, inc, inc, 0.5f, 0.5f);
+                    out0.insert(out0.end(), o0.begin(), o0.end());
+                    out1.insert(out1.end(), o1.begin(), o1.end());
+                }
+                endPos = v->pos;
+            };
+            for (const bool cubic : { false, true })
+                for (const double ratio : { 0.75, 1.0, 1.4983, 2.6 })
+                {
+                    std::vector<float> r0, r1, p0, p1;
+                    uint64_t endRaw = 0, endPacked = 0;
+                    renderWith(*raw, cubic, ratio, r0, r1, endRaw);
+                    renderWith(*packedS, cubic, ratio, p0, p1, endPacked);
+                    if (endRaw != endPacked || r0.size() != p0.size()) positionsSame = false;
+                    float peak = 1.0e-9f, diff = 0.0f;
+                    for (size_t i = 0; i < juce::jmin(r0.size(), p0.size()); ++i)
+                    {
+                        peak = juce::jmax(peak, std::abs(r0[i]), std::abs(r1[i]));
+                        diff = juce::jmax(diff, std::abs(r0[i] - p0[i]), std::abs(r1[i] - p1[i]));
+                    }
+                    worstRender = juce::jmax(worstRender, diff / peak);
+                }
+            if (!(worstRender < 1.0e-5f) || !positionsSame) ok = false;
+        }
+        result << "Packed samples: " << juce::String((double)packedBytes / (double)(pf * 4) * 100.0, 1) << " % of the raw size, packed in "
+               << juce::String(packMs, 1) << " ms, " << windowsChecked << " windows unpacked as stored, unpacking " << juce::String(unpackNsPerFrame, 2)
+               << " ns per frame; a voice rendered from the packed sample against the raw one (plain, splices, cubic, ratios 0.75-2.6): largest difference "
+               << juce::String(worstRender * 100.0f, 5) << " % of the peak, end positions " << (positionsSame ? "identical" : "DIFFERENT") << " -> "
+               << (ok ? "OK" : "*** MISMATCH ***") << "\n";
+    }
     {
         // Dynamic tone shelf: the lowpass behind it must start at 1.8 kHz (about
         // -1 dB) and be down about 10 dB an octave higher (transition ~1.8 kHz wide).
@@ -6892,7 +7354,8 @@ namespace
             }
             else
             {
-                const int16_t* s = source.channel16(ch);
+                std::vector<int16_t> scratch;
+                const int16_t* s = source.read16(ch, scratch);   // a packed source decoded whole
                 for (int i = 0; i < frames; ++i) in[(size_t)(i + half)] = (float)s[i];
             }
             for (int i = 0; i < half; ++i) { in[(size_t)i] = in[(size_t)half]; in[(size_t)(frames + half + i)] = in[(size_t)(frames + half - 1)]; }
@@ -7539,10 +8002,11 @@ namespace
         {
             auto copy = std::make_unique<Sample>(channels, juce::jmax(0, frames), source.sampleRate, source.storesFloat);
             copy->smplPitch = source.smplPitch;
+            std::vector<int16_t> scratch;
             for (int ch = 0; ch < channels; ++ch)
             {
                 if (source.storesFloat) std::memcpy(copy->writable32(ch), source.channel32(ch), (size_t)frames * sizeof(float));
-                else std::memcpy(copy->writable16(ch), source.channel16(ch), (size_t)frames * sizeof(int16_t));
+                else std::memcpy(copy->writable16(ch), source.read16(ch, scratch), (size_t)frames * sizeof(int16_t));
             }
             copy->finaliseLoops(source.loops);
             return copy;
@@ -7552,10 +8016,11 @@ namespace
         const Sample* input = &source;
         if (ratio > 1.0) { filtered = makeAntiAliasCopy(source, ratio); input = filtered.get(); }
         std::vector<std::vector<float>> in((size_t)channels, std::vector<float>((size_t)frames));
+        std::vector<int16_t> scratch;
         for (int ch = 0; ch < channels; ++ch)
         {
             if (input->storesFloat) { const float* s = input->channel32(ch); for (int i = 0; i < frames; ++i) in[(size_t)ch][(size_t)i] = s[i]; }
-            else { const int16_t* s = input->channel16(ch); for (int i = 0; i < frames; ++i) in[(size_t)ch][(size_t)i] = (float)s[i] / 32768.0f; }
+            else { const int16_t* s = input->read16(ch, scratch); for (int i = 0; i < frames; ++i) in[(size_t)ch][(size_t)i] = (float)s[i] / 32768.0f; }
         }
         std::vector<std::vector<float>> out((size_t)channels, std::vector<float>((size_t)outFrames, 0.0f));
         for (int ch = 0; ch < channels; ++ch) resampleChannel(in[(size_t)ch].data(), frames, ratio, out[(size_t)ch].data(), outFrames);
@@ -7701,12 +8166,13 @@ namespace
         const bool unchanged = frames <= 0 || semitones == 0;
         auto copy = std::make_unique<Sample>(channels, juce::jmax(0, frames), source.sampleRate, source.storesFloat);
         copy->smplPitch = source.smplPitch;
+        std::vector<int16_t> scratch;
         if (unchanged)
         {
             for (int ch = 0; ch < channels; ++ch)
             {
                 if (source.storesFloat) std::memcpy(copy->writable32(ch), source.channel32(ch), (size_t)frames * sizeof(float));
-                else std::memcpy(copy->writable16(ch), source.channel16(ch), (size_t)frames * sizeof(int16_t));
+                else std::memcpy(copy->writable16(ch), source.read16(ch, scratch), (size_t)frames * sizeof(int16_t));
             }
             copy->finaliseLoops(source.loops);
             return copy;
@@ -7717,7 +8183,7 @@ namespace
         for (int ch = 0; ch < channels; ++ch)
         {
             if (source.storesFloat) { const float* s = source.channel32(ch); for (int i = 0; i < frames; ++i) in[(size_t)ch][(size_t)i] = s[i]; }
-            else { const int16_t* s = source.channel16(ch); for (int i = 0; i < frames; ++i) in[(size_t)ch][(size_t)i] = (float)s[i] / 32768.0f; }
+            else { const int16_t* s = source.read16(ch, scratch); for (int i = 0; i < frames; ++i) in[(size_t)ch][(size_t)i] = (float)s[i] / 32768.0f; }
             inPtr[(size_t)ch] = in[(size_t)ch].data();
             outPtr[(size_t)ch] = out[(size_t)ch].data();
         }
@@ -7959,6 +8425,39 @@ void SamplerEngine::applyCopyLoopCrossfade(Sample& sample, double fraction)
     }
 }
 
+void SamplerEngine::packIfEnabled(Sample& sample) noexcept
+{
+    if (!compressSamples || sample.compressed || sample.storesFloat) return;
+    const int64_t raw = (int64_t)sample.frameBytes();
+    size_t packedBytes = 0;
+    try { packedBytes = sample.compress16(); }
+    catch (...) { packedBytes = 0; }   // out of memory for the packed copy: the raw data stays
+    if (packedBytes == 0) { if (sample.numFrames >= Sample::kPackBlock) packFailed.fetch_add(1, std::memory_order_relaxed); return; }
+    packRawBytes.fetch_add(raw, std::memory_order_relaxed);
+    packPackedBytes.fetch_add((int64_t)packedBytes, std::memory_order_relaxed);
+    packSamples.fetch_add(1, std::memory_order_relaxed);
+}
+
+void SamplerEngine::notePackStats(const juce::String& what)
+{
+    const PackStats stats = takePackStats();
+    if (stats.samples == 0 && stats.failed == 0) return;
+    const double saved = stats.rawBytes > 0 ? 100.0 * (1.0 - (double)stats.packedBytes / (double)stats.rawBytes) : 0.0;
+    CrashHandler::note("Packed samples: " + what + ": " + juce::String(stats.samples) + " samples, "
+        + juce::File::descriptionOfSizeInBytes(stats.rawBytes) + " -> " + juce::File::descriptionOfSizeInBytes(stats.packedBytes)
+        + " (" + juce::String(saved, 1) + " % saved)" + (stats.failed > 0 ? ", " + juce::String(stats.failed) + " left raw (the check failed)" : juce::String()));
+}
+
+SamplerEngine::PackStats SamplerEngine::takePackStats() noexcept
+{
+    PackStats stats;
+    stats.rawBytes = packRawBytes.exchange(0, std::memory_order_relaxed);
+    stats.packedBytes = packPackedBytes.exchange(0, std::memory_order_relaxed);
+    stats.samples = packSamples.exchange(0, std::memory_order_relaxed);
+    stats.failed = packFailed.exchange(0, std::memory_order_relaxed);
+    return stats;
+}
+
 void SamplerEngine::setCopyLoopCrossfade(float fraction)
 {
     const float clamped = juce::jlimit(0.0f, 1.0f, fraction);
@@ -8171,10 +8670,11 @@ namespace
         block.writeFloat(s.releaseLevelGain);
         block.writeInt((int)s.loops.size());
         for (const auto& loop : s.loops) { block.writeInt64(loop.start); block.writeInt64(loop.end); }
+        std::vector<int16_t> scratch;
         for (int ch = 0; ch < s.numChannels; ++ch)
         {
             if (s.storesFloat) block.write(s.channel32(ch), (size_t)s.numFrames * sizeof(float));
-            else block.write(s.channel16(ch), (size_t)s.numFrames * sizeof(int16_t));
+            else block.write(s.read16(ch, scratch), (size_t)s.numFrames * sizeof(int16_t));   // the cache holds plain frames, packed or not
         }
         out.writeInt64((int64_t)block.getDataSize());   // so a reader can skip the variant
         out.write(block.getData(), block.getDataSize());
@@ -8538,6 +9038,7 @@ void SamplerEngine::buildAntiAliasCopies(Stop* stop, bool background)
             else if (engine->buildsInterrupted.load(std::memory_order_acquire)) why = ", interrupted (launched again later)";
             CrashHandler::note("Copy build of " + stop->name + " ended at " + juce::String(stop->copiesDone.load()) + "/" + juce::String(stop->copiesPlanned.load())
                 + " (" + juce::String(engine->copyCacheHits.load() - hitsBefore) + " pipes from the cache" + why + ")");
+            engine->notePackStats("the copies of " + stop->name);
         }
     } doneNote{ stop, this, copyCacheHits.load() };
     for (auto* rank : ranks)
@@ -8603,12 +9104,16 @@ void SamplerEngine::buildAntiAliasCopies(Stop* stop, bool background)
             to = juce::jlimit<int64_t>(from, s.numFrames, to);
             if (to <= from) return 0.0;
             double power = 0.0;
+            std::vector<int16_t> scratch;
             for (int ch = 0; ch < s.numChannels; ++ch)
+            {
+                const int16_t* x16 = s.storesFloat ? nullptr : s.read16(ch, scratch);
                 for (int64_t i = from; i < to; ++i)
                 {
-                    const double v = s.storesFloat ? (double)s.channel32(ch)[i] : (double)s.channel16(ch)[i] / 32768.0;
+                    const double v = s.storesFloat ? (double)s.channel32(ch)[i] : (double)x16[i] / 32768.0;
                     power += v * v;
                 }
+            }
             return std::sqrt(power / (double)((to - from) * juce::jmax(1, s.numChannels)));
         };
         auto sustainRms = [&](const Sample& s)
@@ -8711,6 +9216,7 @@ void SamplerEngine::buildAntiAliasCopies(Stop* stop, bool background)
                         {
                             copyCacheHits.fetch_add(1, std::memory_order_relaxed);
                             if (crossfade > 0.0) for (auto& copy : copies) applyCopyLoopCrossfade(*copy, crossfade);
+                            for (auto& copy : copies) packIfEnabled(*copy);
                             fresh[pipe] = std::move(copies);
                             stop->copiesDone.fetch_add(1, std::memory_order_relaxed);
                             continue;
@@ -8758,6 +9264,7 @@ void SamplerEngine::buildAntiAliasCopies(Stop* stop, bool background)
                 if (copies.empty()) return;
                 if (releases && method >= 1) releaseLevelGain(rank, task.pipe, task.source, samplesByNote, copies);
                 if (crossfade > 0.0) for (auto& copy : copies) applyCopyLoopCrossfade(*copy, crossfade);
+                for (auto& copy : copies) packIfEnabled(*copy);
                 results[(size_t)index] = std::move(copies);
                 computed.fetch_add(1, std::memory_order_relaxed);
                 stop->copiesDone.fetch_add(1, std::memory_order_relaxed);
@@ -9795,6 +10302,7 @@ void SamplerEngine::loadSamplesIntoStop(Stop* stop, const juce::File& folder, bo
         {
             decoded[(size_t)index] = decodeSampleFile(entries[(size_t)index].file, *manager, asFloat,
                 parseSmpl(entries[(size_t)index].file), resample || baseRate < kBaseSampleRate - 0.5, baseRate);
+            if (decoded[(size_t)index] != nullptr) packIfEnabled(*decoded[(size_t)index]);   // 0.8.145: packed on the loader thread, before it counts
         }
         catch (const std::bad_alloc&)
         {
@@ -10341,6 +10849,7 @@ void SamplerEngine::loadManualFolder(const juce::File& topFolder, int manualInde
                 + "\n\nOnly the stops loaded so far are available" + (skipped > 0 ? " (not loaded: " + list + ")" : juce::String()) + ". Unload another division or close other programs.";
     }
     if (lastLoadError.isNotEmpty()) CrashHandler::note("Load message: " + lastLoadError.replace("\n", " | "));   // what the dialog says (0.8.138: the reports did not carry it)
+    notePackStats("the tree " + topFolder.getFileName());
     for (auto& [groupManual, group] : groups) impl->pendingDivisions.push_back(std::move(group.division));
 }
 
@@ -10921,13 +11430,15 @@ namespace
         }
         const int n = 1 << order;
         std::vector<float> buffer((size_t)n * 2, 0.0f);
+        std::vector<int16_t> scratch;
+        const int16_t* x16 = sample.storesFloat ? nullptr : sample.read16(0, scratch);
         for (int i = 0; i < n; ++i)   // channel 0 (every channel carries the same partials)
         {
             // Blackman-Harris window: side lobes below -92 dB, so the spectrum between
             // the harmonics shows the real noise and aliasing, not window leakage.
             const float phase = juce::MathConstants<float>::twoPi * (float)i / (float)(n - 1);
             const float w = 0.35875f - 0.48829f * std::cos(phase) + 0.14128f * std::cos(2.0f * phase) - 0.01168f * std::cos(3.0f * phase);
-            const float v = sample.storesFloat ? sample.channel32(0)[start + i] : (float)sample.channel16(0)[start + i] / 32768.0f;
+            const float v = sample.storesFloat ? sample.channel32(0)[start + i] : (float)x16[start + i] / 32768.0f;
             buffer[(size_t)i] = v * w;
         }
         juce::dsp::FFT fft(order);

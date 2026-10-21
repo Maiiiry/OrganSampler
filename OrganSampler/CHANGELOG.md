@@ -12,6 +12,25 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.145] - 2026-10-21
+
+### Added
+- Configuration Editor > Engine > "Compress samples in RAM (lossless)", off
+  by default: the 16-bit samples packed the way FLAC packs a file (a
+  predictor per block of 256 frames, the residuals with the bits they need).
+  Every frame comes back exactly, loops and voicing untouched, about a third
+  less RAM (the log says how much: "Packed samples: ..."). The price is
+  stated where it is switched on: every voice unpacks the piece it plays
+  before every block - a third to a half of the polyphony is gone (the
+  self-test's tutti took 40 % longer per block). The polyphony report shows
+  the unpacking as its own figure; `--kerneltest` checks the packing and the
+  packed render against the raw one on every platform.
+
+### Fixed
+- The Linux build of 0.8.144 did not compile (Xlib's Font and Time against
+  JUCE's): the X11 window placement is a JUCE-free file now.
+- The user manual had the "Sample rate on loading" section twice.
+
 ## [0.8.144] - 2026-10-21
 
 ### Fixed
