@@ -2542,6 +2542,7 @@ namespace
             job->completedCount.store(0, std::memory_order_relaxed);
             job->laneBusyTicks.store(0, std::memory_order_relaxed);
             const int64_t jobStart = juce::Time::getHighResolutionTicks();
+            job->openedTicks = jobStart;
             job->open.store(true, std::memory_order_release);
             // Keep the workers spinning across the gap to the next audio period.
             // The period is learned from the job cadence, so small ASIO buffers
@@ -2582,7 +2583,7 @@ namespace
             int idx, count;
             const int64_t posterStart = juce::Time::getHighResolutionTicks();
             const int64_t profPoster0 = prof ? profileTicks() : 0;
-            while ((count = takeChunk(*job, idx)) > 0)
+            while ((count = takeChunkAsPoster(*job, idx)) > 0)
                 renderRange(voiceIndices, idx, idx + count, pool, ctx, mine);
             const int64_t profOwn = prof ? profileDelta(profPoster0, profileTicks()) : 0;
             const int64_t posterBusy = juce::Time::getHighResolutionTicks() - posterStart;
@@ -2718,6 +2719,7 @@ namespace
             std::atomic<bool> open{ false };
             std::atomic<int> nextVoice{ 0 }, lanesJoined{ 0 }, lanesLeft{ 0 }, completedCount{ 0 };
             std::atomic<int64_t> laneBusyTicks{ 0 };   // the lanes' rendering time of this job, summed (utilisation statistics)
+            int64_t openedTicks = 0;                   // when the job opened (the lanes' join delay, 0.8.143)
             const uint32_t* voices = nullptr;
             int numVoices = 0, lanesHint = 1, maxWorkers = 0;
             Voice* pool = nullptr;
@@ -2725,6 +2727,16 @@ namespace
             std::array<int, kMaxLanesPerJob> completed{};
         };
 
+        // The poster at the tail of a job (0.8.143): with less left than two voices
+        // per lane still working, it takes nothing more - those lanes finish it in
+        // the time the poster would need, and its callback ends sooner (the longest
+        // callbacks of #46/#47 were the poster's own rendering, 2.3-2.5 ms).
+        static int takeChunkAsPoster(Job& job, int& idxOut) noexcept
+        {
+            const int working = job.lanesJoined.load(std::memory_order_relaxed) - job.lanesLeft.load(std::memory_order_relaxed);
+            if (working > 0 && job.numVoices - job.nextVoice.load(std::memory_order_relaxed) <= working * 2) return 0;
+            return takeChunk(job, idxOut);
+        }
         // Guided self-scheduling: big chunks while much work remains, small
         // chunks at the end so no lane is left waiting for one slow straggler.
         static int takeChunk(Job& job, int& idxOut) noexcept
@@ -2797,6 +2809,12 @@ namespace
                 }
                 int idx = 0, count = takeChunk(job, idx);
                 if (count <= 0) { job.lanesLeft.fetch_add(1, std::memory_order_acq_rel); continue; }
+                {
+                    // How late this lane came to the job (the wake-up of a sleeping worker).
+                    const int64_t delay = juce::Time::getHighResolutionTicks() - job.openedTicks;
+                    int64_t known = statJoinDelayMax.load(std::memory_order_relaxed);
+                    while (delay > known && !statJoinDelayMax.compare_exchange_weak(known, delay, std::memory_order_relaxed)) {}
+                }
                 const int scratchIndex = acquireScratch();
                 if (scratchIndex < 0)
                 {
@@ -2888,18 +2906,37 @@ namespace
                 }
                 std::unique_lock<std::mutex> lk(sleepMutex);
                 sleepers.fetch_add(1, std::memory_order_acq_rel);
-                // Posters notify when a job opens; the timeout is only a safety net,
-                // kept long so idle workers do not wake the CPUs needlessly.
+                // Posters notify when a job opens; the timeout is a safety net - and,
+                // since 0.8.143, the wake-ahead: the period is known from the jobs'
+                // cadence, so a sleeping worker wakes 1.5 ms before the next period is
+                // due and spins into it. A worker woken by the job itself came a wake-up
+                // late, and the poster rendered alone meanwhile (the 2.3-2.5 ms peaks
+                // of #46/#47 on 10 ms periods).
+                const int64_t ticksPerSecond = juce::Time::getHighResolutionTicksPerSecond();
+                int64_t waitTicks = ticksPerSecond / 50;   // 20 ms
+                {
+                    const int64_t period = periodTicks.load(std::memory_order_relaxed), last = lastJobTicks.load(std::memory_order_relaxed);
+                    if (period > 0 && last > 0)
+                    {
+                        const int64_t lead = ticksPerSecond * 3 / 2000;   // 1.5 ms before the period is due
+                        int64_t next = last + period - lead;
+                        const int64_t sleepFrom = juce::Time::getHighResolutionTicks();
+                        while (next <= sleepFrom) next += period;
+                        waitTicks = juce::jlimit(ticksPerSecond / 10000, waitTicks, next - sleepFrom);
+                    }
+                }
+                bool wokeAhead = false;
                 if (!anyOpenJob() && !shutdown.load(std::memory_order_relaxed))
-                    sleepCv.wait_for(lk, std::chrono::milliseconds(20));
+                    wokeAhead = sleepCv.wait_for(lk, std::chrono::microseconds(juce::jmax<int64_t>(100, waitTicks * 1000000 / juce::jmax<int64_t>(1, ticksPerSecond)))) == std::cv_status::timeout;
                 sleepers.fetch_sub(1, std::memory_order_acq_rel);
+                if (wokeAhead && spinAllowed) lastWorkTicks = juce::Time::getHighResolutionTicks();   // spin through the hot window into the period
             }
         }
 
         // Utilisation statistics since the last query (the polyphony measurement
         // reads them once a second): jobs, their wall time, the lanes' busy time,
         // lanes x wall ("slots"), the poster's own share.
-        std::atomic<int64_t> statJobs{ 0 }, statWallTicks{ 0 }, statBusyTicks{ 0 }, statSlotTicks{ 0 }, statPosterTicks{ 0 };
+        std::atomic<int64_t> statJobs{ 0 }, statWallTicks{ 0 }, statBusyTicks{ 0 }, statSlotTicks{ 0 }, statPosterTicks{ 0 }, statJoinDelayMax{ 0 };
         // The voice profile (gVoiceProfiling): the lanes' thread-local sums, folded here after every chunk.
         std::atomic<int64_t> statProfHeader{ 0 }, statProfSpans{ 0 }, statProfKernel{ 0 }, statProfPost{ 0 }, statProfVoices{ 0 };
         void foldVoiceProfile() noexcept
@@ -2915,8 +2952,9 @@ namespace
         }
     public:
         void takeStats(int& jobs, double& laneUtilisation, double& posterShare, double& jobSeconds,
-            juce::int64& profVoices, double& headerNs, double& spansNs, double& kernelNs, double& postNs) noexcept   // juce::int64: long long on Linux too
+            juce::int64& profVoices, double& headerNs, double& spansNs, double& kernelNs, double& postNs, double& joinDelayMaxNs) noexcept   // juce::int64: long long on Linux too
         {
+            joinDelayMaxNs = (double)statJoinDelayMax.exchange(0, std::memory_order_relaxed) * 1.0e9 / (double)juce::Time::getHighResolutionTicksPerSecond();
             jobs = (int)statJobs.exchange(0, std::memory_order_relaxed);
             const int64_t wall = statWallTicks.exchange(0, std::memory_order_relaxed);
             const int64_t busy = statBusyTicks.exchange(0, std::memory_order_relaxed);
@@ -5952,7 +5990,7 @@ SamplerEngine::RenderPoolStats SamplerEngine::takeRenderPoolStats() noexcept
     RenderPoolStats stats;
     if (impl != nullptr && impl->pool != nullptr)
         impl->pool->takeStats(stats.jobs, stats.laneUtilisation, stats.posterShare, stats.jobSeconds,
-            stats.profiledVoices, stats.voiceHeaderNs, stats.voiceSpansNs, stats.voiceKernelNs, stats.voicePostNs);
+            stats.profiledVoices, stats.voiceHeaderNs, stats.voiceSpansNs, stats.voiceKernelNs, stats.voicePostNs, stats.laneJoinDelayMaxNs);
     stats.lanes = getRenderWorkerCount() + 1;
     if (impl != nullptr)
     {
@@ -9548,7 +9586,7 @@ namespace
     };
 
     std::unique_ptr<Sample> decodeSampleFile(const juce::File& file, juce::AudioFormatManager& manager,
-        bool asFloat, SmplInfo smpl, bool resampleToBase = true)
+        bool asFloat, SmplInfo smpl, bool resampleToBase = true, double baseRate = kBaseSampleRate)
     {
         std::vector<LoopPoints> loops = std::move(smpl.loops);
         std::unique_ptr<juce::AudioFormatReader> reader(manager.createReaderFor(file));
@@ -9558,7 +9596,7 @@ namespace
         const int64_t frames = reader->lengthInSamples;
         const double sourceRate = reader->sampleRate;
         // Files up to 2^27 frames (47 minutes at 48 kHz) are resampled to the base rate.
-        const bool resample = resampleToBase && sourceRate > 1000.0 && std::abs(sourceRate - kBaseSampleRate) > 0.5
+        const bool resample = resampleToBase && sourceRate > 1000.0 && std::abs(sourceRate - baseRate) > 0.5
             && frames <= ((int64_t)1 << 27);
         std::unique_ptr<Sample> sample;
         juce::AudioBuffer<float> temp;
@@ -9567,12 +9605,12 @@ namespace
         int64_t storedFrames = frames;
         if (resample)
         {
-            resampler = std::make_unique<SincResampler>(sourceRate, kBaseSampleRate);
+            resampler = std::make_unique<SincResampler>(sourceRate, baseRate);
             storedFrames = resampler->outputFrames(frames);
         }
         try
         {
-            sample = std::make_unique<Sample>(channels, storedFrames, resample ? kBaseSampleRate : sourceRate, asFloat);
+            sample = std::make_unique<Sample>(channels, storedFrames, resample ? baseRate : sourceRate, asFloat);
             sample->fileName = file.getFileName();
             temp.setSize(channels, resample ? (int)frames : chunk);
         }
@@ -9598,7 +9636,7 @@ namespace
                         dst[i] = (int16_t)std::lrint(juce::jlimit(-32768.0f, 32767.0f, resampled[(size_t)i] * 32768.0f));
                 }
             }
-            const double scale = kBaseSampleRate / sourceRate;
+            const double scale = baseRate / sourceRate;
             for (auto& loop : loops)
             {
                 loop.start = (int64_t)std::llround((double)loop.start * scale);
@@ -9703,6 +9741,8 @@ void SamplerEngine::loadSamplesIntoStop(Stop* stop, const juce::File& folder, bo
     juce::SpinLock managerLock;
     const bool asFloat = storeSamplesAsFloat;
     const bool resample = resampleOnLoad;
+    // The storage rate (0.8.143): 48 kHz as ever or lower; releases at half of it when asked.
+    const double baseRate = isRelease && releaseHalfRate ? storageSampleRate * 0.5 : storageSampleRate;
     parallelFor((int)entries.size(), [&](int index, int thread)
     {
         if (loadOutOfMemory.load(std::memory_order_relaxed)) return;
@@ -9733,7 +9773,7 @@ void SamplerEngine::loadSamplesIntoStop(Stop* stop, const juce::File& folder, bo
         try
         {
             decoded[(size_t)index] = decodeSampleFile(entries[(size_t)index].file, *manager, asFloat,
-                parseSmpl(entries[(size_t)index].file), resample);
+                parseSmpl(entries[(size_t)index].file), resample || baseRate < kBaseSampleRate - 0.5, baseRate);
         }
         catch (const std::bad_alloc&)
         {
@@ -10269,12 +10309,12 @@ void SamplerEngine::loadManualFolder(const juce::File& topFolder, int manualInde
         const juce::String list = shown.joinIntoString(", ") + (skipped > 12 ? ", and " + juce::String(skipped - 12) + " more" : juce::String());
         if (loadCancelled.load(std::memory_order_relaxed))
             lastLoadError = "The loading was cancelled. The instrument is built from the stops loaded so far; " + juce::String(skipped) + " stop(s) were not loaded: " + list
-                + ".\n\nThey are not on the grid; the Stop List keeps their rows and offers them in its pool.";
+                + ".\n\nThey are not on the grid; the Stop List keeps their rows, and \"Add stop\" on the grid offers them as ready-made stops.";
         else if (loadStoppedForMemory.load(std::memory_order_relaxed))
             lastLoadError = "The memory is full: the loading stopped (" + (loadMemoryStopReason.isNotEmpty() ? loadMemoryStopReason : juce::String((double)freePhysicalMemoryBytes() / 1073741824.0, 1) + " GB free")
                 + " of " + juce::String((double)juce::SystemStats::getMemorySizeInMegabytes() / 1024.0, 1) + " GB installed; the system would page samples out, and every stroke would stall the sound).\n\n"
                 "The instrument is built from the stops loaded so far; " + juce::String(skipped) + " stop(s) were not loaded: " + list
-                + ".\n\nThey are not on the grid; the Stop List keeps their rows and offers them in its pool. Load fewer stops (a smaller configuration), keep the 16-bit sample storage, or add memory.";
+                + ".\n\nThey are not on the grid; the Stop List keeps their rows, and \"Add stop\" on the grid offers them as ready-made stops (taking one loads it again). Load fewer stops (a smaller configuration), keep the 16-bit sample storage, or add memory.";
         else
             lastLoadError = "The computer ran out of memory while loading\n" + topFolder.getFullPathName()
                 + "\n\nOnly the stops loaded so far are available" + (skipped > 0 ? " (not loaded: " + list + ")" : juce::String()) + ". Unload another division or close other programs.";

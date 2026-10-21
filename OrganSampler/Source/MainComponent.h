@@ -339,6 +339,7 @@ private:
     int poolIndexOf(const juce::String& path) const;
     int addTreeToPool(const juce::String& path);           // returns its index
     void syncDivisionTreeLists();
+    void dropNestedTrees();   // a tree inside another loaded tree goes: its rows point into the outer one (0.8.143)
     void loadTreeIntoDivision(const juce::File& tree, int manual);   // a new tree: its stops join the division's table
     // The pool tree at that index is replaced by another folder, wherever it is
     // and whatever its name: the table rows keep their folders (relative to the
@@ -549,6 +550,9 @@ private:
     }
     bool sampleStorageFloat = false;
     bool resampleOnLoad = true;   // samples of other rates are resampled to 48 kHz while loading
+    double storageSampleRate = 48000.0;   // the rate the samples are stored at when resampled (48 000 / 36 000 / 32 000; 0.8.143)
+    bool releaseHalfRate = false;         // release samples at half the storage rate (0.8.143)
+    juce::StringArray nestedTreesDropped; // folder trees dropped from the pool for lying inside another (the notice after the load)
     // IR processing (Configuration Editor > Engine): "automatic" (Light on a
     // computer that cannot afford Full, see applyIrProcessing), "full", "light".
     // irLightAuto: the automatic choice made on this computer, kept over starts.

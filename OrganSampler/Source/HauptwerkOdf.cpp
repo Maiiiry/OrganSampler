@@ -876,9 +876,16 @@ HauptwerkOdf HauptwerkOdf::parse(const juce::File& file, const std::function<boo
             auto& page = byPage[d.page];
             if (page.count(stop->second) == 0) page[stop->second] = { d.x, d.y };
         }
-        int bestPage = 0; size_t bestCount = 0;
+        // The SIMPLE jamb page whenever there is one (the definitions carry sister
+        // pages, photorealistic and simple, with the same drawknobs - the simple one
+        // is the plain layout); among several the one with the most stops; a page
+        // of any name only when no "Simple" page exists.
+        int bestPage = 0; size_t bestCount = 0; bool bestSimple = false;
         for (const auto& [page, stops] : byPage)
-            if (stops.size() > bestCount) { bestCount = stops.size(); bestPage = page; }
+        {
+            const bool simple = pageNames.count(page) > 0 && pageNames[page].containsIgnoreCase("simple");
+            if ((simple && !bestSimple) || (simple == bestSimple && stops.size() > bestCount)) { bestCount = stops.size(); bestPage = page; bestSimple = simple; }
+        }
         if (bestPage > 0)
         {
             odf.stopPositions = byPage[bestPage];
@@ -1301,7 +1308,23 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
             const auto* rank = usableRank(use.rankId);
             if (rank == nullptr) continue;
             const int owner = ownerOfRank.count(use.rankId) > 0 ? ownerOfRank.at(use.rankId) : id;
-            if (owner != id) { borrowed[owner][use.increment] += use.count > 0 ? use.count : divisionKeys; continue; }
+            if (owner != id)
+            {
+                // The shift of the borrowed piece RELATIVE TO THE OWNER'S own mapping of
+                // that rank (0.8.143): the owner plays it at increment 0 as a rule, but a
+                // rank nobody plays straight belongs to its first user, who may map it
+                // shifted - the extension then differs by the two increments, as the
+                // definition's key-to-pipe rows say, not by its own increment alone.
+                int ownerIncrement = 0;
+                if (const auto ownerStop = stops.find(owner); ownerStop != stops.end())
+                {
+                    bool found = false;
+                    for (const auto& ownerUse : ownerStop->second.rankUses)
+                        if (ownerUse.rankId == use.rankId && (!found || std::abs(ownerUse.increment) < std::abs(ownerIncrement))) { ownerIncrement = ownerUse.increment; found = true; }
+                }
+                borrowed[owner][use.increment - ownerIncrement] += use.count > 0 ? use.count : divisionKeys;
+                continue;
+            }
             if (std::find(rankIds.begin(), rankIds.end(), use.rankId) != rankIds.end()) continue;
             rankFolders.push_back(rank->folder);
             rankIds.push_back(use.rankId);

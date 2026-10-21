@@ -12,6 +12,39 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.143] - 2026-10-21
+
+### Added
+- Sample rate on loading: 36 kHz and 32 kHz besides 48 kHz - every file
+  stored at that rate (what lies above 17 or 15 kHz goes; organ pipes carry
+  next to nothing there), a quarter or a third less RAM, the kernel
+  interpolates from the coarser grid at the same cost. A filter alone saves
+  nothing; the coarser grid does.
+- Sample storage in RAM: "16-bit integer, releases at half the rate" - the
+  release samples take a quarter of the RAM they would, nothing requantised.
+- The polyphony report tells how late a lane joined a job after it opened.
+
+### Changed
+- The render workers wake ahead of every period (the cadence is known from
+  the jobs) instead of being woken by the job, and the device thread takes
+  no more voices at the tail of a job when the lanes still at work finish
+  them sooner. The 2-2.5 ms peaks that limited a 16-core computer at 55 000
+  voices (#46, #47) were the device thread rendering alone while the workers
+  woke up.
+- A folder tree inside another loaded tree (the library and one of its
+  sub-folders both loaded) is dropped from the pool: its stops point into the
+  outer tree, a message after the load names it, the configuration is saved
+  without it. The same folders twice made every stop appear twice.
+
+### Fixed
+- Hauptwerk import: the grid cells come from the "Simple" jamb page whenever
+  the definition has one (the sister pages, photorealistic and simple, carry
+  the same drawknobs); the most-populated page only without a simple one.
+- Hauptwerk import: an extension's shift is taken relative to the owner's
+  own mapping of the rank (the owner is not always at increment 0).
+- The message of a loading stopped for memory says the stops left out are
+  offered as ready-made stops under "Add stop" (not "in the pool").
+
 ## [0.8.142] - 2026-10-21
 
 ### Added

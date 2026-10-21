@@ -631,6 +631,18 @@ public:
     // player reads them at the right speed (linear interpolation). Affects
     // subsequently loaded divisions.
     void setResampleOnLoad(bool on) noexcept { resampleOnLoad = on; }
+    // The rate the samples are stored at when resampled on loading (0.8.143): 48 kHz
+    // as ever, or 36 / 32 kHz for a quarter / a third less RAM (the content above
+    // 17 / 15 kHz goes - organ pipes carry next to nothing there); the kernel
+    // interpolates from the coarser grid at the same cost.
+    void setStorageSampleRate(double rate) noexcept { storageSampleRate = juce::jlimit(22050.0, 96000.0, rate); }
+    double getStorageSampleRate() const noexcept { return storageSampleRate; }
+    // Release samples at half the storage rate (0.8.143): the releases are a large
+    // part of a set and a decaying tail - stored at half the rate they take a
+    // quarter of the RAM they would (the room noise of the tail stays as it is,
+    // nothing is requantised).
+    void setReleaseHalfRate(bool on) noexcept { releaseHalfRate = on; }
+    bool getReleaseHalfRate() const noexcept { return releaseHalfRate; }
     bool getResampleOnLoad() const noexcept { return resampleOnLoad; }
     // Text for the loading window about the phases after the samples are decoded
     // (tuning and footage analysis, pipe fills): called on the loading thread.
@@ -981,6 +993,9 @@ public:
         // two-core laptops sat at a third of the period while the longest driver
         // callback took 87 % of it.
         double routeMaxTotalNs = 0.0, routeMaxOwnNs = 0.0, routeMaxWaitNs = 0.0;
+        // The latest a worker joined a job after it opened (0.8.143): the wake-up
+        // of a sleeping worker, which the poster renders alone meanwhile.
+        double laneJoinDelayMaxNs = 0.0;
     };
     RenderPoolStats takeRenderPoolStats() noexcept;
     // Times the parts of every voice render (a few clock reads per voice): the
@@ -1363,6 +1378,8 @@ private:
     std::atomic<float> attackMinimumDelayMs{ 2.0f };
     bool storeSamplesAsFloat = true;
     bool resampleOnLoad = true;
+    double storageSampleRate = 48000.0;
+    bool releaseHalfRate = false;
     std::function<void(const juce::String&)> loadStatusCallback;
     bool tuneAllTo440 = false;
 

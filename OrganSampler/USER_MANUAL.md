@@ -820,7 +820,12 @@ instrument; a stop cut in the middle of its files, or with one perspective
 loaded and another not, is dropped whole, and every stop left out is named
 once in the message and stays in the pool of the Stop List - nothing stands
 on the grid half loaded. The polyphony report then says the loading stopped
-on purpose; it never claims the system is paging when it is not. A stop
+on purpose; it never claims the system is paging when it is not. A folder
+tree that lies inside another loaded tree (the whole library and one of its
+sub-folders both loaded) is the same folders twice: the inner tree is
+dropped from the pool, its stops point into the outer tree, and a message
+after the load names it (0.8.143) - load a tree once, whole or in parts,
+never both. A stop
 whose samples the program holds already (a reload of the same organ: the
 new load adopts them, nothing is decoded) is loaded whatever the memory
 says. The loading dialog has a *Cancel* button (0.8.139): the loading stops
@@ -838,9 +843,15 @@ IR hand-over (and of it, waiting for the convolution task) and into the
 bookkeeping (voices in and out, recording, load statistics); with the period
 for scale and the share of the time the device threads spent inside the
 callbacks, and the longest route callback of the run with its parts - the
-sound breaks on such a peak, never on the average. It is what tells, on a
+sound breaks on such a peak, never on the average, and how late a lane
+joined a job after it opened. It is what tells, on a
 computer whose render cores are not full when the sound breaks, where the
-time goes. The limit the measurement judges by - how much of its period the
+time goes. Since 0.8.143 the render workers wake ahead of every period
+(the cadence is known) instead of being woken by the job, and the device
+thread takes no more voices at the tail of a job when the lanes still at
+work finish them sooner: the peaks of 2-2.5 ms that limited a 16-core
+computer at 55 000 voices were the device thread rendering alone while the
+workers woke up. The limit the measurement judges by - how much of its period the
 longest driver callback may take - is the *Measurement limit* of the
 Configuration Editor (0.8.139): 85 % by default, which leaves headroom for
 what the computer does besides; up to 100 %, where a level counts as broken
@@ -2023,7 +2034,23 @@ its own, so a big division on one route was bound to a single core).
 
 *32-bit float* keeps the samples exactly as read (full fidelity); *16-bit
 integer* halves the RAM and allows more polyphony at the cost of a little
-hiss. Takes effect the next time a division's folders are loaded.
+hiss. *16-bit integer, releases at half the rate* (0.8.143) stores the
+release samples - a large part of a set and a decaying tail - at half the
+storage rate: they lose what lies above 12 kHz (at the 48 kHz base) and take
+a quarter of the RAM they would; nothing is requantised, the room noise of
+the tail stays as recorded. Takes effect the next time a division's folders
+are loaded.
+
+### Sample rate on loading
+
+*48 kHz* resamples every file to the base rate (as ever). *36 kHz* and
+*32 kHz* (0.8.143) store every file at that rate: what lies above 17 or
+15 kHz goes - organ pipes carry next to nothing there - and the RAM drops by
+a quarter or a third; the kernel interpolates from the coarser grid at the
+same cost, so more stops fit and the polyphony stays. *Keep each file's own
+rate* loads faster and plays by interpolation. A filter alone would save
+nothing: a 16-bit sample is 16 bits whatever it holds; only the coarser grid
+saves.
 
 ### Sample rate on loading
 

@@ -12084,8 +12084,65 @@ std::vector<juce::String> MainComponent::divisionTrees(int manual) const
     return trees;
 }
 
+void MainComponent::dropNestedTrees()
+{
+    // A folder tree inside another loaded tree (Testing organ: "Samply" and, under
+    // it, "Samply/testy/III") is the same folders twice: every stop of it stood
+    // in the pool a second time and was counted twice. The inner tree goes
+    // (0.8.143): its rows point into the outer tree with the path prefixed, the
+    // divisions without a table take the outer tree, and the user is told once
+    // the load is over (the configuration is saved without it).
+    for (bool again = true; again;)
+    {
+        again = false;
+        for (int inner = 0; inner < (int)sampleTrees.size() && !again; ++inner)
+            for (int outer = 0; outer < (int)sampleTrees.size() && !again; ++outer)
+            {
+                if (inner == outer) continue;
+                const juce::File innerFile(sampleTrees[(size_t)inner]), outerFile(sampleTrees[(size_t)outer]);
+                if (innerFile == outerFile || !innerFile.isAChildOf(outerFile)) continue;
+                const juce::String prefix = slashes(innerFile.getRelativePathFrom(outerFile));
+                for (int manual = 0; manual < SamplerEngine::maxManuals; ++manual)
+                {
+                    auto& config = manualConfigs[(size_t)manual];
+                    for (auto& entry : config.stopBuild.entries)
+                        for (auto& [perspective, ref] : entry.folders)
+                        {
+                            if (ref.tree == inner) { ref.tree = outer; ref.relativePath = ref.relativePath.isEmpty() || ref.relativePath == "." ? prefix : prefix + "/" + ref.relativePath; }
+                            if (ref.tree > inner) --ref.tree;
+                        }
+                    auto replacePath = [&](juce::String& path) { if (path.isNotEmpty() && juce::File(path) == innerFile) path = outerFile.getFullPathName(); };
+                    replacePath(config.folderPath);
+                    for (auto& extra : config.extraFolderPaths) replacePath(extra);
+                    for (auto& tree : config.stopBuild.legacyTrees) replacePath(tree);
+                    // The outer tree once in a division's lists.
+                    std::vector<juce::String> extras;
+                    for (const auto& extra : config.extraFolderPaths)
+                        if (juce::File(extra) != juce::File(config.folderPath) && std::find_if(extras.begin(), extras.end(), [&](const juce::String& e) { return juce::File(e) == juce::File(extra); }) == extras.end())
+                            extras.push_back(extra);
+                    config.extraFolderPaths = extras;
+                }
+                nestedTreesDropped.add(innerFile.getFullPathName() + "  (inside " + outerFile.getFullPathName() + ")");
+                CrashHandler::note("Nested folder tree dropped: " + innerFile.getFullPathName() + " lies inside " + outerFile.getFullPathName() + " - the outer tree alone is kept, the rows point into it");
+                sampleTrees.erase(sampleTrees.begin() + inner);
+                again = true;
+            }
+    }
+    if (nestedTreesDropped.isEmpty()) return;
+    const juce::String list = nestedTreesDropped.joinIntoString("\n  - ");
+    nestedTreesDropped.clear();
+    runWhenLoaded([this, list]
+    {
+        juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Nested folder trees",
+            "These folder trees lie inside another loaded tree - the same folders twice. They were dropped from the pool; "
+            "their stops now point into the outer tree, nothing is lost:\n  - " + list
+            + "\n\nLoad a folder tree once: either the whole tree or its parts, never both. The configuration is saved without them.");
+    });
+}
+
 void MainComponent::syncDivisionTreeLists()
 {
+    dropNestedTrees();
     // The per-division lists (portable configurations, stop merging, older code)
     // mirror what the tables use; topFolder is the pedal's first tree or the pool's.
     for (int manual = 0; manual < SamplerEngine::maxManuals; ++manual)
@@ -15409,6 +15466,10 @@ void MainComponent::loadSettings()
     stopListShowTransmissions = parsed.getProperty("stopListShowTransmissions", false);
     resampleOnLoad = parsed.getProperty("resampleOnLoad", true);
     engine.setResampleOnLoad(resampleOnLoad);
+    storageSampleRate = juce::jlimit(22050.0, 96000.0, (double)parsed.getProperty("storageSampleRate", 48000.0));
+    engine.setStorageSampleRate(storageSampleRate);
+    releaseHalfRate = (bool)parsed.getProperty("releaseHalfRate", false);
+    engine.setReleaseHalfRate(releaseHalfRate);
     irProcessing = parsed.getProperty("irProcessing", "automatic").toString();
     if (irProcessing != "full" && irProcessing != "light") irProcessing = "automatic";
     irLightAuto = parsed.getProperty("irLightAuto", false);
@@ -15991,6 +16052,8 @@ void MainComponent::saveSettings()
     obj->setProperty("equalAt440", equalAt440);
     obj->setProperty("sampleStorageFloat", sampleStorageFloat);
     obj->setProperty("resampleOnLoad", resampleOnLoad);
+    obj->setProperty("storageSampleRate", storageSampleRate);
+    obj->setProperty("releaseHalfRate", releaseHalfRate);
     obj->setProperty("irProcessing", irProcessing);
     obj->setProperty("irLightAuto", irLightAuto);
     obj->setProperty("stopListShowTransmissions", stopListShowTransmissions);
@@ -18170,6 +18233,7 @@ struct MainComponent::PolyphonyMeasurement
     double devCalls = 0.0, devTake = 0.0, devOwn = 0.0, devWait = 0.0, devMix = 0.0, devCompact = 0.0, devSeparation = 0.0, devReverb = 0.0, devReverbWait = 0.0,
            devClip = 0.0, devRecord = 0.0, devStats = 0.0, devBusySum = 0.0; int devBusySamples = 0;
     double devMaxTotal = 0.0, devMaxOwn = 0.0, devMaxWait = 0.0;   // the longest route callback of the run and its parts (ns)
+    double devJoinDelayMax = 0.0;                                   // the latest a lane joined a job after it opened (ns, 0.8.143)
     int renderThreads = 1;            // the render threads (the audio thread included) = the cores the program renders on
     // The kernel benchmark of this computer (ns per voice and frame, cache and RAM), taken for the report once the run is over.
     SamplerEngine::KernelBenchmark kernelBench;
@@ -18679,6 +18743,7 @@ void MainComponent::startPolyphonyMeasurement()
             state->devRecord += pool.routeRecordNs * w; state->devStats += pool.routeStatsNs * w;
             state->devBusySum += w * pool.routeTotalNs() * 1.0e-9; ++state->devBusySamples;   // seconds inside the callbacks per second
             if (pool.routeMaxTotalNs > state->devMaxTotal) { state->devMaxTotal = pool.routeMaxTotalNs; state->devMaxOwn = pool.routeMaxOwnNs; state->devMaxWait = pool.routeMaxWaitNs; }
+            state->devJoinDelayMax = juce::jmax(state->devJoinDelayMax, pool.laneJoinDelayMaxNs);
         }
         int worstRouteIndex = -1;
         const float worst = safeThis->engine.takeMaxBlockLoad(&worstRouteIndex);
@@ -18718,7 +18783,8 @@ void MainComponent::startPolyphonyMeasurement()
             + " + mix " + juce::String(juce::roundToInt((pool.routeMixNs + pool.routeSeparationNs + pool.routeClipNs) / 1000.0)) + " + IR hand-over " + juce::String(juce::roundToInt(pool.routeReverbNs / 1000.0))
             + " (waiting " + juce::String(juce::roundToInt(pool.routeReverbWaitNs / 1000.0)) + ") + bookkeeping " + juce::String(juce::roundToInt((pool.routeTakeNs + pool.routeCompactNs + pool.routeRecordNs + pool.routeStatsNs) / 1000.0))
             + " (" + juce::String(pool.routeCallbacks) + " callbacks, " + juce::String(juce::roundToInt(100.0 * (double)pool.routeCallbacks * pool.routeTotalNs() * 1.0e-9)) + " % of the time; longest "
-            + juce::String(juce::roundToInt(pool.routeMaxTotalNs / 1000.0)) + " us with own render " + juce::String(juce::roundToInt(pool.routeMaxOwnNs / 1000.0)) + ", wait " + juce::String(juce::roundToInt(pool.routeMaxWaitNs / 1000.0)) + "), CPU " + juce::String(juce::roundToInt(state->lastProcessShare * 100.0))
+            + juce::String(juce::roundToInt(pool.routeMaxTotalNs / 1000.0)) + " us with own render " + juce::String(juce::roundToInt(pool.routeMaxOwnNs / 1000.0)) + ", wait " + juce::String(juce::roundToInt(pool.routeMaxWaitNs / 1000.0))
+            + "; lanes joined within " + juce::String(juce::roundToInt(pool.laneJoinDelayMaxNs / 1000.0)) + " us), CPU " + juce::String(juce::roundToInt(state->lastProcessShare * 100.0))
             + " % of all logical CPUs, late driver callbacks: ASIO " + juce::String(lateness.asioLate)
             + " (gaps over 1.5 periods " + juce::String(lateness.asioOver15) + ", over 2 " + juce::String(lateness.asioOver2) + ", longest "
             + juce::String(lateness.asioMaxGapMs, 1) + " ms), other devices " + juce::String(lateness.otherLate) + " (longest " + juce::String(lateness.otherMaxGapMs, 1) + " ms)");
@@ -19377,7 +19443,8 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
                    << ", bookkeeping (voices in and out, recording, load statistics) " << us(state->devTake + state->devCompact + state->devRecord + state->devStats)
                    << ". The device threads spent " << juce::roundToInt(busy * 100.0) << " % of the time inside the route callbacks (the copy to the driver, a few us per route, not counted)."
                    << " The longest route callback of the run took " << juce::roundToInt(state->devMaxTotal / 1000.0) << " us - its own rendering " << juce::roundToInt(state->devMaxOwn / 1000.0)
-                   << ", waiting for the lanes " << juce::roundToInt(state->devMaxWait / 1000.0) << ": the sound breaks on such a peak, not on the average.";
+                   << ", waiting for the lanes " << juce::roundToInt(state->devMaxWait / 1000.0) << ": the sound breaks on such a peak, not on the average."
+                   << " The latest a lane joined a job after it opened: " << juce::roundToInt(state->devJoinDelayMax / 1000.0) << " us (a sleeping worker's wake-up; the workers wake ahead of the period since 0.8.143).";
         }
         // The callback time of this run as a fixed part per block and a part per
         // voice (from the lowest clean level and the failing level). No forecast
@@ -20721,22 +20788,34 @@ void MainComponent::showConfigurationEditor()
             }
 #endif
             addCombo("Sample storage in RAM", { "32-bit float (less polyphony, full fidelity)",
-                "16-bit integer (more polyphony, more hiss)" },
-                o.sampleStorageFloat ? 0 : 1, [&o](int index)
+                "16-bit integer (more polyphony, more hiss)",
+                "16-bit integer, releases at half the rate (the releases take a quarter of their RAM)" },
+                o.sampleStorageFloat ? 0 : o.releaseHalfRate ? 2 : 1, [&o](int index)
             {
                 o.sampleStorageFloat = index == 0;
+                o.releaseHalfRate = index == 2;
                 o.engine.setSampleStorageFloat(o.sampleStorageFloat);
+                o.engine.setReleaseHalfRate(o.releaseHalfRate);
                 o.saveSettings();
-            }, "Takes effect the next time a division folder is loaded.");
-            addCombo("Sample rate on loading", { "Resample everything to 48 kHz (the base rate, windowed sinc)",
+            }, "The releases are a large part of a set and a decaying tail: stored at half the rate (24 kHz at the 48 kHz base) "
+               "they lose what lies above 12 kHz and take a quarter of the RAM they would; nothing is requantised, the room noise "
+               "of the tail stays as recorded. Takes effect the next time a division folder is loaded.");
+            addCombo("Sample rate on loading", { "Resample everything to 48 kHz (the base rate, windowed sinc)  [default]",
+                "Resample everything to 36 kHz (content up to 17 kHz; a quarter less RAM)",
+                "Resample everything to 32 kHz (content up to 15 kHz; a third less RAM)",
                 "Keep each file's own rate (faster loading, played by interpolation)" },
-                o.resampleOnLoad ? 0 : 1, [&o](int index)
+                !o.resampleOnLoad ? 3 : o.storageSampleRate < 34000.0 ? 2 : o.storageSampleRate < 42000.0 ? 1 : 0, [&o](int index)
             {
-                o.resampleOnLoad = index == 0;
+                o.resampleOnLoad = index != 3;
+                o.storageSampleRate = index == 1 ? 36000.0 : index == 2 ? 32000.0 : 48000.0;
                 o.engine.setResampleOnLoad(o.resampleOnLoad);
+                o.engine.setStorageSampleRate(o.storageSampleRate);
                 o.saveSettings();
             }, "Files recorded at 96 or 44.1 kHz: resampling them once while loading takes longer but they then play "
-               "exactly like 48 kHz files and need half the RAM (96 kHz). Takes effect the next time a division folder is loaded.");
+               "exactly like 48 kHz files and need half the RAM (96 kHz). 36 or 32 kHz store every file at that rate: what lies "
+               "above 17 or 15 kHz goes (organ pipes carry next to nothing there), the RAM drops by a quarter or a third, the "
+               "kernel interpolates from the coarser grid at the same cost - more stops fit, the polyphony stays. "
+               "Takes effect the next time a division folder is loaded.");
             {
                 const int selected = o.irProcessing == "full" ? 1 : o.irProcessing == "light" ? 2 : 0;
                 addCombo("IR processing", { "Automatic: Light when this computer cannot afford Full  [default]",

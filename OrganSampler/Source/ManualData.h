@@ -832,7 +832,12 @@ static const char* const kManualText_part4 =
     "loaded and another not, is dropped whole, and every stop left out is named\n"
     "once in the message and stays in the pool of the Stop List - nothing stands\n"
     "on the grid half loaded. The polyphony report then says the loading stopped\n"
-    "on purpose; it never claims the system is paging when it is not. A stop\n"
+    "on purpose; it never claims the system is paging when it is not. A folder\n"
+    "tree that lies inside another loaded tree (the whole library and one of its\n"
+    "sub-folders both loaded) is the same folders twice: the inner tree is\n"
+    "dropped from the pool, its stops point into the outer tree, and a message\n"
+    "after the load names it (0.8.143) - load a tree once, whole or in parts,\n"
+    "never both. A stop\n"
     "whose samples the program holds already (a reload of the same organ: the\n"
     "new load adopts them, nothing is decoded) is loaded whatever the memory\n"
     "says. The loading dialog has a *Cancel* button (0.8.139): the loading stops\n"
@@ -850,9 +855,15 @@ static const char* const kManualText_part4 =
     "bookkeeping (voices in and out, recording, load statistics); with the period\n"
     "for scale and the share of the time the device threads spent inside the\n"
     "callbacks, and the longest route callback of the run with its parts - the\n"
-    "sound breaks on such a peak, never on the average. It is what tells, on a\n"
+    "sound breaks on such a peak, never on the average, and how late a lane\n"
+    "joined a job after it opened. It is what tells, on a\n"
     "computer whose render cores are not full when the sound breaks, where the\n"
-    "time goes. The limit the measurement judges by - how much of its period the\n"
+    "time goes. Since 0.8.143 the render workers wake ahead of every period\n"
+    "(the cadence is known) instead of being woken by the job, and the device\n"
+    "thread takes no more voices at the tail of a job when the lanes still at\n"
+    "work finish them sooner: the peaks of 2-2.5 ms that limited a 16-core\n"
+    "computer at 55 000 voices were the device thread rendering alone while the\n"
+    "workers woke up. The limit the measurement judges by - how much of its period the\n"
     "longest driver callback may take - is the *Measurement limit* of the\n"
     "Configuration Editor (0.8.139): 85 % by default, which leaves headroom for\n"
     "what the computer does besides; up to 100 %, where a level counts as broken\n"
@@ -999,6 +1010,8 @@ static const char* const kManualText_part4 =
     "- **Undulation (beats/s at a1)** - for celestes: the stop beats this many\n"
     "  times per second against an in-tune rank at a1 (negative = flat). A rank\n"
     "  recorded sharp or flat throughout is recognised as a celeste and starts with\n"
+    ;
+static const char* const kManualText_part5 =
     "  its recorded undulation; the slider overrides it once moved. How much faster\n"
     "  the top of the compass beats than the bottom is *Celeste beats* in the\n"
     "  Configuration Editor. The line reads \"needs 440 Hz\" when the set's pitch\n"
@@ -1010,8 +1023,6 @@ static const char* const kManualText_part4 =
     "  (a1 = ... Hz), the footage read from the samples (with the sounding footage\n"
     "  of a mixture or mutation in brackets, and the breaks), and the temperament\n"
     "  the recording was found to be in.\n"
-    ;
-static const char* const kManualText_part5 =
     "\n"
     "Under the sliders are two folding rows of per-key sliders (orange headers;\n"
     "each stop remembers its own folding):\n"
@@ -1201,6 +1212,8 @@ static const char* const kManualText_part5 =
     "*Apply and reload* (grey while the table equals what is loaded) saves the table\n"
     "and loads the changed divisions from it; unchanged divisions are left alone.\n"
     "Stops whose folders are already loaded keep their samples and copies; only new\n"
+    ;
+static const char* const kManualText_part6 =
     "folders are read and only missing copies are built. Folders left out of the\n"
     "table are removed from RAM. A stop that has transmissions cannot be removed or renamed\n"
     "without a warning: its transmissions die with it. The table travels with the\n"
@@ -1212,8 +1225,6 @@ static const char* const kManualText_part5 =
     "read per division and in total, then *Compiling the Stop List*, the steps that\n"
     "build the console, each with its percentage. Opening an ASIO driver is a step\n"
     "of its own and can take a few seconds. Only when the dialog closes are the\n"
-    ;
-static const char* const kManualText_part6 =
     "copies of the filled pipes (see \"The transposition methods\") built in the\n"
     "background: a dark track\n"
     "along the bottom of a stop button means the stop still waits, an orange fill\n"
@@ -1403,6 +1414,8 @@ static const char* const kManualText_part6 =
     "- **ASIO**: the professional driver of an audio interface. The lowest\n"
     "  latency, the most polyphony. One ASIO driver is opened once and shared by\n"
     "  every route that uses it; a second interface with its own ASIO driver is\n"
+    ;
+static const char* const kManualText_part7 =
     "  opened beside it. Use ASIO for every route when you can. Its buffer size\n"
     "  is set in the driver's control panel (*Driver Control Panel* in the audio\n"
     "  tab opens it).\n"
@@ -1414,8 +1427,6 @@ static const char* const kManualText_part6 =
     "  one card has. Every Windows sound device appears as a stereo pair in the\n"
     "  channel list of the tab; the ticked channels are the devices the route\n"
     "  opens - exactly those, on every path (loading a configuration, *Set for\n"
-    ;
-static const char* const kManualText_part7 =
     "  all*, a switch of the type, a reopen). A device that cannot be opened (an\n"
     "  unplugged interface, a digital output with no cable) is refused: its\n"
     "  channels are set to none, the list shows them unticked with the reason\n"
@@ -1605,6 +1616,8 @@ static const char* const kManualText_part7 =
     "it depends on the whole configuration of the organ - the number of audio\n"
     "routes (every perspective of every division, every auxiliary route with a\n"
     "device), the IR reverbs on them, the drivers and their buffer sizes, and the\n"
+    ;
+static const char* const kManualText_part8 =
     "samples themselves (their number of perspectives, the length of their releases).\n"
     "The same computer that renders 25 000 voices of a one-perspective dry set\n"
     "may manage a third of that with three perspectives, an auxiliary route and\n"
@@ -1616,8 +1629,6 @@ static const char* const kManualText_part7 =
     "- **The auxiliary route.** With a device it renders every pipe once more and\n"
     "  halves the polyphony. Set it to *none* unless you need it (see \"The\n"
     "  auxiliary route\").\n"
-    ;
-static const char* const kManualText_part8 =
     "- **IR reverb.** The convolution of an impulse response is heavy and its\n"
     "  cost does not depend on how many pipes sound: it is paid on every route\n"
     "  that has an IR, at every audio period. The convolutions run on the render\n"
@@ -1807,6 +1818,8 @@ static const char* const kManualText_part8 =
     "(when the stop loads, when its compass or a transmission changes, when a\n"
     "setting changes). Until a pipe's copy is ready the pipe plays by plain\n"
     "resampling, so the organ is playable from the first moment; the stop buttons\n"
+    ;
+static const char* const kManualText_part9 =
     "show the build going on (a dark track along the bottom, filling orange), and\n"
     "the pipes switch to their copies one by one as they are finished.\n"
     "\n"
@@ -1818,8 +1831,6 @@ static const char* const kManualText_part8 =
     "source, and the release's decay laid out again to the source's duration\n"
     "(*Filled pipes: release length*). Nothing in the copy varies with time, so\n"
     "nothing modulates or hisses. Weakness: the attack still speaks at the\n"
-    ;
-static const char* const kManualText_part9 =
     "resampled speed - slow downwards, fast upwards.\n"
     "\n"
     "**Pitch shift + time stretch (attack and release).** The same copy, and the\n"
@@ -2009,6 +2020,8 @@ static const char* const kManualText_part9 =
     "can run: *scalar* (one frame a step, every CPU), *SSE2* (four frames, every\n"
     "x86-64), *AVX2* (eight frames, when the CPU has it), *NEON* (arm64). Pick one\n"
     "to compare it with another: the change takes effect at once, no reload, and\n"
+    ;
+static const char* const kManualText_part10 =
     "the polyphony measurement run with each tells which gives more pipes on this\n"
     "computer at this buffer - the report names the kernel it ran with. The\n"
     "setting belongs to the computer (a portable configuration carries none); a\n"
@@ -2020,8 +2033,6 @@ static const char* const kManualText_part9 =
     "(\"Render kernel: ...\").\n"
     "\n"
     "### Currently active\n"
-    ;
-static const char* const kManualText_part10 =
     "\n"
     "The threads really rendering now and the interpolation kernel in use.\n"
     "Information only.\n"
@@ -2047,7 +2058,23 @@ static const char* const kManualText_part10 =
     "\n"
     "*32-bit float* keeps the samples exactly as read (full fidelity); *16-bit\n"
     "integer* halves the RAM and allows more polyphony at the cost of a little\n"
-    "hiss. Takes effect the next time a division's folders are loaded.\n"
+    "hiss. *16-bit integer, releases at half the rate* (0.8.143) stores the\n"
+    "release samples - a large part of a set and a decaying tail - at half the\n"
+    "storage rate: they lose what lies above 12 kHz (at the 48 kHz base) and take\n"
+    "a quarter of the RAM they would; nothing is requantised, the room noise of\n"
+    "the tail stays as recorded. Takes effect the next time a division's folders\n"
+    "are loaded.\n"
+    "\n"
+    "### Sample rate on loading\n"
+    "\n"
+    "*48 kHz* resamples every file to the base rate (as ever). *36 kHz* and\n"
+    "*32 kHz* (0.8.143) store every file at that rate: what lies above 17 or\n"
+    "15 kHz goes - organ pipes carry next to nothing there - and the RAM drops by\n"
+    "a quarter or a third; the kernel interpolates from the coarser grid at the\n"
+    "same cost, so more stops fit and the polyphony stays. *Keep each file's own\n"
+    "rate* loads faster and plays by interpolation. A filter alone would save\n"
+    "nothing: a 16-bit sample is 16 bits whatever it holds; only the coarser grid\n"
+    "saves.\n"
     "\n"
     "### Sample rate on loading\n"
     "\n"
@@ -2195,6 +2222,8 @@ static const char* const kManualText_part10 =
     "   run narrows down below it. Below 1 000 voices the result is taken as\n"
     "   measured, not rounded. When even all 61 keys struck 16 times a second produce no more\n"
     "   voices and the audio stays clean, the organ itself is the limit, not the\n"
+    ;
+static const char* const kManualText_part11 =
     "   computer. The *DSP* field may read lower than 85 % at the moment the run\n"
     "   ends: it shows a peak that fades within a fraction of a second, while the\n"
     "   judge takes the single longest callback and every late one. Above the\n"
@@ -2222,8 +2251,6 @@ static const char* const kManualText_part10 =
     "     job per route and block);\n"
     "   - the kernel of this processor (AVX2, SSE2, NEON or scalar): nanoseconds\n"
     "     per voice and frame with the sample in the cache and streaming from RAM,\n"
-    ;
-static const char* const kManualText_part11 =
     "     measured right then (about a second), and the ceiling that gives at this\n"
     "     buffer with these render cores - the measured limit as a share of it;\n"
     "   - what one voice cost a lane per block during the run, in its parts:\n"
@@ -2397,6 +2424,8 @@ static const char* const kManualText_part11 =
     "\n"
     "### Missing pipes: neighbours borrowed as a group\n"
     "\n"
+    ;
+static const char* const kManualText_part12 =
     "Pipes a rank does not have (beyond its compass, in gaps, the extra octave of an\n"
     "extension) are filled from the nearest real pipes: this many adjacent pipes are\n"
     "taken as a group and transposed by the group's width, and the group repeats for\n"
@@ -2424,8 +2453,6 @@ static const char* const kManualText_part11 =
     "as a share of its source's duration (25 to 200 %, default 100). Resampling\n"
     "alone would make a release shifted two octaves down four times as long and one\n"
     "shifted two octaves up a quarter, but the room does not grow or shrink with the\n"
-    ;
-static const char* const kManualText_part12 =
     "pipe, so the decay is laid out again to this length in both directions (100 % =\n"
     "exactly the source's duration). Longer than 100 % gives a bigger room to the\n"
     "extension than to the stop; shorter dries it. Changing it rebuilds the release\n"
@@ -2599,6 +2626,8 @@ static const char* const kManualText_part12 =
     "Shows or hides the Couplers button (see \"Couplers\").\n"
     "\n"
     "### Top bar: Temperaments\n"
+    ;
+static const char* const kManualText_part13 =
     "\n"
     "Shows or hides the Temperaments button (see \"Temperaments\").\n"
     "\n"
@@ -2626,8 +2655,6 @@ static const char* const kManualText_part12 =
     "\n"
     "### Top bar: Load Voicing\n"
     "\n"
-    ;
-static const char* const kManualText_part13 =
     "Shows or hides the Load Voicing button (the voicing from a file). Hidden by\n"
     "default.\n"
     "\n"
@@ -2801,6 +2828,8 @@ static const char* const kManualText_part13 =
     "### Swell: shutter inertia (settling time)\n"
     "\n"
     "How slowly the shutters follow the pedal (50 to 2000 ms, default 300). Larger\n"
+    ;
+static const char* const kManualText_part14 =
     "= heavier, smoother movement; a sudden pedal stroke then takes this long to\n"
     "arrive.\n"
     "\n"
@@ -2828,8 +2857,6 @@ static const char* const kManualText_part13 =
     "\n"
     "### Perspective volume\n"
     "\n"
-    ;
-static const char* const kManualText_part14 =
     "The level of one perspective of this division (-31 to +6 dB, default 0); -31\n"
     "dB switches the perspective off completely and saves its voices.\n"
     "\n"

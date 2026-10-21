@@ -308,6 +308,20 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   Windows longest callback 2.1 ms of which OWN render 1.9 ms (#40), Core 2 Duo longest 3-5 ms own render 3 ms
   (#41/#42: the poster is half the lanes), Ryzen Linux 0.4 ms (#43, fine). Verbal recommendation given: cap the
   poster's chunk share at the tail of a job + smaller tail chunks for slow lanes; nothing large left.
+  0.8.143 (the user: "tohle zapracuj"): RenderPool wake-ahead - a sleeping worker's `sleepCv.wait_for` is cut to
+  `lastJobTicks + periodTicks - 1.5 ms` (min 100 us, max 20 ms) and on a timeout it sets lastWorkTicks so it spins the
+  hot window into the period (gFewCores outside Windows: no spin, it just polls); `takeChunkAsPoster` = the poster takes
+  nothing more when remaining <= 2 x (lanesJoined - lanesLeft) and some lane still works (never when none works: a
+  stall); `Job::openedTicks` + `statJoinDelayMax` -> `RenderPoolStats::laneJoinDelayMaxNs` -> report "The latest a
+  lane joined a job after it opened: N us" + log "lanes joined within N us". Storage: `storageSampleRate` (engine +
+  MainComponent, settings key, NOT machine-specific; 48000/36000/32000 in the "Sample rate on loading" combo, index 3
+  = keep the files' rate) replaces kBaseSampleRate in `decodeSampleFile(..., baseRate)`; `releaseHalfRate` (third item
+  of "Sample storage in RAM"): releases decoded at baseRate/2 (`loadSamplesIntoStop` isRelease). The merge estimate
+  uses storageRate. `dropNestedTrees()` (called first in `syncDivisionTreeLists`): an inner tree's refs -> the outer
+  tree with the path prefixed, indices shifted, division paths replaced and deduped, note + an AlertWindow via
+  runWhenLoaded ("Nested folder trees"). Caen like-for-like (#46 Ryzen 54 400 / #47 Ultra 7 54 800): same peak on
+  both = the poster rendering alone (2.3-2.5 ms) while the workers wake - this build's wake-ahead + poster tail is
+  the fix to be measured; the review is posted on #46/#47.
 - A route without a device ("none") gets NO voices (0.8.126, `Route::hasDevice` set by `setPerspectiveDeviceKey`,
   checked in `publishVoice`: the voice is finished at once). Before, every pipe was published to its perspective's
   route whatever the device and sat there unrendered until `cleanStaleRoutes` flushed it after ~1 s, counted as
@@ -432,6 +446,14 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   afterwards. No legend above the table. Every README looks the same. Stralsund: 53 + 18 = 71.
 
 ## Pending for the next session (delete when done)
+- Measurements 0.8.141 (#44/#45, Ultra 7 155H, Caen, 7 routes, WASAPI 480 = 10 ms): #44 (16 threads, IR on 6 routes,
+  78 buttons) 42 200 = the stimulus cap (61 keys x 16 strikes, callback 53 %, "first failing level 0") - the log says
+  so even though the user disputes it; #45 (6 P cores, 32 buttons, no IR) broke at 39 239 with callback 95 %.
+  Ryzen 5950X (#35 Doesburg, 15 routes, WASAPI 480) 53 000 at 85 %; (#40 ASIO 256) 32 200. Per voice and block in
+  the run: notebook 1382 ns (kernel 1043) vs Ryzen 1922 ns (kernel 1484) at 480 frames - at 40-50 k voices both
+  stream from RAM (bench 1.57 vs 1.54 ns/frame) and the notebook's DDR5 + 2 MB L2 per P core keep up with Zen 3's
+  DDR4; the Ryzen also carried 15 routes (2x the fixed cost per period). A like-for-like run (same organ, routes,
+  buffer) is still missing.
 - Linux window icon at start-up "rozsypana" (scrambled) since 0.8.136 (`Main.cpp` sends `icon48_png` to `setIcon`).
   Before: upside down for a moment while loading but crisp. Find why the 48 px image is scrambled through JUCE's X11
   `_NET_WM_ICON` path (format/stride?) - NEVER a rescaled icon.

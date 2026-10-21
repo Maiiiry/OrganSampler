@@ -54,8 +54,9 @@ void MainComponent::warnIfMemoryShortForTrees(std::vector<juce::String> trees, c
     const juce::int64 available = availablePhysicalMemoryBytes();
     const juce::int64 installed = (juce::int64)juce::SystemStats::getMemorySizeInMegabytes() * 1024 * 1024;
     const bool asFloat = sampleStorageFloat, resample = resampleOnLoad;
+    const double storageRate = storageSampleRate;
     juce::Component::SafePointer<MainComponent> safeThis(this);
-    juce::Thread::launch([trees, configurationName, available, installed, asFloat, resample, safeThis]
+    juce::Thread::launch([trees, configurationName, available, installed, asFloat, resample, storageRate, safeThis]
     {
         juce::int64 bytes = 0;
         std::vector<juce::String> done;
@@ -90,7 +91,7 @@ void MainComponent::warnIfMemoryShortForTrees(std::vector<juce::String> trees, c
         }
         const double bits = headers > 0 ? bitsSum / headers : 24.0, rate = headers > 0 ? rateSum / headers : 48000.0;
         double factor = asFloat ? 32.0 / bits : 16.0 / bits;
-        if (resample && rate > 1000.0) factor *= 48000.0 / rate;
+        if (resample && rate > 1000.0) factor *= storageRate / rate;   // the storage rate (48, 36 or 32 kHz) against the files' rate
         factor *= 1.15;   // the copies of filled pipes, loops, the program itself
         const juce::int64 needed = (juce::int64)((double)bytes * factor);
         juce::MessageManager::callAsync([safeThis, bytes, needed, available, installed, configurationName]
