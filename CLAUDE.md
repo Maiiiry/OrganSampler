@@ -399,7 +399,13 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   (absent -> "-"; >= measured -> the measured figure: the organ was saved with the saving options in force).
   `measuredRamStorage` = the whole `storageSignature()` since 0.8.152. Never type or estimate it by hand. Doesburg
   0.8.152 test: /tmp/ram_test.sh (auto-load + ORGAN_SAVE_PORTABLE into /tmp/ramtest, the device box closed by the KWin
-  script). `juce::jmax<juce::int64>(0, x)` does not compile with
+  script) - Doesburg (already 16-bit/32 kHz/halved/packed): samples 6.76 of 7.23 GB, ratio 1.03 -> min = measured;
+  Rural Organ loaded as float 48 kHz: 1.76 GB measured, 0.90 GB at the least (ratio 0.232, 79 of 86 releases halvable).
+  A portable save (the hook too) RETARGETS settings' `configurationFile` to the saved file: a test script must back up
+  and restore settings.json, else the next start says "Started without a configuration" when the file is gone.
+  The copies of filled pipes are counted because they are in RAM and in the measured figure (a few per cent); the
+  disk cache of filled pipes plays no role anywhere in the RAM figures - never say a fast load is "thanks to the cache"
+  (Doesburg loaded in 12 s from the OS page cache, 53 GB of WAV still cached from the previous load). `juce::jmax<juce::int64>(0, x)` does not compile with
   juce_dsp (the SIMDRegister overload takes the explicit argument): use std::max or a ternary.
   0.8.149 (Linux): `AfterReportWindow` (MainComponent.cpp, modeless DialogWindow, always on top, `gAfterReportBox`)
   replaces the modal AlertWindow after a report (#58 keyboard, #67 invisible blocker behind the main window on KDE,
