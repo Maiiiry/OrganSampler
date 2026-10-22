@@ -155,6 +155,12 @@ struct Stop
     bool container = false;     // a stop folder's master without samples of its own (only its children sound)
     juce::File folder;
     juce::File tree;   // the folder tree this stop was loaded from
+    // The storage the samples were decoded with (SamplerEngine::storageSignature
+    // at the time: float/16-bit, rate, halved releases, packing; 0.8.149). A reload
+    // adopts loaded samples only with the same signature - a reload with other
+    // choices in the Load box kept the packed, halved samples of the load before
+    // (#62: "16-bit, 32 kHz" runs measured the packed organ).
+    juce::String storageSignature;
 
     // Attack/sustain samples per MIDI note (round robin between variants).
     std::array<std::vector<std::unique_ptr<Sample>>, 128> samplesByNote;
@@ -666,6 +672,8 @@ public:
     // player unpacks every span it plays, several times the per-voice cost.
     void setCompressSamples(bool on) noexcept { compressSamples = on; }
     bool getCompressSamples() const noexcept { return compressSamples; }
+    // The storage choices in force, as one string ("16-bit, 32 kHz, releases at half the rate, packed").
+    juce::String storageSignature() const;
     // Packing statistics since the last call: raw bytes in, packed bytes out,
     // samples packed, samples left raw because the check failed.
     struct PackStats { int64_t rawBytes = 0, packedBytes = 0; int samples = 0, failed = 0; };

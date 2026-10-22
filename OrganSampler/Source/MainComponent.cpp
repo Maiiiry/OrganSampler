@@ -18767,7 +18767,8 @@ void MainComponent::startPolyphonyMeasurement()
         state->summary = juce::String(gridStopItems().size()) + " stops (buttons of the grid), " + juce::String(state->routeCount) + " audio routes - " + devices
             + "; IR reverb on " + juce::String(irRoutes) + " route(s)"
             + (irRoutes > 0 ? " = " + juce::String(irRoutes - irShared) + " convolution(s)"
-                + (irShared > 0 ? " (" + juce::String(irShared) + " share the convolution of a route with the same device, channels and IR settings)" : juce::String()) : juce::String());
+                + (irShared > 0 ? " (" + juce::String(irShared) + " share the convolution of a route with the same device, channels and IR settings)" : juce::String()) : juce::String())
+            + "; samples " + engine.storageSignature();   // the storage in force (0.8.149): a packed or halved organ measures differently
     }
     CrashHandler::note("Polyphony measurement started: " + state->summary + ", previous limit " + juce::String(state->previousLimit));
     // Very quiet output (-42 dB, reached within 50 ms - before the first strike); the engine renders as if it were heard.

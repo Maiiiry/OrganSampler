@@ -10826,14 +10826,17 @@ void SamplerEngine::loadManualFolder(const juce::File& topFolder, int manualInde
     const std::vector<juce::String> oneShot = oneShotPatterns;
 
     // Does the committed division hold this folder with its samples in RAM?
-    auto hasLoadedRankForFolder = [this](int manual, const juce::File& folder)
+    // Samples the division holds for that folder, decoded with the storage
+    // choices in force now (0.8.149: with other choices they are decoded anew).
+    const juce::String signatureNow = storageSignature();
+    auto hasLoadedRankForFolder = [this, &signatureNow](int manual, const juce::File& folder)
     {
         const juce::ScopedLock sl(controlLock);
         for (auto* stop : stops)
         {
             if (stop->primaryManual != manual) continue;
-            if (!stop->container && stop->folder == folder && !stop->samplesUnloaded) return true;
-            for (const auto& rank : stop->ranks) if (rank->folder == folder && !rank->samplesUnloaded) return true;
+            if (!stop->container && stop->folder == folder && !stop->samplesUnloaded && stop->storageSignature == signatureNow) return true;
+            for (const auto& rank : stop->ranks) if (rank->folder == folder && !rank->samplesUnloaded && rank->storageSignature == signatureNow) return true;
         }
         return false;
     };
@@ -11153,14 +11156,16 @@ void SamplerEngine::commitPendingDivisions()
             {
                 if (!rank->adoptSamples) return;
                 Stop* source = nullptr;
+                const juce::String wanted = storageSignature();
                 for (auto* old : retiring)
                 {
-                    if (!old->container && old->folder == rank->folder && !old->samplesUnloaded) source = old;
-                    for (auto& r : old->ranks) if (source == nullptr && r->folder == rank->folder && !r->samplesUnloaded) source = r.get();
+                    if (!old->container && old->folder == rank->folder && !old->samplesUnloaded && old->storageSignature == wanted) source = old;
+                    for (auto& r : old->ranks) if (source == nullptr && r->folder == rank->folder && !r->samplesUnloaded && r->storageSignature == wanted) source = r.get();
                     if (source != nullptr) break;
                 }
                 rank->adoptSamples = false;
-                if (source == nullptr) { loadRankSamples(rank); return; }   // gone meanwhile: decoded after all
+                if (source == nullptr) { loadRankSamples(rank); return; }   // gone meanwhile, or decoded with other choices: decoded after all
+                rank->storageSignature = source->storageSignature;
                 for (int note = 0; note < 128; ++note) rank->samplesByNote[(size_t)note] = std::move(source->samplesByNote[(size_t)note]);
                 rank->velocityLayers = std::move(source->velocityLayers);
                 rank->releaseLayers = std::move(source->releaseLayers);
@@ -11392,8 +11397,16 @@ namespace
     }
 }
 
+juce::String SamplerEngine::storageSignature() const
+{
+    return juce::String(storeSamplesAsFloat ? "32-bit float" : "16-bit") + ", "
+        + (resampleOnLoad ? juce::String(juce::roundToInt(storageSampleRate / 1000.0)) + " kHz" : juce::String("the files' own rate"))
+        + (releaseHalfRate ? ", releases at half the rate" : "") + (compressSamples && !storeSamplesAsFloat ? ", packed" : "");
+}
+
 void SamplerEngine::loadRankSamples(Stop* rank)
 {
+    rank->storageSignature = storageSignature();
     loadSamplesIntoStop(rank, rank->folder, false, 99999);
     for (const auto& relEntry : juce::RangedDirectoryIterator(rank->folder, false, "*", juce::File::findDirectories))
     {

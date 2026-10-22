@@ -34,6 +34,11 @@ title shows the version. Released executables are named `OrganSampler_<version>.
   Mac every release through the sinc cost half the polyphony (#64).
 - The "Audio levels" log line names the master volume (and the measurement's
   level when it is in force): two sessions compare (#63).
+- A reload of the organ with other choices in the Load box (storage, rate,
+  halved releases, packing) decodes the samples anew. Before, the reload
+  adopted the samples the division held - packed and halved from the load
+  before - and the measurement of "16-bit, 32 kHz" measured the packed organ
+  (#62). The measurement's summary names the storage in force.
 
 ## [0.8.148] - 2026-10-22
 

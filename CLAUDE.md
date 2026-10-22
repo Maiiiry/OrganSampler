@@ -390,6 +390,11 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   boosts each quiet stream) - told the user to disable them on the endpoint; JUCE's shared WASAPI client does not set
   AUDCLNT_STREAMOPTIONS_RAW (would need a JUCE patch). Measurement table of every issue log: /tmp/measure_all.py
   (dedupes by start time + CPU, version by the release times, options from the "Load Configuration" line).
+  `Stop::storageSignature` (= `SamplerEngine::storageSignature()` at decode, copied on adoption): a reload adopts a
+  division's loaded samples ONLY with the same storage choices (`hasLoadedRankForFolder` and the adopt lambda check
+  it) - before, a reload after the Load box kept the packed/halved samples of the previous load (#62: the "16-bit,
+  32 kHz" runs at 7 000-11 000 were the packed organ; "packedTrees 0" after a reload = adoption). The measurement
+  summary names "samples <signature>".
   0.8.148: LESSONS. (1) "Audio callback anomaly: <old device> manual N perspective default: no callbacks" every minute
   = a route WITHOUT a device (closed by closeHiddenRoutes, "remembered as none") whose RouteCallback kept its old
   deviceLabel/expectedBlock - fixed (audioDeviceStopped zeroes expectedBlock/Rate); never read such lines as a dead
