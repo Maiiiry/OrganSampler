@@ -389,6 +389,28 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   available" box of the user's Doesburg configuration (its routes are Windows Audio) for a screenshot on Wayland, where
   nothing else can click (no xdotool). Website 0.8.151: `site/assets/main.png` = the console with Doesburg Surround
   (the user: "jen na první okno", the Stop List / Divisions / Editor pictures stay; README.md keeps console-stralsund.png).
+  0.8.154: merge grid - `baseShown` (MainComponentMerge.cpp, the base's non-child table rows per division) decides the
+  "last row"; the added organ's first row lands at lastRow + 1 (Beziers stood 11 empty rows under Caen: stale cells
+  of stops gone/pooled/indented counted). The move between divisions keeps the arrange mode (`dropStopReferences()`
+  instead of exitArrangeMode in the move-house branch); "Grid drop: ..." log line in `dropItem`. `freezeGrid()/thawGrid()`
+  (MainComponent): `applyPortableConfiguration` takes a snapshot of `stopsViewport` before `engine.unloadManual`, shows
+  it dimmed (0.55) over the workspace, the loader's completion thaws it - the grid stayed blank for the minutes a
+  merge took. The user drags in MY test instance when one is open (he found the minimized window): every test run
+  shows up in his hands - say so, or close it first. Disk facts (this Ryzen): the organs live on D: = Samsung 870 QVO
+  8 TB SATA; Caen (45 GB) 24 s from the page cache, 119 s cold (~400 MB/s = the disk) - a merge of a second 45 GB organ
+  evicts the first; "loading was super fast before" = warm cache. Never call a cold load a regression without the
+  warm/cold pair. Filled pipes: the copy build (SincTable, makeAntiAliasCopy, applyStaticEq, `formantFollowForShift`: the
+  stop's setting downward up to an octave, +30 points for any upward shift, beyond an octave +15 points per further
+  octave for the resampling methods / +25 for the phase vocoder, keepLoudness, copyParametersKey v5) is unchanged since 0.8.49; the cache record
+  carries the source frame counts, so copies of a 32 kHz run are not taken for a 48 kHz load.
+  0.8.153 CI LESSON: the two Windows pushes of 22 Oct evening (main + tag v0.8.153) updated the refs but GitHub created
+  NO workflow run and no check suite for them (Actions enabled, status page green, the Linux pushes of the afternoon
+  ran) - `POST /repos/.../actions/workflows/build.yml/dispatches {"ref":"v0.8.153"}` (build.yml and pages.yml have
+  `workflow_dispatch`) started the build; a dispatched run on a tag ref still publishes the release (github.ref =
+  refs/tags/...). When `actions/runs?head_sha=<sha>` says 0 and `commits/<sha>/check-suites` says 0 five minutes after
+  a push, dispatch instead of re-pushing the tag. Packing measured (Doesburg demo, 8 GB raw, warm cache): 0.8.145 packer
+  15 ns per frame and channel = 63 s of thread time (~4 s wall on 16 threads), 0.8.153 one-pass packer 6.7 ns; the
+  "Packed samples" line prints the thread time. A cold load of the same demo took 38 s (disk), warm 7-8 s.
   0.8.153 REGRESSIONS (the user: "soupis všech poškození a regresí"): (1) 0.8.144's rebuildUI rule "a stop folder with
   no children is left off the grid" hid every NEW stop folder (empty by nature) - now only after a load stopped for
   memory (`engine.lastLoadWasMemoryLimited()`). (2) The 0.8.146 "Rank count [II]" switch was NEVER shown: its

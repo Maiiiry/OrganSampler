@@ -129,6 +129,12 @@ private:
 
     juce::Component stopsContent;
     NoWheelViewport stopsViewport;
+    // A picture of the grid as it was, shown dimmed over the workspace while a
+    // load (a merge, a reload) replaces the instrument (0.8.154: the grid went
+    // blank for the minutes a second organ took to load).
+    std::unique_ptr<juce::ImageComponent> frozenGrid;
+    void freezeGrid();
+    void thawGrid();
     // The empty instrument (no folder tree, no stop): a hint in the stop
     // workspace with a button that opens the user manual; gone once anything loads.
     // The hint sits on a panel of the window's own background colour, so that

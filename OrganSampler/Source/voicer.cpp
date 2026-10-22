@@ -3319,6 +3319,9 @@ void Voicer::dropItem(int manual, const juce::String& key, juce::Component* row,
             if (cell.manual == m && cell.key.isNotEmpty()) stopCells[m][cell.key] = { cell.column, cell.row };
     const std::pair<int, int> cell{ target->column, target->row };
     const bool cellFree = target->key.isEmpty();
+    CrashHandler::note("Grid drop: " + key + " from division " + juce::String(manual) + " at screen " + screenPosition.toString()
+        + " -> division " + juce::String(target->manual) + " cell " + juce::String(cell.first) + "," + juce::String(cell.second)
+        + (target == &virtualCell ? " (below the last row)" : cellFree ? " (free)" : " (occupied by " + target->key + ")") + (duplicate ? ", a copy" : ""));
 
     // A stop folder's child dropped on a cell leaves the folder and takes the cell.
     if (!duplicate && sourceIndex >= 0 && source->transmissions[(size_t)sourceIndex].groupMaster.isNotEmpty())
@@ -3411,7 +3414,10 @@ void Voicer::dropItem(int manual, const juce::String& key, juce::Component* row,
     if (cellFree) stopCells[target->manual][key] = cell;
     retargetSavedStop(source->name, manual, target->manual);
     for (auto* child : groupChildren(source)) retargetSavedStop(child->name, manual, target->manual);
-    exitArrangeMode();
+    // The arrange mode goes on (0.8.153): the owner moves the stop in place and
+    // rebuilds the grid - the exit dated from the days the move reloaded both
+    // divisions, and the user arranging several stops lost the mode at each.
+    dropStopReferences();
     if (moveStopRequest)
     {
         Stop* moving = source;

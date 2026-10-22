@@ -12,6 +12,24 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.154] - 2026-10-22
+
+### Fixed
+- Merging a second organ put its stops many empty rows under the loaded
+  ones (Beziers eleven rows under Caen, out of sight without scrolling): the
+  "last row" counted every cell ever stored for the division, stale ones of
+  stops long gone, pooled or indented under a folder included. It now counts
+  the rows the grid shows, and the added organ's first row follows right
+  under it.
+- Dragging a stop to another division ended the arrange mode (a leftover
+  from the days the move reloaded both divisions; the move is in place). It
+  goes on, like every other arrangement.
+- While a merge or a reload builds the new instrument, the grid no longer
+  goes blank: a dimmed picture of the grid as it stood stays over the
+  workspace until the new one is built.
+- The log names every drop on the grid ("Grid drop: ... -> division N cell
+  c,r (free | occupied by ... | below the last row)").
+
 ## [0.8.153] - 2026-10-22
 
 ### Fixed

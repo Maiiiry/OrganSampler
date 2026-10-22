@@ -316,6 +316,7 @@ void MainComponent::mergeConfiguration(juce::var added, const juce::File& addedF
     const bool addedMidi = (bool)added.getProperty("containsMidiMappings", false);
     int stopsAdded = 0, stopsShared = 0, stopsRenamed = 0, perspectivesAdded = 0, perspectivesKept = 0;
     std::set<juce::String> keptStopKeys;   // "<manual>|<comparable name>" of the added stops that made it (for the voicing and the grid)
+    std::map<int, std::set<juce::String>> baseShown;   // per division: comparable names of the base's own grid rows (not the children of stop folders)
     std::map<juce::String, juce::String> renamed;   // "<manual>|<old name>" -> new name
     juce::StringArray addedPerspectiveNames;
     for (int manual = 0; manual < juce::jmin(SamplerEngine::maxManuals, addedArray->size(), baseArray->size()); ++manual)
@@ -351,6 +352,8 @@ void MainComponent::mergeConfiguration(juce::var added, const juce::File& addedF
         ManualConfig::StopBuild baseBuild = stopBuildFromVar(baseItem->getProperty("stopBuild"));
         if (!baseBuild.active && !baseEmpty) { baseBuild = deriveStopBuildFromEngine(manual); baseBuild.active = true; }
         if (baseEmpty) { baseBuild = {}; baseBuild.active = true; }
+        for (const auto& existing : baseBuild.entries)
+            if (!existing.child) baseShown[manual].insert(stopBuildKey(existing.name));
         // The added stop table: its own (tree indexes remapped), or the automatic rules on its trees.
         ManualConfig::StopBuild addedBuild = stopBuildFromVar(addedItem.getProperty("stopBuild", juce::var()));
         std::vector<ManualConfig::StopBuild::Entry> addedEntries;   // with tree = merged pool index
@@ -556,12 +559,29 @@ void MainComponent::mergeConfiguration(juce::var added, const juce::File& addedF
             {
                 const int manual = division.name.toString().getIntValue();
                 juce::DynamicObject::Ptr cells = grid->getProperty(division.name).getDynamicObject() != nullptr ? grid->getProperty(division.name).getDynamicObject() : new juce::DynamicObject();
+                // The last row the base really shows here: the cells of its own table rows
+                // (0.8.154: every stored cell counted before - stale ones of stops long gone,
+                // pooled or indented under a folder - and Beziers stood eleven empty rows
+                // under Caen, out of sight). The added rows start right under it, their own
+                // first row shifted to it.
                 int lastRow = -1;
+                const auto& shown = baseShown[manual];
                 for (const auto& cell : cells->getProperties())
                 {
                     const auto parts = juce::StringArray::fromTokens(cell.value.toString(), ",", "");
-                    if (parts.size() == 2) lastRow = juce::jmax(lastRow, parts[1].getIntValue());
+                    if (parts.size() == 2 && shown.count(stopBuildKey(cell.name.toString())) != 0) lastRow = juce::jmax(lastRow, parts[1].getIntValue());
                 }
+                int firstAdded = std::numeric_limits<int>::max();
+                if (auto* addedCells = division.value.getDynamicObject())
+                    for (const auto& cell : addedCells->getProperties())
+                    {
+                        const auto key = cell.name.toString();
+                        if (key.startsWith("tr:") || keptStopKeys.count(juce::String(manual) + "|" + stopBuildKey(key)) == 0) continue;
+                        const auto parts = juce::StringArray::fromTokens(cell.value.toString(), ",", "");
+                        if (parts.size() == 2) firstAdded = juce::jmin(firstAdded, parts[1].getIntValue());
+                    }
+                if (firstAdded == std::numeric_limits<int>::max()) firstAdded = 0;
+                const int shift = lastRow + 1 - firstAdded;
                 if (auto* addedCells = division.value.getDynamicObject())
                     for (const auto& cell : addedCells->getProperties())
                     {
@@ -572,7 +592,7 @@ void MainComponent::mergeConfiguration(juce::var added, const juce::File& addedF
                         if (newName != renamed.end()) key = newName->second;
                         const auto parts = juce::StringArray::fromTokens(cell.value.toString(), ",", "");
                         if (parts.size() != 2) continue;
-                        cells->setProperty(juce::Identifier(key), parts[0] + "," + juce::String(parts[1].getIntValue() + lastRow + 1));
+                        cells->setProperty(juce::Identifier(key), parts[0] + "," + juce::String(parts[1].getIntValue() + shift));
                     }
                 grid->setProperty(division.name, juce::var(cells.get()));
             }

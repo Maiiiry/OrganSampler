@@ -2189,6 +2189,7 @@ void MainComponent::resized()
 
     bounds.removeFromTop(8);
     stopsViewport.setBounds(bounds.reduced(4));
+    if (frozenGrid != nullptr) frozenGrid->setBounds(stopsViewport.getBounds());
     {
         // The empty-instrument hint in the middle of the stop workspace, on its
         // own panel (the window's background) so that no column divider crosses it.
@@ -11327,6 +11328,22 @@ void MainComponent::resolveAndApplyPortableConfiguration(juce::var configuration
     applyPortableConfiguration(configuration, configurationFile, selectedLibraryRoot);
 }
 
+void MainComponent::freezeGrid()
+{
+    if (frozenGrid == nullptr) return;
+    frozenGrid->setBounds(stopsViewport.getBounds());
+    frozenGrid->setVisible(true);
+    frozenGrid->toFront(false);
+    CrashHandler::note("Grid picture kept over the workspace while the instrument loads");
+}
+
+void MainComponent::thawGrid()
+{
+    if (frozenGrid == nullptr) return;
+    frozenGrid.reset();
+    CrashHandler::note("Grid picture removed: the new grid stands");
+}
+
 void MainComponent::applyPortableConfiguration(juce::var configuration,
     const juce::File& configurationFile, const juce::File& libraryRoot)
 {
@@ -11496,6 +11513,19 @@ void MainComponent::applyPortableConfiguration(juce::var configuration,
     audioMuted.store(true);
     panic();
     if (keyboardsWindow != nullptr) keyboardsWindow.reset();
+    // The grid as it stands, kept as a picture over the workspace until the new
+    // instrument is built (0.8.154); taken before the divisions are unloaded.
+    if (frozenGrid == nullptr && !engine.getStops().isEmpty() && stopsViewport.isShowing() && stopsViewport.getWidth() > 0)
+    {
+        const juce::Image picture = stopsViewport.createComponentSnapshot(stopsViewport.getLocalBounds(), false, 1.0f);
+        frozenGrid = std::make_unique<juce::ImageComponent>();
+        frozenGrid->setImage(picture, juce::RectanglePlacement(juce::RectanglePlacement::xLeft | juce::RectanglePlacement::yTop | juce::RectanglePlacement::doNotResize));
+        frozenGrid->setInterceptsMouseClicks(false, false);
+        frozenGrid->setAlpha(0.55f);
+        frozenGrid->setBounds(stopsViewport.getBounds());
+        frozenGrid->setVisible(false);
+        addChildComponent(*frozenGrid);
+    }
     for (int manual = 0; manual < SamplerEngine::maxManuals; ++manual)
     {
         removePerspectiveAudioRoutesForManual(manual);
@@ -11511,6 +11541,7 @@ void MainComponent::applyPortableConfiguration(juce::var configuration,
         voicer->setActiveManualCount(manualCount + 1);
         voicer->rebuildUI(stopsContent, stopsViewport);
     }
+    freezeGrid();   // after the rebuild: the picture was taken before it, the empty grid stays under it
     lastSettingsDirectory = configurationFile.getParentDirectory();
     saveLastDirectory();
     setCurrentConfigurationName(configurationFile.getFileNameWithoutExtension());
@@ -11791,7 +11822,7 @@ void MainComponent::beginStartupFolderLoading()
         {
             engine.noteOffAll();
             audioMuted.store(false);
-            juce::MessageManager::callAsync([this] { activeFolderLoader.reset(); });
+            juce::MessageManager::callAsync([this] { activeFolderLoader.reset(); thawGrid(); });
         }, this);
     // "Compiling the Stop List" in the loading dialog, step by step with its percentage.
     loader->phases =
