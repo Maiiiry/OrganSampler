@@ -1,7 +1,7 @@
 "use strict";
 const config = window.organSamplerSite || {};
 const views = {
-  main: { file: "main.png", alt: "The main window: top bar, combination pistons, the global sound sliders with the polyphony display and the stop grids of four divisions.", caption: "The console: one column per division, the stops as buttons, couplers and tremulants in the headers, pistons and the crescendo above." },
+  main: { file: "main.png", alt: "The main window: top bar, combination pistons, the global sound sliders with the polyphony display and the stop grids of five divisions.", caption: "The console: one column per division, the stops as buttons, couplers and tremulants in the headers, pistons and the crescendo above. Shown: Doesburg Surround (Sonus Paradisi), opened from its Hauptwerk organ definition - 64 stops in five divisions." },
   stoplist: { file: "stoplist.png", alt: "The Stop List: a table of stops per division with their sample folders per perspective and the transmissions.", caption: "The Stop List: the organ is built here from the loaded folder trees - stops, perspectives, divisions, transmissions." },
   divisions: { file: "divisions.png", alt: "The Divisions dialog: MIDI, compass, swell, tremulant and wind of a division, and its audio tabs with the device, buffer size and output channels per perspective.", caption: "The Divisions dialog: MIDI and compass, swell, tremulant, wind - and one audio route per perspective, each on any device and channels." },
   editor: { file: "editor.png", alt: "The Configuration Editor: the engine, global sound and console options, each with a question mark that opens the manual at its chapter.", caption: "The Configuration Editor: every option explained by the manual chapter behind its question mark." }
