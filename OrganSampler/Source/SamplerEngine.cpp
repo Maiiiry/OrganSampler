@@ -11406,22 +11406,26 @@ SamplerEngine::MinimumRamEstimate SamplerEngine::estimateMinimumRam() const
     {
         for (const auto& s : list) if (s != nullptr) items.push_back({ s.get(), release });
     };
-    for (const auto* stop : stops)
+    // Every rank of a stop (the stop itself is the first, the other perspectives
+    // follow in `ranks`): 0.8.151 took the first alone - Doesburg counted 2.3 GB of
+    // its 7.2 GB.
+    std::function<void(const Stop&)> addStop = [&](const Stop& stop)
     {
-        if (stop == nullptr) continue;
-        for (const auto& list : stop->samplesByNote) addList(list, false);
-        for (const auto& entry : stop->aliasFree) addList(entry.second, false);
-        for (const auto& layer : stop->velocityLayers)
+        for (const auto& list : stop.samplesByNote) addList(list, false);
+        for (const auto& entry : stop.aliasFree) addList(entry.second, false);
+        for (const auto& layer : stop.velocityLayers)
         {
             for (const auto& list : layer.samplesByNote) addList(list, false);
             for (const auto& entry : layer.aliasFree) addList(entry.second, false);
         }
-        for (const auto& layer : stop->releaseLayers)
+        for (const auto& layer : stop.releaseLayers)
         {
             for (const auto& list : layer.samplesByNote) addList(list, true);
             for (const auto& entry : layer.aliasFree) addList(entry.second, true);
         }
-    }
+        for (const auto& rank : stop.ranks) if (rank != nullptr) addStop(*rank);
+    };
+    for (const auto* stop : stops) if (stop != nullptr) addStop(*stop);
     e.samplesTotal = (int)items.size();
     for (const auto& item : items) e.bytesNow += (int64_t)item.sample->frameBytes();
     if (items.empty()) return e;
@@ -11446,7 +11450,8 @@ SamplerEngine::MinimumRamEstimate SamplerEngine::estimateMinimumRam() const
         {
             // The halved releases' rule of decodeSampleFile (0.8.147), at the low rate:
             // treble above 0.46 x the halved rate louder than -18 dB keeps the full rate.
-            if (s.sampleRate > lowRate * 0.5 + 0.5 && energyAboveDb(audio, s.sampleRate, 0.46 * lowRate * 0.5) <= -18.0) { target = lowRate * 0.5; ++e.releasesHalved; }
+            if (s.sampleRate <= lowRate * 0.5 + 0.5) ++e.releasesAlreadyHalved;
+            else if (energyAboveDb(audio, s.sampleRate, 0.46 * lowRate * 0.5) <= -18.0) { target = lowRate * 0.5; ++e.releasesHalved; }
             else ++e.releasesKeptFull;
         }
         const bool convert = std::abs(s.sampleRate - target) > 0.5;

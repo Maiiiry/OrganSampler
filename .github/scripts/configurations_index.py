@@ -85,8 +85,8 @@ def main():
         # 32 kHz on loading, releases at half the rate, packed), estimated by the
         # program from the loaded samples at the save.
         ram_min = int(cfg.get('estimatedMinimumRamBytes', 0) or 0)
-        if ram_min >= ram_bytes:
-            ram_min = 0
+        if ram_min > ram_bytes > 0:
+            ram_min = ram_bytes   # loaded with the saving options already: the measured figure is the least
         title = folder
         readme = os.path.join(path, 'README.md')
         if os.path.exists(readme):

@@ -12,6 +12,16 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.152] - 2026-10-22
+
+### Fixed
+- The least-RAM estimate of 0.8.151 counted the first rank of every stop alone
+  (the other perspectives live in the stop's ranks): Doesburg Surround counted
+  2.3 GB of its 7.2 GB. The configuration's `measuredRamStorage` now carries
+  the whole storage signature ("16-bit, 32 kHz, releases at half the rate,
+  packed"), not the bits alone, and INDEX.md's "RAM min" shows the measured
+  figure for an organ saved with the saving options already in force.
+
 ## [0.8.151] - 2026-10-22
 
 ### Added

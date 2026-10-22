@@ -389,13 +389,17 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   available" box of the user's Doesburg configuration (its routes are Windows Audio) for a screenshot on Wayland, where
   nothing else can click (no xdotool). Website 0.8.151: `site/assets/main.png` = the console with Doesburg Surround
   (the user: "jen na první okno", the Stop List / Divisions / Editor pictures stay; README.md keeps console-stralsund.png).
-  0.8.151 RAM min: `SamplerEngine::estimateMinimumRam()` (every k-th of all loaded samples, ~160, first 3 s each:
+  0.8.151/0.8.152 RAM min: `SamplerEngine::estimateMinimumRam()` (every k-th of all loaded samples INCLUDING the
+  perspective ranks in `Stop::ranks` - 0.8.151 took the first rank alone, Doesburg 2.3 of 7.2 GB -, ~160, first 3 s each:
   resampled to 32 kHz with `SincResampler`, a release halved to 16 kHz when `energyAboveDb(0.46 x 16 kHz) <= -18`,
   int16, `compress16`; ratio of their bytes to `frameBytes()` x all sample bytes) -> the portable save writes
   `estimatedMinimumRamBytes` = (measured - sample bytes) + sample bytes x ratio and `estimatedMinimumRamStorage`
   (`minimumRamStorageText`), log "RAM with every saving option (...)"; the README RAM line gets "; about X GB at the
   least, with every saving option of the load box (...)" and `configurations_index.py` the sortable "RAM min" column
-  (0 or >= measured -> "-"). Never type or estimate it by hand. `juce::jmax<juce::int64>(0, x)` does not compile with
+  (absent -> "-"; >= measured -> the measured figure: the organ was saved with the saving options in force).
+  `measuredRamStorage` = the whole `storageSignature()` since 0.8.152. Never type or estimate it by hand. Doesburg
+  0.8.152 test: /tmp/ram_test.sh (auto-load + ORGAN_SAVE_PORTABLE into /tmp/ramtest, the device box closed by the KWin
+  script). `juce::jmax<juce::int64>(0, x)` does not compile with
   juce_dsp (the SIMDRegister overload takes the explicit argument): use std::max or a ternary.
   0.8.149 (Linux): `AfterReportWindow` (MainComponent.cpp, modeless DialogWindow, always on top, `gAfterReportBox`)
   replaces the modal AlertWindow after a report (#58 keyboard, #67 invisible blocker behind the main window on KDE,
@@ -613,7 +617,7 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
 
 ## Pending for the next Linux session (delete when done)
 - The Projucer resave + VS2026 files + the Windows exe in C:\OrganSampler and its shortcut are NOT done for
-  0.8.149-0.8.151 (Linux session): do them on Windows next (git fetch + reset --mixed origin/main first).
+  0.8.149-0.8.152 (Linux session): do them on Windows next (git fetch + reset --mixed origin/main first).
   LESSON 0.8.147: the two
   checkouts are two git repositories on the SAME sources - after a Linux session the Windows checkout `F:` is behind
   origin and holds the Linux commits' content as uncommitted changes; `git pull` there fails ("local changes would be

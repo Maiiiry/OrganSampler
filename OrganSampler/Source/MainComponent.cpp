@@ -10085,7 +10085,7 @@ void MainComponent::savePortableConfiguration(const juce::File& file, bool inclu
         if (ram > 0)
         {
             root->setProperty("measuredRamBytes", ram);
-            root->setProperty("measuredRamStorage", sampleStorageFloat ? "32-bit float" : "16-bit");
+            root->setProperty("measuredRamStorage", engine.storageSignature());   // 0.8.152: the whole signature ("16-bit, 32 kHz, releases at half the rate, packed"), not the bits alone
             // 0.8.151: the least the organ can take - every saving option of the load
             // box - estimated from the loaded samples (the README's second RAM figure
             // and INDEX.md's "RAM min" column: a reader must not be put off by the
@@ -10103,7 +10103,7 @@ void MainComponent::savePortableConfiguration(const juce::File& file, bool inclu
                 CrashHandler::note("RAM with every saving option (" + juce::String(SamplerEngine::minimumRamStorageText) + "): about " + gb(minimum)
                     + " (now " + gb(ram) + ": samples " + gb(least.bytesNow) + " x " + juce::String(least.ratio, 3) + " + the rest " + gb(fixed) + "; "
                     + juce::String(least.samplesTested) + " of " + juce::String(least.samplesTotal) + " samples tested, releases halved "
-                    + juce::String(least.releasesHalved) + ", kept at the full rate " + juce::String(least.releasesKeptFull) + ")");
+                    + juce::String(least.releasesHalved) + ", kept at the full rate " + juce::String(least.releasesKeptFull) + ", already at half " + juce::String(least.releasesAlreadyHalved) + ")");
             }
         }
     }

@@ -681,7 +681,7 @@ public:
     // into that form and the ratio of its bytes to what it takes now is applied to
     // all the sample bytes. The fixed part of the process (the program, the voice
     // pool, the UI) is the caller's: the measured RAM minus bytesNow.
-    struct MinimumRamEstimate { int64_t bytesNow = 0, bytesMinimum = 0; double ratio = 1.0; int samplesTotal = 0, samplesTested = 0, releasesHalved = 0, releasesKeptFull = 0; };
+    struct MinimumRamEstimate { int64_t bytesNow = 0, bytesMinimum = 0; double ratio = 1.0; int samplesTotal = 0, samplesTested = 0, releasesHalved = 0, releasesKeptFull = 0, releasesAlreadyHalved = 0; };
     static constexpr const char* minimumRamStorageText = "16-bit, 32 kHz on loading, releases at half the rate, packed";
     MinimumRamEstimate estimateMinimumRam() const;
     // Packing statistics since the last call: raw bytes in, packed bytes out,
