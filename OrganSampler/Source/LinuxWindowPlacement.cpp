@@ -7,7 +7,10 @@
 #include <X11/Xutil.h>
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <vector>
 
 namespace
@@ -104,8 +107,85 @@ namespace
     }
 }
 
-bool LinuxWindowPlacement::placeSideBySide(const std::string& folderName, Box left, Box right, std::string& note)
+namespace
 {
+    std::string shellQuote(const std::string& s)
+    {
+        std::string out = "'";
+        for (const char c : s) { if (c == '\'') out += "'\\''"; else out += c; }
+        return out + "'";
+    }
+
+    std::string runCapture(const std::string& command)
+    {
+        std::string out;
+        if (FILE* p = popen((command + " 2>&1").c_str(), "r"))
+        {
+            char buffer[512];
+            while (fgets(buffer, sizeof(buffer), p) != nullptr) out += buffer;
+            pclose(p);
+        }
+        return out;
+    }
+
+    // KDE Plasma on Wayland (0.8.150): the X11 client list shows XWayland windows
+    // only - Dolphin and a Wayland browser are not in it. KWin's scripting
+    // (D-Bus org.kde.KWin /Scripting) sees every window: a script finds the file
+    // manager by the folder in its caption (or by its class) and the browser by
+    // its class, un-maximises them and sets their frames. Plasma 6 and 5 API.
+    bool placeThroughKWin(const std::string& folderName, LinuxWindowPlacement::Box left, LinuxWindowPlacement::Box right, LinuxWindowPlacement::Box box, std::string& note)
+    {
+        if (runCapture("gdbus introspect --session --dest org.kde.KWin --object-path /Scripting").find("loadScript") == std::string::npos) return false;
+        std::string js;
+        auto num = [](int v) { return std::to_string(v); };
+        std::string folder;
+        for (const char c : folderName) { if (c == '"' || c == '\\') folder += '\\'; folder += c; }
+        js += "var folder = \"" + folder + "\".toLowerCase();\n";
+        js += "var browsers = ['firefox','chrom','brave','vivaldi','opera','epiphany','falkon','konqueror','midori','librewolf','edge'];\n";
+        js += "var managers = ['dolphin','nautilus','thunar','pcmanfm','nemo','caja','spacefm','krusader','doublecmd','org.gnome.files'];\n";
+        js += "var list = (typeof workspace.windowList === 'function') ? workspace.windowList() : workspace.clientList();\n";
+        js += "var fm = null, br = null;\n";
+        js += "function cls(w) { return ((w.resourceClass || '') + ' ' + (w.resourceName || '')).toString().toLowerCase(); }\n";
+        js += "for (var i = 0; i < list.length; ++i) { var w = list[i]; if (!w || w.specialWindow || cls(w).indexOf('organsampler') >= 0) continue;\n";
+        js += "  if (!fm && (w.caption || '').toString().toLowerCase().indexOf(folder) >= 0) { fm = w; continue; }\n";
+        js += "  if (!br) for (var b = 0; b < browsers.length; ++b) if (cls(w).indexOf(browsers[b]) >= 0) { br = w; break; } }\n";
+        js += "if (!fm) for (var i = 0; i < list.length; ++i) { var w = list[i]; if (!w || w === br || w.specialWindow) continue;\n";
+        js += "  for (var m = 0; m < managers.length; ++m) if (cls(w).indexOf(managers[m]) >= 0) { fm = w; break; } if (fm) break; }\n";
+        js += "function place(w, x, y, wd, ht) { try { if (typeof w.setMaximize === 'function') w.setMaximize(false, false); } catch (e) {}\n";
+        js += "  if ('frameGeometry' in w) w.frameGeometry = { x: x, y: y, width: wd, height: ht }; else w.geometry = { x: x, y: y, width: wd, height: ht };\n";
+        js += "  if ('activeWindow' in workspace) workspace.activeWindow = w; else workspace.activeClient = w; }\n";
+        js += "if (fm) place(fm, " + num(right.x) + ", " + num(right.y) + ", " + num(right.width) + ", " + num(right.height) + ");\n";
+        js += "if (br) place(br, " + num(left.x) + ", " + num(left.y) + ", " + num(left.width) + ", " + num(left.height) + ");\n";
+        if (box.width > 0)
+        {
+            // The program's own box: KWin put it where its placement policy likes (the top
+            // left corner), and an XWayland client cannot move itself - the script can.
+            js += "for (var i = 0; i < list.length; ++i) { var w = list[i]; if (w && cls(w).indexOf('organsampler') >= 0 && (w.caption || '').toString() == 'Report a problem')\n";
+            js += "  { w.frameGeometry = { x: " + num(box.x) + ", y: " + num(box.y) + ", width: " + num(box.width) + ", height: " + num(box.height) + " }; if ('activeWindow' in workspace) workspace.activeWindow = w; } }\n";
+        }
+        js += "print('OrganSampler report windows: file manager ' + (fm ? fm.caption : 'none') + ', browser ' + (br ? br.caption : 'none'));\n";
+        const std::string path = std::string(getenv("HOME") ? getenv("HOME") : "/tmp") + "/.config/OrganSampler/kwin-report-windows.js";
+        { std::ofstream out(path); if (!out) return false; out << js; }
+        const std::string loaded = runCapture("gdbus call --session --dest org.kde.KWin --object-path /Scripting --method org.kde.kwin.Scripting.loadScript "
+            + shellQuote(path) + " organsampler-report-windows");
+        // "(int32 7,)" -> 7; -1 = refused
+        int id = -1;
+        if (const auto p = loaded.find("int32 "); p != std::string::npos) id = atoi(loaded.c_str() + p + 6);
+        if (id < 0) { note = "KWin scripting refused the script: " + loaded.substr(0, 120); return false; }
+        runCapture("gdbus call --session --dest org.kde.KWin --object-path /Scripting/Script" + std::to_string(id) + " --method org.kde.kwin.Script.run");
+        runCapture("gdbus call --session --dest org.kde.KWin --object-path /Scripting --method org.kde.kwin.Scripting.unloadScript organsampler-report-windows");
+        note = "Report windows (KWin scripting, Wayland): script " + std::to_string(id) + " run; left " + num(left.x) + "," + num(left.y) + " " + num(left.width) + "x" + num(left.height)
+            + ", right " + num(right.x) + "," + num(right.y) + " " + num(right.width) + "x" + num(right.height) + " (what it found is in KWin's own log: journalctl --user -u plasma-kwin_wayland)";
+        return true;
+    }
+}
+
+bool LinuxWindowPlacement::placeSideBySide(const std::string& folderName, Box left, Box right, Box box, std::string& note)
+{
+    // A Wayland session (KDE): the X11 list below holds the XWayland windows only -
+    // KWin's scripting places the native ones. The X11 way stays for X11 sessions.
+    if (const char* session = getenv("XDG_SESSION_TYPE"); session != nullptr && std::string(session) == "wayland")
+        if (placeThroughKWin(folderName, left, right, box, note)) return true;
     Display* display = XOpenDisplay(nullptr);
     if (display == nullptr) { note = "Report windows (X11): no display"; return false; }
     const Window root = DefaultRootWindow(display);
@@ -166,5 +246,5 @@ bool LinuxWindowPlacement::placeSideBySide(const std::string& folderName, Box le
     return fileManager != 0 || browser != 0;
 }
 #else
-bool LinuxWindowPlacement::placeSideBySide(const std::string&, Box, Box, std::string&) { return false; }
+bool LinuxWindowPlacement::placeSideBySide(const std::string&, Box, Box, Box, std::string&) { return false; }
 #endif

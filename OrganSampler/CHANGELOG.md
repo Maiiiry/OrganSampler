@@ -12,6 +12,16 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.150] - 2026-10-22
+
+### Fixed
+- Linux on Wayland (KDE): the report windows are placed through KWin's own
+  scripting - the X11 list holds the XWayland windows only, so Dolphin and a
+  Wayland browser were never found ("file manager not found"), and a window
+  of ours cannot move itself there either: KWin put the report box in the top
+  left corner. The script puts the browser left, the file manager right and
+  the box at the bottom; X11 sessions keep the X11 way.
+
 ## [0.8.149] - 2026-10-22
 
 ### Fixed

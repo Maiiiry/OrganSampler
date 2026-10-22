@@ -373,6 +373,15 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   single callbacks at 107-130 % (the OS scheduled something else) plus lane join delays up to 4.6 ms (the worker
   preempted) - no wake-ahead bug (inactive on 2 cores). The Projucer resave and the VS2026 files are NOT updated
   for 0.8.146 (Linux session): do it on Windows next.
+  0.8.150 WAYLAND (the AMD KDE box runs Plasma 6.6 on Wayland, XDG_SESSION_TYPE=wayland): the X11 `_NET_CLIENT_LIST`
+  holds XWayland windows only (Dolphin/Firefox invisible, "windows seen:" empty) and an XWayland client cannot place
+  itself - KWin's placement put the report box in the top-left corner (and that is the user's "miniature Configuration
+  Editor in the corner" too, most likely). `LinuxWindowPlacement::placeThroughKWin`: a JS file in ~/.config/OrganSampler
+  loaded over D-Bus (`gdbus call --session --dest org.kde.KWin --object-path /Scripting --method
+  org.kde.kwin.Scripting.loadScript <file> <name>` -> "(int32 N,)", then `/Scripting/ScriptN org.kde.kwin.Script.run`,
+  then unloadScript); the script finds windows by caption/resourceClass (Plasma 6 `workspace.windowList()`, 5
+  `clientList()`), un-maximises, sets `frameGeometry`, places our own "Report a problem" box (`wantedScreen`) too.
+  Test: `ORGAN_TEST_REPORT_WINDOWS=<folder>` with the folder open in Dolphin and a browser open (/tmp/report_test.sh).
   0.8.149 (Linux): `AfterReportWindow` (MainComponent.cpp, modeless DialogWindow, always on top, `gAfterReportBox`)
   replaces the modal AlertWindow after a report (#58 keyboard, #67 invisible blocker behind the main window on KDE,
   #64 macOS buttons shrunk: the System Events fallback resized OUR front window - now skipped when the frontmost app

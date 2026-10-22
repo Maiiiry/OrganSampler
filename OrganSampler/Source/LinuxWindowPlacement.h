@@ -16,5 +16,7 @@ namespace LinuxWindowPlacement
     struct Box { int x = 0, y = 0, width = 0, height = 0; };
     // folderNameUtf8: the report folder's name (the file manager's title holds it).
     // note: filled with one line for the log. Returns true when a window was placed.
-    bool placeSideBySide(const std::string& folderNameUtf8, Box left, Box right, std::string& note);
+    // box: where the program's own "Report a problem" box belongs (width 0 = leave it);
+    // KDE on Wayland places a new window where it likes, the KWin script puts it back.
+    bool placeSideBySide(const std::string& folderNameUtf8, Box left, Box right, Box box, std::string& note);
 }
