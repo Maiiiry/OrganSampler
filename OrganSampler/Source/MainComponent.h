@@ -370,6 +370,7 @@ private:
     // After the report: the message with "Open the GitHub form" (again) and "Open the report folder".
     static void showAfterReport(const juce::URL& url, const juce::File& folder);
     static void arrangeReportWindows(const juce::File& folder);   // the browser on the left half of the screen, the file manager with the report folder on the right (0.8.139)
+    static const juce::Displays::Display* displayOfMainWindow();   // the screen the main window is on (0.8.146)
     std::shared_ptr<std::vector<SamplerEngine::FolderAssignment>> stopBuildMap(int manual) const;   // nullptr while inactive
     ManualConfig::StopBuild deriveStopBuildFromEngine(int manual) const;   // the table as the loaded stops are
     void extendStopBuildWithTree(int manual, const juce::File& tree, int treeIndex);   // a tree added to a built division
@@ -552,7 +553,8 @@ private:
     bool resampleOnLoad = true;   // samples of other rates are resampled to 48 kHz while loading
     double storageSampleRate = 48000.0;   // the rate the samples are stored at when resampled (48 000 / 36 000 / 32 000; 0.8.143)
     bool releaseHalfRate = false;         // release samples at half the storage rate (0.8.143)
-    bool compressSamples = false;         // lossless packing of the 16-bit samples in RAM (0.8.145, machine-specific, off by default)
+    bool compressSamples = false;         // lossless packing of the 16-bit samples in RAM (0.8.145, off by default)
+    int pendingMaxPolyphony = 0;          // the limit a measurement decided, set in the engine once the run's tails have died (0.8.146)
     juce::StringArray nestedTreesDropped; // folder trees dropped from the pool for lying inside another (the notice after the load)
     juce::StringArray nestedTreesNoticed; // the ones the user was told about in this session (settings.json and the configuration file both carried the tree: two boxes, 0.8.144)
     // IR processing (Configuration Editor > Engine): "automatic" (Light on a
@@ -1034,6 +1036,11 @@ private:
     void chooseConfigurationToSave(std::function<void(bool saved)> then = nullptr);
     void launchConfigurationLoadChooser();
     void loadConfigurationFile(const juce::File& file);   // the chosen file: parsed, checked, applied
+    // Before a configuration's samples load (0.8.146): the sample storage, the
+    // packing and the rate on loading, shown with the file's own values (else
+    // this computer's last choice) - the user confirms or changes them, they go
+    // into the configuration and are saved with it. Cancel abandons the load.
+    void askLoadOptions(juce::var configuration, const juce::String& what, std::function<void(juce::var)> proceed);
     void chooseConfigurationToLoad();
     // portable: for another computer - no MIDI, no audio devices or channels,
     // no machine settings, no unused trees (see the manual, "Portable

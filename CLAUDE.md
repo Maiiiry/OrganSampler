@@ -342,6 +342,37 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   JuceHeader.h and Xlib.h in one translation unit. CMakeLists links `${X11_LIBRARIES}` on Linux (find_package(X11)):
   JUCE itself dlopens libX11, so nothing linked it and the first v0.8.145 tag failed with "undefined reference to
   XOpenDisplay" - the tag was moved onto the CMake fix (the Windows exe is the same build).
+  0.8.146 (Linux session): the storage choices (`sampleStorageFloat`, `releaseHalfRate`, `compressSamples`,
+  `resampleOnLoad`, `storageSampleRate`) are NO LONGER machine-specific keys: they travel with the organ and
+  `MainComponent::askLoadOptions` (an AlertWindow with three combos: storage / packing / rate on loading, Load /
+  Cancel) shows them before every Load Configuration and Hauptwerk import with the file's values (else this
+  computer's last choice) - the user's choice goes into the configuration var and the members/engine, and is
+  saved with the configuration; the dev hooks ORGAN_LOAD_CONFIGURATION / ORGAN_MERGE_ON_START skip the box. The
+  startup auto-load and the merge take the file's values silently. Never apply a file's storage choices without
+  the box again, and never silently override them from settings.json either (the 0.8.144 rule is replaced by the
+  box). Measurement end (`finishPolyphonyMeasurement`): keys up, NO noteOffAll (the tails ring out), the level
+  glides up over 3 s at once (callback glide 3 s), the limit (new or restored) is applied 8 s later by
+  `setLimitLater` (`pendingMaxPolyphony` is what saveSettings writes meanwhile) - a limit of a few thousand set
+  while thousands of tails sounded stole them at once ("the audio stops dead"). `SamplerEngine::setPerspectiveDeviceKey`
+  flushes the route's voices (`Impl::flushRouteVoices` = the body of cleanStaleRoutes, `finishRouteVoicesLocked`)
+  when the key changes or empties (JACK -> ALSA after a measurement played every tail and kill fade at once).
+  Half-rate releases: `decodeSampleFile(..., fullRate, &keptFull)` keeps the full rate when `energyAboveDb`
+  (4096-frame windows over the first second, the loudest) above 0.42 x the half rate is > -30 dB; measured on Caen
+  Clairon 4' key 80 with numpy (/tmp/halfrate.py): linear interpolation x2 of a 24 kHz file leaves images in
+  12-16 kHz at -20 dB and the file loses -9 dB of its energy above 16 kHz - a reed must stay at the full rate.
+  Log "Releases at half the rate in the tree ...: N stored at half, M kept at the full rate". The "Not enough memory
+  for this organ" box is gone for good (the log line stays). `maxVoices` 500000 (the pool is built at start,
+  ~160 MB; the user asked). `Stop::showRankCount` + StopRow `rankCountToggle` ("Rank count [II]", stop folders
+  only; saved as "showRankCount": false only when off). `displayOfMainWindow()` for the report windows and the
+  after-report box (two screens: everything went to the primary); Linux rects get 36 px for the frame on top;
+  macOS box lifted by height/7. `fitWindowOnScreen(..., wanted)`: a dialog that came up < 70 % of the bounds
+  placeDialog gave it is set again (the KDE "miniature Configuration Editor" - not reproduced here: the editor
+  opened right with and without a remembered position; the cure is generic). Measurement reviews #53-#56: the
+  spread is buffer size (256/480/512/1024), the device path (PipeWire default output vs direct hardware vs JACK),
+  the packing (16 packed trees: Ultra 7 60 000 -> 16-26 000, Ryzen 64 000 -> 46-52 000) and, on two cores,
+  single callbacks at 107-130 % (the OS scheduled something else) plus lane join delays up to 4.6 ms (the worker
+  preempted) - no wake-ahead bug (inactive on 2 cores). The Projucer resave and the VS2026 files are NOT updated
+  for 0.8.146 (Linux session): do it on Windows next.
   0.8.144 - LESSON: the 0.8.143 wake-ahead used `periodTicks` (the smoothed gap between CONSECUTIVE JOBS = the gap
   between the routes of one callback, ~0.3 ms with 8 routes) as the period -> workers woke every few hundred us and
   spun: #48 Core 2 Duo Linux 2900 (was 2500-2600 ok), #49 Mac 5000 but kernel 9.7 us/voice (3x), #50 Ultra 7 8 routes
@@ -496,9 +527,6 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
 - Linux window icon at start-up "rozsypana" (scrambled) since 0.8.136 (`Main.cpp` sends `icon48_png` to `setIcon`).
   Before: upside down for a moment while loading but crisp. Find why the 48 px image is scrambled through JUCE's X11
   `_NET_WM_ICON` path (format/stride?) - NEVER a rescaled icon.
-- Linux: switching the route device from JACK to ALSA after a measurement plays a flood of release tails: voices of
-  routes whose device stopped stay in the ring/active list. Drop a route's voices for good when its device closes and
-  after the measurement (noteOffAll + flush add ring, active list, IR hand-over buffers).
 - Device-thread peaks (0.8.138 reports): #34 Ultra 7 155H (P+E cores): longest route callback 2616 us of which WAITING
   FOR THE LANES 2412 us - a worker on an E core (or preempted) holds the poster; try lanes on P cores only / smaller
   chunks at the end of a job. #35 Ryzen Windows: longest 1270 us of which OWN RENDER 1071 - the poster takes chunks
@@ -508,7 +536,9 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
 - GitHub's issue list hides the number in its new UI (the user asked why "#27" is not in the row): nothing of ours.
 
 ## Pending for the next Linux session (delete when done)
-- The Linux clone `~/OrganSamplerC-linux` needs `git pull` (0.8.138-0.8.145 were made on Windows); the NTFS checkout `F:` is the user's (git cannot
+- Windows next: `Projucer --resave` (absolute path) + the .ico copy for 0.8.146 (made on Linux: Builds/VisualStudio2026
+  and JuceLibraryCode still say 0.8.145), commit them. The Linux clone `~/OrganSamplerC-linux` is in sync (0.8.146 was
+  committed there and the NTFS checkout `F:` holds the same sources); the NTFS checkout is the user's (git cannot
   run there from Linux: "expected submodule path 'JUCE' not to be a symbolic link"). After each release copy the Linux
   binary to `~/Downloads/OrganSampler`.
 - Windows builds: never run two MSBuilds of the solution at once - the second fails with C1041 (PDB) and can

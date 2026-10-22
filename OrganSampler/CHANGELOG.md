@@ -12,6 +12,50 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.146] - 2026-10-22
+
+### Added
+- Load Configuration asks, before the samples load, how they are to be held:
+  the sample storage (32-bit float, 16-bit, 16-bit with the releases at half
+  the rate), the lossless packing and the rate on loading - shown with the
+  configuration file's own values (else this computer's last choice), saved
+  with the configuration. The same choices stay in the Configuration Editor.
+  A Hauptwerk import asks the same way.
+- A stop folder's voicing has "Rank count [II]": whether the button carries
+  the Roman numeral of the ranks that sound with it (on by default).
+- The ceiling of the Maximum polyphony is 500 000 voices (300 000 before).
+
+### Changed
+- The end of a polyphony measurement (finished or cancelled) lets the release
+  tails of the run ring out and brings the level up over three seconds from
+  that moment, report or no report. Nothing is killed any more and the new
+  (or the restored) polyphony limit is applied only eight seconds later, once
+  the tails are gone: the limit falling from the run's ceiling to a few
+  thousand while thousands of tails sounded stole them at once - the sound
+  stopped dead.
+- A route whose device stops or changes drops its voices at once (JACK to
+  ALSA right after a measurement played every tail and kill fade of the run
+  at once when the next device started).
+- Releases at half the rate: a release whose first second carries treble
+  above 10 kHz (louder than -30 dB of the whole: reeds, bright treble pipes)
+  keeps the full rate. Played by linear interpolation at twice the rate, the
+  halved file rang with the images of what was cut (Caen Clairon 4': images
+  in 12-16 kHz only 20 dB under the signal). The log counts both kinds.
+- The "Not enough memory for this organ" message box is gone (the estimate
+  cannot know the packing, the half-rate releases or the storage rate for
+  sure); the loading still stops itself when the memory runs short and says
+  which stops were left out.
+
+### Fixed
+- Report a problem with two screens: the box and the browser/file manager
+  pair go to the screen the main window is on (they went to the primary
+  one). Linux: the file manager and the browser get room for their frames (a
+  file manager given the whole height lost its title bar above the screen).
+  macOS: the box sits higher, above the browser's "Create issue" button.
+- A dialog that came up far smaller than it was given (the Configuration
+  Editor as a miniature in a screen corner on a KDE desktop) is set to its
+  size again by the placement check that follows every dialog.
+
 ## [0.8.145] - 2026-10-21
 
 ### Added

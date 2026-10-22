@@ -190,6 +190,7 @@ private:
     juce::Label aliasLabel;
     juce::ComboBox aliasBox;
     void aliasChanged();
+    juce::ToggleButton rankCountToggle;   // a stop folder's "[II]" on its button (0.8.146)
     juce::Label ranksLabel;
     juce::OwnedArray<juce::ToggleButton> rankButtons;
     // Velocity layers ("_070" files): one tick box per layer of the stop; unticked,

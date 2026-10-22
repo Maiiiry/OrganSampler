@@ -101,12 +101,10 @@ void MainComponent::warnIfMemoryShortForTrees(std::vector<juce::String> trees, c
             const bool tight = needed > available - (juce::int64)512 * 1024 * 1024;
             CrashHandler::note("Memory for \"" + configurationName + "\": " + gb(bytes) + " of WAV files, about " + gb(needed) + " in memory, "
                 + gb(available) + " free of " + gb(installed) + " installed" + (tight ? " - TOO LITTLE: the system will page samples out" : ""));
-            if (!tight) return;
-            juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Not enough memory for this organ",
-                "The samples of \"" + configurationName + "\" take " + gb(bytes) + " of WAV files - about " + gb(needed) + " held in memory - and only "
-                + gb(available) + " of the " + gb(installed) + " installed is free.\n\nThe system will page samples out, and every stroke that touches them "
-                "stalls the sound (callbacks of several periods, a window that answers slowly). Load fewer stops (a smaller configuration), keep the "
-                "16-bit sample storage, or add memory. The RAM column of the polyphony display shows what the program holds.", "OK", safeThis.getComponent());
+            // No message box (0.8.146, the user's rule): the estimate cannot know
+            // the packing, the half-rate releases or the storage rate's effect for
+            // sure, and the loading stops itself when the memory runs short - that
+            // message, naming the stops left out, is the one that counts.
         });
     });
 }

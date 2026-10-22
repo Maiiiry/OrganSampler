@@ -5572,6 +5572,19 @@ struct SamplerEngine::Impl
         }
     }
 
+    // Every voice of a route finished at once, without a render (control lock
+    // held): the route's device stopped or changed (0.8.146) - what sat in its
+    // ring and active list would otherwise play on when the next device starts,
+    // thousands of release tails and kill fades at once after a measurement
+    // and a switch from JACK to ALSA. Returns false when a render holds the route.
+    bool flushRouteVoices(Route& r)
+    {
+        const juce::SpinLock::ScopedTryLockType lk(r.renderLock);
+        if (!lk.isLocked()) return false;
+        finishRouteVoicesLocked(r);
+        return true;
+    }
+
     // Routes whose device stopped delivering callbacks must not accumulate voices.
     void cleanStaleRoutes(double now)
     {
@@ -5592,6 +5605,15 @@ struct SamplerEngine::Impl
             }
             const juce::SpinLock::ScopedTryLockType lk(r.renderLock);
             if (!lk.isLocked()) continue;
+            finishRouteVoicesLocked(r);
+        }
+    }
+
+    // The ring and the active list of a route emptied into the finished queue
+    // (renderLock held by the caller).
+    void finishRouteVoicesLocked(Route& r)
+    {
+        {
             uint32_t head = r.addHead.load(std::memory_order_relaxed);
             const uint32_t tail = r.addTail.load(std::memory_order_acquire);
             const uint32_t cap = (uint32_t)r.addRing.size();
@@ -7029,6 +7051,23 @@ void SamplerEngine::setPerspectiveDeviceKey(int manualIndex, const juce::String&
         const juce::ScopedLock sl(controlLock);
         route = impl->ensureRoute(manualIndex, perspective);
         if (route == nullptr || route->deviceKey == key) return;
+        // The device of this route stops or changes (0.8.146): nothing of what it
+        // was playing goes on to the next one - the ring and the active list are
+        // finished now, not after the next device's first callbacks (a switch from
+        // JACK to ALSA right after a measurement played every release tail and
+        // kill fade of the run at once).
+        if (route->deviceKey.isNotEmpty())
+        {
+            bool flushed = false;
+            for (int attempt = 0; attempt < 50 && !flushed; ++attempt)
+            {
+                flushed = impl->flushRouteVoices(*route);
+                if (!flushed) juce::Thread::sleep(1);   // a last callback of the old device still renders it
+            }
+            if (flushed) impl->reclaimFinished();
+            CrashHandler::note("Route manual " + juce::String(manualIndex) + " " + perspective + ": device " + (key.isEmpty() ? "stopped" : "changed")
+                + (flushed ? ", its voices dropped" : ", its voices NOT dropped (a render held the route)"));
+        }
         route->deviceKey = key;
         route->hasDevice.store(key.isNotEmpty(), std::memory_order_release);
     }
@@ -10113,8 +10152,58 @@ namespace
         }
     };
 
+    // The share of a signal's energy above `fromHz` in its first second (dB
+    // below the whole; -200 for none): whether a lower storage rate would cut
+    // something audible. Windows of 4096 frames over the first second, the
+    // loudest window counts (a reed's chiff or a bright treble start).
+    double energyAboveDb(const juce::AudioBuffer<float>& audio, double sampleRate, double fromHz)
+    {
+        constexpr int order = 12, n = 1 << order;
+        const int frames = audio.getNumSamples();
+        if (frames < n || sampleRate <= 0.0) return -200.0;
+        juce::dsp::FFT fft(order);
+        std::vector<float> buffer((size_t)n * 2);
+        const int64_t span = juce::jmin<int64_t>(frames, (int64_t)sampleRate) - n;
+        const int windows = span <= 0 ? 1 : (int)juce::jmin<int64_t>(8, span / 2048 + 1);
+        const int firstBin = juce::jlimit(1, n / 2, (int)std::ceil(fromHz / sampleRate * n));
+        double worst = -200.0;
+        for (int w = 0; w < windows; ++w)
+        {
+            const int64_t start = windows > 1 ? span * w / (windows - 1) : 0;
+            std::fill(buffer.begin(), buffer.end(), 0.0f);
+            for (int ch = 0; ch < audio.getNumChannels(); ++ch)
+            {
+                const float* x = audio.getReadPointer(ch) + start;
+                for (int i = 0; i < n; ++i)
+                {
+                    const float window = 0.5f - 0.5f * std::cos(2.0f * juce::MathConstants<float>::pi * (float)i / (float)(n - 1));
+                    buffer[(size_t)i] += x[i] * window;
+                }
+            }
+            fft.performFrequencyOnlyForwardTransform(buffer.data(), true);
+            double total = 0.0, above = 0.0;
+            for (int k = 1; k <= n / 2; ++k)
+            {
+                const double e = (double)buffer[(size_t)k] * buffer[(size_t)k];
+                total += e;
+                if (k >= firstBin) above += e;
+            }
+            if (total > 1.0e-18) worst = juce::jmax(worst, 10.0 * std::log10(above / total + 1.0e-20));
+        }
+        return worst;
+    }
+
+    // Reads a sample file into a Sample at `baseRate` (resampled when the file's
+    // rate differs; `resampleToBase` false keeps the file's own rate). `fullRate`
+    // (0.8.146, the releases at half the rate): a higher rate the file falls back
+    // to when its first second carries treble above 0.42 x baseRate louder than
+    // -30 dB of the whole - a reed or a bright treble pipe would otherwise lose
+    // it and, played by the kernel's linear interpolation at twice the rate,
+    // ring with the images of what is left (Caen Clairon 4': the images in
+    // 12-16 kHz sat 20 dB under the signal). `keptFull` tells the caller.
     std::unique_ptr<Sample> decodeSampleFile(const juce::File& file, juce::AudioFormatManager& manager,
-        bool asFloat, SmplInfo smpl, bool resampleToBase = true, double baseRate = kBaseSampleRate)
+        bool asFloat, SmplInfo smpl, bool resampleToBase = true, double baseRate = kBaseSampleRate,
+        double fullRate = 0.0, bool* keptFull = nullptr)
     {
         std::vector<LoopPoints> loops = std::move(smpl.loops);
         std::unique_ptr<juce::AudioFormatReader> reader(manager.createReaderFor(file));
@@ -10129,51 +10218,59 @@ namespace
         std::unique_ptr<Sample> sample;
         juce::AudioBuffer<float> temp;
         constexpr int chunk = 1 << 15;
-        std::unique_ptr<SincResampler> resampler;
-        int64_t storedFrames = frames;
         if (resample)
         {
-            resampler = std::make_unique<SincResampler>(sourceRate, baseRate);
-            storedFrames = resampler->outputFrames(frames);
-        }
-        try
-        {
-            sample = std::make_unique<Sample>(channels, storedFrames, resample ? baseRate : sourceRate, asFloat);
-            sample->fileName = file.getFileName();
-            temp.setSize(channels, resample ? (int)frames : chunk);
-        }
-        catch (const std::bad_alloc&)
-        {
-            throw;   // handled by the caller, which stops the whole load
-        }
-        sample->sourceSampleRate = sourceRate;
-        if (resample)
-        {
-            // The whole file as float, every channel through the kernel.
+            // The whole file as float first: the treble check decides the rate.
+            temp.setSize(channels, (int)frames);   // std::bad_alloc: handled by the caller, which stops the whole load
             temp.clear();
             if (!reader->read(&temp, 0, (int)frames, 0, true, true)) return nullptr;
-            std::vector<float> resampled((size_t)storedFrames);
+            double targetRate = baseRate;
+            if (fullRate > baseRate + 0.5 && energyAboveDb(temp, sourceRate, 0.42 * baseRate) > -30.0)
+            {
+                targetRate = fullRate;
+                if (keptFull != nullptr) *keptFull = true;
+            }
+            const bool convert = std::abs(sourceRate - targetRate) > 0.5;
+            std::unique_ptr<SincResampler> resampler;
+            int64_t storedFrames = frames;
+            if (convert)
+            {
+                resampler = std::make_unique<SincResampler>(sourceRate, targetRate);
+                storedFrames = resampler->outputFrames(frames);
+            }
+            sample = std::make_unique<Sample>(channels, storedFrames, convert ? targetRate : sourceRate, asFloat);
+            sample->fileName = file.getFileName();
+            sample->sourceSampleRate = sourceRate;
+            std::vector<float> resampled(convert ? (size_t)storedFrames : (size_t)0);
             for (int c = 0; c < channels; ++c)
             {
-                resampler->process(temp.getReadPointer(c), frames, resampled.data(), storedFrames);
-                if (asFloat) std::memcpy(sample->writable32(c), resampled.data(), (size_t)storedFrames * sizeof(float));
+                const float* src = temp.getReadPointer(c);
+                if (convert) { resampler->process(src, frames, resampled.data(), storedFrames); src = resampled.data(); }
+                if (asFloat) std::memcpy(sample->writable32(c), src, (size_t)storedFrames * sizeof(float));
                 else
                 {
                     int16_t* dst = sample->writable16(c);
                     for (int64_t i = 0; i < storedFrames; ++i)
-                        dst[i] = (int16_t)std::lrint(juce::jlimit(-32768.0f, 32767.0f, resampled[(size_t)i] * 32768.0f));
+                        dst[i] = (int16_t)std::lrint(juce::jlimit(-32768.0f, 32767.0f, src[(size_t)i] * 32768.0f));
                 }
             }
-            const double scale = baseRate / sourceRate;
-            for (auto& loop : loops)
+            if (convert)
             {
-                loop.start = (int64_t)std::llround((double)loop.start * scale);
-                loop.end = (int64_t)std::llround((double)loop.end * scale);
+                const double scale = targetRate / sourceRate;
+                for (auto& loop : loops)
+                {
+                    loop.start = (int64_t)std::llround((double)loop.start * scale);
+                    loop.end = (int64_t)std::llround((double)loop.end * scale);
+                }
             }
             sample->finaliseLoops(std::move(loops));
             sample->smplPitch = smpl.pitchSemitones;
             return sample;
         }
+        sample = std::make_unique<Sample>(channels, frames, sourceRate, asFloat);   // std::bad_alloc: the caller stops the load
+        sample->fileName = file.getFileName();
+        temp.setSize(channels, chunk);
+        sample->sourceSampleRate = sourceRate;
         for (int64_t position = 0; position < frames; position += chunk)
         {
             const int count = (int)juce::jmin<int64_t>(chunk, frames - position);
@@ -10270,7 +10367,8 @@ void SamplerEngine::loadSamplesIntoStop(Stop* stop, const juce::File& folder, bo
     const bool asFloat = storeSamplesAsFloat;
     const bool resample = resampleOnLoad;
     // The storage rate (0.8.143): 48 kHz as ever or lower; releases at half of it when asked.
-    const double baseRate = isRelease && releaseHalfRate ? storageSampleRate * 0.5 : storageSampleRate;
+    const bool halfRate = isRelease && releaseHalfRate;
+    const double baseRate = halfRate ? storageSampleRate * 0.5 : storageSampleRate;
     parallelFor((int)entries.size(), [&](int index, int thread)
     {
         if (loadOutOfMemory.load(std::memory_order_relaxed)) return;
@@ -10300,8 +10398,12 @@ void SamplerEngine::loadSamplesIntoStop(Stop* stop, const juce::File& folder, bo
         }
         try
         {
+            bool keptFull = false;
             decoded[(size_t)index] = decodeSampleFile(entries[(size_t)index].file, *manager, asFloat,
-                parseSmpl(entries[(size_t)index].file), resample || baseRate < kBaseSampleRate - 0.5, baseRate);
+                parseSmpl(entries[(size_t)index].file), resample || baseRate < kBaseSampleRate - 0.5, baseRate,
+                halfRate ? storageSampleRate : 0.0, &keptFull);
+            if (halfRate && decoded[(size_t)index] != nullptr)
+                (keptFull ? halfRateKeptFull : halfRateReleases).fetch_add(1, std::memory_order_relaxed);
             if (decoded[(size_t)index] != nullptr) packIfEnabled(*decoded[(size_t)index]);   // 0.8.145: packed on the loader thread, before it counts
         }
         catch (const std::bad_alloc&)
@@ -10850,6 +10952,12 @@ void SamplerEngine::loadManualFolder(const juce::File& topFolder, int manualInde
     }
     if (lastLoadError.isNotEmpty()) CrashHandler::note("Load message: " + lastLoadError.replace("\n", " | "));   // what the dialog says (0.8.138: the reports did not carry it)
     notePackStats("the tree " + topFolder.getFileName());
+    {
+        const int half = halfRateReleases.exchange(0, std::memory_order_relaxed), full = halfRateKeptFull.exchange(0, std::memory_order_relaxed);
+        if (half + full > 0)
+            CrashHandler::note("Releases at half the rate in the tree " + topFolder.getFileName() + ": " + juce::String(half) + " stored at half, "
+                + juce::String(full) + " kept at the full rate for their treble (energy above 0.42 x the half rate louder than -30 dB)");
+    }
     for (auto& [groupManual, group] : groups) impl->pendingDivisions.push_back(std::move(group.division));
 }
 

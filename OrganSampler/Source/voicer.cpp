@@ -176,7 +176,7 @@ juce::String StopRow::caption() const
     {
         const auto children = childrenGetter(stop);
         const int transmissions = childTransmissionsGetter ? (int)childTransmissionsGetter(stop).size() : 0;
-        if (!children.empty() || transmissions > 0)
+        if ((!children.empty() || transmissions > 0) && stop->showRankCount)
         {
             bool sounds = false;
             for (int note = 0; note < 128 && !sounds; ++note) sounds = stop->hasNoteInAnyRank(note);
@@ -447,6 +447,17 @@ StopRow::StopRow(Stop* stop, SamplerEngine& engine, int noteMin, int noteMax, in
         "transposition and \"Trsm.\"). Type any text to replace it; the stop keeps its identity for saved states.");
     aliasBox.onChange = [this] { aliasChanged(); };
     addAndMakeVisible(aliasBox);
+    // A stop folder: whether its button carries the rank count "[II]" (0.8.146).
+    rankCountToggle.setButtonText("Rank count [II]");
+    rankCountToggle.setToggleState(this->stop->showRankCount, juce::dontSendNotification);
+    rankCountToggle.setTooltip("The button of a stop folder shows how many ranks sound with it, as a Roman numeral. Off: the name alone.");
+    rankCountToggle.onClick = [this]
+    {
+        this->stop->showRankCount = rankCountToggle.getToggleState();
+        stopButton.setButtonText(caption());
+        if (this->relayout) this->relayout(this->stop);
+    };
+    addAndMakeVisible(rankCountToggle);
 
     for (int manual = 0; manual < SamplerEngine::maxManuals; ++manual)
     {
@@ -789,6 +800,8 @@ StopRow::StopRow(Stop* stop, SamplerEngine& engine, int noteMin, int noteMax, in
     sourceLabel.setVisible(transmissionControls);
     aliasLabel.setVisible(showVoicing);
     aliasBox.setVisible(showVoicing);
+    rankCountToggle.setVisible(showVoicing && !isTransmission() && ((childrenGetter && !childrenGetter(stop).empty())
+        || (childTransmissionsGetter && !childTransmissionsGetter(stop).empty())));
     globalSlider.setVisible(withPipes); globalLabel.setVisible(withPipes);
     gainSlider.setVisible(stopControls); gainLabel.setVisible(stopControls);
     attackSlider.setVisible(stopControls); attackLabel.setVisible(stopControls);
@@ -1328,6 +1341,8 @@ void StopRow::resized()
     aliasLabel.setBounds(x, 13, 46, 23);
     x += 48;
     aliasBox.setBounds(x, 13, 190, 23);
+    x += 196;
+    rankCountToggle.setBounds(x, 13, 150, 23);
 
     // A stop folder with pipes of its own: its voicing steps right of the tree
     // lines that join its children to it.
@@ -3402,6 +3417,7 @@ juce::var Voicer::createState() const
         stopObj->setProperty(juce::Identifier("name"), stop->name);
         stopObj->setProperty("perspective", stop->perspective);
         stopObj->setProperty("alias", stop->alias);
+        if (!stop->showRankCount) stopObj->setProperty("showRankCount", false);   // a stop folder's "[II]" switched off (0.8.146)
         stopObj->setProperty(juce::Identifier("globalDb"), stop->db);
         stopObj->setProperty(juce::Identifier("gainDb"), stop->gainDb);
         stopObj->setProperty(juce::Identifier("attackMs"), stop->attackMs);
@@ -3635,6 +3651,7 @@ void Voicer::loadState(const juce::File& file)
                 stop->attackMs = (float)attackMs;
                 stop->attackFadeoutMs = (float)attackFadeoutMs;
                 stop->alias = stopObj->getProperty("alias").toString();
+                stop->showRankCount = !stopObj->hasProperty("showRankCount") || (bool)stopObj->getProperty("showRankCount");
                 engine.setStopRandomPitchError(stop, randomPitchErrorCents, true);
                 // The formant share of the filled pipes: set before any copy is built (no rebuild here).
                 {

@@ -489,6 +489,14 @@ Save* goes on and leaves the file as it was, *Cancel* stays. An instrument
 built with no file open is offered a new file the same way (*Save As...*).
 *Shut down PC* never asks:
 it saves into the open configuration (or into a rescue file) and shuts down.
+
+Before the samples of a loaded configuration (or of a Hauptwerk organ
+definition) load, a box asks how they are to be held in RAM: *Sample storage
+in RAM*, *Compress samples in RAM* and *Sample rate on loading* (see the
+Configuration Editor's Engine section for what they mean). The box shows the
+configuration file's own values when it carries them, else this computer's
+last choices; what you choose loads and is saved with the configuration.
+*Cancel* leaves the loading alone.
 Starting the program without *Load the last configuration at startup* begins
 with an empty instrument; nothing stops you from loading folders and playing
 without any configuration at all.
@@ -983,6 +991,9 @@ Open it with the corner button. Its first line shows the alias, the
 perspectives and, for a stop with velocity layers, one tick box per layer. The
 sliders:
 
+- **Rank count [II]** (stop folders only, 0.8.146) - whether the button
+  carries the Roman numeral of the ranks that sound with the folder. Off: the
+  name alone. On by default; saved with the configuration.
 - **Alias** - the caption of the button. *Automatic* shows the folder name;
   type any text to show that instead (an alias without a footage gets the
   stop's footage appended). The alias is only a caption: saved states,
@@ -2044,8 +2055,11 @@ hiss. *16-bit integer, releases at half the rate* (0.8.143) stores the
 release samples - a large part of a set and a decaying tail - at half the
 storage rate: they lose what lies above 12 kHz (at the 48 kHz base) and take
 a quarter of the RAM they would; nothing is requantised, the room noise of
-the tail stays as recorded. Takes effect the next time a division's folders
-are loaded.
+the tail stays as recorded. A release whose first second carries treble
+above 10 kHz louder than -30 dB of the whole (reeds, bright treble pipes)
+keeps the full rate (0.8.146): halved, it would ring with the images of what
+was cut. The log says how many went each way. Takes effect the next time a
+division's folders are loaded.
 
 ### Compress samples in RAM (lossless)
 
@@ -2114,7 +2128,7 @@ needs to be set: the grouping follows the settings and the devices.
 
 ### Maximum polyphony
 
-The number of voices that may sound at once (64 to 300000, default 30000).
+The number of voices that may sound at once (64 to 500000, default 30000).
 The ceiling is far above what a computer of 2026 renders - a 16-core machine
 manages 25 000 to 30 000 voices of a wet set with three perspectives at a
 buffer of 256 - and leaves room for the computers of the years to come; the
@@ -2220,8 +2234,10 @@ happens:
 4. *Maximum polyphony* is set to the most voices that stayed clean. The
    slider is yours afterwards: lower it for more headroom (couplers, long
    releases, other programs running), raise it if you dare. The
-   registration and the two attack settings are restored; the sound comes
-   back over two seconds after the report's OK.
+   registration and the two attack settings are restored; the release tails
+   of the run ring out and the level comes back over three seconds from the
+   end of the run (the same after Cancel), and the new limit takes effect
+   eight seconds later, once the tails are gone.
 5. The report names the result and gives advice: every route on a Windows
    Audio device (rendered by its own thread alone) and every auxiliary route
    with a device (every pipe once more), with the share of its period it

@@ -501,9 +501,10 @@ public:
         float gainEnd = target;
         if (gainStart != target)
         {
-            // Down in 50 ms (before the first strike of the measurement), up over 2 s (after the report's OK).
+            // Down in 50 ms (before the first strike of the measurement), up over 3 s
+            // (as soon as the run ends: the release tails come up gently, 0.8.146).
             const double rate = expectedRate.load(std::memory_order_relaxed);
-            const double seconds = target < gainStart ? 0.05 : 2.0;
+            const double seconds = target < gainStart ? 0.05 : 3.0;
             const float maxStep = (float)(numSamples / juce::jmax(1000.0, rate) / seconds);
             gainEnd = gainStart + juce::jlimit(-maxStep, maxStep, target - gainStart);
         }
@@ -4629,11 +4630,34 @@ namespace
 // macOS through AppleScript (Finder and the frontmost application - System Events
 // needs the accessibility permission for the latter), Linux through wmctrl when
 // it is installed. Where it fails, the windows stay as the system put them.
+namespace { juce::Rectangle<int> workAreaWithMargins(const juce::Rectangle<int>& userArea); }   // defined below
+
+// The display the program's main window is on (0.8.146: with two screens the
+// report windows went to the primary one while the organ sat on the other).
+const juce::Displays::Display* MainComponent::displayOfMainWindow()
+{
+    const auto& displays = juce::Desktop::getInstance().getDisplays();
+    const juce::Displays::Display* display = nullptr;
+    for (auto* window : { juce::TopLevelWindow::getActiveTopLevelWindow(), (juce::TopLevelWindow*)nullptr })
+        if (window != nullptr) display = displays.getDisplayForRect(window->getScreenBounds(), false);
+    if (display == nullptr)
+        for (int i = 0; i < juce::TopLevelWindow::getNumTopLevelWindows(); ++i)
+            if (auto* window = juce::TopLevelWindow::getTopLevelWindow(i); window != nullptr && window->isVisible())
+            {
+                display = displays.getDisplayForRect(window->getScreenBounds(), false);
+                if (display != nullptr) break;
+            }
+    return display != nullptr ? display : displays.getPrimaryDisplay();
+}
+
 void MainComponent::arrangeReportWindows(const juce::File& folder)
 {
-    auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
+    const auto* display = displayOfMainWindow();
     if (display == nullptr) return;
-    const auto area = display->userArea;
+    // The work area with the 2 % margins, and room for the frame the window
+    // manager adds (0.8.146: a file manager given the whole height lost its title
+    // bar above the screen).
+    const auto area = workAreaWithMargins(display->userArea).withTrimmedTop(36).withTrimmedBottom(8);
     const auto left = area.withWidth(area.getWidth() / 2), right = area.withTrimmedLeft(area.getWidth() / 2);
    #if JUCE_WINDOWS
     RECT work{};
@@ -4714,11 +4738,18 @@ void MainComponent::showAfterReport(const juce::URL& url, const juce::File& fold
         else if (result == 2) { folder.startAsProcess(); juce::Timer::callAfterDelay(1500, [folder] { arrangeReportWindows(folder); }); showAfterReport(url, folder); }
     }), true);
     // At the bottom of the screen, out of the way of the browser and the file
-    // manager the user drags the zip between (0.8.138: it sat in the middle over both).
-    if (auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
+    // manager the user drags the zip between (0.8.138: it sat in the middle over
+    // both); on macOS a little higher, above the browser's "Create issue" button
+    // (0.8.146). On the screen of the main window.
+    if (const auto* display = displayOfMainWindow())
     {
         const auto area = display->userArea;
-        window->setTopLeftPosition(area.getX() + (area.getWidth() - window->getWidth()) / 2, area.getBottom() - window->getHeight() - area.getHeight() / 50);
+       #if JUCE_MAC
+        const int lift = area.getHeight() / 7;
+       #else
+        const int lift = area.getHeight() / 50;
+       #endif
+        window->setTopLeftPosition(area.getX() + (area.getWidth() - window->getWidth()) / 2, area.getBottom() - window->getHeight() - lift);
     }
 }
 
@@ -4798,7 +4829,15 @@ void MainComponent::showProblemReportDialog()
             cancel.setButtonText("Cancel");
             cancel.onClick = [this] { if (auto* window = findParentComponentOfClass<juce::DialogWindow>()) window->exitModalState(0); };
             addAndMakeVisible(cancel);
-            setSize(760, 560);
+            // Sized for the screen (0.8.146: on a 1280 x 800 laptop the dialog filled the
+            // whole left half): at most 45 % of the width and 60 % of the height.
+            int width = 760, height = 560;
+            if (const auto* display = MainComponent::displayOfMainWindow())
+            {
+                width = juce::jlimit(520, 760, display->userArea.getWidth() * 45 / 100);
+                height = juce::jlimit(400, 560, display->userArea.getHeight() * 60 / 100);
+            }
+            setSize(width, height);
         }
         void resized() override
         {
@@ -5221,7 +5260,7 @@ namespace
         return userArea.reduced(0, juce::roundToInt(userArea.getHeight() * 0.02));
     }
 
-    void fitWindowOnScreen(juce::Component& window, const juce::String& what, bool logAlways = true)
+    void fitWindowOnScreen(juce::Component& window, const juce::String& what, bool logAlways = true, juce::Rectangle<int> wanted = {})
     {
         juce::String log = what + ": ";
         bool corrected = false;
@@ -5239,6 +5278,15 @@ namespace
             if (display == nullptr) break;
             const auto work = workAreaWithMargins(display->userBounds.toNearestInt());
             if (attempt == 0) log << "work area " << work.toString() << " (2 % margins), frame " << outer.toString();
+            // A window far smaller than it was given (0.8.146: the Configuration Editor
+            // came up as a miniature in a screen corner on a KDE desktop): its bounds set again.
+            if (wanted.getWidth() > 0 && (client.getWidth() < wanted.getWidth() * 7 / 10 || client.getHeight() < wanted.getHeight() * 7 / 10))
+            {
+                window.setBounds(wanted);
+                log << " -> smaller than asked, set to " << wanted.toString();
+                corrected = true;
+                continue;
+            }
             if (work.contains(outer)) break;
             corrected = true;
             int width = outer.getWidth(), height = outer.getHeight();
@@ -5261,11 +5309,11 @@ namespace
     // The fit now and again a little later: a window manager places and decorates
     // a new window after it is shown (the frame read back at once can be the
     // wrong one), and some centre a tall window with its title bar off the top.
-    void fitWindowOnScreenSoon(juce::Component::SafePointer<juce::Component> window, const juce::String& what)
+    void fitWindowOnScreenSoon(juce::Component::SafePointer<juce::Component> window, const juce::String& what, juce::Rectangle<int> wanted = {})
     {
-        juce::MessageManager::callAsync([window, what] { if (window != nullptr && window->isShowing()) fitWindowOnScreen(*window, what, true); });
+        juce::MessageManager::callAsync([window, what, wanted] { if (window != nullptr && window->isShowing()) fitWindowOnScreen(*window, what, true, wanted); });
         for (const int delay : { 150, 700, 2000 })
-            juce::Timer::callAfterDelay(delay, [window, what] { if (window != nullptr && window->isShowing()) fitWindowOnScreen(*window, what, false); });
+            juce::Timer::callAfterDelay(delay, [window, what, wanted] { if (window != nullptr && window->isShowing()) fitWindowOnScreen(*window, what, false, wanted); });
     }
 }
 
@@ -5314,7 +5362,7 @@ void MainComponent::placeDialog(juce::Component& window, const juce::String& key
     trackedDialogs.emplace_back(key, juce::Component::SafePointer<juce::Component>(&window));
     // Once the window is on the screen: its whole frame inside the work area
     // (a dialog taller than a small screen came up with the title bar off the top).
-    fitWindowOnScreenSoon(juce::Component::SafePointer<juce::Component>(&window), "Dialog " + key);
+    fitWindowOnScreenSoon(juce::Component::SafePointer<juce::Component>(&window), "Dialog " + key, window.getBounds());
 }
 
 void MainComponent::rememberDialogBounds()
@@ -9316,6 +9364,7 @@ void MainComponent::saveStopSettings()
                 stopObj->setProperty(juce::Identifier("name"), stop->name);
                 stopObj->setProperty("perspective", stop->perspective);
                 stopObj->setProperty("alias", stop->alias);
+                if (!stop->showRankCount) stopObj->setProperty("showRankCount", false);
                 stopObj->setProperty(juce::Identifier("globalDb"), stop->db);
                 stopObj->setProperty(juce::Identifier("gainDb"), stop->gainDb);
                 stopObj->setProperty(juce::Identifier("attackMs"), stop->attackMs);
@@ -9462,6 +9511,7 @@ void MainComponent::loadStopSettings()
                         stop->attackMs = (float)attackMs;
                         stop->attackFadeoutMs = (float)attackFadeoutMs;
                         stop->alias = stopObj->getProperty("alias").toString();
+                        stop->showRankCount = !stopObj->hasProperty("showRankCount") || (bool)stopObj->getProperty("showRankCount");
                         engine.setStopRandomPitchError(stop, randomPitchErrorCents, true);
                         engine.replaceTransmissions(stop, Voicer::transmissionsFromVar(stopVar, stop->primaryManual));
                         if (stopObj->hasProperty("ranks"))
@@ -9786,7 +9836,79 @@ void MainComponent::loadConfigurationFile(const juce::File& file)
             "Load Configuration", "The selected file is not a valid OrganSampler configuration.");
         return;
     }
-    resolveAndApplyPortableConfiguration(configuration, file);
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    askLoadOptions(configuration, file.getFileNameWithoutExtension(), [safeThis, file](juce::var chosen)
+    {
+        if (safeThis != nullptr) safeThis->resolveAndApplyPortableConfiguration(chosen, file);
+    });
+}
+
+void MainComponent::askLoadOptions(juce::var configuration, const juce::String& what, std::function<void(juce::var)> proceed)
+{
+    // The three choices that decide how the samples are held: from the file
+    // when it carries them (saved there by the program), else this computer's
+    // last choice. Tests (ORGAN_LOAD_CONFIGURATION) take them as they are.
+    auto* root = configuration.getDynamicObject();
+    if (root == nullptr) return;
+    const bool fromFile = root->hasProperty("sampleStorageFloat");
+    const bool asFloat = fromFile ? (bool)root->getProperty("sampleStorageFloat") : sampleStorageFloat;
+    const bool halfRate = root->hasProperty("releaseHalfRate") ? (bool)root->getProperty("releaseHalfRate") : releaseHalfRate;
+    const bool packed = root->hasProperty("compressSamples") ? (bool)root->getProperty("compressSamples") : compressSamples;
+    const bool resample = root->hasProperty("resampleOnLoad") ? (bool)root->getProperty("resampleOnLoad") : resampleOnLoad;
+    const double rate = root->hasProperty("storageSampleRate") ? (double)root->getProperty("storageSampleRate") : storageSampleRate;
+    if (std::getenv("ORGAN_LOAD_CONFIGURATION") != nullptr || std::getenv("ORGAN_MERGE_ON_START") != nullptr)
+    {
+        proceed(configuration);
+        return;
+    }
+    auto* window = new juce::AlertWindow("Load Configuration: " + what,
+        "How the samples of this organ are held in RAM - the choices decide what loads, so they are made here, before the loading starts. "
+        + juce::String(fromFile ? "They come from the configuration file; " : "The file carries none, these are this computer's last choices; ")
+        + "what you choose is saved with the configuration. The same choices are in the Configuration Editor (Engine) for the next load.",
+        juce::MessageBoxIconType::QuestionIcon);
+    window->addComboBox("storage", { "32-bit float (less polyphony, full fidelity)",
+        "16-bit integer (more polyphony, more hiss)",
+        "16-bit integer, releases at half the rate (a quarter of their RAM; bright pipes keep the full rate)" }, "Sample storage in RAM");
+    window->getComboBoxComponent("storage")->setSelectedItemIndex(asFloat ? 0 : halfRate ? 2 : 1, juce::dontSendNotification);
+    window->addComboBox("packing", { "Off  [default]", "On: a third less RAM, a third to a half of the polyphony gone" }, "Compress samples in RAM (lossless)");
+    window->getComboBoxComponent("packing")->setSelectedItemIndex(packed ? 1 : 0, juce::dontSendNotification);
+    window->addComboBox("rate", { "Resample everything to 48 kHz  [default]", "Resample everything to 36 kHz (content up to 17 kHz; a quarter less RAM)",
+        "Resample everything to 32 kHz (content up to 15 kHz; a third less RAM)", "Keep each file's own rate (faster loading, played by interpolation)" }, "Sample rate on loading");
+    window->getComboBoxComponent("rate")->setSelectedItemIndex(!resample ? 3 : rate < 34000.0 ? 2 : rate < 42000.0 ? 1 : 0, juce::dontSendNotification);
+    window->addButton("Load", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    window->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    juce::Component::SafePointer<juce::AlertWindow> box(window);
+    window->enterModalState(true, juce::ModalCallbackFunction::create([safeThis, box, configuration, what, proceed](int result) mutable
+    {
+        if (safeThis == nullptr || box == nullptr) return;
+        if (result != 1) { CrashHandler::note("Load Configuration \"" + what + "\": cancelled at the sample storage choices"); return; }
+        const int storage = box->getComboBoxComponent("storage")->getSelectedItemIndex();
+        const int packing = box->getComboBoxComponent("packing")->getSelectedItemIndex();
+        const int rateIndex = box->getComboBoxComponent("rate")->getSelectedItemIndex();
+        auto& o = *safeThis;
+        o.sampleStorageFloat = storage == 0;
+        o.releaseHalfRate = storage == 2;
+        o.compressSamples = packing == 1;
+        o.resampleOnLoad = rateIndex != 3;
+        o.storageSampleRate = rateIndex == 1 ? 36000.0 : rateIndex == 2 ? 32000.0 : 48000.0;
+        o.engine.setSampleStorageFloat(o.sampleStorageFloat);
+        o.engine.setReleaseHalfRate(o.releaseHalfRate);
+        o.engine.setCompressSamples(o.compressSamples);
+        o.engine.setResampleOnLoad(o.resampleOnLoad);
+        o.engine.setStorageSampleRate(o.storageSampleRate);
+        if (auto* r = configuration.getDynamicObject())
+        {
+            r->setProperty("sampleStorageFloat", o.sampleStorageFloat);
+            r->setProperty("releaseHalfRate", o.releaseHalfRate);
+            r->setProperty("compressSamples", o.compressSamples);
+            r->setProperty("resampleOnLoad", o.resampleOnLoad);
+            r->setProperty("storageSampleRate", o.storageSampleRate);
+        }
+        CrashHandler::note("Load Configuration \"" + what + "\": sample storage " + juce::String(o.sampleStorageFloat ? "32-bit float" : o.releaseHalfRate ? "16-bit, releases at half the rate" : "16-bit")
+            + ", packing " + (o.compressSamples ? "on" : "off") + ", rate on loading " + (o.resampleOnLoad ? juce::String(juce::roundToInt(o.storageSampleRate)) + " Hz" : juce::String("the files' own")));
+        proceed(configuration);
+    }), true);
 }
 
 namespace
@@ -9796,11 +9918,10 @@ namespace
     const juce::StringArray& machineSpecificKeys()
     {
         static const juce::StringArray keys{ "windowX", "windowY", "windowWidth", "windowHeight", "windowMaximised", "twoWindows",
-            "divisionScreen", "dialogBounds", "uiScalePercent", "copyCacheFolder", "copyCacheEnabled", "sampleStorageFloat",
+            "divisionScreen", "dialogBounds", "uiScalePercent", "copyCacheFolder", "copyCacheEnabled",
             "renderThreads", "renderThreadPreset", "renderThreadsWasapi", "showUnusableAudioDevices", "configEditorCollapsed", "configurationFile",
             "loadLastConfigurationAtStartup", "maxPolyphony", "measurementShareLimit", "irProcessing", "irLightAuto", "unpackArchiveShownOnce", "renderThreadPresetChosen",
-            "resampleOnLoad", "storageSampleRate", "releaseHalfRate", "compressSamples",
-            "renderKernel" };
+            "renderKernel" };   // 0.8.146: sampleStorageFloat, resampleOnLoad, storageSampleRate, releaseHalfRate, compressSamples travel with the organ (askLoadOptions)
         return keys;
     }
 }
@@ -10537,7 +10658,11 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
         safeThis->hauptwerkImport = odf;
         safeThis->runWhenLoaded([safeThis, odf, file = plan.configurationFile, summary] { if (safeThis != nullptr) safeThis->applyHauptwerkVoicing(odf, file, summary); });
         safeThis->suppressPortableNotice = true;   // made here and now: no "from another computer" notice, the import's own report follows
-        safeThis->resolveAndApplyPortableConfiguration(configuration, plan.configurationFile);
+        const juce::File configurationFile = plan.configurationFile;
+        safeThis->askLoadOptions(configuration, configurationFile.getFileNameWithoutExtension(), [safeThis, configurationFile](juce::var chosen)
+        {
+            if (safeThis != nullptr) safeThis->resolveAndApplyPortableConfiguration(chosen, configurationFile);
+        });
     };
     juce::Timer::callAfterDelay(300, [poll] { if (*poll) (*poll)(); });
 }
@@ -15991,7 +16116,7 @@ void MainComponent::saveSettings()
     obj->setProperty("manualCount", manualCount);
     obj->setProperty("masterVolumeDb", masterVolumeSlider.getValue());
     obj->setProperty("globalPitchCents", pitchSlider.getValue());
-    obj->setProperty("maxPolyphony", engine.getMaxPolyphony());
+    obj->setProperty("maxPolyphony", pendingMaxPolyphony > 0 ? pendingMaxPolyphony : engine.getMaxPolyphony());
     obj->setProperty("measurementShareLimit", (double)measurementShareLimit);
     obj->setProperty("releaseFadeOutMs", releaseFadeOutSlider.getValue());
     obj->setProperty("releaseFadeInMs", releaseFadeInSlider.getValue());
@@ -19195,9 +19320,12 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
     polyphonyMeasurement = nullptr;   // the timers see this and stop
     CrashHandler::StallWatchdog::setStallAction(nullptr);
     // Keys up, everything back as it was: the registration, the mute state, the sound.
+    // The release tails of the run go on sounding (nothing is killed, 0.8.146: a
+    // cut and a flood of tails on the next device were the result) and the level
+    // glides up to normal over three seconds from now, report or no report.
     for (int manual = 0; manual <= manualCount; ++manual)
         for (int note = 36; note <= 96; ++note) routeKeyboardNote(manual, note, 0, false);
-    engine.noteOffAll();
+    outputGainTarget.store(1.0f);
     engine.setAttackMinimumMs((float)state->previousAttackMinimumMs);
     engine.setAttackMinimumDelayMs((float)state->previousAttackDelayMs);
     applyRegistrationState(state->registration, false);
@@ -19210,11 +19338,27 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
     // Cancelled, or over before anything happened: everything back, no report.
     // (A breakup before the first target counts as a result: the report then
     // says the sound broke already at that few voices and why.)
+    // The polyphony limit comes back (or the new one in) only once the tails of
+    // the run have died down: the run's thousands of release voices above a
+    // limit of a few thousand would be stolen at once - that was the "audio stops
+    // dead" at the end of a measurement.
+    auto setLimitLater = [this](int limit)
+    {
+        juce::Component::SafePointer<MainComponent> safeThis(this);
+        pendingMaxPolyphony = limit;   // what the settings save meanwhile
+        juce::Timer::callAfterDelay(8000, [safeThis, limit]
+        {
+            if (safeThis == nullptr || safeThis->polyphonyMeasurement != nullptr) return;   // a new run owns the limit
+            if (safeThis->pendingMaxPolyphony == limit) safeThis->pendingMaxPolyphony = 0;
+            safeThis->engine.setMaxPolyphony(limit);
+            if (auto* display = dynamic_cast<PolyphonyDisplay*>(safeThis->polyphonyDisplay.get())) display->refreshLimit();
+            safeThis->refreshConfigurationEditor();
+        });
+    };
     if (cancelled || (state->results.empty() && state->firstFailingPeak == 0 && !state->exhausted))
     {
-        outputGainTarget.store(1.0f);   // the level glides back over two seconds
         engine.setVoiceProfiling(false);
-        engine.setMaxPolyphony(state->previousLimit);
+        setLimitLater(state->previousLimit);
         refreshConfigurationEditor();
         CrashHandler::note(cancelled ? "Polyphony measurement cancelled: everything restored" : "Polyphony measurement ended without a result");
         return;
@@ -19232,8 +19376,7 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
     auto hundreds = [](int v) { return juce::jlimit(64, SamplerEngine::maxVoices, v < 1000 ? v : (v / 100) * 100); };
     const int cleanBase = juce::jmax(state->highestCleanPeak, state->cleanSecondSafe);
     const int newLimit = hundreds(cleanBase > 0 ? cleanBase : juce::jmax(200, state->firstFailingPeak / 2));
-    engine.setMaxPolyphony(newLimit);
-    if (auto* display = dynamic_cast<PolyphonyDisplay*>(polyphonyDisplay.get())) display->refreshLimit();
+    setLimitLater(newLimit);   // saved now (pendingMaxPolyphony), in the engine once the tails are gone
     saveSettings();
     refreshConfigurationEditor();
 

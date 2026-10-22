@@ -134,6 +134,7 @@ struct Stop
 {
     juce::String name;      // from the folder: the stop's identity in every saved state
     juce::String alias;     // shown instead of the name when set (voicing "Alias")
+    bool showRankCount = true;   // a stop folder's button shows its rank count "[II]" (voicing, 0.8.146)
     // The alias, else the name with its foot mark; when neither carries a
     // footage, the footage measured from the smpl pitch of the lowest pipe is appended.
     juce::String displayName() const;
@@ -644,7 +645,7 @@ public:
     // per voice over the pool and the routes (420 MB at 300 000). Nothing else
     // depends on it - no per-block work grows with the pool, only with the
     // voices actually sounding - so a faster computer may use all of it.
-    static constexpr int maxVoices = 300000;
+    static constexpr int maxVoices = 500000;   // 0.8.146: 300 000 before; the pool is built at start (about 160 MB)
     static constexpr int maxManuals = 8;   // pedal + up to seven manuals
 
     void setSampleRate(double sr);
@@ -1427,6 +1428,7 @@ private:
     bool compressSamples = false;   // 0.8.145: pack the 16-bit samples in RAM (Sample::compress16)
     std::atomic<int64_t> packRawBytes{ 0 }, packPackedBytes{ 0 };
     std::atomic<int> packSamples{ 0 }, packFailed{ 0 };
+    std::atomic<int> halfRateReleases{ 0 }, halfRateKeptFull{ 0 };   // 0.8.146: releases stored at half the rate / kept full for their treble
     std::function<void(const juce::String&)> loadStatusCallback;
     bool tuneAllTo440 = false;
 
