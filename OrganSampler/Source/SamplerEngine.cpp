@@ -10488,7 +10488,8 @@ void SamplerEngine::loadSamplesIntoStop(Stop* stop, const juce::File& folder, bo
         const int midi = extractMidiFromFilename(entry.getFile().getFileName());
         // "_NNN" at the end: a velocity layer (attacks and releases alike).
         const int layer = extractVelocityLayerFromFilename(entry.getFile().getFileName());
-        if (midi >= 0) entries.push_back({ entry.getFile(), midi, layer });
+        // Files whose key (number - offset) lies off the 0..127 range are not decoded.
+        if (midi >= 0 && midi - stop->sampleOffset >= 0 && midi - stop->sampleOffset < 128) entries.push_back({ entry.getFile(), midi, layer });
     }
     std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b)
     {
@@ -10565,7 +10566,11 @@ void SamplerEngine::loadSamplesIntoStop(Stop* stop, const juce::File& folder, bo
     for (size_t i = 0; i < entries.size(); ++i)
     {
         if (decoded[i] == nullptr) continue;
-        const int midi = entries[i].midi;
+        // The key the file plays on: its number minus the stop's offset (0.8.155:
+        // Doesburg's "024" on key 36 with -12; before, the number was the key and
+        // the organ sounded an octave high, its lowest octave off the keyboard).
+        const int midi = entries[i].midi - stop->sampleOffset;
+        if (midi < 0 || midi > 127) continue;
         if (isRelease) stop->getOrCreateReleaseLayer(releaseMaxHoldMs, entries[i].velocityLayer > 0 ? entries[i].velocityLayer : -1)
             .samplesByNote[(size_t)midi].push_back(std::move(decoded[i]));
         else if (entries[i].velocityLayer > 0) stop->getOrCreateVelocityLayer(entries[i].velocityLayer).samplesByNote[(size_t)midi].push_back(std::move(decoded[i]));
@@ -10854,14 +10859,17 @@ void SamplerEngine::loadManualFolder(const juce::File& topFolder, int manualInde
     // Samples the division holds for that folder, decoded with the storage
     // choices in force now (0.8.149: with other choices they are decoded anew).
     const juce::String signatureNow = storageSignature();
-    auto hasLoadedRankForFolder = [this, &signatureNow](int manual, const juce::File& folder)
+    // ... and with the same "Files vs keys" offset (0.8.155): samples keyed for
+    // another offset are decoded afresh, never adopted.
+    auto hasLoadedRankForFolder = [this, &signatureNow](int manual, const juce::File& folder, int sampleOffset)
     {
         const juce::ScopedLock sl(controlLock);
         for (auto* stop : stops)
         {
             if (stop->primaryManual != manual) continue;
-            if (!stop->container && stop->folder == folder && !stop->samplesUnloaded && stop->storageSignature == signatureNow) return true;
-            for (const auto& rank : stop->ranks) if (rank->folder == folder && !rank->samplesUnloaded && rank->storageSignature == signatureNow) return true;
+            if (!stop->container && stop->folder == folder && !stop->samplesUnloaded && stop->storageSignature == signatureNow && stop->sampleOffset == sampleOffset) return true;
+            for (const auto& rank : stop->ranks)
+                if (rank->folder == folder && !rank->samplesUnloaded && rank->storageSignature == signatureNow && rank->sampleOffset == sampleOffset) return true;
         }
         return false;
     };
@@ -10878,7 +10886,7 @@ void SamplerEngine::loadManualFolder(const juce::File& topFolder, int manualInde
         // again: the commit adopts the old rank's samples, copies and analysis.
         const bool replaces = !append || (replacing != nullptr && replacing->count(manualIndex) != 0);
         if (isPooledStop(manualIndex, rank->name)) rank->samplesUnloaded = true;
-        else if (replaces && hasLoadedRankForFolder(manualIndex, stopFolder)) { rank->samplesUnloaded = true; rank->adoptSamples = true; }
+        else if (replaces && hasLoadedRankForFolder(manualIndex, stopFolder, rank->sampleOffset)) { rank->samplesUnloaded = true; rank->adoptSamples = true; }
         else loadRankSamples(rank);
         rank->folderHash = (uint32_t)stopFolder.getFullPathName().hashCode();
         rank->windContribution = windStopContribution(rank->name);
@@ -10948,7 +10956,7 @@ void SamplerEngine::loadManualFolder(const juce::File& topFolder, int manualInde
             // memory: loaded whatever the memory says (0.8.139, #33: a reload on the
             // 8 GB Mac "skipped" 25 stops that were in memory all along and named them).
             const bool replacesHere = !append || (replacing != nullptr && replacing->count(groupManual) != 0);
-            const bool adoptable = !assignment.container && (isPooledStop(groupManual, stopName) || (replacesHere && hasLoadedRankForFolder(groupManual, stopFolder)));
+            const bool adoptable = !assignment.container && (isPooledStop(groupManual, stopName) || (replacesHere && hasLoadedRankForFolder(groupManual, stopFolder, assignment.sampleOffset)));
             juce::String memoryReason;
             if (!assignment.container && !adoptable && !loadOutOfMemory.load(std::memory_order_relaxed))
             {
@@ -10991,6 +10999,7 @@ void SamplerEngine::loadManualFolder(const juce::File& topFolder, int manualInde
                 {
                     auto rank = std::make_unique<Stop>(found->second->name, stopFolder);
                     rank->perspective = assignment.perspective;
+                    rank->sampleOffset = assignment.sampleOffset;
                     loadRank(rank.get(), stopFolder, groupManual);
                     found->second->isOneShot = found->second->isOneShot || rank->isOneShot;
                     found->second->ranks.push_back(std::move(rank));
@@ -10998,6 +11007,7 @@ void SamplerEngine::loadManualFolder(const juce::File& topFolder, int manualInde
                 }
                 auto mainStop = std::make_unique<Stop>(stopName, stopFolder);
                 mainStop->perspective = assignment.perspective;
+                mainStop->sampleOffset = assignment.sampleOffset;
                 loadRank(mainStop.get(), stopFolder, groupManual);
                 perspectiveStops[groupKey] = mainStop.get();
                 newStops.add(mainStop.release());
@@ -11184,8 +11194,9 @@ void SamplerEngine::commitPendingDivisions()
                 const juce::String wanted = storageSignature();
                 for (auto* old : retiring)
                 {
-                    if (!old->container && old->folder == rank->folder && !old->samplesUnloaded && old->storageSignature == wanted) source = old;
-                    for (auto& r : old->ranks) if (source == nullptr && r->folder == rank->folder && !r->samplesUnloaded && r->storageSignature == wanted) source = r.get();
+                    if (!old->container && old->folder == rank->folder && !old->samplesUnloaded && old->storageSignature == wanted && old->sampleOffset == rank->sampleOffset) source = old;
+                    for (auto& r : old->ranks)
+                        if (source == nullptr && r->folder == rank->folder && !r->samplesUnloaded && r->storageSignature == wanted && r->sampleOffset == rank->sampleOffset) source = r.get();
                     if (source != nullptr) break;
                 }
                 rank->adoptSamples = false;
@@ -11208,6 +11219,7 @@ void SamplerEngine::commitPendingDivisions()
                 rank->footageKnown = source->footageKnown;
                 rank->footageSemitones = source->footageSemitones;
                 rank->lowestFootageSemitones = source->lowestFootageSemitones;
+                rank->sampleOffset = source->sampleOffset;
                 rank->soundingHarmonic = source->soundingHarmonic;
                 rank->soundingMeasured = source->soundingMeasured;
                 rank->footageSounding = source->footageSounding;
@@ -11577,9 +11589,23 @@ void SamplerEngine::unloadStopSamples(Stop* stop)
     impl->resume();
 }
 
-void SamplerEngine::reloadStopSamples(Stop* stop)
+void SamplerEngine::setStopSampleOffset(Stop* stop, int offset)
 {
-    if (stop == nullptr || !stop->samplesUnloaded) return;
+    if (stop == nullptr || stop->container) return;
+    offset = juce::jlimit(-48, 48, offset);
+    if (stop->sampleOffset == offset) return;
+    {
+        const juce::ScopedLock sl(controlLock);
+        stop->sampleOffset = offset;
+        for (auto& rank : stop->ranks) rank->sampleOffset = offset;
+    }
+    CrashHandler::note("Files vs keys of \"" + stop->name + "\" set to " + juce::String(offset) + ": its samples are loaded again on their keys");
+    reloadStopSamples(stop, true);
+}
+
+void SamplerEngine::reloadStopSamples(Stop* stop, bool evenIfLoaded)
+{
+    if (stop == nullptr || (!stop->samplesUnloaded && !evenIfLoaded)) return;
     BuildPause buildLock(*this);   // a background build may still read the old samples (it stops at its next pipe)
     loadOutOfMemory.store(false, std::memory_order_relaxed);
     // Decode into detached stand-ins first, then swap the sample lists in while
@@ -11587,7 +11613,7 @@ void SamplerEngine::reloadStopSamples(Stop* stop)
     std::vector<std::pair<Stop*, std::unique_ptr<Stop>>> staged;
     staged.emplace_back(stop, std::make_unique<Stop>(stop->name, stop->folder));
     for (auto& rank : stop->ranks) staged.emplace_back(rank.get(), std::make_unique<Stop>(rank->name, rank->folder));
-    for (auto& entry : staged) loadRankSamples(entry.second.get());
+    for (auto& entry : staged) { entry.second->sampleOffset = entry.first->sampleOffset; loadRankSamples(entry.second.get()); }
     impl->suspend();
     {
         const juce::ScopedLock sl(controlLock);
@@ -11597,6 +11623,10 @@ void SamplerEngine::reloadStopSamples(Stop* stop)
             live->samplesByNote = std::move(entry.second->samplesByNote);
             live->velocityLayers = std::move(entry.second->velocityLayers);
             live->releaseLayers = std::move(entry.second->releaseLayers);
+            live->storageSignature = entry.second->storageSignature;
+            // The filled pipes' copies were made for the old keys: all of them anew.
+            live->aliasFree.clear();
+            live->aliasFreeOffset.clear();
             live->nextSampleIndex.fill(0);
             for (int note = 0; note < 128; ++note)
                 if (live->hasNote(note) && std::abs(live->getNoteDb(note)) < 1.0e-6f) live->setNoteDb(note, 0.0f);

@@ -458,6 +458,24 @@ StopRow::StopRow(Stop* stop, SamplerEngine& engine, int noteMin, int noteMax, in
         if (this->relayout) this->relayout(this->stop);
     };
     addAndMakeVisible(rankCountToggle);
+    // The sample offset (0.8.155): "Files -12 vs keys" when the files' numbers do not
+    // name the keys (Doesburg); set in the Stop List, read from a Hauptwerk definition.
+    sampleOffsetLabel.setText("Files vs keys:", juce::dontSendNotification);
+    const juce::String offsetTip = "The sample files' numbers minus the keys they play on (the Stop List column \"Files vs keys\" is the same setting): "
+        "-12 puts the file 024 on key 36 (Doesburg). A change loads this stop's samples again on their keys; each key's tooltip below names its file.";
+    sampleOffsetLabel.setTooltip(offsetTip);
+    addAndMakeVisible(sampleOffsetLabel);
+    for (int offset = -24; offset <= 24; ++offset)
+        sampleOffsetBox.addItem(offset == 0 ? juce::String("0 (the number is the key)") : (offset > 0 ? "+" : "") + juce::String(offset), offset + 100);
+    sampleOffsetBox.setSelectedId(juce::jlimit(-24, 24, this->stop->sampleOffset) + 100, juce::dontSendNotification);
+    sampleOffsetBox.setTooltip(offsetTip);
+    sampleOffsetBox.onChange = [this]
+    {
+        const int chosen = sampleOffsetBox.getSelectedId() - 100;
+        if (chosen == this->stop->sampleOffset) return;
+        if (sampleOffsetRequest) sampleOffsetRequest(this->stop, chosen);
+    };
+    addAndMakeVisible(sampleOffsetBox);
 
     for (int manual = 0; manual < SamplerEngine::maxManuals; ++manual)
     {
@@ -806,6 +824,8 @@ StopRow::StopRow(Stop* stop, SamplerEngine& engine, int noteMin, int noteMax, in
     rankCountToggle.setVisible(showVoicing && !isTransmission());
     rankCountToggle.setEnabled((childrenGetter && !childrenGetter(stop).empty())
         || (childTransmissionsGetter && !childTransmissionsGetter(stop).empty()));
+    sampleOffsetLabel.setVisible(withPipes && !isTransmission());
+    sampleOffsetBox.setVisible(withPipes && !isTransmission());
     globalSlider.setVisible(withPipes); globalLabel.setVisible(withPipes);
     gainSlider.setVisible(stopControls); gainLabel.setVisible(stopControls);
     attackSlider.setVisible(stopControls); attackLabel.setVisible(stopControls);
@@ -1319,6 +1339,13 @@ void StopRow::resized()
         // stood past the band's edge on a stop with rank boxes and a long pitch text.
         rankCountToggle.setBounds(x, 13, 140, 23);
         x += 146;
+        if (!stop->container)
+        {
+            sampleOffsetLabel.setBounds(x, 13, 96, 23);
+            x += 98;
+            sampleOffsetBox.setBounds(x, 13, 150, 23);
+            x += 158;
+        }
     }
     if (isTransmission())
     {
@@ -1705,8 +1732,13 @@ void Voicer::rebuildUI(juce::Component& container, juce::Viewport& viewport)
                 const auto b = row->getStopButtonBounds().translated(row->getX(), row->getY());
                 auto* parent = row->getParentComponent();
                 const auto s = parent != nullptr ? parent->localAreaToGlobal(b) : b;
+                int firstNote = -1, lastNote = -1;
+                for (int note = 0; note < 128; ++note)
+                    if (row->getStop()->hasNoteInAnyRank(note)) { if (firstNote < 0) firstNote = note; lastNote = note; }
                 CrashHandler::note("Grid item: manual " + juce::String(row->getStop()->primaryManual) + (row->isTransmission() ? " transmission " : " stop ")
-                    + row->getStop()->name + " button " + s.toString() + (row->isExpanded() ? " EXPANDED " + row->describeLineOne() : juce::String()));
+                    + row->getStop()->name + " button " + s.toString() + " notes " + juce::String(firstNote) + ".." + juce::String(lastNote)
+                    + (row->getStop()->sampleOffset != 0 ? " files " + juce::String(row->getStop()->sampleOffset) : juce::String())
+                    + (row->isExpanded() ? " EXPANDED " + row->describeLineOne() : juce::String()));
                 if (const char* png = std::getenv("ORGAN_TEST_SNAPSHOT"); png != nullptr && row->isExpanded())
                 {
                     const juce::Image snapshot = row->createComponentSnapshot(row->getLocalBounds(), false, 1.0f);
@@ -1783,6 +1815,21 @@ void Voicer::rebuildUI(juce::Component& container, juce::Viewport& viewport)
                         r->getStop()->voicingExpanded = true;
                         CrashHandler::note("ORGAN_TEST_EXPAND: " + parts[1]);
                         juce::MessageManager::callAsync([this] { if (uiContainer != nullptr && uiViewport != nullptr) rebuildUI(*uiContainer, *uiViewport); });
+                    }
+            }
+            // ORGAN_TEST_OFFSET="<manual>|<stop name>|<offset>": "Files vs keys" as the voicing box would set it (once).
+            static bool offsetDone = false;
+            if (const char* test = std::getenv("ORGAN_TEST_OFFSET"); test != nullptr && !offsetDone && !compactCells.empty())
+            {
+                const auto parts = juce::StringArray::fromTokens(juce::String(test), "|", "");
+                for (auto* r : stopRows)
+                    if (parts.size() == 3 && r != nullptr && !r->isTransmission() && r->getStop() != nullptr
+                        && r->getStop()->primaryManual == parts[0].getIntValue() && r->getStop()->name.startsWith(parts[1]))
+                    {
+                        offsetDone = true;
+                        CrashHandler::note("ORGAN_TEST_OFFSET: " + r->getStop()->name + " -> " + parts[2]);
+                        if (sampleOffsetRequest) sampleOffsetRequest(r->getStop(), parts[2].getIntValue());
+                        break;
                     }
             }
             if (const char* png = std::getenv("ORGAN_TEST_SNAPSHOT"); png != nullptr && uiContainer != nullptr)
@@ -2457,6 +2504,7 @@ void Voicer::layoutScreen(int screen, juce::Component& container, juce::Viewport
                 { scrollTarget = target; if (uiContainer != nullptr && uiViewport != nullptr) rebuildUI(*uiContainer, *uiViewport); },
                 activeManualCount, stateChanged, transmissionIndex);
             row->setArrangeHooks(hooksFor(manual, key));
+            row->sampleOffsetRequest = [this](Stop* target, int offset) { if (sampleOffsetRequest) sampleOffsetRequest(target, offset); };
             row->setTransmissionRemover([this](Stop* target, int index) { removeTransmission(target, index); });
             row->setChildrenGetter([this](const Stop* master) { return groupChildren(master); },
                 [this](const Stop* master) { return groupChildTransmissions(master); });

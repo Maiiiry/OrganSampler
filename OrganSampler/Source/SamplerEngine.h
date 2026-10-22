@@ -140,6 +140,10 @@ struct Stop
     juce::String name;      // from the folder: the stop's identity in every saved state
     juce::String alias;     // shown instead of the name when set (voicing "Alias")
     bool showRankCount = true;   // a stop folder's button shows its rank count "[II]" (voicing, 0.8.146)
+    // The sample files' numbers minus the keys they play on (0.8.155, Stop List
+    // "Files vs keys"; the Hauptwerk import reads it from the definition): the
+    // loader puts file 024 on key 36 when it is -12. 0 = the number is the key.
+    int sampleOffset = 0;
     // The alias, else the name with its foot mark; when neither carries a
     // footage, the footage measured from the smpl pitch of the lowest pipe is appended.
     juce::String displayName() const;
@@ -735,6 +739,9 @@ public:
         bool grouped = true;        // same-named folders form one stop (its perspectives)
         bool container = false;     // an empty stop without samples (a stop folder's master); folder = the tree it is created with
         int manual = -1;            // the division this stop belongs to (-1 = the manual given to loadManualFolder)
+        // The sample files' numbers minus the keys they play on (0.8.155): Doesburg
+        // names the file of key 36 "024" - the offset is -12, the key = number - offset.
+        int sampleOffset = 0;
     };
     // 'replacing': divisions whose stops the commit replaces with the loaded
     // ones (their old stops stay until then and lend their samples and copies
@@ -1292,7 +1299,10 @@ public:
     // Stop pool: release / reload the samples of a stop (and its perspective
     // ranks). Message thread only; reloading decodes synchronously.
     void unloadStopSamples(Stop* stop);
-    void reloadStopSamples(Stop* stop);
+    void reloadStopSamples(Stop* stop, bool evenIfLoaded = false);
+    // "Files vs keys" of a loaded stop (0.8.155): the offset set on the stop and
+    // its ranks, their samples decoded again on their keys, the fills rebuilt.
+    void setStopSampleOffset(Stop* stop, int offset);
     // Stops (per division, by name) whose samples are not loaded at all while
     // they sit in the stop pool. Consulted by the loaders.
     void setPooledStopNames(std::map<int, std::set<juce::String>> names);

@@ -1474,6 +1474,7 @@ MainComponent::MainComponent()
     voicer->indentStopRequest = [this](Stop* stop, Stop* master) { indentStopUnder(stop, master); };
     voicer->outdentStopRequest = [this](Stop* stop) { outdentStop(stop); };
     voicer->newStopFolderRequest = [this](int manual, int column, int row) { createStopFolderOnGrid(manual, column, row); };
+    voicer->sampleOffsetRequest = [this](Stop* stop, int offset) { setStopSampleOffset(stop, offset); };
     voicer->readyStopNames = [this](int manual)
     {
         std::vector<juce::String> names;
@@ -10630,6 +10631,7 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
                             entry->setProperty("alias", child.name);      // the rank name without its perspective ("Rec: Quintaton 16 (L component)")
                             entry->setProperty("customName", false);
                             entry->setProperty("child", true);
+                            if (child.sampleOffset != 0) entry->setProperty("sampleOffset", child.sampleOffset);
                             entry->setProperty("folders", folders);
                             childEntries.add(juce::var(entry.get()));
                         }
@@ -10653,6 +10655,7 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
                     entry->setProperty("alias", stop.name);           // the Hauptwerk stop name on the button
                     entry->setProperty("customName", false);
                     entry->setProperty("child", false);
+                    if (stop.sampleOffset != 0) entry->setProperty("sampleOffset", stop.sampleOffset);
                     entry->setProperty("folders", folders);
                     entries.add(juce::var(entry.get()));
                 }
@@ -12598,7 +12601,7 @@ std::shared_ptr<std::vector<SamplerEngine::FolderAssignment>> MainComponent::sto
         {
             const auto folder = resolveStopBuildFolder(manual, ref);
             if (folder == juce::File()) continue;
-            map->push_back({ folder, entry.name, perspective, true, false, manual });
+            map->push_back({ folder, entry.name, perspective, true, false, manual, entry.sampleOffset });
         }
     }
     return map;
@@ -12890,6 +12893,7 @@ MainComponent::ManualConfig::StopBuild MainComponent::deriveStopBuildFromEngine(
         entry.name = stop->name;
         entry.alias = stop->alias;
         entry.child = stop->groupMaster.isNotEmpty();
+        entry.sampleOffset = stop->sampleOffset;
         if (stop->container) { build.entries.push_back(entry); continue; }   // a stop folder without pipes: a row without folders
         auto place = [&](const Stop* rank)
         {
@@ -13185,6 +13189,24 @@ void MainComponent::indentStopUnder(Stop* stop, Stop* master)
         rebuildPerspectiveAudioRoutes();   // the division may lack this stop's perspectives' routes
     }
     finishInPlaceStopEdit(source == target ? std::set<int>{ source } : std::set<int>{ source, target });
+}
+
+void MainComponent::setStopSampleOffset(Stop* stop, int offset)
+{
+    // "Files vs keys" chosen in the voicing (0.8.155): the Stop List row takes it,
+    // the engine loads the stop's samples again on their keys, the division's
+    // fills follow (the same as the column with "Apply and reload", for one stop).
+    if (stop == nullptr || stop->container || activeFolderLoader != nullptr) return;
+    const int manual = stop->primaryManual;
+    if (manual < 0 || manual > manualCount) return;
+    offset = juce::jlimit(-48, 48, offset);
+    auto& config = manualConfigs[(size_t)manual];
+    if (!config.stopBuild.active) { config.stopBuild = deriveStopBuildFromEngine(manual); config.stopBuild.active = true; }
+    for (auto& entry : config.stopBuild.entries)
+        if (!entry.isTransmission() && stopBuildKey(entry.name) == stopBuildKey(stop->name)) entry.sampleOffset = offset;
+    engine.setStopSampleOffset(stop, offset);
+    configurationDirty = true;
+    finishInPlaceStopEdit({ manual });
 }
 
 void MainComponent::createStopFolderOnGrid(int manual, int column, int row)
@@ -13841,6 +13863,7 @@ juce::var MainComponent::stopBuildToVar(const ManualConfig::StopBuild& build)
         item->setProperty("alias", entry.alias);
         item->setProperty("customName", entry.customName);
         item->setProperty("child", entry.child);
+        if (entry.sampleOffset != 0) item->setProperty("sampleOffset", entry.sampleOffset);
         juce::Array<juce::var> folders;
         for (const auto& [perspective, ref] : entry.folders)
         {
@@ -13873,6 +13896,7 @@ MainComponent::ManualConfig::StopBuild MainComponent::stopBuildFromVar(const juc
             entry.alias = item.getProperty("alias", "").toString();
             entry.customName = item.getProperty("customName", false);
             entry.child = item.getProperty("child", false);
+            entry.sampleOffset = juce::jlimit(-48, 48, (int)item.getProperty("sampleOffset", 0));
             if (auto* folders = item.getProperty("folders", juce::var()).getArray())
                 for (const auto& folder : *folders)
                 {
@@ -14114,7 +14138,7 @@ void MainComponent::showStopBuildingDialog(int)
             layoutGrid();
         }
 
-        int neededWidth() const { return 24 + removeWidth + divisionWidth + nameWidth + aliasWidth + transmissionWidth
+        int neededWidth() const { return 24 + removeWidth + divisionWidth + nameWidth + aliasWidth + offsetWidth + transmissionWidth
             + (int)perspectives.size() * cellWidth + 60; }
 
         // An empty table: a big hint with an arrow leading to "Load folder...".
@@ -14143,7 +14167,7 @@ void MainComponent::showStopBuildingDialog(int)
         }
 
     private:
-        enum : int { rowHeight = 32, headerHeight = 30, removeWidth = 26, divisionWidth = 74, nameWidth = 240, aliasWidth = 150,
+        enum : int { rowHeight = 32, headerHeight = 30, removeWidth = 26, divisionWidth = 74, nameWidth = 240, aliasWidth = 150, offsetWidth = 92,
             transmissionWidth = 180, cellWidth = 250, freeWidth = 24, indent = 28, pathTailLength = 30, sidewaysDrag = 40 };
 
         // The stop name: double-click edits it, dragging it moves the row (up/down:
@@ -14258,6 +14282,7 @@ void MainComponent::showStopBuildingDialog(int)
             std::unique_ptr<juce::ComboBox> division;
             std::unique_ptr<NameCell> name;
             std::unique_ptr<juce::TextEditor> alias;
+            std::unique_ptr<juce::TextEditor> offset;   // "Files vs keys": the files' numbers minus the keys (0.8.155)
             std::unique_ptr<juce::TextButton> transmissions;
             std::vector<Cell> cells;
         };
@@ -14403,7 +14428,7 @@ void MainComponent::showStopBuildingDialog(int)
             applyButton.setTooltip(changes ? "Saves the table and loads the changed divisions again. Folders left out of the "
                 "table are not loaded (they leave the RAM)." : "Nothing to apply: the table is what is loaded. Transmissions act at once.");
         }
-        juce::Label divisionHeader, nameHeader, aliasHeader, transmissionHeader;
+        juce::Label divisionHeader, nameHeader, aliasHeader, offsetHeader, transmissionHeader;
         std::vector<HeaderCell> headers;
         std::vector<std::unique_ptr<Row>> rows;
         juce::TextButton addStopButton, addPerspectiveButton, removeEmptyButton, aliasesButton, loadFolderButton, unloadFolderButton, swapButton,
@@ -14565,7 +14590,11 @@ void MainComponent::showStopBuildingDialog(int)
             for (size_t i = 0; i < rows.size(); ++i)
             {
                 commitName(i, rows[i]->name->getText());
-                if (auto* entry = entryOf(i)) entry->alias = rows[i]->alias->getText().trim();
+                if (auto* entry = entryOf(i))
+                {
+                    entry->alias = rows[i]->alias->getText().trim();
+                    if (rows[i]->offset != nullptr) entry->sampleOffset = juce::jlimit(-48, 48, rows[i]->offset->getText().trim().getIntValue());
+                }
             }
             recentlyAdded = { -1, -1 };   // the next action ends the "just added" highlight
             dropCandidates.clear();
@@ -14628,14 +14657,14 @@ void MainComponent::showStopBuildingDialog(int)
         int perspectiveColumnForScreenPoint(juce::Point<int> screen) const
         {
             const auto local = grid.getLocalPoint(nullptr, screen);
-            const int x0 = removeWidth + divisionWidth + nameWidth + aliasWidth + transmissionWidth;
+            const int x0 = removeWidth + divisionWidth + nameWidth + aliasWidth + offsetWidth + transmissionWidth;
             if (local.x < x0) return -1;
             const int column = (local.x - x0) / (int)cellWidth;
             return column < (int)perspectives.size() ? column : -1;
         }
         juce::Rectangle<int> cellRect(int row, int column) const
         {
-            const int x = removeWidth + divisionWidth + nameWidth + aliasWidth + transmissionWidth + column * cellWidth;
+            const int x = removeWidth + divisionWidth + nameWidth + aliasWidth + offsetWidth + transmissionWidth + column * cellWidth;
             return { x, (int)headerHeight + row * (int)rowHeight + 2, cellWidth - freeWidth - 4, rowHeight - 4 };
         }
 
@@ -14694,6 +14723,9 @@ void MainComponent::showStopBuildingDialog(int)
             header(divisionHeader, "Division");
             header(nameHeader, "Stop (name in every saved state)");
             header(aliasHeader, "Alias (shown instead)");
+            header(offsetHeader, "Files vs keys");
+            offsetHeader.setTooltip("The sample files' numbers minus the keys they play on: -12 when the file 024 is to sound on key 36 "
+                "(Doesburg). 0 or empty: the number in the file name is the key. A Hauptwerk import reads it from the definition.");
             header(transmissionHeader, "Transmissions");
             for (size_t p = 0; p < perspectives.size(); ++p)
             {
@@ -14883,6 +14915,24 @@ void MainComponent::showStopBuildingDialog(int)
                 updateApplyState();
             };
             grid.addAndMakeVisible(*row->alias);
+            if (!transmission && !entry.folders.empty())
+            {
+                // "Files vs keys" (0.8.155): the files' numbers minus the keys they play on.
+                row->offset = std::make_unique<juce::TextEditor>();
+                row->offset->setFont(juce::Font(juce::FontOptions(16.0f)));
+                row->offset->setInputRestrictions(3, "-+0123456789");
+                row->offset->setJustification(juce::Justification::centred);
+                row->offset->setText(entry.sampleOffset != 0 ? juce::String(entry.sampleOffset) : juce::String(), false);
+                row->offset->setTextToShowWhenEmpty("0", juce::Colours::grey);
+                row->offset->setTooltip("Files vs keys: the sample files' numbers minus the keys they play on. -12: the file 024 sounds on key 36 "
+                    "(Doesburg). Empty or 0: the number in the file name is the key. Applied with \"Apply and reload\".");
+                row->offset->onTextChange = [this, i]
+                {
+                    if (auto* e = entryOf(i)) e->sampleOffset = juce::jlimit(-48, 48, rows[i]->offset->getText().trim().getIntValue());
+                    updateApplyState();
+                };
+                grid.addAndMakeVisible(*row->offset);
+            }
             if (transmission)
             {
                 // The source in grey: a transmission has no transmissions and no folders of its own.
@@ -14988,7 +15038,7 @@ void MainComponent::showStopBuildingDialog(int)
 
         void layoutGrid()
         {
-            const int width = removeWidth + divisionWidth + nameWidth + aliasWidth + transmissionWidth + (int)perspectives.size() * cellWidth + 12;
+            const int width = removeWidth + divisionWidth + nameWidth + aliasWidth + offsetWidth + transmissionWidth + (int)perspectives.size() * cellWidth + 12;
             const int height = headerHeight + (int)rows.size() * rowHeight + 8;
             grid.markerYFor = [](int index) { return (int)headerHeight + index * (int)rowHeight; };
             grid.setSize(juce::jmax(width, view.getWidth() - 20), juce::jmax(height, 40));
@@ -14998,6 +15048,7 @@ void MainComponent::showStopBuildingDialog(int)
             transmissionHeader.setBounds(x, 0, transmissionWidth, headerHeight); x += transmissionWidth;
             nameHeader.setBounds(x, 0, nameWidth, headerHeight); x += nameWidth;
             aliasHeader.setBounds(x, 0, aliasWidth, headerHeight); x += aliasWidth;
+            offsetHeader.setBounds(x, 0, offsetWidth, headerHeight); x += offsetWidth;
             for (auto& header : headers)
             {
                 header.label->setBounds(x + 2, 0, cellWidth - freeWidth - 6, headerHeight);
@@ -15015,6 +15066,8 @@ void MainComponent::showStopBuildingDialog(int)
                 row->transmissions->setBounds(x, y + 2, transmissionWidth - 6, rowHeight - 4); x += transmissionWidth;
                 row->name->setBounds(x + shift, y + 2, nameWidth - 6 - shift, rowHeight - 4); x += nameWidth;
                 row->alias->setBounds(x, y + 2, aliasWidth - 6, rowHeight - 4); x += aliasWidth;
+                if (row->offset != nullptr) row->offset->setBounds(x, y + 2, offsetWidth - 6, rowHeight - 4);
+                x += offsetWidth;
                 for (auto& cell : row->cells)
                 {
                     cell.button->setBounds(x, y + 2, cellWidth - freeWidth - 4, rowHeight - 4);

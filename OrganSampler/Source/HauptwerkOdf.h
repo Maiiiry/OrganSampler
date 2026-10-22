@@ -47,6 +47,7 @@ struct HauptwerkOdf
         bool noise = false;             // key/stop action noises, blower, tremulant noise: no stop of ours
         juce::String perspective;       // "Direct", "Diffuse", "Rear", "Front" ... from the name; empty when the name says nothing
         std::vector<Pipe> pipes;        // the first layer's attack sample of every pipe (tremmed layers and "trem" folders excluded)
+        int sampleOffset = 0;           // the files' numbers minus the pipes' notes, the most common value (Doesburg: -12 - "024" for note 36; 0.8.155)
         juce::File folder;              // the folder most of the pipes lie in (absolute, once the packages are resolved)
         int packageId = 0;              // the installation package that folder lies in
         juce::String folderRelative;    // the folder relative to its package ("pipe/PE/PEd_Princip16/01-dirMk2H-PEd_Princip16")
@@ -146,6 +147,10 @@ struct HauptwerkOdf
         // a transmission of the owner into this division with that shift.
         int extensionOfStopId = 0;
         int shift = 0;
+        // The sample files' numbers minus the keys they play on, from the ranks'
+        // pipes (0.8.155): the Stop List row's "Files vs keys", the loader puts the
+        // files on their keys (Doesburg: -12, before the organ sounded an octave high).
+        int sampleOffset = 0;
         // The cell on our grid from the jamb page (0.8.142): the rank of the
         // drawknob's x among the division's columns and of its y among its rows;
         // -1 = none (no page, or a layout too wide or too tall to copy).

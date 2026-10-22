@@ -826,6 +826,23 @@ HauptwerkOdf HauptwerkOdf::parse(const juce::File& file, const std::function<boo
     // A rank whose pipes have no release sample at all is a one-shot (chimes,
     // harp, carillon): the sample plays out whatever the key does.
     for (auto& [id, rank] : odf.ranks) rank.oneShot = !rank.pipes.empty() && rankReleaseRows[id] == 0;
+    // The files' numbers against the pipes' notes (0.8.155): Doesburg names the
+    // file of the pipe on key 36 "024" - the most common difference is the rank's
+    // offset; the Stop List row carries it and the loader puts the files on their keys.
+    for (auto& [id, rank] : odf.ranks)
+    {
+        std::map<int, int> counts;
+        for (const auto& pipe : rank.pipes)
+        {
+            const auto name = pipe.file.fromLastOccurrenceOf("/", false, false);
+            int number = 0, digits = 0;
+            for (const auto c : name) { if (juce::CharacterFunctions::isDigit(c) && digits < 3) { number = number * 10 + (int)(c - '0'); ++digits; } else break; }
+            if (digits >= 2) ++counts[number - pipe.note];
+        }
+        int best = 0, bestCount = -1;
+        for (const auto& [offset, count] : counts) if (count > bestCount) { best = offset; bestCount = count; }
+        rank.sampleOffset = bestCount > 0 ? juce::jlimit(-48, 48, best) : 0;
+    }
     // Every rank's folder: the parent folder of most of its pipes, made absolute
     // through its installation package.
     for (auto& [id, rank] : odf.ranks)
@@ -1331,6 +1348,7 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
         return index;
     };
     // The stops in the order of the divisions of ours, each primary ODF division's first.
+    int offsetStops = 0;   // stops whose files are numbered off their keys (0.8.155)
     std::vector<std::pair<int, int>> stopOrder;   // (division of ours, ODF stop id)
     for (size_t i = 0; i < ordered.size(); ++i)
         for (const int divisionId : divisionsOf(ordered[i]))
@@ -1415,6 +1433,18 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
         if (rankFolders.empty()) { ++result.stopsWithoutSamples; result.notes.add("\"" + stop.name + "\" has no usable pipes (tremmed, noise or missing samples): left out"); continue; }
         PlanStop planStop;
         planStop.stopId = id; planStop.name = StopNames::capitaliseAfterDivisionPrefix(stop.name); planStop.rankIds = rankIds;
+        // The files' numbers against the keys, from the stop's ranks (0.8.155).
+        auto sampleOffsetFor = [this](const std::vector<int>& ids)
+        {
+            std::map<int, int> weight;
+            for (const int rankId : ids)
+                if (const auto rank = ranks.find(rankId); rank != ranks.end()) weight[rank->second.sampleOffset] += (int)rank->second.pipes.size();
+            int best = 0, bestWeight = -1;
+            for (const auto& [offset, w] : weight) if (w > bestWeight) { best = offset; bestWeight = w; }
+            return bestWeight > 0 ? best : 0;
+        };
+        planStop.sampleOffset = sampleOffsetFor(rankIds);
+        if (planStop.sampleOffset != 0) ++offsetStops;
         // Several ranks in ONE perspective (Caen: a stereo stop recorded as
         // an "(L component)" and an "(R component)" rank, two folders for the
         // same perspective): OrganSampler's stop has one folder per
@@ -1464,6 +1494,7 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
                         PlanStop child;
                         child.stopId = id; child.name = StopNames::capitaliseAfterDivisionPrefix(key); child.rankIds = ids;
                         child.folders = foldersFor(ids);
+                        child.sampleOffset = sampleOffsetFor(ids);
                         planStop.children.push_back(child);
                     }
                     result.notes.add("\"" + stop.name + "\" has " + juce::String((int)rankIds.size()) + " ranks in " + juce::String((int)ranksPerLabel.size())
@@ -1589,6 +1620,10 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
         if (placed > 0) result.notes.add("Grid: " + juce::String(placed) + " stop(s) placed as on the definition's page \"" + jambPageName + "\""
             + (skippedDivisions > 0 ? " (" + juce::String(skippedDivisions) + " division(s) left in the table's order: a layout too wide or too tall)" : juce::String()));
     }
+    if (offsetStops > 0)
+        result.notes.add("Files vs keys: " + juce::String(offsetStops) + " stop(s) have their sample files numbered off the keys they play on "
+            "(the definition's pipe notes against the file names, e.g. the file 024 on key 36): the Stop List rows carry the offset and the "
+            "loader puts every file on its key");
     // The couplers of the definition as couplers of ours (0.8.138): the keyboard
     // played = our source division, the keyboard or division pulled = our
     // target; the type from the semitones (0 unison, 12 the 4', -12 the 16') or

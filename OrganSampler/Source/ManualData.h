@@ -1016,6 +1016,15 @@ static const char* const kManualText_part5 =
     "  items indented under it) - whether the button carries the Roman numeral of\n"
     "  the ranks that sound with it. Off: the name alone. On by default; saved\n"
     "  with the configuration.\n"
+    "- **Files vs keys** (every stop with pipes, next to the rank count) - the\n"
+    "  sample files' numbers minus the keys they play on. Most sample folders\n"
+    "  name the file of key 36 \"036\" and the setting is 0; Doesburg names it\n"
+    "  \"024\" on every stop, so the setting is -12 - without it the organ sounds an\n"
+    "  octave high and its lowest octave lies off the keyboard. A change loads the\n"
+    "  stop's samples again on their keys at once (the fills follow). The same\n"
+    "  setting is the Stop List column \"Files vs keys\", where a Hauptwerk import\n"
+    "  writes what the definition says for every stop. Each key's tooltip in the\n"
+    "  rows below names the file it plays.\n"
     "- **Alias** - the caption of the button. *Automatic* shows the folder name;\n"
     "  type any text to show that instead (an alias without a footage gets the\n"
     "  stop's footage appended). The alias is only a caption: saved states,\n"
@@ -1162,9 +1171,9 @@ static const char* const kManualText_part5 =
     "\n"
     "*Stop List* in the top bar (also *Stop building...* in the Divisions dialog and\n"
     "in every division section of the Configuration Editor) opens one table for\n"
-    "the whole organ: one row per stop with its division, name, alias and\n"
-    "transmissions, and one column per perspective holding the sample folder that\n"
-    "plays that perspective of the stop.\n"
+    "the whole organ: one row per stop with its division, name, alias, \"Files vs\n"
+    "keys\" and transmissions, and one column per perspective holding the sample\n"
+    "folder that plays that perspective of the stop.\n"
     "\n"
     "## 4.1 Folder trees and the pool\n"
     "\n"
@@ -1203,6 +1212,8 @@ static const char* const kManualText_part5 =
     "  loaded trees (a folder serves one cell only); the small x beside a cell\n"
     "  frees its folder. A cell can also be dragged onto another cell (empty: takes\n"
     "  the folder; occupied: swaps). The whole path appears in a tip while the\n"
+    ;
+static const char* const kManualText_part6 =
     "  mouse rests on the cell.\n"
     "- **Transmissions:** the cell shows where the stop's transmissions go\n"
     "  (division and transposition); click it to add one into any division (its\n"
@@ -1212,8 +1223,6 @@ static const char* const kManualText_part5 =
     "  movable like a stop.\n"
     "- **Add stop...** adds, per division, an empty stop folder or one of the\n"
     "  ready-made stops of the loaded trees that no division uses yet (added\n"
-    ;
-static const char* const kManualText_part6 =
     "  whole, with the folders of every perspective; a stop whose folders are in\n"
     "  the table already is not offered). The x at a row's start\n"
     "  removes the stop (its folders become free). **Remove empty stops** removes\n"
@@ -1233,6 +1242,11 @@ static const char* const kManualText_part6 =
     "- **Name:** derived from the folders; a typed name is kept until the field is\n"
     "  cleared. The name is the stop's identity in voicing, combinations and\n"
     "  configurations; the alias is only what is shown.\n"
+    "- **Files vs keys:** the sample files' numbers minus the keys they play on,\n"
+    "  0 (empty) when the number in a file name is the key - as in most sample\n"
+    "  folders. Doesburg names the file of key 36 \"024\": -12. A Hauptwerk import\n"
+    "  fills the column from the definition; the voicing of every stop offers the\n"
+    "  same setting and applies it at once. Applied here with *Apply and reload*.\n"
     "\n"
     "## 4.3 Apply and reload\n"
     "\n"
@@ -1400,6 +1414,8 @@ static const char* const kManualText_part6 =
     "and it can even **mix different kinds of driver** in one organ. An organ can\n"
     "spread over every output of every interface in the room: the Hauptwerk\n"
     "division on an RME, the R\xC3\xBC""ckpositiv on a second card, the pedal on a third,\n"
+    ;
+static const char* const kManualText_part7 =
     "headphones on the on-board sound chip. Which drivers there are and how to\n"
     "set them up differs by operating system: see \"Audio on Windows\", \"Audio on\n"
     "Linux\" and \"Audio on macOS\" below. Two things hold everywhere:\n"
@@ -1414,8 +1430,6 @@ static const char* const kManualText_part6 =
     "that finds a buffer below 256 samples on any route says so first and asks\n"
     "for 512, or 256 at the least, before anything else.\n"
     "\n"
-    ;
-static const char* const kManualText_part7 =
     "**One rate for every device.** Every audio route renders at the rate of its\n"
     "device, and the devices of one organ may run at different rates and buffer\n"
     "sizes - the program does not stop you. The samples are loaded at 48 kHz (see\n"
@@ -1602,6 +1616,8 @@ static const char* const kManualText_part7 =
     "  the audio tab (where Windows has the driver control panel button) lists\n"
     "  everything regardless; the same switch is in the settings editor as *Audio\n"
     "  devices: list also the ALSA devices that cannot be opened*.\n"
+    ;
+static const char* const kManualText_part8 =
     "\n"
     "A menu entry with the icon, so that the program starts from the\n"
     "application menu like any other: *Install menu entry and icon* in the\n"
@@ -1616,8 +1632,6 @@ static const char* const kManualText_part7 =
     "reports are welcome. Two builds: `OrganSampler-macos.zip` for Apple silicon\n"
     "Macs on **macOS 11 Big Sur or newer**, and `OrganSampler-macos-10.11-intel.zip`\n"
     "for Intel Macs on **macOS 10.11 El Capitan or newer** (10.11 is the oldest\n"
-    ;
-static const char* const kManualText_part8 =
     "system the framework allows; a Mac on 10.10 needs the free upgrade to the\n"
     "newest system Apple offers for it, 10.13 High Sierra for the 2010 models).\n"
     "\n"
@@ -1804,6 +1818,8 @@ static const char* const kManualText_part8 =
     "  row of every stop reports what its own ranks were found to be in\n"
     "  (\"temperament = ...\"), which helps the choice. \"Equal\" is reported whenever\n"
     "  the recording matches equal temperament.\n"
+    ;
+static const char* const kManualText_part9 =
     "- **The target temperament** is the temperament the organ *plays* in. A\n"
     "  **single click** on a temperament selects it (or *Target temperament* in\n"
     "  the Configuration Editor). Every pipe is then retuned by the difference\n"
@@ -1818,8 +1834,6 @@ static const char* const kManualText_part8 =
     "diapasons (a1 = 435, 440, 442, 465 Hz ...), and an organ built from the stops\n"
     "of two such organs would be out of tune with itself. With every organ at 440 Hz\n"
     "the stops agree, and celeste beats and the global *Pitch* slider (Global\n"
-    ;
-static const char* const kManualText_part9 =
     "sound, cents on top of everything) mean what they say. The voicing row's\n"
     "*Undulation* line reads \"needs 440 Hz\" until this is done.\n"
     "\n"
@@ -2006,6 +2020,8 @@ static const char* const kManualText_part9 =
     "  to get the disk space back, or after replacing the samples wholesale; the\n"
     "  copies are built again (and cached again) the next time they are needed.\n"
     "  Nothing else is lost.\n"
+    ;
+static const char* const kManualText_part10 =
     "- *Filled pipes cache: files of stops not loaded now* - **Remove them**\n"
     "  deletes only the files of ranks that are not loaded at the moment: the\n"
     "  stops of other configurations, of folders you have unloaded or deleted.\n"
@@ -2020,8 +2036,6 @@ static const char* const kManualText_part9 =
     "The cache is a convenience, not a necessity: with it off everything works the\n"
     "same, only the build after each load takes its full time.\n"
     "\n"
-    ;
-static const char* const kManualText_part10 =
     "---\n"
     "\n"
     "# 8. Configuration Editor reference\n"
@@ -2208,6 +2222,8 @@ static const char* const kManualText_part10 =
     "channels, with the same impulse response, dry/wet, wet volume, high and low\n"
     "cut, pre-delay, decay and fade-out. Convolution is linear - the reverb of the\n"
     "summed dry signal of such routes is the sum of their reverbs - so the sound is\n"
+    ;
+static const char* const kManualText_part11 =
     "the same and the work is paid once per group: Rural Organ's three divisions on\n"
     "one device, each with its default and its auxiliary route, run two\n"
     "convolutions instead of six. The IR caption of a route that rides on\n"
@@ -2222,8 +2238,6 @@ static const char* const kManualText_part10 =
     "manages 25 000 to 30 000 voices of a wet set with three perspectives at a\n"
     "buffer of 256 - and leaves room for the computers of the years to come; the\n"
     "program is as stable at any value, the ceiling only sizes the voice pool.\n"
-    ;
-static const char* const kManualText_part11 =
     "When it is reached the oldest voices are faded out. Set it below what the\n"
     "computer can render so that an overload fades old voices rather than crackles:\n"
     "set the maximum polyphony so that the *DSP* value never exceeds 100 %, to\n"
@@ -2410,6 +2424,8 @@ static const char* const kManualText_part11 =
     "position \"-inf\" silences them. Quieter releases make a drier organ without\n"
     "losing the room entirely.\n"
     "\n"
+    ;
+static const char* const kManualText_part12 =
     "### Release cutting\n"
     "\n"
     "Release samples are faded out over this share of their length and end there\n"
@@ -2424,8 +2440,6 @@ static const char* const kManualText_part11 =
     "action. Longer values make staccato playing more deliberate.\n"
     "\n"
     "### Attack minimum delay\n"
-    ;
-static const char* const kManualText_part12 =
     "\n"
     "A small pause between the key press and the start of the pipe (0 to 500 ms,\n"
     "default 2), varied at random by a couple of milliseconds so that a chord's\n"
@@ -2612,6 +2626,8 @@ static const char* const kManualText_part12 =
     "\n"
     "Pitch shift methods. On (default): every shifted copy is brought to the\n"
     "loudness of its source sample, so a filled pipe is as strong as the pipe it was\n"
+    ;
+static const char* const kManualText_part13 =
     "made from. Off: the copy keeps whatever level the shift left it with (a copy\n"
     "with its formants moved down loses level).\n"
     "\n"
@@ -2626,8 +2642,6 @@ static const char* const kManualText_part12 =
     "the copies in RAM (hundreds of MB for a large organ) and never plays a stale\n"
     "copy. Switch it on when the build after loading annoys you; switch it off\n"
     "when disk space is short - everything works the same without it. \"The cache\"\n"
-    ;
-static const char* const kManualText_part13 =
     "describes it in full.\n"
     "\n"
     "### Filled pipes cache: Empty the cache\n"
@@ -2814,6 +2828,8 @@ static const char* const kManualText_part13 =
     "a wrong base temperament puts the whole organ slightly out of tune. See\n"
     "\"Temperaments\".\n"
     "\n"
+    ;
+static const char* const kManualText_part14 =
     "### Target temperament\n"
     "\n"
     "The temperament the organ *plays* in (see \"Temperaments\"). Every pipe is retuned by the\n"
@@ -2828,8 +2844,6 @@ static const char* const kManualText_part13 =
     "returns to where it was last time, always with its title bar on the screen.\n"
     "\n"
     "## 8.5 Folder name patterns (one per line)\n"
-    ;
-static const char* const kManualText_part14 =
     "\n"
     "### One-shot stops (folder contains)\n"
     "\n"
@@ -3016,6 +3030,8 @@ static const char* const kManualText_part14 =
     "400 ms, default 255). The same lag governs the volume glide when a pipe held\n"
     "through several routes passes from one route to another.\n"
     "\n"
+    ;
+static const char* const kManualText_part15 =
     "### Wind: also affects divisions\n"
     "\n"
     "Tick the other divisions fed from this wind supply: they receive half of this\n"
@@ -3030,8 +3046,6 @@ static const char* const kManualText_part14 =
     "in the application-data folder; a crash writes a file beside it. When the\n"
     "window answers nothing for eight seconds the log records where it was waiting.\n"
     "That folder is what a report needs - and *Report a problem...* sends it for\n"
-    ;
-static const char* const kManualText_part15 =
     "you.\n"
     "\n"
     "### Report a problem\n"

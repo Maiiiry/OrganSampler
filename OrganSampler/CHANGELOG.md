@@ -12,6 +12,20 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.155] - 2026-10-22
+
+### Added
+- "Files vs keys" (Stop List, a column after the alias; the voicing names it
+  on the stop's line): the sample files' numbers minus the keys they play on.
+  Doesburg names the file of key 36 "024" on every stop (-12); the number in
+  a file name was always the key, so the organ sounded an octave high and its
+  lowest octave lay off the keyboard. The loader puts every file on its key
+  and loads every file of the folder whose key fits 0-127 (six-octave folders
+  for the octave couplers included); a Hauptwerk import reads the offset of
+  every stop from the definition (pipe notes against file names) and writes
+  it into the rows (the plan says how many stops have one). Organs imported
+  before: load the definition again, or type the offset into the column.
+
 ## [0.8.154] - 2026-10-22
 
 ### Fixed

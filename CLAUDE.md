@@ -389,6 +389,29 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   available" box of the user's Doesburg configuration (its routes are Windows Audio) for a screenshot on Wayland, where
   nothing else can click (no xdotool). Website 0.8.151: `site/assets/main.png` = the console with Doesburg Surround
   (the user: "jen na první okno", the Stop List / Divisions / Editor pictures stay; README.md keeps console-stralsund.png).
+  0.8.155 FILES VS KEYS (#76): the number in a sample's file name is NOT always the key. Doesburg (Sonus Paradisi)
+  names the file of key 36 "024" on 232 of 244 ranks (Caen, Beziers, Ashton: 0) - the ODF's `Pipe_SoundEngine01`
+  NormalMIDINoteNumber (d) is the key, the Sample row's file name carries the number; our loader took the number as
+  the key, so Doesburg sounded an octave high with its lowest octave off the keyboard and the top octave filled by
+  copies. Now `Stop::sampleOffset` / `FolderAssignment::sampleOffset` / `StopBuild::Entry::sampleOffset` (json
+  "sampleOffset", only when != 0) = file number - key; `loadSamplesIntoStop` puts a file on key number - offset (files
+  whose key falls off 0..127 are not decoded; all others are - six-octave folders load whole for the couplers).
+  Set in TWO places: the Stop List column "Files vs keys" (after Alias, applied with Apply and reload) and the voicing's
+  box "Files vs keys" on every stop with pipes (`StopRow::sampleOffsetBox` -> `Voicer::sampleOffsetRequest` ->
+  `MainComponent::setStopSampleOffset` -> entry + `engine.setStopSampleOffset` = `reloadStopSamples(stop, true)` with
+  the copies cleared + `finishInPlaceStopEdit`). Adoption on a reload compares the offset too (`hasLoadedRankForFolder
+  (manual, folder, offset)`, the commit's source match). The Hauptwerk import: `Rank::sampleOffset` = the most common
+  (file number - pipe note) over the rank's pipes, `PlanStop::sampleOffset` the pipe-weighted mode over the stop's ranks
+  (children per child), written into the rows; the plan notes "Files vs keys: N stop(s) ..." (Doesburg Surround: 64).
+  The per-pipe levels (`levelsForFolders`, keyed by pipe note) are keys already - they were misaligned before on Doesburg.
+  Never verify this by the sound's pitch (the user: "je to podle jména souboru ... zřejmé z ODF"). Organs imported
+  before 0.8.155 keep offset 0: load the definition again or type the column. Dev hook `ORGAN_TEST_OFFSET=
+  "<manual>|<stop prefix>|<offset>"` (the voicing path); the grid dump prints "notes a..b files N" per stop.
+  RAR PLAN (agreed, not coded): the configuration never names an archive; a tree path is resolved on disk first, then
+  in an index of the rars under the library root (= the organ's folder with its rars; multi-volume RAR 4/5, non-solid
+  read in parallel per file through libarchive handles; solid sequential; encrypted refused); right-click on "Unpack
+  archive" = "Load from RAR": an ODF inside -> the Hauptwerk import from the archive, else the wav trees. Caen rars
+  22.0 GB vs 45.5 GB unpacked, RAR 4 non-solid, unrar t 74 MB/s packed per thread.
   0.8.154: merge grid - `baseShown` (MainComponentMerge.cpp, the base's non-child table rows per division) decides the
   "last row"; the added organ's first row lands at lastRow + 1 (Beziers stood 11 empty rows under Caen: stale cells
   of stops gone/pooled/indented counted). The move between divisions keeps the arrange mode (`dropStopReferences()`

@@ -320,6 +320,7 @@ private:
                 juce::String name, alias;
                 bool customName = false;                      // typed by the user, not derived from the folders
                 bool child = false;                           // indented under the previous non-child row (stop folder)
+                int sampleOffset = 0;                         // the files' numbers minus the keys they play on ("Files vs keys", 0.8.155)
                 std::map<juce::String, FolderRef> folders;    // perspective -> folder
                 // A transmission shown as a row of its receiving division (Stop List
                 // "Show Trsm."): never written into the table, applied to the engine.
@@ -388,6 +389,7 @@ private:
     // Arrange mode: a click on a free grid cell makes a new empty stop (a stop
     // folder) there; its Stop List row is added and the division reloads.
     void createStopFolderOnGrid(int manual, int column, int row);
+    void setStopSampleOffset(Stop* stop, int offset);   // "Files vs keys" from the voicing (0.8.155)
     // A ready-made stop the loaded folder trees hold: its name and the folder of
     // every perspective, as a Stop List row would carry them.
     struct ReadyStop

@@ -64,6 +64,9 @@ public:
         std::function<void(juce::Component*, juce::Point<int>, bool duplicate)> hover;   // while dragging: shows where an indent would happen (duplicate: the drag makes a copy)
     };
     void setArrangeHooks(ArrangeHooks hooks) { arrange = std::move(hooks); }
+    // "Files vs keys" chosen in the voicing (0.8.155): the owner sets it on the
+    // Stop List row and the engine, which loads the stop's samples again.
+    std::function<void(Stop*, int)> sampleOffsetRequest;
     juce::Rectangle<int> getStopButtonBounds() const { return stopButton.getBounds(); }
     // Development (ORGAN_DUMP_GRID): where the first line's widgets are and whether they show.
     juce::String describeLineOne() const
@@ -203,6 +206,8 @@ private:
     juce::ComboBox aliasBox;
     void aliasChanged();
     juce::ToggleButton rankCountToggle;   // a stop folder's "[II]" on its button (0.8.146)
+    juce::Label sampleOffsetLabel;        // "Files vs keys:" before the box (0.8.155)
+    juce::ComboBox sampleOffsetBox;       // the stop's sample offset, -24..+24, settable here (the Stop List column too)
     juce::Label ranksLabel;
     juce::OwnedArray<juce::ToggleButton> rankButtons;
     // Velocity layers ("_070" files): one tick box per layer of the stop; unticked,
@@ -371,6 +376,7 @@ public:
     // Arrange mode: a click on a free grid cell asked for a new empty stop (a stop
     // folder) there. The owner adds its Stop List row and reloads; the cell is set.
     std::function<void(int manual, int column, int row)> newStopFolderRequest;
+    std::function<void(Stop*, int)> sampleOffsetRequest;   // "Files vs keys" chosen in a stop's voicing (0.8.155)
     // Arrange mode: a stop folder dropped under a stop (after the question was
     // answered "Merge"): the owner moves its children under that stop, the folder
     // itself too when it has pipes, otherwise the empty folder row is removed.

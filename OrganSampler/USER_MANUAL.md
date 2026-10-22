@@ -1002,6 +1002,15 @@ sliders:
   items indented under it) - whether the button carries the Roman numeral of
   the ranks that sound with it. Off: the name alone. On by default; saved
   with the configuration.
+- **Files vs keys** (every stop with pipes, next to the rank count) - the
+  sample files' numbers minus the keys they play on. Most sample folders
+  name the file of key 36 "036" and the setting is 0; Doesburg names it
+  "024" on every stop, so the setting is -12 - without it the organ sounds an
+  octave high and its lowest octave lies off the keyboard. A change loads the
+  stop's samples again on their keys at once (the fills follow). The same
+  setting is the Stop List column "Files vs keys", where a Hauptwerk import
+  writes what the definition says for every stop. Each key's tooltip in the
+  rows below names the file it plays.
 - **Alias** - the caption of the button. *Automatic* shows the folder name;
   type any text to show that instead (an alias without a footage gets the
   stop's footage appended). The alias is only a caption: saved states,
@@ -1148,9 +1157,9 @@ waits with a message.
 
 *Stop List* in the top bar (also *Stop building...* in the Divisions dialog and
 in every division section of the Configuration Editor) opens one table for
-the whole organ: one row per stop with its division, name, alias and
-transmissions, and one column per perspective holding the sample folder that
-plays that perspective of the stop.
+the whole organ: one row per stop with its division, name, alias, "Files vs
+keys" and transmissions, and one column per perspective holding the sample
+folder that plays that perspective of the stop.
 
 ## 4.1 Folder trees and the pool
 
@@ -1217,6 +1226,11 @@ plays that perspective of the stop.
 - **Name:** derived from the folders; a typed name is kept until the field is
   cleared. The name is the stop's identity in voicing, combinations and
   configurations; the alias is only what is shown.
+- **Files vs keys:** the sample files' numbers minus the keys they play on,
+  0 (empty) when the number in a file name is the key - as in most sample
+  folders. Doesburg names the file of key 36 "024": -12. A Hauptwerk import
+  fills the column from the definition; the voicing of every stop offers the
+  same setting and applies it at once. Applied here with *Apply and reload*.
 
 ## 4.3 Apply and reload
 
