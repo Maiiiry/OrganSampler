@@ -566,7 +566,8 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
 - GitHub's issue list hides the number in its new UI (the user asked why "#27" is not in the row): nothing of ours.
 
 ## Pending for the next Linux session (delete when done)
-- The Linux clone `~/OrganSamplerC-linux` needs `git pull` (0.8.147 was made on Windows). LESSON 0.8.147: the two
+- The Linux clone `~/OrganSamplerC-linux` needs `git pull` (0.8.147 and 0.8.148 were made on Windows; the Linux binary
+  of v0.8.148 goes to ~/Downloads/OrganSampler). LESSON 0.8.147: the two
   checkouts are two git repositories on the SAME sources - after a Linux session the Windows checkout `F:` is behind
   origin and holds the Linux commits' content as uncommitted changes; `git pull` there fails ("local changes would be
   overwritten") and a commit lands on the old base (the push is rejected, a tag push is not: v0.8.147 was first built
