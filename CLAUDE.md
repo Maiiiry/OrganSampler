@@ -389,6 +389,26 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   available" box of the user's Doesburg configuration (its routes are Windows Audio) for a screenshot on Wayland, where
   nothing else can click (no xdotool). Website 0.8.151: `site/assets/main.png` = the console with Doesburg Surround
   (the user: "jen na první okno", the Stop List / Divisions / Editor pictures stay; README.md keeps console-stralsund.png).
+  0.8.153 REGRESSIONS (the user: "soupis všech poškození a regresí"): (1) 0.8.144's rebuildUI rule "a stop folder with
+  no children is left off the grid" hid every NEW stop folder (empty by nature) - now only after a load stopped for
+  memory (`engine.lastLoadWasMemoryLimited()`). (2) The 0.8.146 "Rank count [II]" switch was NEVER shown: its
+  visibility was decided in StopRow's constructor with `childrenGetter` still null (the getters come after construction
+  through `setChildrenGetter`) - now visible on every expanded stop row right after the button, enabled in
+  `setChildrenGetter`. Never decide a row widget's state from the getters inside the constructor. (3) The 0.8.146 size
+  cap of the Report a problem dialog (60 % of 800 = 480 px) left the buttons a negative height on 1280x800 (#69/#72/#74) -
+  fixed parts first, editors flexible. (4) Loading: the user's own files carry "packing on" (Caen 96-138 s vs 47-82 s
+  off; Doesburg cached 14 s off / 36 s on / 58 s at 32 kHz without packing) - the load box shows it; the pack costs
+  ~2.5x (three predictor passes + a full unpack verify), the 32 kHz sinc (99 taps) 4x. Not yet made cheaper.
+  Grid dev hooks (voicer.cpp, end of rebuildUI, 1.5 s after a layout): `ORGAN_DUMP_GRID=1` (buttons + free cells in
+  SCREEN coordinates, expanded rows with `describeLineOne()`), `ORGAN_TEST_DROP="<manual>|<stop>|<target>|<col>|<row>"`
+  (dropItem as the mouse would; verified: Rural "TA - violon" 0 -> 1), `ORGAN_TEST_NEW_FOLDER="<manual>|<col>|<row>"`,
+  `ORGAN_TEST_EXPAND="<manual>|<stop prefix>"`, `ORGAN_TEST_SNAPSHOT=<png>` (+ "<png>.row.png" of the expanded row on a
+  dark background - the texts are white, a bare snapshot shows nothing). ORGAN_LOAD_CONFIGURATION needs
+  ORGAN_DUMP_STOPLIST or ORGAN_SAVE_PORTABLE set as well. Start test runs `-WindowStyle Minimized` and NEVER drive the
+  mouse or take screen captures while the user works at the machine (he was writing mail). The drag between divisions
+  by mouse (StopRow::mouseDown/Drag/Up) is unchanged since 0.8.111 and the drop path works - #77's "nefunguje
+  přetahování" still needs the user's description of what happens. Small test organs on Windows:
+  F:\Suchy_rejstrik\Kobrle\Rural Organ.json and TestingOrgan.json (portable, trees beside them).
   0.8.151/0.8.152 RAM min: `SamplerEngine::estimateMinimumRam()` (every k-th of all loaded samples INCLUDING the
   perspective ranks in `Stop::ranks` - 0.8.151 took the first rank alone, Doesburg 2.3 of 7.2 GB -, ~160, first 3 s each:
   resampled to 32 kHz with `SincResampler`, a release halved to 16 kHz when `energyAboveDb(0.46 x 16 kHz) <= -18`,
@@ -622,9 +642,7 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
 - GitHub's issue list hides the number in its new UI (the user asked why "#27" is not in the row): nothing of ours.
 
 ## Pending for the next Linux session (delete when done)
-- The Projucer resave + VS2026 files + the Windows exe in C:\OrganSampler and its shortcut are NOT done for
-  0.8.149-0.8.152 (Linux session): do them on Windows next (git fetch + reset --mixed origin/main first).
-  LESSON 0.8.147: the two
+- LESSON 0.8.147: the two
   checkouts are two git repositories on the SAME sources - after a Linux session the Windows checkout `F:` is behind
   origin and holds the Linux commits' content as uncommitted changes; `git pull` there fails ("local changes would be
   overwritten") and a commit lands on the old base (the push is rejected, a tag push is not: v0.8.147 was first built

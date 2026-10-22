@@ -997,9 +997,11 @@ Open it with the corner button. Its first line shows the alias, the
 perspectives and, for a stop with velocity layers, one tick box per layer. The
 sliders:
 
-- **Rank count [II]** (stop folders only, 0.8.146) - whether the button
-  carries the Roman numeral of the ranks that sound with the folder. Off: the
-  name alone. On by default; saved with the configuration.
+- **Rank count [II]** (right after the button on every opened stop; it can be
+  switched where the button carries a count: a stop folder, or a stop with
+  items indented under it) - whether the button carries the Roman numeral of
+  the ranks that sound with it. Off: the name alone. On by default; saved
+  with the configuration.
 - **Alias** - the caption of the button. *Automatic* shows the folder name;
   type any text to show that instead (an alias without a footage gets the
   stop's footage appended). The alias is only a caption: saved states,

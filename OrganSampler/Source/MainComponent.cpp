@@ -4903,13 +4903,11 @@ void MainComponent::showProblemReportDialog()
                 l.setFont(juce::FontOptions(15.0f));
                 addAndMakeVisible(l);
             };
-            label(intro, "What went wrong? The program adds its activity log, crash reports, settings, the last self-test and a description of "
-                "the computer and the audio devices by itself (no samples, no voicing). Then the GitHub bug report opens in your browser with the "
-                "fields filled in, and the report folder on your Desktop: drag logs.zip into \"Logs\" and the pictures into \"Screenshots\". "
-                "A free GitHub account is needed to submit.");
+            label(intro, "The program packs its logs and settings (no samples) and opens the GitHub form with the fields filled in; "
+                "drag logs.zip and the pictures from the report folder into it. A free GitHub account is needed.");
             intro.setMinimumHorizontalScale(1.0f);
-            label(whatLabel, "What happened (what you saw or heard, and what you expected):");
-            label(stepsLabel, "Steps to reproduce (from the start of the program; does it happen every time?):");
+            label(whatLabel, "What happened:");
+            label(stepsLabel, "Steps to reproduce:");
             for (auto* editor : { &what, &steps })
             {
                 editor->setMultiLine(true, true);
@@ -4917,7 +4915,7 @@ void MainComponent::showProblemReportDialog()
                 editor->setFont(juce::FontOptions(15.0f));
                 addAndMakeVisible(editor);
             }
-            windowShots.setButtonText("Take screenshots of the program's windows now (recommended - keep the dialog in question open)");
+            windowShots.setButtonText("Screenshots of the program's windows (keep the dialog in question open)");
             windowShots.setToggleState(true, juce::dontSendNotification);
             addAndMakeVisible(windowShots);
             addFiles.setButtonText("Add screenshot files...");
@@ -4976,24 +4974,29 @@ void MainComponent::showProblemReportDialog()
         }
         void resized() override
         {
+            // The fixed parts first (the buttons at the bottom above all: on a 1280 x 800
+            // screen the 480 px dialog of 0.8.146 left them a negative height - "tiny
+            // buttons", #69/#72/#74), the two editors share what is left.
             auto area = getLocalBounds().reduced(14);
-            intro.setBounds(area.removeFromTop(96));
-            area.removeFromTop(6);
-            whatLabel.setBounds(area.removeFromTop(22));
-            what.setBounds(area.removeFromTop(120));
-            area.removeFromTop(8);
-            stepsLabel.setBounds(area.removeFromTop(22));
-            steps.setBounds(area.removeFromTop(110));
-            area.removeFromTop(10);
-            windowShots.setBounds(area.removeFromTop(26));
-            auto files = area.removeFromTop(30);
-            addFiles.setBounds(files.removeFromLeft(190).reduced(0, 2));
-            files.removeFromLeft(10);
-            filesLabel.setBounds(files);
             auto buttons = area.removeFromBottom(34);
             cancel.setBounds(buttons.removeFromRight(100).reduced(2));
             buttons.removeFromRight(8);
             create.setBounds(buttons.removeFromRight(280).reduced(2));
+            area.removeFromBottom(6);
+            auto files = area.removeFromBottom(30);
+            addFiles.setBounds(files.removeFromLeft(190).reduced(0, 2));
+            files.removeFromLeft(10);
+            filesLabel.setBounds(files);
+            windowShots.setBounds(area.removeFromBottom(26));
+            area.removeFromBottom(6);
+            intro.setBounds(area.removeFromTop(44));
+            area.removeFromTop(6);
+            whatLabel.setBounds(area.removeFromTop(22));
+            const int editors = juce::jmax(80, area.getHeight() - 22 - 8);
+            what.setBounds(area.removeFromTop(editors * 55 / 100));
+            area.removeFromTop(8);
+            stepsLabel.setBounds(area.removeFromTop(22));
+            steps.setBounds(area);
         }
         MainComponent& owner;
         juce::Label intro, whatLabel, stepsLabel, filesLabel;

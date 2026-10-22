@@ -65,6 +65,14 @@ public:
     };
     void setArrangeHooks(ArrangeHooks hooks) { arrange = std::move(hooks); }
     juce::Rectangle<int> getStopButtonBounds() const { return stopButton.getBounds(); }
+    // Development (ORGAN_DUMP_GRID): where the first line's widgets are and whether they show.
+    juce::String describeLineOne() const
+    {
+        auto one = [](const juce::String& name, const juce::Component& c)
+        { return name + (c.isVisible() ? " " : " hidden ") + c.getBounds().toString(); };
+        return "row " + getBounds().toString() + " | " + one("rankCount", rankCountToggle) + (rankCountToggle.isEnabled() ? "" : " disabled")
+            + " | " + one("diapason", diapasonLabel) + " | " + one("alias", aliasBox);
+    }
     // Expanded rows carry two lines of controls above the per-key sliders.
     static constexpr int expandedControlsHeight = 104;
     // Height of the per-key area below them: the "Volume per key" and "Treble per
@@ -132,6 +140,10 @@ public:
         childrenGetter = std::move(getter);
         childTransmissionsGetter = std::move(transmissionGetter);
         stopButton.setButtonText(caption());   // "[N]" on a stop folder's button
+        // The rank-count switch is enabled where the button can carry a count: known
+        // only now, the getters come after construction (0.8.153: it stayed greyed).
+        rankCountToggle.setEnabled((childrenGetter && !childrenGetter(stop).empty())
+            || (childTransmissionsGetter && !childTransmissionsGetter(stop).empty()));
     }
 
 private:

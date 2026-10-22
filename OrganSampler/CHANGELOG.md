@@ -12,6 +12,32 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.153] - 2026-10-22
+
+### Fixed
+- A new stop folder created on the grid (arrange mode, "New stop folder here")
+  never appeared: since 0.8.144 every stop folder without children was left
+  off the grid, meant for folders whose children a load stopped for memory
+  had left out - and a fresh folder is empty by nature. The rule now applies
+  after such a load only.
+- The "Rank count [II]" switch of 0.8.146 was never shown: its visibility was
+  decided in the row's constructor, before the row knows its children. It now
+  stands right after the stop's button on every expanded stop (enabled where
+  the button can carry a count: a stop folder, or a stop with items indented
+  under it), no longer behind the alias where a long pitch text pushed it past
+  the band's edge.
+- "Report a problem" on a 1280 x 800 screen (macOS, Linux laptops): the 0.8.146
+  size cap of 480 px left the buttons a negative height ("tiny buttons"). The
+  buttons and the file row are laid out first with fixed heights, the two text
+  fields share the rest; the texts are shorter.
+- Development hooks for the grid: `ORGAN_DUMP_GRID=1` logs every button and
+  free cell in screen coordinates, `ORGAN_TEST_DROP="<manual>|<stop>|<target
+  manual>|<column>|<row>"` drops a stop on a cell as the mouse would,
+  `ORGAN_TEST_NEW_FOLDER="<manual>|<column>|<row>"`, `ORGAN_TEST_EXPAND=
+  "<manual>|<stop>"` and `ORGAN_TEST_SNAPSHOT=<png>` (the grid and the expanded
+  row as pictures). The drop between divisions and the new folder are verified
+  by them on the Rural Organ.
+
 ## [0.8.152] - 2026-10-22
 
 ### Fixed

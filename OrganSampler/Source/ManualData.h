@@ -1009,11 +1009,13 @@ static const char* const kManualText_part4 =
     "perspectives and, for a stop with velocity layers, one tick box per layer. The\n"
     "sliders:\n"
     "\n"
-    "- **Rank count [II]** (stop folders only, 0.8.146) - whether the button\n"
+    "- **Rank count [II]** (right after the button on every opened stop; it can be\n"
     ;
 static const char* const kManualText_part5 =
-    "  carries the Roman numeral of the ranks that sound with the folder. Off: the\n"
-    "  name alone. On by default; saved with the configuration.\n"
+    "  switched where the button carries a count: a stop folder, or a stop with\n"
+    "  items indented under it) - whether the button carries the Roman numeral of\n"
+    "  the ranks that sound with it. Off: the name alone. On by default; saved\n"
+    "  with the configuration.\n"
     "- **Alias** - the caption of the button. *Automatic* shows the folder name;\n"
     "  type any text to show that instead (an alias without a footage gets the\n"
     "  stop's footage appended). The alias is only a caption: saved states,\n"
@@ -1210,10 +1212,10 @@ static const char* const kManualText_part5 =
     "  movable like a stop.\n"
     "- **Add stop...** adds, per division, an empty stop folder or one of the\n"
     "  ready-made stops of the loaded trees that no division uses yet (added\n"
-    "  whole, with the folders of every perspective; a stop whose folders are in\n"
-    "  the table already is not offered). The x at a row's start\n"
     ;
 static const char* const kManualText_part6 =
+    "  whole, with the folders of every perspective; a stop whose folders are in\n"
+    "  the table already is not offered). The x at a row's start\n"
     "  removes the stop (its folders become free). **Remove empty stops** removes\n"
     "  every row without folders that has no children.\n"
     "- **Aliases from folders** gives every stop without an alias the bare name\n"
@@ -1412,10 +1414,10 @@ static const char* const kManualText_part6 =
     "that finds a buffer below 256 samples on any route says so first and asks\n"
     "for 512, or 256 at the least, before anything else.\n"
     "\n"
-    "**One rate for every device.** Every audio route renders at the rate of its\n"
-    "device, and the devices of one organ may run at different rates and buffer\n"
     ;
 static const char* const kManualText_part7 =
+    "**One rate for every device.** Every audio route renders at the rate of its\n"
+    "device, and the devices of one organ may run at different rates and buffer\n"
     "sizes - the program does not stop you. The samples are loaded at 48 kHz (see\n"
     "\"Sample rate on loading\"): a device at 44.1 or 96 kHz gets its route's pipes\n"
     "read at the matching speed, through the same interpolation as a transposed\n"
@@ -1614,10 +1616,10 @@ static const char* const kManualText_part7 =
     "reports are welcome. Two builds: `OrganSampler-macos.zip` for Apple silicon\n"
     "Macs on **macOS 11 Big Sur or newer**, and `OrganSampler-macos-10.11-intel.zip`\n"
     "for Intel Macs on **macOS 10.11 El Capitan or newer** (10.11 is the oldest\n"
-    "system the framework allows; a Mac on 10.10 needs the free upgrade to the\n"
-    "newest system Apple offers for it, 10.13 High Sierra for the 2010 models).\n"
     ;
 static const char* const kManualText_part8 =
+    "system the framework allows; a Mac on 10.10 needs the free upgrade to the\n"
+    "newest system Apple offers for it, 10.13 High Sierra for the 2010 models).\n"
     "\n"
     "## 5.7 Audio devices not ready when OrganSampler starts\n"
     "\n"
@@ -1816,10 +1818,10 @@ static const char* const kManualText_part8 =
     "diapasons (a1 = 435, 440, 442, 465 Hz ...), and an organ built from the stops\n"
     "of two such organs would be out of tune with itself. With every organ at 440 Hz\n"
     "the stops agree, and celeste beats and the global *Pitch* slider (Global\n"
-    "sound, cents on top of everything) mean what they say. The voicing row's\n"
-    "*Undulation* line reads \"needs 440 Hz\" until this is done.\n"
     ;
 static const char* const kManualText_part9 =
+    "sound, cents on top of everything) mean what they say. The voicing row's\n"
+    "*Undulation* line reads \"needs 440 Hz\" until this is done.\n"
     "\n"
     "## 6.4 MIDI learn\n"
     "\n"
@@ -2018,10 +2020,10 @@ static const char* const kManualText_part9 =
     "The cache is a convenience, not a necessity: with it off everything works the\n"
     "same, only the build after each load takes its full time.\n"
     "\n"
-    "---\n"
-    "\n"
     ;
 static const char* const kManualText_part10 =
+    "---\n"
+    "\n"
     "# 8. Configuration Editor reference\n"
     "\n"
     "*Configuration Editor* (top bar) holds every setting of the program in one\n"
@@ -2220,10 +2222,10 @@ static const char* const kManualText_part10 =
     "manages 25 000 to 30 000 voices of a wet set with three perspectives at a\n"
     "buffer of 256 - and leaves room for the computers of the years to come; the\n"
     "program is as stable at any value, the ceiling only sizes the voice pool.\n"
-    "When it is reached the oldest voices are faded out. Set it below what the\n"
-    "computer can render so that an overload fades old voices rather than crackles:\n"
     ;
 static const char* const kManualText_part11 =
+    "When it is reached the oldest voices are faded out. Set it below what the\n"
+    "computer can render so that an overload fades old voices rather than crackles:\n"
     "set the maximum polyphony so that the *DSP* value never exceeds 100 %, to\n"
     "avoid cracks and dropouts. The polyphony display of the main window shows\n"
     "*NOW* (the voices sounding), *PEAK* (the most that sounded since the last\n"
@@ -2422,10 +2424,10 @@ static const char* const kManualText_part11 =
     "action. Longer values make staccato playing more deliberate.\n"
     "\n"
     "### Attack minimum delay\n"
-    "\n"
-    "A small pause between the key press and the start of the pipe (0 to 500 ms,\n"
     ;
 static const char* const kManualText_part12 =
+    "\n"
+    "A small pause between the key press and the start of the pipe (0 to 500 ms,\n"
     "default 2), varied at random by a couple of milliseconds so that a chord's\n"
     "pipes do not all speak in the same instant. Keys repeated faster than the delay\n"
     "follow each other without it, and a key struck again right after its release\n"
@@ -2624,10 +2626,10 @@ static const char* const kManualText_part12 =
     "the copies in RAM (hundreds of MB for a large organ) and never plays a stale\n"
     "copy. Switch it on when the build after loading annoys you; switch it off\n"
     "when disk space is short - everything works the same without it. \"The cache\"\n"
-    "describes it in full.\n"
-    "\n"
     ;
 static const char* const kManualText_part13 =
+    "describes it in full.\n"
+    "\n"
     "### Filled pipes cache: Empty the cache\n"
     "\n"
     "The row shows the size of the cache and the folder it lives in. *Empty the\n"
@@ -2826,10 +2828,10 @@ static const char* const kManualText_part13 =
     "returns to where it was last time, always with its title bar on the screen.\n"
     "\n"
     "## 8.5 Folder name patterns (one per line)\n"
-    "\n"
-    "### One-shot stops (folder contains)\n"
     ;
 static const char* const kManualText_part14 =
+    "\n"
+    "### One-shot stops (folder contains)\n"
     "\n"
     "Folders whose name matches one of these patterns hold samples that play once\n"
     "without looping (chiff, percussion, bells). Defaults: \"Chiff\", \"Chimes\",\n"
@@ -3028,10 +3030,10 @@ static const char* const kManualText_part14 =
     "in the application-data folder; a crash writes a file beside it. When the\n"
     "window answers nothing for eight seconds the log records where it was waiting.\n"
     "That folder is what a report needs - and *Report a problem...* sends it for\n"
-    "you.\n"
-    "\n"
     ;
 static const char* const kManualText_part15 =
+    "you.\n"
+    "\n"
     "### Report a problem\n"
     "\n"
     "*Report a problem...* at the top of the Configuration Editor opens a dialog\n"

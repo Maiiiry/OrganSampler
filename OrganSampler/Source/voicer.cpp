@@ -800,8 +800,12 @@ StopRow::StopRow(Stop* stop, SamplerEngine& engine, int noteMin, int noteMax, in
     sourceLabel.setVisible(transmissionControls);
     aliasLabel.setVisible(showVoicing);
     aliasBox.setVisible(showVoicing);
-    rankCountToggle.setVisible(showVoicing && !isTransmission() && ((childrenGetter && !childrenGetter(stop).empty())
-        || (childTransmissionsGetter && !childTransmissionsGetter(stop).empty())));
+    // Every expanded stop row carries the switch (0.8.153: the user looked for it on
+    // every stop); it is enabled where the button can show a count - a stop folder
+    // or a stop with items indented under it.
+    rankCountToggle.setVisible(showVoicing && !isTransmission());
+    rankCountToggle.setEnabled((childrenGetter && !childrenGetter(stop).empty())
+        || (childTransmissionsGetter && !childTransmissionsGetter(stop).empty()));
     globalSlider.setVisible(withPipes); globalLabel.setVisible(withPipes);
     gainSlider.setVisible(stopControls); gainLabel.setVisible(stopControls);
     attackSlider.setVisible(stopControls); attackLabel.setVisible(stopControls);
@@ -1309,6 +1313,13 @@ void StopRow::resized()
     removeButton.setBounds(margin + 1, 1, 18, 18);                     // top-left corner, arrange mode only
     removeButton.setVisible(arrange.active && arrange.active(this));
     int x = margin + buttonWidth + sliderSpacing;
+    if (!isTransmission())
+    {
+        // The rank-count switch right after the button (0.8.153): behind the alias it
+        // stood past the band's edge on a stop with rank boxes and a long pitch text.
+        rankCountToggle.setBounds(x, 13, 140, 23);
+        x += 146;
+    }
     if (isTransmission())
     {
         transpositionLabel.setBounds(x, 13, 100, 23);
@@ -1342,7 +1353,6 @@ void StopRow::resized()
     x += 48;
     aliasBox.setBounds(x, 13, 190, 23);
     x += 196;
-    rankCountToggle.setBounds(x, 13, 150, 23);
 
     // A stop folder with pipes of its own: its voicing steps right of the tree
     // lines that join its children to it.
@@ -1683,6 +1693,119 @@ void Voicer::rebuildUI(juce::Component& container, juce::Viewport& viewport)
     layoutScreen(0, container, viewport);
     if (screenContainers[1] != nullptr && screenViewports[1] != nullptr)
         layoutScreen(1, *screenContainers[1], *screenViewports[1]);
+    // Development (0.8.153): ORGAN_DUMP_GRID=1 logs every grid item's button and
+    // every free cell in SCREEN coordinates once the layout has settled - a test
+    // script drives the mouse by them (the drag between divisions, #77).
+    if (std::getenv("ORGAN_DUMP_GRID") != nullptr)
+        juce::Timer::callAfterDelay(1500, [this]
+        {
+            for (auto* row : stopRows)
+            {
+                if (row == nullptr || row->getStop() == nullptr) continue;
+                const auto b = row->getStopButtonBounds().translated(row->getX(), row->getY());
+                auto* parent = row->getParentComponent();
+                const auto s = parent != nullptr ? parent->localAreaToGlobal(b) : b;
+                CrashHandler::note("Grid item: manual " + juce::String(row->getStop()->primaryManual) + (row->isTransmission() ? " transmission " : " stop ")
+                    + row->getStop()->name + " button " + s.toString() + (row->isExpanded() ? " EXPANDED " + row->describeLineOne() : juce::String()));
+                if (const char* png = std::getenv("ORGAN_TEST_SNAPSHOT"); png != nullptr && row->isExpanded())
+                {
+                    const juce::Image snapshot = row->createComponentSnapshot(row->getLocalBounds(), false, 1.0f);
+                    juce::Image image(juce::Image::RGB, snapshot.getWidth(), snapshot.getHeight(), true);
+                    {
+                        juce::Graphics g(image);   // the window's dark background under the white texts
+                        g.fillAll(juce::Colour(0xff2b2b2b));
+                        g.drawImageAt(snapshot, 0, 0);
+                    }
+                    const juce::File file = juce::File(juce::String(png) + ".row.png");
+                    file.deleteFile();
+                    juce::FileOutputStream stream(file);
+                    if (stream.openedOk()) juce::PNGImageFormat().writeImageToStream(image, stream);
+                }
+            }
+            for (const auto& cell : compactCells)
+            {
+                if (cell.key.isNotEmpty()) continue;
+                auto* cellContainer = containerOf(cell.manual);
+                if (cellContainer == nullptr) cellContainer = uiContainer;
+                if (cellContainer == nullptr) continue;
+                CrashHandler::note("Grid free cell: manual " + juce::String(cell.manual) + " cell " + juce::String(cell.column) + "," + juce::String(cell.row)
+                    + " " + cellContainer->localAreaToGlobal(cell.bounds).toString());
+            }
+            // ORGAN_TEST_DROP="<manual>|<stop name>|<target manual>|<column>|<row>": the stop
+            // is dropped on that cell exactly as the mouse would drop it (once per run);
+            // ORGAN_TEST_NEW_FOLDER="<manual>|<column>|<row>": a new stop folder there.
+            static bool dropDone = false, folderDone = false;
+            auto cellCentre = [this](int target, int column, int row, juce::Point<int>& where)
+            {
+                for (const auto& cell : compactCells)
+                    if (cell.manual == target && cell.column == column && cell.row == row)
+                    {
+                        auto* c = containerOf(cell.manual);
+                        if (c == nullptr) c = uiContainer;
+                        if (c == nullptr) return false;
+                        where = c->localAreaToGlobal(cell.bounds).getCentre();
+                        return true;
+                    }
+                return false;
+            };
+            if (const char* drop = std::getenv("ORGAN_TEST_DROP"); drop != nullptr && !dropDone && !compactCells.empty())
+            {
+                const auto parts = juce::StringArray::fromTokens(juce::String(drop), "|", "");
+                if (parts.size() == 5)
+                {
+                    const int manual = parts[0].getIntValue(), target = parts[2].getIntValue();
+                    StopRow* dragged = nullptr;
+                    for (auto* r : stopRows)
+                        if (r != nullptr && !r->isTransmission() && r->getStop() != nullptr && r->getStop()->primaryManual == manual && r->getStop()->name == parts[1]) dragged = r;
+                    juce::Point<int> where;
+                    const bool found = cellCentre(target, parts[3].getIntValue(), parts[4].getIntValue(), where);
+                    CrashHandler::note("ORGAN_TEST_DROP: " + parts[1] + " (row " + (dragged != nullptr ? "found" : "MISSING") + ") from division " + juce::String(manual)
+                        + " to division " + juce::String(target) + " cell " + parts[3] + "," + parts[4] + (found ? " at " + where.toString() : juce::String(" - cell MISSING")));
+                    if (dragged != nullptr && found)
+                    {
+                        dropDone = true;
+                        enterArrangeMode(manual);
+                        dropItem(manual, parts[1], dragged, where, false);
+                    }
+                }
+            }
+            // ORGAN_TEST_EXPAND="<manual>|<stop name>" opens that stop's voicing (once);
+            // ORGAN_TEST_SNAPSHOT=<png> writes a picture of the grid after every layout.
+            static bool expandDone = false;
+            if (const char* expand = std::getenv("ORGAN_TEST_EXPAND"); expand != nullptr && !expandDone && !compactCells.empty())
+            {
+                const auto parts = juce::StringArray::fromTokens(juce::String(expand), "|", "");
+                for (auto* r : stopRows)
+                    if (parts.size() == 2 && r != nullptr && !r->isTransmission() && r->getStop() != nullptr
+                        && r->getStop()->primaryManual == parts[0].getIntValue() && r->getStop()->name.startsWith(parts[1]))
+                    {
+                        expandDone = true;
+                        r->getStop()->voicingExpanded = true;
+                        CrashHandler::note("ORGAN_TEST_EXPAND: " + parts[1]);
+                        juce::MessageManager::callAsync([this] { if (uiContainer != nullptr && uiViewport != nullptr) rebuildUI(*uiContainer, *uiViewport); });
+                    }
+            }
+            if (const char* png = std::getenv("ORGAN_TEST_SNAPSHOT"); png != nullptr && uiContainer != nullptr)
+            {
+                const juce::Image image = uiContainer->createComponentSnapshot(uiContainer->getLocalBounds(), false, 1.0f);
+                const juce::File file = juce::File(juce::String(png));   // not File file(String(x)): the vexing parse
+                file.deleteFile();
+                juce::FileOutputStream stream(file);
+                if (stream.openedOk()) juce::PNGImageFormat().writeImageToStream(image, stream);
+                CrashHandler::note("ORGAN_TEST_SNAPSHOT: " + file.getFullPathName() + " " + juce::String(image.getWidth()) + "x" + juce::String(image.getHeight()));
+            }
+            if (const char* folder = std::getenv("ORGAN_TEST_NEW_FOLDER"); folder != nullptr && !folderDone && !compactCells.empty())
+            {
+                folderDone = true;
+                const auto parts = juce::StringArray::fromTokens(juce::String(folder), "|", "");
+                if (parts.size() == 3 && newStopFolderRequest)
+                {
+                    CrashHandler::note("ORGAN_TEST_NEW_FOLDER: division " + parts[0] + " cell " + parts[1] + "," + parts[2]);
+                    enterArrangeMode(parts[0].getIntValue());
+                    newStopFolderRequest(parts[0].getIntValue(), parts[1].getIntValue(), parts[2].getIntValue());
+                }
+            }
+        });
 }
 
 void Voicer::layoutScreen(int screen, juce::Component& container, juce::Viewport& viewport)
@@ -2370,10 +2493,13 @@ void Voicer::layoutScreen(int screen, juce::Component& container, juce::Viewport
         {
             if (isStopHidden(manual, stop->name)) continue;   // in the stop pool, not on the grid
             if (stop->groupMaster.isNotEmpty()) continue;      // a stop folder's child: under its master's voicing
-            // A stop folder with nothing under it (its children left out of the load
-            // for memory, 0.8.144): not on the grid - an empty button is a stop that
-            // seems loaded. Its row stays in the Stop List.
-            if (stop->container && groupChildren(stop).empty() && groupChildTransmissions(stop).empty()) continue;
+            // A stop folder with nothing under it because its children were left out
+            // of a load stopped for memory (0.8.144): not on the grid - an empty button
+            // is a stop that seems loaded. Its row stays in the Stop List. Only after
+            // such a load (0.8.153): the rule hid every NEW stop folder created on the
+            // grid - empty until the user puts something into it (#77).
+            if (stop->container && groupChildren(stop).empty() && groupChildTransmissions(stop).empty()
+                && engine.lastLoadWasMemoryLimited()) continue;
             items.push_back({ stop, false, stop->name });
         }
         for (auto* stop : engine.getStops())
