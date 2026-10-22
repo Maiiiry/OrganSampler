@@ -2069,9 +2069,9 @@ with the bits they need. Every frame comes back exactly - loops, pitch and
 voicing are untouched - and a set takes about a third less RAM; the log
 says how much ("Packed samples: ..."). **The price:** every voice unpacks
 the piece it plays before every block, about as much work again as the
-interpolation itself, so a third to a half of the polyphony is gone (the
-self-test's tutti took 40 % longer per block) - measure it, the report shows
-the unpacking as its own figure. Use it only when an organ
+interpolation itself, so half the polyphony is gone, up to two thirds on a
+big organ (Caen on a 16-core notebook: 60 000 to 25 000 voices) - measure it,
+the report shows the unpacking as its own figure. Use it only when an organ
 does not fit the memory otherwise; 32-bit float storage is not packed.
 Takes effect the next time a division's folders are loaded.
 

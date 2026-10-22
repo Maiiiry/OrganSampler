@@ -9870,7 +9870,7 @@ void MainComponent::askLoadOptions(juce::var configuration, const juce::String& 
         "16-bit integer (more polyphony, more hiss)",
         "16-bit integer, releases at half the rate (a quarter of their RAM; bright pipes keep the full rate)" }, "Sample storage in RAM");
     window->getComboBoxComponent("storage")->setSelectedItemIndex(asFloat ? 0 : halfRate ? 2 : 1, juce::dontSendNotification);
-    window->addComboBox("packing", { "Off  [default]", "On: a third less RAM, a third to a half of the polyphony gone" }, "Compress samples in RAM (lossless)");
+    window->addComboBox("packing", { "Off  [default]", "On: a third less RAM, half the polyphony gone (up to two thirds on a big organ)" }, "Compress samples in RAM (lossless)");
     window->getComboBoxComponent("packing")->setSelectedItemIndex(packed ? 1 : 0, juce::dontSendNotification);
     window->addComboBox("rate", { "Resample everything to 48 kHz  [default]", "Resample everything to 36 kHz (content up to 17 kHz; a quarter less RAM)",
         "Resample everything to 32 kHz (content up to 15 kHz; a third less RAM)", "Keep each file's own rate (faster loading, played by interpolation)" }, "Sample rate on loading");
@@ -20989,8 +20989,8 @@ void MainComponent::showConfigurationEditor()
             }, "Packs the 16-bit samples the way FLAC does (a predictor per block of 256 frames, the residuals with the bits they need): "
                "every frame comes back exactly, loops, pitch and voicing are untouched, and a set takes about a third less RAM "
                "(the log says how much: \"Packed samples: ...\"). THE PRICE: every voice unpacks the piece it plays before every "
-               "block, about as much work again as the interpolation itself - a third to a half of the polyphony is gone "
-               "(the self-test's tutti took 40 % longer per block); measure it, the report shows the unpacking as its own figure. "
+               "block, about as much work again as the interpolation itself - half the polyphony is gone, up to two thirds on a big organ "
+               "(Caen on a 16-core notebook: 60 000 -> 25 000 voices); measure it, the report shows the unpacking as its own figure. "
                "Use it only when an organ does not fit the memory otherwise; 32-bit float storage is not packed. "
                "Takes effect the next time a division folder is loaded.");
             addCombo("Sample rate on loading", { "Resample everything to 48 kHz (the base rate, windowed sinc)  [default]",
