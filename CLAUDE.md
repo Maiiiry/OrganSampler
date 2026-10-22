@@ -373,6 +373,19 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   single callbacks at 107-130 % (the OS scheduled something else) plus lane join delays up to 4.6 ms (the worker
   preempted) - no wake-ahead bug (inactive on 2 cores). The Projucer resave and the VS2026 files are NOT updated
   for 0.8.146 (Linux session): do it on Windows next.
+  0.8.148: LESSONS. (1) "Audio callback anomaly: <old device> manual N perspective default: no callbacks" every minute
+  = a route WITHOUT a device (closed by closeHiddenRoutes, "remembered as none") whose RouteCallback kept its old
+  deviceLabel/expectedBlock - fixed (audioDeviceStopped zeroes expectedBlock/Rate); never read such lines as a dead
+  device on the endpoint (the #59 first analysis did, and sent the user to set a "default" route to none that does
+  not exist in the dialog - closeHiddenRoutes works). (2) The sinc kernel of 0.8.147 applied to every sample below 0.8 x
+  the route rate - with the 32 kHz storage that is EVERY attack, scalar 13 ns/frame vs 1.1 AVX2: Doesburg 45 400 ->
+  15 900 (#61) and 7 700 with 1 lane (#60); now < 0.6 x the rate = halved releases only. When a report shows "kernel
+  6684" instead of ~1500, suspect a kernel path change before anything else. (3) Aggregated WASAPI: `aggregatedRoutesRunning`
+  (counted in RouteCallback::audioDeviceAboutToStart/Stopped) caps the lanes at physical cores / routes in the callback
+  (15 routes x 16 lanes: 16 highest-priority workers spinning for 15 posters starved the endpoint threads - breakups at
+  one pipe, clean with 1 lane; #59). (4) The load box takes the FILE's storage choices: the user loaded Doesburg with
+  "packing on, 32 kHz, halved releases" from his Linux experiments without noticing - say so in every polyphony
+  analysis (the log line "Load Configuration "<name>": sample storage ..., packing ..., rate ...").
   0.8.147 (Windows): the level after a measurement is held at -52 dB for 4 s (`outputGainHoldUntilMs`) and then
   glides up IN DECIBELS, 4.5 dB/s (~12 s to 0 dB) - the callback's `factor = 10^(4.5 * blockSeconds / 20)`; a linear
   glide (0.8.146 "3 s") reached -20 dB in a third of a second and the user heard a jump into the tails. NEVER a
@@ -553,9 +566,16 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
 - GitHub's issue list hides the number in its new UI (the user asked why "#27" is not in the row): nothing of ours.
 
 ## Pending for the next Linux session (delete when done)
-- Windows next: `Projucer --resave` (absolute path) + the .ico copy for 0.8.146 (made on Linux: Builds/VisualStudio2026
-  and JuceLibraryCode still say 0.8.145), commit them. The Linux clone `~/OrganSamplerC-linux` is in sync (0.8.146 was
-  committed there and the NTFS checkout `F:` holds the same sources); the NTFS checkout is the user's (git cannot
+- The Linux clone `~/OrganSamplerC-linux` needs `git pull` (0.8.147 was made on Windows). LESSON 0.8.147: the two
+  checkouts are two git repositories on the SAME sources - after a Linux session the Windows checkout `F:` is behind
+  origin and holds the Linux commits' content as uncommitted changes; `git pull` there fails ("local changes would be
+  overwritten") and a commit lands on the old base (the push is rejected, a tag push is not: v0.8.147 was first built
+  from such a dangling commit). The way: `git fetch`, `git reset --mixed origin/main` (HEAD moves, the files stay),
+  then commit the tree anew, push, re-point the tag. Always `git fetch` + `git status -sb` BEFORE committing on the
+  other system. #58 (Linux, two monitors): the report windows' placement still wrong (file manager "not found" by its
+  title, the browser not half the width) - test on the KDE AMD box in the next Linux session (LinuxWindowPlacement:
+  log the window names seen, check `_NET_SUPPORTED` for _NET_MOVERESIZE_WINDOW before falling back to
+  XMoveResizeWindow, never both). The NTFS checkout is the user's (git cannot
   run there from Linux: "expected submodule path 'JUCE' not to be a symbolic link"). After each release copy the Linux
   binary to `~/Downloads/OrganSampler`.
 - Windows builds: never run two MSBuilds of the solution at once - the second fails with C1041 (PDB) and can

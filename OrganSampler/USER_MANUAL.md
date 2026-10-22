@@ -2075,6 +2075,11 @@ threads per route only fight each other there. Raise it when one or two
 aggregated routes carry the whole organ (a big division on a single route is
 otherwise bound to one core): the route then shares its pipes out over the
 set number of threads, like a route on ASIO does over all *Render threads*.
+Whatever is set, a route gets at most cores / aggregated routes lanes
+(0.8.148): fifteen routes with sixteen lanes each kept sixteen workers
+spinning for fifteen posters and starved the endpoint threads - the sound
+broke at one pipe, clean with one lane. The activity log says when the cap
+applies ("Aggregated WASAPI: N route(s) on M cores - L lane(s) per route").
 Routes on ASIO drivers and on Windows Audio devices do not use this setting:
 every such device is one stream with one callback, and all its routes are
 rendered by the whole pool of *Render threads* (since 0.8.47 for Windows
@@ -2096,8 +2101,9 @@ digital ringing at the start of a reed's release - and the sinc puts them
 40-50 dB down; after 1.3 s, where the treble has died, the linear kernel
 takes over. Only a release whose treble above 11 kHz is louder than -18 dB
 of the whole (a reed in the treble) keeps the full rate; the log says how
-many went each way. The same kernel serves the 36 and 32 kHz storage. Takes
-effect the next time a division's folders are loaded.
+many went each way. The sinc kernel serves the halved releases only (0.8.148:
+run on every sample of the 32 kHz storage it cost two thirds of the
+polyphony). Takes effect the next time a division's folders are loaded.
 
 ### Compress samples in RAM (lossless)
 

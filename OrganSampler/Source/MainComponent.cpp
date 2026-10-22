@@ -491,8 +491,18 @@ public:
         const float master = owner.masterGainLinear.load(std::memory_order_relaxed);
         // A shared host (ASIO, Windows Audio) renders with the whole pool; a private
         // Aggregated WASAPI device with its own lanes setting.
-        owner.engine.renderBlockForPerspective(scratch, master, manual, perspective,
-            usesSharedHost.load(std::memory_order_relaxed) ? 0 : owner.wasapiRenderLanes.load(std::memory_order_relaxed));
+        int laneLimit = 0;
+        if (!usesSharedHost.load(std::memory_order_relaxed))
+        {
+            // Aggregated WASAPI: the lanes setting, capped at cores / aggregated routes
+            // (0.8.148) - every route posts from its own thread, and more lanes than
+            // cores for all of them together starve the endpoint threads.
+            static const int physical = juce::jmax(1, juce::SystemStats::getNumPhysicalCpus());
+            const int wanted = juce::jmax(1, owner.wasapiRenderLanes.load(std::memory_order_relaxed));
+            const int routes = juce::jmax(1, owner.aggregatedRoutesRunning.load(std::memory_order_relaxed));
+            laneLimit = juce::jlimit(1, wanted, physical / routes);
+        }
+        owner.engine.renderBlockForPerspective(scratch, master, manual, perspective, laneLimit);
         float peak = 0.0f;
         // The polyphony measurement: heard very quietly (-52 dB), the rendering as
         // usual; the level glides to the target over two seconds, never jumps.
@@ -606,6 +616,22 @@ public:
             // ASIO driver reset itself, typically after a control-panel latency change.
             usesAsio.store(device->getTypeName().equalsIgnoreCase("ASIO"), std::memory_order_relaxed);
             usesSharedHost.store(MainComponent::isSharedHostType(device->getTypeName()), std::memory_order_relaxed);
+            if (device->getTypeName() == "Aggregated WASAPI" && !countedAggregated)
+            {
+                // The aggregated routes share the pool from as many threads as there are
+                // routes (0.8.148): the lanes each may take are capped at cores / routes
+                // (see the callback) - fifteen routes with sixteen lanes each had sixteen
+                // workers spinning for fifteen posters and the endpoint threads starved
+                // (#59: the sound broke at one pipe, clean with one lane).
+                const int routes = owner.aggregatedRoutesRunning.fetch_add(1, std::memory_order_relaxed) + 1;
+                countedAggregated = true;
+                const int wanted = owner.wasapiRenderLanes.load(std::memory_order_relaxed);
+                const int physical = juce::jmax(1, juce::SystemStats::getNumPhysicalCpus());
+                const int allowed = juce::jlimit(1, wanted, physical / routes);
+                if (allowed < wanted)
+                    CrashHandler::note("Aggregated WASAPI: " + juce::String(routes) + " route(s) on " + juce::String(physical) + " cores - "
+                        + juce::String(allowed) + " lane(s) per route of the " + juce::String(wanted) + " set");
+            }
             if (usesAsio.load(std::memory_order_relaxed))
                 CrashHandler::note("  ASIO details: driver preferred buffer " + juce::String(device->getDefaultBufferSize())
                     + ", running " + juce::String(block));
@@ -616,7 +642,16 @@ public:
             // the user (Driver Control Panel / Reopen buttons in the audio tab).
         }
     }
-    void audioDeviceStopped() override { owner.engine.setPerspectiveDeviceKey(manual, perspective, {}); }
+    void audioDeviceStopped() override
+    {
+        owner.engine.setPerspectiveDeviceKey(manual, perspective, {});
+        // No device: nothing to report on (0.8.148: a route whose device was closed
+        // - "remembered as none" - went on logging "no callbacks" every minute under
+        // its old device's name, and the log read as a dead device on the endpoint).
+        expectedBlock.store(0, std::memory_order_relaxed);
+        expectedRate.store(0.0, std::memory_order_relaxed);
+        if (countedAggregated) { owner.aggregatedRoutesRunning.fetch_sub(1, std::memory_order_relaxed); countedAggregated = false; }
+    }
     void setUseConfiguredOutputs(bool shouldUse) { useConfiguredOutputs = shouldUse; }
 
     // Called about once a second from the GUI timer. Returns an empty string
@@ -683,6 +718,7 @@ private:
     juce::String perspective;
     bool useConfiguredOutputs = false;
     std::atomic<bool> usesAsio{ false }, usesSharedHost{ false };
+    bool countedAggregated = false;   // this route counts in owner.aggregatedRoutesRunning (0.8.148)
     juce::AudioIODevice* lastDevice = nullptr;   // identity only, never dereferenced
     MainComponent::DeviceClock* deviceClock = nullptr;   // the clock of the device this route plays through
     juce::AudioBuffer<float> scratch;
@@ -21045,7 +21081,9 @@ void MainComponent::showConfigurationEditor()
                 }, "Lanes of every endpoint thread of an Aggregated WASAPI device (one thread per sound card, each rendering its "
                    "own routes). 1 = each thread renders its routes alone and the threads run in parallel - with twenty routes on "
                    "sixteen cores that gave 62 900 voices (#52), more than the shared pool; more lanes make the threads compete for "
-                   "the pool. Keep 1 unless a measurement says otherwise. ASIO and a single Windows Audio device use the setting above.");
+                   "the pool. Keep 1 unless a measurement says otherwise. Whatever is set, a route gets at most cores / aggregated routes "
+                   "lanes (fifteen routes with sixteen lanes each starved the endpoint threads: the sound broke at one pipe, #59). "
+                   "ASIO and a single Windows Audio device use the setting above.");
             }
 #endif
             addCombo("Sample storage in RAM", { "32-bit float (less polyphony, full fidelity)",

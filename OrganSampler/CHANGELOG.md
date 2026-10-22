@@ -12,6 +12,23 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.148] - 2026-10-22
+
+### Fixed
+- Aggregated WASAPI: a route gets at most cores / aggregated routes lanes
+  whatever "Render threads for Aggregated WASAPI" says. Fifteen routes with
+  sixteen lanes each kept sixteen workers spinning for fifteen posters and
+  starved the endpoint threads - the sound broke at one pipe, clean with one
+  lane (#59, #60).
+- The windowed-sinc kernel of 0.8.147 ran for every sample stored below 80 %
+  of the route's rate - the whole organ at the 32 kHz storage - and Doesburg
+  fell from 45 000 to 16 000 voices on ASIO (#61). It serves the halved
+  releases only (below 60 % of the rate), as meant.
+- A route whose device was closed ("no stop plays through the division's own
+  route - remembered as none") went on logging "Audio callback anomaly: no
+  callbacks" every minute under its old device's name; the log read as five
+  dead devices on the endpoint. Nothing to report without a device.
+
 ## [0.8.147] - 2026-10-22
 
 ### Changed

@@ -654,6 +654,7 @@ private:
     // Windows Audio / WASAPI callbacks render with this many threads (1 = the
     // driver thread alone, which measured best); ASIO uses the full pool.
     std::atomic<int> wasapiRenderLanes{ 1 };
+    std::atomic<int> aggregatedRoutesRunning{ 0 };   // routes with an Aggregated WASAPI device started (0.8.148: the lanes cap cores / routes)
     int renderThreadsWasapi = 1;
     bool showUnusableAudioDevices = false;   // Linux: list also the ALSA devices of the cards the sound server holds
     // Swell shutter curve: fast gain rise near closed, flattening when open.

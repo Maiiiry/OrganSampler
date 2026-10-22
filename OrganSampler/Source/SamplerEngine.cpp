@@ -2168,7 +2168,11 @@ namespace
         // A sample stored below the route's rate (releases at half the rate, 36/32 kHz
         // storage): its first 1.3 s through the windowed-sinc kernel (0.8.147), the
         // rest - and every loop splice and cubic (filled pipe) span - as before.
-        const bool lowRate = s.sampleRate < c.routeRate * 0.8;
+        // Only a HALVED sample (releases at half the rate): the 36/32 kHz storage is
+        // 0.75/0.67 of the rate and the user took the linear kernel's result there;
+        // 0.8.147 ran every 32 kHz attack through the scalar sinc (13 ns a frame
+        // against 1.1) and Doesburg fell from 45 000 to 16 000 voices (#61).
+        const bool lowRate = s.sampleRate < c.routeRate * 0.6;
         const uint64_t sincEndF = lowRate ? (uint64_t)(1.3 * s.sampleRate) << 32 : 0;
         const bool hasLoops = v.loopEnabled && !s.loops.empty();
         // A sustained sample without loop points plays as one big loop: it fades

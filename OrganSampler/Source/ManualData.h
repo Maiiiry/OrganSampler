@@ -2099,6 +2099,11 @@ static const char* const kManualText_part10 =
     "aggregated routes carry the whole organ (a big division on a single route is\n"
     "otherwise bound to one core): the route then shares its pipes out over the\n"
     "set number of threads, like a route on ASIO does over all *Render threads*.\n"
+    "Whatever is set, a route gets at most cores / aggregated routes lanes\n"
+    "(0.8.148): fifteen routes with sixteen lanes each kept sixteen workers\n"
+    "spinning for fifteen posters and starved the endpoint threads - the sound\n"
+    "broke at one pipe, clean with one lane. The activity log says when the cap\n"
+    "applies (\"Aggregated WASAPI: N route(s) on M cores - L lane(s) per route\").\n"
     "Routes on ASIO drivers and on Windows Audio devices do not use this setting:\n"
     "every such device is one stream with one callback, and all its routes are\n"
     "rendered by the whole pool of *Render threads* (since 0.8.47 for Windows\n"
@@ -2120,8 +2125,9 @@ static const char* const kManualText_part10 =
     "40-50 dB down; after 1.3 s, where the treble has died, the linear kernel\n"
     "takes over. Only a release whose treble above 11 kHz is louder than -18 dB\n"
     "of the whole (a reed in the treble) keeps the full rate; the log says how\n"
-    "many went each way. The same kernel serves the 36 and 32 kHz storage. Takes\n"
-    "effect the next time a division's folders are loaded.\n"
+    "many went each way. The sinc kernel serves the halved releases only (0.8.148:\n"
+    "run on every sample of the 32 kHz storage it cost two thirds of the\n"
+    "polyphony). Takes effect the next time a division's folders are loaded.\n"
     "\n"
     "### Compress samples in RAM (lossless)\n"
     "\n"
@@ -2216,14 +2222,14 @@ static const char* const kManualText_part10 =
     "limit found is what the computer renders cleanly whatever the stops. By hand:\n"
     "\n"
     "1. Engage a large number of stops with long releases (a full registration of\n"
+    ;
+static const char* const kManualText_part11 =
     "   wet samples).\n"
     "2. Bash the keys: play many quick staccato notes over many keys at once\n"
     "   (palm smearing - repeated fast strokes with the flat hands over the\n"
     "   keyboards), so that as many releases as possible sound at the same time:\n"
     "   that produces the highest polyphony. Remember:\n"
     "   the longer the release, the more polyphony it costs, because every voice\n"
-    ;
-static const char* const kManualText_part11 =
     "   keeps its place in the polyphony until its release has died away\n"
     "   completely.\n"
     "3. Watch *DSP* and *PEAK* while you do it. At the moment the audio starts to\n"
@@ -2418,14 +2424,14 @@ static const char* const kManualText_part11 =
     "### Wind: harmonic filter\n"
     "\n"
     "The same shelf following the wind sag: this much high-frequency loss at the\n"
+    ;
+static const char* const kManualText_part12 =
     "full sag (default 2 dB). Big chords starve the wind, and a starved pipe is\n"
     "duller as well as flatter.\n"
     "\n"
     "### Wind: volume change per cent of sag\n"
     "\n"
     "How much quieter a pipe gets for every cent the wind sag lowers its pitch (0\n"
-    ;
-static const char* const kManualText_part12 =
     "to 0.6 dB per cent, default 0.2). Together with the division's *Wind: depth*\n"
     "it decides how strongly a full chord sags in level.\n"
     "\n"
@@ -2620,14 +2626,14 @@ static const char* const kManualText_part12 =
     "\n"
     "Where the cache files live. By default `FilledPipesCache` in the\n"
     "application-data folder, usually on the system drive; the row then says\n"
+    ;
+static const char* const kManualText_part13 =
     "\"(default)\". *Choose...* opens a folder dialog: pick a folder on a big drive\n"
     "(beside the samples, say). The files built so far are moved there at once, so\n"
     "nothing has to be rebuilt. The folder is remembered in the settings.\n"
     "\n"
     "### Filled pipes: resampling quality\n"
     "\n"
-    ;
-static const char* const kManualText_part13 =
     "How the sample of a neighbouring pipe is played at another pitch. *Linear* is\n"
     "the interpolation of every other voice (cheapest, audible images at large\n"
     "shifts). *Cubic interpolation* lowers the interpolation images by about 20 dB\n"
@@ -2822,14 +2828,14 @@ static const char* const kManualText_part13 =
     "star at the start anchors it to the end of the name, a star at the end to its\n"
     "start; underscores count. Applies to the next folder load.\n"
     "\n"
+    ;
+static const char* const kManualText_part14 =
     "### Perspective prefixes\n"
     "\n"
     "Folder name prefixes that mark a microphone perspective, one line per\n"
     "perspective. Every prefix that belongs to the same perspective must stand on\n"
     "that one line, separated by semicolons; the perspective takes its name from\n"
     "the first entry of the line (\"Direct;01-dirMk2H-;dir\" makes folders with any\n"
-    ;
-static const char* const kManualText_part14 =
     "of the three prefixes the perspective \"Direct\"). Defaults: Direct, Diffuse and\n"
     "Rear. Prefixes found in a newly loaded set are added here by themselves (a\n"
     "prefix that shares its stem with a known perspective joins its line; an\n"
@@ -3024,14 +3030,14 @@ static const char* const kManualText_part14 =
     "out of the way. The program puts the browser on the left half of the screen\n"
     "and the folder on the right half, side by side, so the zip is dragged across\n"
     "(0.8.139; Windows always, macOS through AppleScript - the browser only with\n"
+    ;
+static const char* const kManualText_part15 =
     "the accessibility permission -, Linux where wmctrl is installed). The\n"
     "link carries the computer and the routes only while it stays short (0.8.138;\n"
     "GitHub answered a long one with an error after its sign-in) - the whole\n"
     "list is in `system.txt` of `logs.zip` in any case. A free\n"
     "GitHub account is needed to submit; the report is public, like every issue\n"
     "of a free program.\n"
-    ;
-static const char* const kManualText_part15 =
     "\n"
     "GitHub may first ask you to sign in or to make the account, and after that\n"
     "it sometimes lands on another page instead of the form. The message that\n"
