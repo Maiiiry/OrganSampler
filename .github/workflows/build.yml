@@ -162,8 +162,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           current="${GITHUB_REF_NAME}"
-          for tag in $(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName --jq '.[].tagName'); do
+          # Each tag once (a release listed twice made the second delete fail on the tag
+          # already gone, 0.8.154); a release or tag gone by then is no failure.
+          for tag in $(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName --jq '.[].tagName' | sort -u); do
             case "$tag" in
-              v*) if [ "$tag" != "$current" ]; then echo "deleting $tag"; gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag; fi ;;
+              v*) if [ "$tag" != "$current" ]; then
+                    echo "deleting $tag"
+                    gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || echo "$tag: already gone"
+                  fi ;;
             esac
           done
