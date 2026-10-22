@@ -12,6 +12,29 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.149] - 2026-10-22
+
+### Fixed
+- The box after a report ("Open the GitHub form / Open the report folder /
+  Done") is a window of the program's own, modeless and always on top. The
+  modal box it replaces kept the keyboard from a second Report a problem
+  (#58), sat invisible behind the main window on KDE while blocking every
+  click in the middle of the screen (#67), and on macOS was resized by the
+  placement script meant for the browser - its buttons shrank to nothing
+  (#64). The macOS script never touches a window of ours any more.
+- Linux report windows: a manager with EWMH gets the move message alone (the
+  plain X11 move on top of it left KWin's frames and windows at odds); the
+  file manager is found by its class when its title does not carry the
+  folder; the log names the windows seen (#58).
+- The Hauptwerk import spells the rank folders as the disk does ("Ped", not
+  the definition's "ped"), so the configuration loads on Linux too (#57).
+- The sinc kernel of the halved releases runs only for releases with treble
+  (energy above a quarter of their rate louder than -40 dB): a dull release
+  has nothing to mirror and keeps the cheap linear kernel. On the Core 2 Duo
+  Mac every release through the sinc cost half the polyphony (#64).
+- The "Audio levels" log line names the master volume (and the measurement's
+  level when it is in force): two sessions compare (#63).
+
 ## [0.8.148] - 2026-10-22
 
 ### Fixed

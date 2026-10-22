@@ -1635,6 +1635,19 @@ MainComponent::MainComponent()
             safeThis->loadTreeIntoDivision(tree, division);
         });
     }
+    // ORGAN_TEST_REPORT_WINDOWS=<folder> (tests, 0.8.149): the report box and the
+    // window placement (browser left, file manager right) for that folder, 4 s
+    // after the start - open the folder and a browser by hand first.
+    if (const char* env = std::getenv("ORGAN_TEST_REPORT_WINDOWS"))
+    {
+        const juce::File folder(juce::String::fromUTF8(env));
+        juce::Timer::callAfterDelay(4000, [folder]
+        {
+            showAfterReport(juce::URL("https://github.com/zurek-jiri/OrganSampler/issues/new/choose"), folder);
+            juce::Timer::callAfterDelay(1500, [folder] { arrangeReportWindows(folder); });
+            juce::Timer::callAfterDelay(4500, [folder] { arrangeReportWindows(folder); });
+        });
+    }
     // Development aids: ORGAN_OPEN_CONFIG_EDITOR=1 opens the editor at startup,
     // ORGAN_OPEN_KEYBOARDS=<division> opens that division's Settings dialog.
     if (const char* env = std::getenv("ORGAN_OPEN_CONFIG_EDITOR"))
@@ -4680,7 +4693,11 @@ namespace
 // macOS through AppleScript (Finder and the frontmost application - System Events
 // needs the accessibility permission for the latter), Linux through wmctrl when
 // it is installed. Where it fails, the windows stay as the system put them.
-namespace { juce::Rectangle<int> workAreaWithMargins(const juce::Rectangle<int>& userArea); }   // defined below
+namespace
+{
+    juce::Rectangle<int> workAreaWithMargins(const juce::Rectangle<int>& userArea);   // defined below
+    void fitWindowOnScreenSoon(juce::Component::SafePointer<juce::Component> window, const juce::String& what, juce::Rectangle<int> wanted);
+}
 
 // The display the program's main window is on (0.8.146: with two screens the
 // report windows went to the primary one while the organ sat on the other).
@@ -4750,9 +4767,13 @@ void MainComponent::arrangeReportWindows(const juce::File& folder)
         if (process.start(juce::StringArray{ "osascript", "-e", "tell application \"" + app + "\" to set bounds of front window to " + bounds }))
         { process.waitForProcessToFinish(3000); placed = process.getExitCode() == 0; }
     }
-    if (!placed)
+    // The System Events fallback only for another application's window: with
+    // OrganSampler frontmost it resized OUR front window - the report box - to
+    // the browser's half of the screen (#64: its buttons shrank to nothing).
+    if (!placed && app.isNotEmpty() && app != "OrganSampler" && app != "Finder")
         run("tell application \"System Events\" to tell (first application process whose frontmost is true) to set {position, size} of front window to {{"
             + juce::String(left.getX()) + ", " + juce::String(left.getY()) + "}, {" + juce::String(left.getWidth()) + ", " + juce::String(left.getHeight()) + "}}");
+    CrashHandler::note("Report windows (macOS): frontmost \"" + app + "\", browser " + (placed ? "placed by its own scripting" : app.isNotEmpty() && app != "OrganSampler" && app != "Finder" ? "placed through System Events" : "not placed"));
    #elif JUCE_LINUX
     {
         // X11 itself (0.8.144); the placement code is JUCE-free (0.8.145: Xlib's Font/Time clash with juce's).
@@ -4771,10 +4792,65 @@ void MainComponent::arrangeReportWindows(const juce::File& folder)
 
 namespace
 {
-    // The box after a report, if it is still up: a modal box blocks the keyboard
-    // of a second Report a problem dialog (#58: nothing could be typed), so the
-    // dialog closes it first.
-    juce::Component::SafePointer<juce::AlertWindow> gAfterReportBox;
+    // The box after a report (0.8.149): a modeless window of ours, always on
+    // top. The modal AlertWindow it replaces kept the keyboard from a second
+    // Report a problem (#58), sat invisible behind the main window on KDE while
+    // blocking every click in the middle of the screen (#67), and on macOS was
+    // resized by the placement script meant for the browser (#64: its buttons
+    // shrank to nothing). The main window stays usable with it open.
+    class AfterReportWindow final : public juce::DialogWindow
+    {
+    public:
+        AfterReportWindow(const juce::URL& urlIn, const juce::File& folderIn)
+            : juce::DialogWindow("Report a problem", juce::Colours::darkgrey, true, true), url(urlIn), folder(folderIn)
+        {
+            auto* content = new juce::Component();
+            text.setText("The report folder " + folder.getFileName() + " (on your Desktop) opens in the file manager, the GitHub form in the browser - "
+                "put them side by side.\nDrag logs.zip into \"Logs\" and the pictures into \"Screenshots\", then \"Submit new issue\".\n"
+                "Asked to sign in first? Press \"Open the GitHub form\" again afterwards.", juce::dontSendNotification);
+            text.setJustificationType(juce::Justification::topLeft);
+            text.setFont(juce::FontOptions(15.0f));
+            text.setBounds(14, 10, 612, 96);
+            content->addAndMakeVisible(text);
+            openForm.setButtonText("Open the GitHub form");
+            openFolder.setButtonText("Open the report folder");
+            done.setButtonText("Done");
+            openForm.setBounds(14, 114, 190, 30);
+            openFolder.setBounds(214, 114, 190, 30);
+            done.setBounds(526, 114, 100, 30);
+            openForm.onClick = [this] { url.launchInDefaultBrowser(); if (arrange) juce::Timer::callAfterDelay(1500, arrange); };
+            openFolder.onClick = [this] { folder.startAsProcess(); if (arrange) juce::Timer::callAfterDelay(1500, arrange); };
+            done.onClick = [this] { closeButtonPressed(); };
+            content->addAndMakeVisible(openForm);
+            content->addAndMakeVisible(openFolder);
+            content->addAndMakeVisible(done);
+            content->setSize(640, 156);
+            setUsingNativeTitleBar(true);
+            setResizable(false, false);
+            setContentOwned(content, true);
+            setAlwaysOnTop(true);
+        }
+        void closeButtonPressed() override { delete this; }
+        float getDesktopScaleFactor() const override { return UIScale::factor(); }
+        // A placement script of another window must not shrink or grow this one
+        // (#64): the size it was built with is put back.
+        void resized() override
+        {
+            juce::DialogWindow::resized();
+            if (getContentComponent() != nullptr && wanted.getWidth() > 0 && getContentComponent()->getBounds().getWidth() != wanted.getWidth())
+                juce::MessageManager::callAsync([safe = juce::Component::SafePointer<AfterReportWindow>(this)]
+                { if (safe != nullptr) safe->setContentComponentSize(safe->wanted.getWidth(), safe->wanted.getHeight()); });
+        }
+        juce::Rectangle<int> wanted{ 0, 0, 640, 156 };
+        std::function<void()> arrange;   // the browser and the file manager side by side (set by showAfterReport)
+    private:
+        juce::URL url;
+        juce::File folder;
+        juce::Label text;
+        juce::TextButton openForm, openFolder, done;
+        JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AfterReportWindow)
+    };
+    juce::Component::SafePointer<AfterReportWindow> gAfterReportBox;
 }
 
 void MainComponent::showAfterReport(const juce::URL& url, const juce::File& folder)
@@ -4782,24 +4858,15 @@ void MainComponent::showAfterReport(const juce::URL& url, const juce::File& fold
     // Stays until "Done": GitHub may ask the user to sign in (or to make a free
     // account) and then land somewhere else - the form is opened again from here,
     // filled in, as often as needed; the link is in the folder as well.
-    auto* window = new juce::AlertWindow("Report a problem",
-        "The report folder " + folder.getFileName() + " (on your Desktop) opens in the file manager, the GitHub form in the browser - put them side by side.\n"
-        "Drag logs.zip into \"Logs\" and the pictures into \"Screenshots\", then \"Submit new issue\".\n"
-        "Asked to sign in first? Press \"Open the GitHub form\" again afterwards.",
-        juce::MessageBoxIconType::InfoIcon);
-    window->addButton("Open the GitHub form", 1, juce::KeyPress(juce::KeyPress::returnKey));
-    window->addButton("Open the report folder", 2);
-    window->addButton("Done", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    if (gAfterReportBox != nullptr) { delete gAfterReportBox.getComponent(); gAfterReportBox = nullptr; }
+    auto* window = new AfterReportWindow(url, folder);
+    window->arrange = [folder] { arrangeReportWindows(folder); };
     gAfterReportBox = window;
-    window->enterModalState(true, juce::ModalCallbackFunction::create([url, folder](int result)
-    {
-        if (result == 1) { url.launchInDefaultBrowser(); juce::Timer::callAfterDelay(1500, [folder] { arrangeReportWindows(folder); }); showAfterReport(url, folder); }
-        else if (result == 2) { folder.startAsProcess(); juce::Timer::callAfterDelay(1500, [folder] { arrangeReportWindows(folder); }); showAfterReport(url, folder); }
-    }), true);
     // At the bottom of the screen, out of the way of the browser and the file
     // manager the user drags the zip between (0.8.138: it sat in the middle over
     // both); on macOS a little higher, above the browser's "Create issue" button
     // (0.8.146). On the screen of the main window.
+    juce::Rectangle<int> bounds(0, 0, 640, 190);
     if (const auto* display = displayOfMainWindow())
     {
         const auto area = display->userArea;
@@ -4808,8 +4875,12 @@ void MainComponent::showAfterReport(const juce::URL& url, const juce::File& fold
        #else
         const int lift = area.getHeight() / 50;
        #endif
-        window->setTopLeftPosition(area.getX() + (area.getWidth() - window->getWidth()) / 2, area.getBottom() - window->getHeight() - lift);
+        bounds.setPosition(area.getX() + (area.getWidth() - bounds.getWidth()) / 2, area.getBottom() - bounds.getHeight() - lift);
     }
+    window->setBounds(UIScale::toWindowSpace(bounds));
+    window->setVisible(true);
+    window->toFront(true);
+    fitWindowOnScreenSoon(juce::Component::SafePointer<juce::Component>(window), "Report box", {});
 }
 
 void MainComponent::showProblemReportDialog()
@@ -4817,7 +4888,7 @@ void MainComponent::showProblemReportDialog()
     // What happened, how to reproduce it, the program's own screenshots
     // (recommended: keep the dialog in question open) and screenshot files of
     // the user's own; "Create report" writes the folder and opens GitHub.
-    if (gAfterReportBox != nullptr) { gAfterReportBox->exitModalState(0); gAfterReportBox = nullptr; }   // a second report right after the first (#58)
+    if (gAfterReportBox != nullptr) { delete gAfterReportBox.getComponent(); gAfterReportBox = nullptr; }   // a second report right after the first (#58)
     struct Content final : public juce::Component
     {
         explicit Content(MainComponent& o) : owner(o)
@@ -5632,7 +5703,13 @@ void MainComponent::checkAudioCallbackHealth()
     if (levels.isNotEmpty() && nowMs - audioLevelsLastLogMs >= 10000.0)
     {
         audioLevelsLastLogMs = nowMs;
-        CrashHandler::note("Audio levels: " + levels);
+        // The levels are the routes' own renders (master and route volume in, the
+        // measurement's -52 dB not yet): the master is named so that two sessions
+        // compare (0.8.149, #63: the "20 dB louder" aggregate was the master at
+        // -18 dB against -40.6 dB on ASIO an hour later, the renders were equal).
+        const float target = outputGainTarget.load(std::memory_order_relaxed);
+        CrashHandler::note("Audio levels (master " + juce::String(masterVolumeSlider.getValue(), 1) + " dB"
+            + (target < 0.999f ? ", measurement level -52 dB on top" : juce::String()) + "): " + levels);
     }
 
     // An ASIO device whose callback period contradicts its buffer size for two

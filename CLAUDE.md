@@ -373,6 +373,23 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   single callbacks at 107-130 % (the OS scheduled something else) plus lane join delays up to 4.6 ms (the worker
   preempted) - no wake-ahead bug (inactive on 2 cores). The Projucer resave and the VS2026 files are NOT updated
   for 0.8.146 (Linux session): do it on Windows next.
+  0.8.149 (Linux): `AfterReportWindow` (MainComponent.cpp, modeless DialogWindow, always on top, `gAfterReportBox`)
+  replaces the modal AlertWindow after a report (#58 keyboard, #67 invisible blocker behind the main window on KDE,
+  #64 macOS buttons shrunk: the System Events fallback resized OUR front window - now skipped when the frontmost app
+  is OrganSampler/Finder/empty; `AfterReportWindow::resized` puts its size back). `ORGAN_TEST_REPORT_WINDOWS=<folder>`
+  shows the box + placement 4 s after the start (open the folder and a browser by hand first). LinuxWindowPlacement:
+  `wmSupports("_NET_MOVERESIZE_WINDOW")` -> EWMH message alone, else XMoveResizeWindow (never both); file manager by
+  class when the title lacks the folder; the note lists the windows seen. `HauptwerkOdf::spelledAsOnDisk` (rank
+  folders spelt as the disk, #57). `Sample::sincHead` (set in decodeSampleFile: halved AND energy above 0.25 x rate
+  > -40 dB; copies inherit it): the sinc runs only for those (Core 2 Duo Mac 4100 -> 2200 with every release through
+  it, #64 14:18). Levels log: "Audio levels (master X dB[, measurement level -52 dB on top]): ...". #62/#63 "aggregate
+  20 dB louder": every aggregated run 13:19-13:54 shows -15 dB at 10 k voices, ASIO/Windows Audio from 14:01 -38 dB -
+  the user lowered the master to -40.6 as his reaction; the per-route renders are the same chain for every device
+  type (renderRoute: masterGain x route volume), so the loudness comes after our buffer: 15 shared-mode streams of one
+  route each on the endpoint "ADAT (7+8)" - most likely the endpoint's audio enhancements (loudness equalisation
+  boosts each quiet stream) - told the user to disable them on the endpoint; JUCE's shared WASAPI client does not set
+  AUDCLNT_STREAMOPTIONS_RAW (would need a JUCE patch). Measurement table of every issue log: /tmp/measure_all.py
+  (dedupes by start time + CPU, version by the release times, options from the "Load Configuration" line).
   0.8.148: LESSONS. (1) "Audio callback anomaly: <old device> manual N perspective default: no callbacks" every minute
   = a route WITHOUT a device (closed by closeHiddenRoutes, "remembered as none") whose RouteCallback kept its old
   deviceLabel/expectedBlock - fixed (audioDeviceStopped zeroes expectedBlock/Rate); never read such lines as a dead

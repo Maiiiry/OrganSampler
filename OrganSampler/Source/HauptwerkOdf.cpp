@@ -262,6 +262,33 @@ juce::File HauptwerkOdf::packageFolder(const juce::File& hauptwerkRoot, int pack
     return bare.isDirectory() ? bare : padded;
 }
 
+// A relative path with every part spelt as the folder on the disk is (a
+// case-insensitive match per part where the exact name does not exist);
+// empty when a part is not there at all.
+juce::String HauptwerkOdf::spelledAsOnDisk(const juce::File& base, const juce::String& relative)
+{
+    juce::StringArray parts;
+    parts.addTokens(relative.replaceCharacter('\\', '/'), "/", "");
+    parts.removeEmptyStrings();
+    juce::File dir = base;
+    juce::StringArray spelt;
+    for (const auto& part : parts)
+    {
+        juce::File next = dir.getChildFile(part);
+        juce::String name = part;
+        bool found = false;
+        for (const auto& entry : juce::RangedDirectoryIterator(dir, false, "*", juce::File::findDirectories))
+            if (entry.getFile().getFileName() == part) { found = true; break; }
+        if (!found)
+            for (const auto& entry : juce::RangedDirectoryIterator(dir, false, "*", juce::File::findDirectories))
+                if (entry.getFile().getFileName().equalsIgnoreCase(part)) { name = entry.getFile().getFileName(); next = entry.getFile(); found = true; break; }
+        if (!found) return {};
+        spelt.add(name);
+        dir = next;
+    }
+    return spelt.joinIntoString("/");
+}
+
 juce::String HauptwerkOdf::perspectiveOfRankName(const juce::String& name)
 {
     // "Front A (direct): HW. Octave 2" - the part before the colon names the
@@ -817,6 +844,14 @@ HauptwerkOdf HauptwerkOdf::parse(const juce::File& file, const std::function<boo
         rank.packageId = packageId;
         rank.folderRelative = dir;
         rank.folder = packageFolder(root, packageId).getChildFile(dir.isEmpty() ? juce::String(".") : dir);
+        // The folder as it is spelt ON THE DISK (0.8.149, #57): the definition says
+        // "002293/ped", the disk has "Ped" - Windows does not care, Linux does, and
+        // the configuration must carry the disk's spelling so that it loads on both.
+        if (const auto onDisk = spelledAsOnDisk(packageFolder(root, packageId), dir); onDisk.isNotEmpty() && onDisk != dir)
+        {
+            rank.folderRelative = onDisk;
+            rank.folder = packageFolder(root, packageId).getChildFile(onDisk);
+        }
     }
     // Ranks of one stop that landed in ONE perspective label although their
     // folders carry different prefixes ("02-dir22-", "04-dis2h-", "05-reaSen-"

@@ -82,6 +82,11 @@ struct Sample
     // source's release has to the source's sustain (measured when built; applied
     // at playback when "release level matched" is on).
     float releaseLevelGain = 1.0f;
+    // A sample stored at half the route's rate whose first second carries
+    // treble above a quarter of its own rate (0.8.149): played through the sinc
+    // kernel for its first 1.3 s; a dull one (nothing above 6 kHz at -40 dB)
+    // has nothing to mirror and keeps the cheap linear kernel.
+    bool sincHead = false;
     juce::String fileName;               // the file the sample was read from (its name only; copies carry their source's)
 
     Sample(int channels, int64_t frames, double sr, bool asFloat);
@@ -1428,7 +1433,7 @@ private:
     bool compressSamples = false;   // 0.8.145: pack the 16-bit samples in RAM (Sample::compress16)
     std::atomic<int64_t> packRawBytes{ 0 }, packPackedBytes{ 0 };
     std::atomic<int> packSamples{ 0 }, packFailed{ 0 };
-    std::atomic<int> halfRateReleases{ 0 }, halfRateKeptFull{ 0 };   // 0.8.146: releases stored at half the rate / kept full for their treble
+    std::atomic<int> halfRateReleases{ 0 }, halfRateKeptFull{ 0 }, halfRateSincHeads{ 0 };   // 0.8.146: releases stored at half the rate / kept full for their treble
     std::function<void(const juce::String&)> loadStatusCallback;
     bool tuneAllTo440 = false;
 

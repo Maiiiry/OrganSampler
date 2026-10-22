@@ -2172,7 +2172,7 @@ namespace
         // 0.75/0.67 of the rate and the user took the linear kernel's result there;
         // 0.8.147 ran every 32 kHz attack through the scalar sinc (13 ns a frame
         // against 1.1) and Doesburg fell from 45 000 to 16 000 voices (#61).
-        const bool lowRate = s.sampleRate < c.routeRate * 0.6;
+        const bool lowRate = s.sincHead && s.sampleRate < c.routeRate * 0.6;
         const uint64_t sincEndF = lowRate ? (uint64_t)(1.3 * s.sampleRate) << 32 : 0;
         const bool hasLoops = v.loopEnabled && !s.loops.empty();
         // A sustained sample without loop points plays as one big loop: it fades
@@ -6788,6 +6788,7 @@ juce::String SamplerEngine::runKernelSelfCheck()
                 for (const double ratio : { 0.75, 1.0, 1.4983, 2.6 })
                 {
                     raw->sampleRate = packedS->sampleRate = rateOfSample;
+                    raw->sincHead = packedS->sincHead = rateOfSample < 30000.0;
                     std::vector<float> r0, r1, p0, p1;
                     uint64_t endRaw = 0, endPacked = 0;
                     renderWith(*raw, cubic, ratio, r0, r1, endRaw);
@@ -7460,6 +7461,7 @@ namespace
     {
         auto copy = std::make_unique<Sample>(source.numChannels, source.numFrames, source.sampleRate, source.storesFloat);
         copy->smplPitch = source.smplPitch;
+        copy->sincHead = source.sincHead;
         const int frames = (int)source.numFrames;
         if (frames <= 0) { copy->finaliseLoops(source.loops); return copy; }
         // Cutoff a little below the folding limit: the transition band must end there.
@@ -10320,14 +10322,20 @@ namespace
             temp.clear();
             if (!reader->read(&temp, 0, (int)frames, 0, true, true)) return nullptr;
             double targetRate = baseRate;
-            // 0.8.147: the sinc kernel plays the first 1.3 s of a halved file without
-            // the images, so only a file whose treble above the halved rate's reach
-            // is a real part of it (louder than -18 dB of the whole: a reed in the
-            // treble) keeps the full rate; the -30 dB rule of 0.8.146 kept too many.
-            if (fullRate > baseRate + 0.5 && energyAboveDb(temp, sourceRate, 0.46 * baseRate) > -18.0)
+            bool sincHead = false;
+            if (fullRate > baseRate + 0.5)
             {
-                targetRate = fullRate;
-                if (keptFull != nullptr) *keptFull = true;
+                // 0.8.147: the sinc kernel plays the first 1.3 s of a halved file without
+                // the images, so only a file whose treble above the halved rate's reach
+                // is a real part of it (louder than -18 dB of the whole: a reed in the
+                // treble) keeps the full rate; the -30 dB rule of 0.8.146 kept too many.
+                // 0.8.149: the sinc costs ten times the linear kernel - a halved file
+                // with nothing above a quarter of its rate (6 kHz at 24 kHz) louder than
+                // -40 dB has nothing to mirror and plays linear (the Core 2 Duo Mac fell
+                // from 4100 to 2200 voices with every release through the sinc, #64).
+                const double top = energyAboveDb(temp, sourceRate, 0.46 * baseRate);
+                if (top > -18.0) { targetRate = fullRate; if (keptFull != nullptr) *keptFull = true; }
+                else sincHead = energyAboveDb(temp, sourceRate, 0.25 * baseRate) > -40.0;
             }
             const bool convert = std::abs(sourceRate - targetRate) > 0.5;
             std::unique_ptr<SincResampler> resampler;
@@ -10340,6 +10348,7 @@ namespace
             sample = std::make_unique<Sample>(channels, storedFrames, convert ? targetRate : sourceRate, asFloat);
             sample->fileName = file.getFileName();
             sample->sourceSampleRate = sourceRate;
+            sample->sincHead = sincHead;
             std::vector<float> resampled(convert ? (size_t)storedFrames : (size_t)0);
             for (int c = 0; c < channels; ++c)
             {
@@ -10502,7 +10511,10 @@ void SamplerEngine::loadSamplesIntoStop(Stop* stop, const juce::File& folder, bo
                 parseSmpl(entries[(size_t)index].file), resample || baseRate < kBaseSampleRate - 0.5, baseRate,
                 halfRate ? storageSampleRate : 0.0, &keptFull);
             if (halfRate && decoded[(size_t)index] != nullptr)
+            {
                 (keptFull ? halfRateKeptFull : halfRateReleases).fetch_add(1, std::memory_order_relaxed);
+                if (decoded[(size_t)index]->sincHead) halfRateSincHeads.fetch_add(1, std::memory_order_relaxed);
+            }
             if (decoded[(size_t)index] != nullptr) packIfEnabled(*decoded[(size_t)index]);   // 0.8.145: packed on the loader thread, before it counts
         }
         catch (const std::bad_alloc&)
@@ -11053,8 +11065,10 @@ void SamplerEngine::loadManualFolder(const juce::File& topFolder, int manualInde
     notePackStats("the tree " + topFolder.getFileName());
     {
         const int half = halfRateReleases.exchange(0, std::memory_order_relaxed), full = halfRateKeptFull.exchange(0, std::memory_order_relaxed);
+        const int sinc = halfRateSincHeads.exchange(0, std::memory_order_relaxed);
         if (half + full > 0)
-            CrashHandler::note("Releases at half the rate in the tree " + topFolder.getFileName() + ": " + juce::String(half) + " stored at half, "
+            CrashHandler::note("Releases at half the rate in the tree " + topFolder.getFileName() + ": " + juce::String(half) + " stored at half ("
+                + juce::String(sinc) + " of them with treble, played through the sinc kernel for 1.3 s), "
                 + juce::String(full) + " kept at the full rate for their treble (energy above 0.46 x the half rate louder than -18 dB)");
     }
     for (auto& [groupManual, group] : groups) impl->pendingDivisions.push_back(std::move(group.division));

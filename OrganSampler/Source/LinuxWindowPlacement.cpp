@@ -58,7 +58,21 @@ namespace
         XSendEvent(display, DefaultRootWindow(display), False, SubstructureRedirectMask | SubstructureNotifyMask, &event);
     }
 
-    void placeWindow(Display* display, Window window, LinuxWindowPlacement::Box r)
+    // Whether the window manager announces an EWMH message in _NET_SUPPORTED.
+    bool wmSupports(Display* display, const char* atomName)
+    {
+        const Atom supported = XInternAtom(display, "_NET_SUPPORTED", False), wanted = XInternAtom(display, atomName, False);
+        Atom type = 0; int format = 0; unsigned long count = 0, after = 0; unsigned char* data = nullptr;
+        bool found = false;
+        if (XGetWindowProperty(display, DefaultRootWindow(display), supported, 0, 4096, False, XA_ATOM, &type, &format, &count, &after, &data) == Success && data != nullptr)
+        {
+            for (unsigned long i = 0; i < count && !found; ++i) found = ((Atom*)data)[i] == wanted;
+            XFree(data);
+        }
+        return found;
+    }
+
+    void placeWindow(Display* display, Window window, LinuxWindowPlacement::Box r, bool ewmh)
     {
         // Out of the maximised state first (a maximised window ignores a move).
         XEvent state{};
@@ -81,8 +95,11 @@ namespace
         move.xclient.data.l[2] = r.y;
         move.xclient.data.l[3] = r.width;
         move.xclient.data.l[4] = r.height;
-        sendToRoot(display, move);
-        XMoveResizeWindow(display, window, r.x, r.y, (unsigned)std::max(1, r.width), (unsigned)std::max(1, r.height));   // for a manager without EWMH
+        // A manager with _NET_MOVERESIZE_WINDOW gets the message alone (0.8.149):
+        // moving the client window as well under KWin left the frame and the
+        // client at odds, the windows overlapping (#58). Without EWMH the plain move.
+        if (ewmh) sendToRoot(display, move);
+        else XMoveResizeWindow(display, window, r.x, r.y, (unsigned)std::max(1, r.width), (unsigned)std::max(1, r.height));
         XRaiseWindow(display, window);
     }
 }
@@ -113,21 +130,39 @@ bool LinuxWindowPlacement::placeSideBySide(const std::string& folderName, Box le
         }
     }
     static const char* browsers[]{ "firefox", "chrom", "brave", "vivaldi", "opera", "epiphany", "falkon", "konqueror", "midori", "librewolf", "edge" };
+    static const char* fileManagers[]{ "dolphin", "nautilus", "thunar", "pcmanfm", "nemo", "caja", "spacefm", "krusader", "doublecmd", "org.gnome.files" };
     Window fileManager = 0, browser = 0;
+    std::string seen;
     for (const Window w : windows)
     {
         const std::string name = windowName(display, w), cls = windowClass(display, w);
         if (cls.find("organsampler") != std::string::npos) continue;
+        if (seen.size() < 600) seen += " [" + cls.substr(0, 24) + ": " + name.substr(0, 40) + "]";
         if (fileManager == 0 && containsIgnoreCase(name, folderName)) { fileManager = w; continue; }
         if (browser == 0)
             for (const char* b : browsers) if (cls.find(b) != std::string::npos) { browser = w; break; }
     }
+    // The folder's window not found by its title (a file manager that shows the
+    // folder name differently): the first file manager by its class (0.8.149).
+    if (fileManager == 0)
+        for (const Window w : windows)
+        {
+            const std::string cls = windowClass(display, w);
+            if (cls.find("organsampler") != std::string::npos || w == browser) continue;
+            bool fm = false;
+            for (const char* f : fileManagers) if (cls.find(f) != std::string::npos) fm = true;
+            if (fm) { fileManager = w; break; }
+        }
     if (browser == 0 && active != 0 && active != fileManager && windowClass(display, active).find("organsampler") == std::string::npos) browser = active;
-    if (fileManager != 0) placeWindow(display, fileManager, right);
-    if (browser != 0) placeWindow(display, browser, left);
+    const bool ewmh = wmSupports(display, "_NET_MOVERESIZE_WINDOW");
+    if (fileManager != 0) placeWindow(display, fileManager, right, ewmh);
+    if (browser != 0) placeWindow(display, browser, left, ewmh);
     XFlush(display);
     XCloseDisplay(display);
-    note = std::string("Report windows (X11): file manager ") + (fileManager != 0 ? "placed" : "not found") + ", browser " + (browser != 0 ? "placed" : "not found");
+    note = std::string("Report windows (X11, ") + (ewmh ? "EWMH" : "no EWMH") + "): file manager " + (fileManager != 0 ? "placed" : "not found") + ", browser " + (browser != 0 ? "placed" : "not found")
+        + "; left " + std::to_string(left.x) + "," + std::to_string(left.y) + " " + std::to_string(left.width) + "x" + std::to_string(left.height)
+        + ", right " + std::to_string(right.x) + "," + std::to_string(right.y) + " " + std::to_string(right.width) + "x" + std::to_string(right.height)
+        + "; windows seen:" + seen;
     return fileManager != 0 || browser != 0;
 }
 #else

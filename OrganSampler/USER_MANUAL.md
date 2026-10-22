@@ -1705,6 +1705,17 @@ desktop, a 16-core notebook), 2026-10:
   on the second core is taken by the system now and then (the report shows
   it as "the latest a lane joined a job" of several milliseconds). Take the
   median of three runs, not the best.
+- **Aggregated WASAPI** is a different animal: every route is a shared-mode
+  stream of its own, mixed by Windows. Each route renders on its own thread
+  (one lane, capped at cores / routes), so a big organ spread over fifteen
+  routes measures like ASIO (Doesburg, 16-core: 42 600 against 45 400 on
+  ASIO), while the whole organ on two routes is bound to two cores. The
+  mixer of Windows has its say after our buffer: an endpoint with "audio
+  enhancements" on (loudness equalisation) boosts every quiet stream on its
+  own, and fifteen streams of one route each came out some 20 dB louder than
+  the same organ on ASIO (the program's own levels in the activity log were
+  the same) - switch the enhancements off in the endpoint's properties, or
+  use ASIO or one Windows Audio device for the card.
 - **What the measurement cannot see.** It judges every callback of the
   program's own audio threads (its length against the period, late calls).
   A dropout made after our buffer leaves the program - a shared-mode mixer
@@ -2100,10 +2111,12 @@ let the images of what the file holds through at only 7-11 dB below it - a
 digital ringing at the start of a reed's release - and the sinc puts them
 40-50 dB down; after 1.3 s, where the treble has died, the linear kernel
 takes over. Only a release whose treble above 11 kHz is louder than -18 dB
-of the whole (a reed in the treble) keeps the full rate; the log says how
-many went each way. The sinc kernel serves the halved releases only (0.8.148:
-run on every sample of the 32 kHz storage it cost two thirds of the
-polyphony). Takes effect the next time a division's folders are loaded.
+of the whole (a reed in the treble) keeps the full rate; a halved release
+with nothing above 6 kHz louder than -40 dB has nothing to mirror and plays
+through the cheap linear kernel (0.8.149: the sinc costs ten times the
+linear kernel - every release through it took half the polyphony of a
+two-core laptop). The log says how many went each way. Takes effect the
+next time a division's folders are loaded.
 
 ### Compress samples in RAM (lossless)
 

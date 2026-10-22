@@ -1725,6 +1725,17 @@ static const char* const kManualText_part8 =
     "  on the second core is taken by the system now and then (the report shows\n"
     "  it as \"the latest a lane joined a job\" of several milliseconds). Take the\n"
     "  median of three runs, not the best.\n"
+    "- **Aggregated WASAPI** is a different animal: every route is a shared-mode\n"
+    "  stream of its own, mixed by Windows. Each route renders on its own thread\n"
+    "  (one lane, capped at cores / routes), so a big organ spread over fifteen\n"
+    "  routes measures like ASIO (Doesburg, 16-core: 42 600 against 45 400 on\n"
+    "  ASIO), while the whole organ on two routes is bound to two cores. The\n"
+    "  mixer of Windows has its say after our buffer: an endpoint with \"audio\n"
+    "  enhancements\" on (loudness equalisation) boosts every quiet stream on its\n"
+    "  own, and fifteen streams of one route each came out some 20 dB louder than\n"
+    "  the same organ on ASIO (the program's own levels in the activity log were\n"
+    "  the same) - switch the enhancements off in the endpoint's properties, or\n"
+    "  use ASIO or one Windows Audio device for the card.\n"
     "- **What the measurement cannot see.** It judges every callback of the\n"
     "  program's own audio threads (its length against the period, late calls).\n"
     "  A dropout made after our buffer leaves the program - a shared-mode mixer\n"
@@ -1807,6 +1818,8 @@ static const char* const kManualText_part8 =
     "Everything that can be played from a console can be learned: stops,\n"
     "transmissions, couplers, tremulants, pistons and the stepping buttons, the\n"
     "crescendo (a continuous controller), the swell of every division (the swell\n"
+    ;
+static const char* const kManualText_part9 =
     "bar in the header), every global slider, every top-bar button, the keyboards\n"
     "themselves (right-click the keyboard icon beside the division's name in its\n"
     "header, or the keyboard drawing in the Divisions dialog). Right-click the control and choose the\n"
@@ -1818,8 +1831,6 @@ static const char* const kManualText_part8 =
     "*Record* in the top bar records the stereo mix to a WAV file; click again to\n"
     "stop (the recording ends with a short fade).\n"
     "\n"
-    ;
-static const char* const kManualText_part9 =
     "---\n"
     "\n"
     "# 7. Filled pipes, extensions and the transposition methods\n"
@@ -2009,6 +2020,8 @@ static const char* const kManualText_part9 =
     "scrolling dialog, in sections: Engine, Global sound, Advanced global audio\n"
     "(collapsed by default: click its title), Console, Folder name patterns, and\n"
     "one section per division (collapsed by default). The folding is remembered.\n"
+    ;
+static const char* const kManualText_part10 =
     "The \"?\" beside every option opens this manual at the option's chapter below.\n"
     "At the top: *About & licences...* with this manual (a chapter box jumps to any\n"
     "chapter), the program's licence and, in full, the licences of the software it\n"
@@ -2020,8 +2033,6 @@ static const char* const kManualText_part9 =
     "### This computer\n"
     "\n"
     "The processor, its physical cores and logical CPUs, and the RAM. Information\n"
-    ;
-static const char* const kManualText_part10 =
     "only; it tells what the thread settings below can use.\n"
     "\n"
     "### Render threads\n"
@@ -2124,10 +2135,12 @@ static const char* const kManualText_part10 =
     "digital ringing at the start of a reed's release - and the sinc puts them\n"
     "40-50 dB down; after 1.3 s, where the treble has died, the linear kernel\n"
     "takes over. Only a release whose treble above 11 kHz is louder than -18 dB\n"
-    "of the whole (a reed in the treble) keeps the full rate; the log says how\n"
-    "many went each way. The sinc kernel serves the halved releases only (0.8.148:\n"
-    "run on every sample of the 32 kHz storage it cost two thirds of the\n"
-    "polyphony). Takes effect the next time a division's folders are loaded.\n"
+    "of the whole (a reed in the treble) keeps the full rate; a halved release\n"
+    "with nothing above 6 kHz louder than -40 dB has nothing to mirror and plays\n"
+    "through the cheap linear kernel (0.8.149: the sinc costs ten times the\n"
+    "linear kernel - every release through it took half the polyphony of a\n"
+    "two-core laptop). The log says how many went each way. Takes effect the\n"
+    "next time a division's folders are loaded.\n"
     "\n"
     "### Compress samples in RAM (lossless)\n"
     "\n"
@@ -2209,6 +2222,8 @@ static const char* const kManualText_part10 =
     "reset), *DSP* (the load) and *LIMIT* (this setting).\n"
     "\n"
     "The value belongs to the organ, not to the computer alone: the number of\n"
+    ;
+static const char* const kManualText_part11 =
     "audio routes, the auxiliary routes, the IR reverbs, the drivers and the buffer\n"
     "sizes all change it (see \"Getting the most polyphony\"). It is saved with the\n"
     "configuration. The easiest way to find it is the button below it,\n"
@@ -2222,8 +2237,6 @@ static const char* const kManualText_part10 =
     "limit found is what the computer renders cleanly whatever the stops. By hand:\n"
     "\n"
     "1. Engage a large number of stops with long releases (a full registration of\n"
-    ;
-static const char* const kManualText_part11 =
     "   wet samples).\n"
     "2. Bash the keys: play many quick staccato notes over many keys at once\n"
     "   (palm smearing - repeated fast strokes with the flat hands over the\n"
@@ -2411,6 +2424,8 @@ static const char* const kManualText_part11 =
     "gets only half or none of it, so fast repetitions stay crisp.\n"
     "\n"
     "## 8.3 Advanced global audio\n"
+    ;
+static const char* const kManualText_part12 =
     "\n"
     "### Swell: harmonic filter\n"
     "\n"
@@ -2424,8 +2439,6 @@ static const char* const kManualText_part11 =
     "### Wind: harmonic filter\n"
     "\n"
     "The same shelf following the wind sag: this much high-frequency loss at the\n"
-    ;
-static const char* const kManualText_part12 =
     "full sag (default 2 dB). Big chords starve the wind, and a starved pipe is\n"
     "duller as well as flatter.\n"
     "\n"
@@ -2613,6 +2626,8 @@ static const char* const kManualText_part12 =
     "cache* deletes every cached file at once - to get the disk space back, or\n"
     "after you have replaced your sample folders. The copies are built again, and\n"
     "cached again, the next time they are needed; nothing else is lost.\n"
+    ;
+static const char* const kManualText_part13 =
     "\n"
     "### Filled pipes cache: files of stops not loaded now\n"
     "\n"
@@ -2626,8 +2641,6 @@ static const char* const kManualText_part12 =
     "\n"
     "Where the cache files live. By default `FilledPipesCache` in the\n"
     "application-data folder, usually on the system drive; the row then says\n"
-    ;
-static const char* const kManualText_part13 =
     "\"(default)\". *Choose...* opens a folder dialog: pick a folder on a big drive\n"
     "(beside the samples, say). The files built so far are moved there at once, so\n"
     "nothing has to be rebuilt. The folder is remembered in the settings.\n"
@@ -2815,6 +2828,8 @@ static const char* const kManualText_part13 =
     "\"Tubular\", \"Celesta\", \"Harp\", \"Glockenspiel\" (a Hauptwerk import adds the\n"
     "folders of every stop the definition plays without release samples). The patterns\n"
     "match like those of *Ignored folders (folder contains)* (a star at the start\n"
+    ;
+static const char* const kManualText_part14 =
     "or the end anchors them). Applies to the next folder load.\n"
     "\n"
     "### Ignored folders (folder contains)\n"
@@ -2828,8 +2843,6 @@ static const char* const kManualText_part13 =
     "star at the start anchors it to the end of the name, a star at the end to its\n"
     "start; underscores count. Applies to the next folder load.\n"
     "\n"
-    ;
-static const char* const kManualText_part14 =
     "### Perspective prefixes\n"
     "\n"
     "Folder name prefixes that mark a microphone perspective, one line per\n"
@@ -3017,6 +3030,8 @@ static const char* const kManualText_part14 =
     "for what happened and how to reproduce it. When you press *Create the report\n"
     "and open GitHub*, the program writes a folder `OrganSampler-report-<date>`\n"
     "onto your Desktop with `logs.zip` (the activity log, the crash reports,\n"
+    ;
+static const char* const kManualText_part15 =
     "`settings.json`, the last self-test report and `system.txt` - the version,\n"
     "the computer, every audio route with its device, buffer, rate and channels;\n"
     "no samples, no voicing, no combinations) and PNG screenshots of every window\n"
@@ -3030,8 +3045,6 @@ static const char* const kManualText_part14 =
     "out of the way. The program puts the browser on the left half of the screen\n"
     "and the folder on the right half, side by side, so the zip is dragged across\n"
     "(0.8.139; Windows always, macOS through AppleScript - the browser only with\n"
-    ;
-static const char* const kManualText_part15 =
     "the accessibility permission -, Linux where wmctrl is installed). The\n"
     "link carries the computer and the routes only while it stays short (0.8.138;\n"
     "GitHub answered a long one with an error after its sign-in) - the whole\n"
