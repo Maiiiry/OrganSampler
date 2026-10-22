@@ -691,7 +691,13 @@ static const char* const kManualText_part3 =
     "configuration expects and where to put the file, the routes, the RAM the\n"
     "program used with the whole organ loaded (measured at the moment of saving\n"
     "and stored in the configuration as well; `configurations/INDEX.md` shows it\n"
-    "as a column, the figure readers need most), the version, and the Stop List\n"
+    "as a column, the figure readers need most) together with the least the\n"
+    "organ can take - the RAM with every saving option of the load box (16-bit,\n"
+    "32 kHz on loading, releases at half the rate, packed samples), estimated by\n"
+    "the program at the save from a share of the loaded samples brought into\n"
+    "that form (INDEX.md's \"RAM min\" column; the price of those options is\n"
+    "polyphony, see the storage options in the Configuration Editor chapter) -,\n"
+    "the version, and the Stop List\n"
     "as a table in the order of your grid with the buttons' captions,\n"
     "transmissions and extensions included. Fill in the three\n"
     "\"(fill in: ...)\" places - the organ, the producer and product of the\n"
@@ -802,14 +808,14 @@ static const char* const kManualText_part3 =
     "## 2.3 The crescendo\n"
     "\n"
     "The crescendo display is a row of segments, one per step (30 by default).\n"
+    ;
+static const char* const kManualText_part4 =
     "Drag it, or move a learned MIDI controller (right-click the display: *Learn\n"
     "MIDI continuous controller*). *Cresc.* switches the crescendo on: switching it\n"
     "on remembers the registration set by hand, switching it off brings that\n"
     "registration back. *Crescendo settings...* (right-click the display) opens the\n"
     "dialog in which every step is taught: switch *Set* on, engage the stops, click\n"
     "the step. Moving from one step to the next switches only the difference: the\n"
-    ;
-static const char* const kManualText_part4 =
     "stops, transmissions and couplers the two steps have in common stay as they\n"
     "sound, so a chord held through the crescendo never restarts; only what the\n"
     "new step adds starts to sound and only what it drops stops. The dialog also sets the\n"
@@ -1004,14 +1010,14 @@ static const char* const kManualText_part4 =
     "sliders:\n"
     "\n"
     "- **Rank count [II]** (stop folders only, 0.8.146) - whether the button\n"
+    ;
+static const char* const kManualText_part5 =
     "  carries the Roman numeral of the ranks that sound with the folder. Off: the\n"
     "  name alone. On by default; saved with the configuration.\n"
     "- **Alias** - the caption of the button. *Automatic* shows the folder name;\n"
     "  type any text to show that instead (an alias without a footage gets the\n"
     "  stop's footage appended). The alias is only a caption: saved states,\n"
     "  combinations and MIDI learn keep using the stop's real name, so renaming\n"
-    ;
-static const char* const kManualText_part5 =
     "  breaks nothing.\n"
     "- **Perspectives** - the microphone perspectives this stop has, each with its\n"
     "  own on/off and volume.\n"
@@ -1206,14 +1212,14 @@ static const char* const kManualText_part5 =
     "  ready-made stops of the loaded trees that no division uses yet (added\n"
     "  whole, with the folders of every perspective; a stop whose folders are in\n"
     "  the table already is not offered). The x at a row's start\n"
+    ;
+static const char* const kManualText_part6 =
     "  removes the stop (its folders become free). **Remove empty stops** removes\n"
     "  every row without folders that has no children.\n"
     "- **Aliases from folders** gives every stop without an alias the bare name\n"
     "  of its sample folder: no parent folders (\"TA - fletna\" becomes \"Fletna\",\n"
     "  shown as \"Fletna 8'\"), no perspective prefix, a capital first letter, a\n"
     "  footage at the end of the folder name with its foot mark; a stop without a\n"
-    ;
-static const char* const kManualText_part6 =
     "  footage in its name shows the measured one (a mixture's first sounding\n"
     "  harmonic). Aliases you typed stay. Applied with *Apply and reload*.\n"
     "- **Add perspective...** adds a column (a known perspective name or a new\n"
@@ -1408,14 +1414,14 @@ static const char* const kManualText_part6 =
     "\n"
     "**One rate for every device.** Every audio route renders at the rate of its\n"
     "device, and the devices of one organ may run at different rates and buffer\n"
+    ;
+static const char* const kManualText_part7 =
     "sizes - the program does not stop you. The samples are loaded at 48 kHz (see\n"
     "\"Sample rate on loading\"): a device at 44.1 or 96 kHz gets its route's pipes\n"
     "read at the matching speed, through the same interpolation as a transposed\n"
     "pipe, which costs a little more per voice and is a step below the quality of\n"
     "the resampling on load. So give every device 48 kHz and the same buffer size.\n"
     "A device opened for the first time, or chosen for a route that had none, runs\n"
-    ;
-static const char* const kManualText_part7 =
     "at the loading rate, 48 kHz, when it offers it (a fresh device would\n"
     "otherwise open at the lowest rate from 44.1 kHz up); a device chosen for a\n"
     "route keeps the rate the route ran at when it offers it; a portable\n"
@@ -1610,14 +1616,14 @@ static const char* const kManualText_part7 =
     "for Intel Macs on **macOS 10.11 El Capitan or newer** (10.11 is the oldest\n"
     "system the framework allows; a Mac on 10.10 needs the free upgrade to the\n"
     "newest system Apple offers for it, 10.13 High Sierra for the 2010 models).\n"
+    ;
+static const char* const kManualText_part8 =
     "\n"
     "## 5.7 Audio devices not ready when OrganSampler starts\n"
     "\n"
     "Devices that cannot be opened at start-up (unplugged, driver missing, or merely\n"
     "late - an RME interface registers a few seconds after it switches its sample\n"
     "rate) are waited for: a box \"Waiting for audio devices\" appears and the program\n"
-    ;
-static const char* const kManualText_part8 =
     "checks every second for six seconds. Devices still absent afterwards are listed\n"
     "once in one message; their routes stay silent until the device appears, then\n"
     "reopen by themselves. A device you choose yourself is never swapped back.\n"
@@ -1812,14 +1818,14 @@ static const char* const kManualText_part8 =
     "the stops agree, and celeste beats and the global *Pitch* slider (Global\n"
     "sound, cents on top of everything) mean what they say. The voicing row's\n"
     "*Undulation* line reads \"needs 440 Hz\" until this is done.\n"
+    ;
+static const char* const kManualText_part9 =
     "\n"
     "## 6.4 MIDI learn\n"
     "\n"
     "Everything that can be played from a console can be learned: stops,\n"
     "transmissions, couplers, tremulants, pistons and the stepping buttons, the\n"
     "crescendo (a continuous controller), the swell of every division (the swell\n"
-    ;
-static const char* const kManualText_part9 =
     "bar in the header), every global slider, every top-bar button, the keyboards\n"
     "themselves (right-click the keyboard icon beside the division's name in its\n"
     "header, or the keyboard drawing in the Divisions dialog). Right-click the control and choose the\n"
@@ -2014,14 +2020,14 @@ static const char* const kManualText_part9 =
     "\n"
     "---\n"
     "\n"
+    ;
+static const char* const kManualText_part10 =
     "# 8. Configuration Editor reference\n"
     "\n"
     "*Configuration Editor* (top bar) holds every setting of the program in one\n"
     "scrolling dialog, in sections: Engine, Global sound, Advanced global audio\n"
     "(collapsed by default: click its title), Console, Folder name patterns, and\n"
     "one section per division (collapsed by default). The folding is remembered.\n"
-    ;
-static const char* const kManualText_part10 =
     "The \"?\" beside every option opens this manual at the option's chapter below.\n"
     "At the top: *About & licences...* with this manual (a chapter box jumps to any\n"
     "chapter), the program's licence and, in full, the licences of the software it\n"
@@ -2216,14 +2222,14 @@ static const char* const kManualText_part10 =
     "program is as stable at any value, the ceiling only sizes the voice pool.\n"
     "When it is reached the oldest voices are faded out. Set it below what the\n"
     "computer can render so that an overload fades old voices rather than crackles:\n"
+    ;
+static const char* const kManualText_part11 =
     "set the maximum polyphony so that the *DSP* value never exceeds 100 %, to\n"
     "avoid cracks and dropouts. The polyphony display of the main window shows\n"
     "*NOW* (the voices sounding), *PEAK* (the most that sounded since the last\n"
     "reset), *DSP* (the load) and *LIMIT* (this setting).\n"
     "\n"
     "The value belongs to the organ, not to the computer alone: the number of\n"
-    ;
-static const char* const kManualText_part11 =
     "audio routes, the auxiliary routes, the IR reverbs, the drivers and the buffer\n"
     "sizes all change it (see \"Getting the most polyphony\"). It is saved with the\n"
     "configuration. The easiest way to find it is the button below it,\n"
@@ -2418,14 +2424,14 @@ static const char* const kManualText_part11 =
     "### Attack minimum delay\n"
     "\n"
     "A small pause between the key press and the start of the pipe (0 to 500 ms,\n"
+    ;
+static const char* const kManualText_part12 =
     "default 2), varied at random by a couple of milliseconds so that a chord's\n"
     "pipes do not all speak in the same instant. Keys repeated faster than the delay\n"
     "follow each other without it, and a key struck again right after its release\n"
     "gets only half or none of it, so fast repetitions stay crisp.\n"
     "\n"
     "## 8.3 Advanced global audio\n"
-    ;
-static const char* const kManualText_part12 =
     "\n"
     "### Swell: harmonic filter\n"
     "\n"
@@ -2620,14 +2626,14 @@ static const char* const kManualText_part12 =
     "when disk space is short - everything works the same without it. \"The cache\"\n"
     "describes it in full.\n"
     "\n"
+    ;
+static const char* const kManualText_part13 =
     "### Filled pipes cache: Empty the cache\n"
     "\n"
     "The row shows the size of the cache and the folder it lives in. *Empty the\n"
     "cache* deletes every cached file at once - to get the disk space back, or\n"
     "after you have replaced your sample folders. The copies are built again, and\n"
     "cached again, the next time they are needed; nothing else is lost.\n"
-    ;
-static const char* const kManualText_part13 =
     "\n"
     "### Filled pipes cache: files of stops not loaded now\n"
     "\n"
@@ -2822,14 +2828,14 @@ static const char* const kManualText_part13 =
     "## 8.5 Folder name patterns (one per line)\n"
     "\n"
     "### One-shot stops (folder contains)\n"
+    ;
+static const char* const kManualText_part14 =
     "\n"
     "Folders whose name matches one of these patterns hold samples that play once\n"
     "without looping (chiff, percussion, bells). Defaults: \"Chiff\", \"Chimes\",\n"
     "\"Tubular\", \"Celesta\", \"Harp\", \"Glockenspiel\" (a Hauptwerk import adds the\n"
     "folders of every stop the definition plays without release samples). The patterns\n"
     "match like those of *Ignored folders (folder contains)* (a star at the start\n"
-    ;
-static const char* const kManualText_part14 =
     "or the end anchors them). Applies to the next folder load.\n"
     "\n"
     "### Ignored folders (folder contains)\n"
@@ -3024,14 +3030,14 @@ static const char* const kManualText_part14 =
     "That folder is what a report needs - and *Report a problem...* sends it for\n"
     "you.\n"
     "\n"
+    ;
+static const char* const kManualText_part15 =
     "### Report a problem\n"
     "\n"
     "*Report a problem...* at the top of the Configuration Editor opens a dialog\n"
     "for what happened and how to reproduce it. When you press *Create the report\n"
     "and open GitHub*, the program writes a folder `OrganSampler-report-<date>`\n"
     "onto your Desktop with `logs.zip` (the activity log, the crash reports,\n"
-    ;
-static const char* const kManualText_part15 =
     "`settings.json`, the last self-test report and `system.txt` - the version,\n"
     "the computer, every audio route with its device, buffer, rate and channels;\n"
     "no samples, no voicing, no combinations) and PNG screenshots of every window\n"

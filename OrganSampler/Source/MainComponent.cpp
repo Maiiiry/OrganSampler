@@ -10086,6 +10086,25 @@ void MainComponent::savePortableConfiguration(const juce::File& file, bool inclu
         {
             root->setProperty("measuredRamBytes", ram);
             root->setProperty("measuredRamStorage", sampleStorageFloat ? "32-bit float" : "16-bit");
+            // 0.8.151: the least the organ can take - every saving option of the load
+            // box - estimated from the loaded samples (the README's second RAM figure
+            // and INDEX.md's "RAM min" column: a reader must not be put off by the
+            // figure of the full storage when a third of it would do).
+            juce::MouseCursor::showWaitCursor();
+            const auto least = engine.estimateMinimumRam();
+            juce::MouseCursor::hideWaitCursor();
+            if (least.bytesMinimum > 0 && least.samplesTested > 0)
+            {
+                auto gb = [](juce::int64 b) { return juce::String((double)b / (1024.0 * 1024.0 * 1024.0), 2) + " GB"; };
+                const juce::int64 fixed = ram > (juce::int64)least.bytesNow ? ram - (juce::int64)least.bytesNow : 0;   // not jmax: juce_dsp's SIMD overload takes the explicit <int64>
+                const juce::int64 minimum = std::min<juce::int64>(ram, fixed + (juce::int64)least.bytesMinimum);
+                root->setProperty("estimatedMinimumRamBytes", minimum);
+                root->setProperty("estimatedMinimumRamStorage", SamplerEngine::minimumRamStorageText);
+                CrashHandler::note("RAM with every saving option (" + juce::String(SamplerEngine::minimumRamStorageText) + "): about " + gb(minimum)
+                    + " (now " + gb(ram) + ": samples " + gb(least.bytesNow) + " x " + juce::String(least.ratio, 3) + " + the rest " + gb(fixed) + "; "
+                    + juce::String(least.samplesTested) + " of " + juce::String(least.samplesTotal) + " samples tested, releases halved "
+                    + juce::String(least.releasesHalved) + ", kept at the full rate " + juce::String(least.releasesKeptFull) + ")");
+            }
         }
     }
 
@@ -11132,7 +11151,15 @@ juce::String MainComponent::configurationReadme(const juce::var& configuration, 
         {
             const double gb = (double)ram / (1024.0 * 1024.0 * 1024.0);
             text << "- **RAM:** about " << (gb < 10.0 ? juce::String(gb, 1) : juce::String(juce::roundToInt(gb))) << " GB with the whole organ loaded ("
-                 << configuration.getProperty("measuredRamStorage", "16-bit").toString() << " sample storage; measured by the program when this file was saved).\n";
+                 << configuration.getProperty("measuredRamStorage", "16-bit").toString() << " sample storage; measured by the program when this file was saved)";
+            const juce::int64 least = (juce::int64)configuration.getProperty("estimatedMinimumRamBytes", 0);
+            if (least > 0 && least < ram)
+            {
+                const double lgb = (double)least / (1024.0 * 1024.0 * 1024.0);
+                text << "; about " << (lgb < 10.0 ? juce::String(lgb, 1) : juce::String(juce::roundToInt(lgb))) << " GB at the least, with every saving option of the load box ("
+                     << configuration.getProperty("estimatedMinimumRamStorage", SamplerEngine::minimumRamStorageText).toString() << "; estimated by the program from the loaded samples)";
+            }
+            text << ".\n";
         }
     }
     text << "- **Saved with:** OrganSampler " << version << ".\n";

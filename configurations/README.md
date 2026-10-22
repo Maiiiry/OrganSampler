@@ -78,8 +78,11 @@ licence (GPLv3).
 ## The published configurations
 
 The list is [INDEX.md](INDEX.md): one line per organ with its divisions,
-Stop List rows and perspectives, written automatically from the configuration
-files. The README of each organ says how to download its `.json`.
+Stop List rows, RAM (as measured with the organ loaded, and the least it can
+take with every saving option of the load box - 16-bit, 32 kHz on loading,
+releases at half the rate, packed samples) and perspectives, written
+automatically from the configuration files. The README of each organ says how
+to download its `.json`.
 
 ## The demo organ: Rural Organ
 

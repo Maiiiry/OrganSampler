@@ -674,6 +674,16 @@ public:
     bool getCompressSamples() const noexcept { return compressSamples; }
     // The storage choices in force, as one string ("16-bit, 32 kHz, releases at half the rate, packed").
     juce::String storageSignature() const;
+    // 0.8.151: the RAM the samples would take with every saving option of the load
+    // box - 16-bit, 32 kHz on loading, releases at half the rate (where the treble
+    // rule of the loader keeps them so), packed - estimated from the samples loaded
+    // now: every k-th sample (about 160 of them, the first 3 s of each) is brought
+    // into that form and the ratio of its bytes to what it takes now is applied to
+    // all the sample bytes. The fixed part of the process (the program, the voice
+    // pool, the UI) is the caller's: the measured RAM minus bytesNow.
+    struct MinimumRamEstimate { int64_t bytesNow = 0, bytesMinimum = 0; double ratio = 1.0; int samplesTotal = 0, samplesTested = 0, releasesHalved = 0, releasesKeptFull = 0; };
+    static constexpr const char* minimumRamStorageText = "16-bit, 32 kHz on loading, releases at half the rate, packed";
+    MinimumRamEstimate estimateMinimumRam() const;
     // Packing statistics since the last call: raw bytes in, packed bytes out,
     // samples packed, samples left raw because the check failed.
     struct PackStats { int64_t rawBytes = 0, packedBytes = 0; int samples = 0, failed = 0; };

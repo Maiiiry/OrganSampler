@@ -378,10 +378,25 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   itself - KWin's placement put the report box in the top-left corner (and that is the user's "miniature Configuration
   Editor in the corner" too, most likely). `LinuxWindowPlacement::placeThroughKWin`: a JS file in ~/.config/OrganSampler
   loaded over D-Bus (`gdbus call --session --dest org.kde.KWin --object-path /Scripting --method
-  org.kde.kwin.Scripting.loadScript <file> <name>` -> "(int32 N,)", then `/Scripting/ScriptN org.kde.kwin.Script.run`,
+  org.kde.kwin.Scripting.loadScript <file> <name>` -> "(N,)" - gdbus prints the int32 WITHOUT a type word; 0.8.150
+  looked for "int32 N", took every answer for a refusal and fell back to X11 (fixed 0.8.151: the number after "(" is
+  parsed, a script of ours still loaded from an earlier run is unloaded first - loadScript answers -1 while the name is
+  loaded -, the X11 fallback keeps the KWin note), then `/Scripting/ScriptN org.kde.kwin.Script.run`,
   then unloadScript); the script finds windows by caption/resourceClass (Plasma 6 `workspace.windowList()`, 5
   `clientList()`), un-maximises, sets `frameGeometry`, places our own "Report a problem" box (`wantedScreen`) too.
   Test: `ORGAN_TEST_REPORT_WINDOWS=<folder>` with the folder open in Dolphin and a browser open (/tmp/report_test.sh).
+  A KWin script can close a window too (`w.closeWindow()`): /tmp/kwin-close-box.js dismisses the "Audio devices not
+  available" box of the user's Doesburg configuration (its routes are Windows Audio) for a screenshot on Wayland, where
+  nothing else can click (no xdotool). Website 0.8.151: `site/assets/main.png` = the console with Doesburg Surround
+  (the user: "jen na první okno", the Stop List / Divisions / Editor pictures stay; README.md keeps console-stralsund.png).
+  0.8.151 RAM min: `SamplerEngine::estimateMinimumRam()` (every k-th of all loaded samples, ~160, first 3 s each:
+  resampled to 32 kHz with `SincResampler`, a release halved to 16 kHz when `energyAboveDb(0.46 x 16 kHz) <= -18`,
+  int16, `compress16`; ratio of their bytes to `frameBytes()` x all sample bytes) -> the portable save writes
+  `estimatedMinimumRamBytes` = (measured - sample bytes) + sample bytes x ratio and `estimatedMinimumRamStorage`
+  (`minimumRamStorageText`), log "RAM with every saving option (...)"; the README RAM line gets "; about X GB at the
+  least, with every saving option of the load box (...)" and `configurations_index.py` the sortable "RAM min" column
+  (0 or >= measured -> "-"). Never type or estimate it by hand. `juce::jmax<juce::int64>(0, x)` does not compile with
+  juce_dsp (the SIMDRegister overload takes the explicit argument): use std::max or a ternary.
   0.8.149 (Linux): `AfterReportWindow` (MainComponent.cpp, modeless DialogWindow, always on top, `gAfterReportBox`)
   replaces the modal AlertWindow after a report (#58 keyboard, #67 invisible blocker behind the main window on KDE,
   #64 macOS buttons shrunk: the System Events fallback resized OUR front window - now skipped when the frontmost app
@@ -597,17 +612,16 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
 - GitHub's issue list hides the number in its new UI (the user asked why "#27" is not in the row): nothing of ours.
 
 ## Pending for the next Linux session (delete when done)
-- The Linux clone `~/OrganSamplerC-linux` needs `git pull` (0.8.147 and 0.8.148 were made on Windows; the Linux binary
-  of v0.8.148 goes to ~/Downloads/OrganSampler). LESSON 0.8.147: the two
+- The Projucer resave + VS2026 files + the Windows exe in C:\OrganSampler and its shortcut are NOT done for
+  0.8.149-0.8.151 (Linux session): do them on Windows next (git fetch + reset --mixed origin/main first).
+  LESSON 0.8.147: the two
   checkouts are two git repositories on the SAME sources - after a Linux session the Windows checkout `F:` is behind
   origin and holds the Linux commits' content as uncommitted changes; `git pull` there fails ("local changes would be
   overwritten") and a commit lands on the old base (the push is rejected, a tag push is not: v0.8.147 was first built
   from such a dangling commit). The way: `git fetch`, `git reset --mixed origin/main` (HEAD moves, the files stay),
   then commit the tree anew, push, re-point the tag. Always `git fetch` + `git status -sb` BEFORE committing on the
-  other system. #58 (Linux, two monitors): the report windows' placement still wrong (file manager "not found" by its
-  title, the browser not half the width) - test on the KDE AMD box in the next Linux session (LinuxWindowPlacement:
-  log the window names seen, check `_NET_SUPPORTED` for _NET_MOVERESIZE_WINDOW before falling back to
-  XMoveResizeWindow, never both). The NTFS checkout is the user's (git cannot
+  other system. #58 (Linux, two monitors): the KDE AMD box runs WAYLAND - the X11 way finds nothing there; the KWin
+  scripting way (0.8.150, working since 0.8.151) is to be confirmed by the user's own report. The NTFS checkout is the user's (git cannot
   run there from Linux: "expected submodule path 'JUCE' not to be a symbolic link"). After each release copy the Linux
   binary to `~/Downloads/OrganSampler`.
 - Windows builds: never run two MSBuilds of the solution at once - the second fails with C1041 (PDB) and can

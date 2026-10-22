@@ -681,7 +681,13 @@ README in the published form - the perspectives, the folders the
 configuration expects and where to put the file, the routes, the RAM the
 program used with the whole organ loaded (measured at the moment of saving
 and stored in the configuration as well; `configurations/INDEX.md` shows it
-as a column, the figure readers need most), the version, and the Stop List
+as a column, the figure readers need most) together with the least the
+organ can take - the RAM with every saving option of the load box (16-bit,
+32 kHz on loading, releases at half the rate, packed samples), estimated by
+the program at the save from a share of the loaded samples brought into
+that form (INDEX.md's "RAM min" column; the price of those options is
+polyphony, see the storage options in the Configuration Editor chapter) -,
+the version, and the Stop List
 as a table in the order of your grid with the buttons' captions,
 transmissions and extensions included. Fill in the three
 "(fill in: ...)" places - the organ, the producer and product of the

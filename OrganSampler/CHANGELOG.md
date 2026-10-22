@@ -12,6 +12,29 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.151] - 2026-10-22
+
+### Added
+- A portable configuration carries the least RAM the organ can take
+  (`estimatedMinimumRamBytes`): the RAM with every saving option of the load
+  box - 16-bit, 32 kHz on loading, releases at half the rate, packed samples -
+  estimated at the save from a share of the loaded samples brought into that
+  form (about 160 of them, the first three seconds of each, resampled, halved
+  where the loader's treble rule allows and packed; the ratio of their bytes
+  applied to all the sample bytes, the fixed part of the process kept). The
+  README's RAM line names both figures and `configurations/INDEX.md` gets a
+  sortable "RAM min" column with the explanation in its head - a reader is not
+  put off by the figure of the full storage when a third of it would do.
+
+### Fixed
+- Linux on Wayland (KDE): the KWin placement of 0.8.150 never ran - gdbus
+  prints the script id as "(7,)" and the program looked for "int32 7", took
+  every answer for a refusal and fell back to the X11 way, which finds
+  nothing on Wayland. A script of ours still loaded from an earlier run is
+  unloaded first; the log keeps the KWin note when the fallback runs.
+- Website: the console screenshot shows Doesburg Surround (64 stops in five
+  divisions) instead of the Rural Organ.
+
 ## [0.8.150] - 2026-10-22
 
 ### Fixed

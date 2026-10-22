@@ -11397,6 +11397,85 @@ namespace
     }
 }
 
+SamplerEngine::MinimumRamEstimate SamplerEngine::estimateMinimumRam() const
+{
+    MinimumRamEstimate e;
+    struct Item { const Sample* sample; bool release; };
+    std::vector<Item> items;
+    auto addList = [&items](const std::vector<std::unique_ptr<Sample>>& list, bool release)
+    {
+        for (const auto& s : list) if (s != nullptr) items.push_back({ s.get(), release });
+    };
+    for (const auto* stop : stops)
+    {
+        if (stop == nullptr) continue;
+        for (const auto& list : stop->samplesByNote) addList(list, false);
+        for (const auto& entry : stop->aliasFree) addList(entry.second, false);
+        for (const auto& layer : stop->velocityLayers)
+        {
+            for (const auto& list : layer.samplesByNote) addList(list, false);
+            for (const auto& entry : layer.aliasFree) addList(entry.second, false);
+        }
+        for (const auto& layer : stop->releaseLayers)
+        {
+            for (const auto& list : layer.samplesByNote) addList(list, true);
+            for (const auto& entry : layer.aliasFree) addList(entry.second, true);
+        }
+    }
+    e.samplesTotal = (int)items.size();
+    for (const auto& item : items) e.bytesNow += (int64_t)item.sample->frameBytes();
+    if (items.empty()) return e;
+    constexpr double lowRate = 32000.0;   // the lowest "Sample rate on loading" of the load box
+    const size_t step = juce::jmax<size_t>(1, items.size() / 160);
+    double nowTested = 0.0, minTested = 0.0;
+    std::vector<int16_t> scratch;
+    for (size_t i = 0; i < items.size(); i += step)
+    {
+        const Sample& s = *items[i].sample;
+        if (s.numFrames < Sample::kPackBlock || s.numChannels < 1 || s.sampleRate <= 0.0) continue;
+        const int64_t frames = juce::jmin<int64_t>(s.numFrames, (int64_t)(3.0 * s.sampleRate));
+        juce::AudioBuffer<float> audio(s.numChannels, (int)frames);
+        for (int c = 0; c < s.numChannels; ++c)
+        {
+            float* dst = audio.getWritePointer(c);
+            if (s.storesFloat) std::memcpy(dst, s.channel32(c), (size_t)frames * sizeof(float));
+            else { const int16_t* x = s.read16(c, scratch); for (int64_t f = 0; f < frames; ++f) dst[f] = (float)x[f] / 32768.0f; }
+        }
+        double target = juce::jmin(s.sampleRate, lowRate);
+        if (items[i].release)
+        {
+            // The halved releases' rule of decodeSampleFile (0.8.147), at the low rate:
+            // treble above 0.46 x the halved rate louder than -18 dB keeps the full rate.
+            if (s.sampleRate > lowRate * 0.5 + 0.5 && energyAboveDb(audio, s.sampleRate, 0.46 * lowRate * 0.5) <= -18.0) { target = lowRate * 0.5; ++e.releasesHalved; }
+            else ++e.releasesKeptFull;
+        }
+        const bool convert = std::abs(s.sampleRate - target) > 0.5;
+        int64_t outFrames = frames;
+        std::unique_ptr<SincResampler> resampler;
+        if (convert) { resampler = std::make_unique<SincResampler>(s.sampleRate, target); outFrames = resampler->outputFrames(frames); }
+        if (outFrames < Sample::kPackBlock) continue;
+        Sample low(s.numChannels, outFrames, target, false);
+        std::vector<float> resampled(convert ? (size_t)outFrames : (size_t)0);
+        for (int c = 0; c < s.numChannels; ++c)
+        {
+            const float* src = audio.getReadPointer(c);
+            if (convert) { resampler->process(src, frames, resampled.data(), outFrames); src = resampled.data(); }
+            int16_t* dst = low.writable16(c);
+            for (int64_t f = 0; f < outFrames; ++f) dst[f] = (int16_t)juce::jlimit(-32768, 32767, juce::roundToInt(src[f] * 32768.0f));
+        }
+        size_t lowBytes = low.compress16();
+        if (lowBytes == 0) lowBytes = low.frameBytes();
+        // What the tested frames take now: their share of the sample's bytes.
+        nowTested += (double)s.frameBytes() * (double)frames / (double)s.numFrames;
+        minTested += (double)lowBytes;
+        ++e.samplesTested;
+    }
+    if (nowTested <= 0.0) return e;
+    e.ratio = minTested / nowTested;
+    e.bytesMinimum = (int64_t)((double)e.bytesNow * e.ratio);
+    return e;
+}
+
 juce::String SamplerEngine::storageSignature() const
 {
     return juce::String(storeSamplesAsFloat ? "32-bit float" : "16-bit") + ", "

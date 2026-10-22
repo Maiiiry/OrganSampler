@@ -166,11 +166,23 @@ namespace
         js += "print('OrganSampler report windows: file manager ' + (fm ? fm.caption : 'none') + ', browser ' + (br ? br.caption : 'none'));\n";
         const std::string path = std::string(getenv("HOME") ? getenv("HOME") : "/tmp") + "/.config/OrganSampler/kwin-report-windows.js";
         { std::ofstream out(path); if (!out) return false; out << js; }
+        // A script of this name still loaded (a run that never reached the unload) makes
+        // loadScript answer -1: unload first.
+        runCapture("gdbus call --session --dest org.kde.KWin --object-path /Scripting --method org.kde.kwin.Scripting.unloadScript organsampler-report-windows");
         const std::string loaded = runCapture("gdbus call --session --dest org.kde.KWin --object-path /Scripting --method org.kde.kwin.Scripting.loadScript "
             + shellQuote(path) + " organsampler-report-windows");
-        // "(int32 7,)" -> 7; -1 = refused
+        // gdbus prints the int32 reply as "(7,)" (0.8.151: 0.8.150 looked for "int32 7" and
+        // took every answer for a refusal); -1 = refused
         int id = -1;
-        if (const auto p = loaded.find("int32 "); p != std::string::npos) id = atoi(loaded.c_str() + p + 6);
+        {
+            auto p = loaded.find('(');
+            if (p != std::string::npos)
+            {
+                ++p;
+                while (p < loaded.size() && (loaded[p] == ' ' || isalpha((unsigned char)loaded[p]))) ++p;
+                if (p < loaded.size() && (loaded[p] == '-' || isdigit((unsigned char)loaded[p]))) id = atoi(loaded.c_str() + p);
+            }
+        }
         if (id < 0) { note = "KWin scripting refused the script: " + loaded.substr(0, 120); return false; }
         runCapture("gdbus call --session --dest org.kde.KWin --object-path /Scripting/Script" + std::to_string(id) + " --method org.kde.kwin.Script.run");
         runCapture("gdbus call --session --dest org.kde.KWin --object-path /Scripting --method org.kde.kwin.Scripting.unloadScript organsampler-report-windows");
@@ -184,8 +196,9 @@ bool LinuxWindowPlacement::placeSideBySide(const std::string& folderName, Box le
 {
     // A Wayland session (KDE): the X11 list below holds the XWayland windows only -
     // KWin's scripting places the native ones. The X11 way stays for X11 sessions.
+    std::string kwinNote;
     if (const char* session = getenv("XDG_SESSION_TYPE"); session != nullptr && std::string(session) == "wayland")
-        if (placeThroughKWin(folderName, left, right, box, note)) return true;
+        if (placeThroughKWin(folderName, left, right, box, kwinNote)) { note = kwinNote; return true; }
     Display* display = XOpenDisplay(nullptr);
     if (display == nullptr) { note = "Report windows (X11): no display"; return false; }
     const Window root = DefaultRootWindow(display);
@@ -243,6 +256,7 @@ bool LinuxWindowPlacement::placeSideBySide(const std::string& folderName, Box le
         + "; left " + std::to_string(left.x) + "," + std::to_string(left.y) + " " + std::to_string(left.width) + "x" + std::to_string(left.height)
         + ", right " + std::to_string(right.x) + "," + std::to_string(right.y) + " " + std::to_string(right.width) + "x" + std::to_string(right.height)
         + "; windows seen:" + seen;
+    if (!kwinNote.empty()) note += "; " + kwinNote;
     return fileManager != 0 || browser != 0;
 }
 #else

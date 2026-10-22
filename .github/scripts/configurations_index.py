@@ -81,6 +81,12 @@ def main():
         # The RAM the program used with the organ loaded, measured by the program
         # when the portable configuration was saved (0.8.118; older files: unknown).
         ram_bytes = int(cfg.get('measuredRamBytes', 0) or 0)
+        # The least it can take (0.8.151): every saving option of the load box (16-bit,
+        # 32 kHz on loading, releases at half the rate, packed), estimated by the
+        # program from the loaded samples at the save.
+        ram_min = int(cfg.get('estimatedMinimumRamBytes', 0) or 0)
+        if ram_min >= ram_bytes:
+            ram_min = 0
         title = folder
         readme = os.path.join(path, 'README.md')
         if os.path.exists(readme):
@@ -89,7 +95,7 @@ def main():
                     if line.startswith('# '):
                         title = line[2:].strip()
                         break
-        rows.append((title, folder, divisions, count, ', '.join(perspectives), ram_bytes))
+        rows.append((title, folder, divisions, count, ', '.join(perspectives), ram_bytes, ram_min))
 
     def ram_text(ram_bytes):
         if ram_bytes <= 0:
@@ -101,7 +107,8 @@ def main():
     # triangles as links: each opens the same table sorted by that column -
     # INDEX.md by organ ascending, INDEX-<column>-<asc|desc>.md the others.
     columns = [('organ', 'Organ', lambda r: r[0].lower()), ('divisions', 'Divisions', lambda r: r[2]),
-               ('stops', 'Stops', lambda r: r[3]), ('ram', 'RAM', lambda r: r[5]), ('routes', 'Routes', lambda r: r[4].lower())]
+               ('stops', 'Stops', lambda r: r[3]), ('ram', 'RAM', lambda r: r[5]), ('rammin', 'RAM min', lambda r: r[6] if r[6] > 0 else r[5]),
+               ('routes', 'Routes', lambda r: r[4].lower())]
     def file_for(key, descending):
         return 'INDEX.md' if (key == 'organ' and not descending) else 'INDEX-%s-%s.md' % (key, 'desc' if descending else 'asc')
     def render(sort_key, descending):
@@ -119,7 +126,10 @@ def main():
             'put it), the number of divisions, the rows of its Stop List (transmissions and extensions',
             'included, the rows nested in stop folders not), the RAM the program used with the whole',
             'organ loaded (measured by the program when the configuration was saved, 16-bit sample',
-            'storage unless the README says otherwise; `-` = saved by an older version) and the',
+            'storage unless the README says otherwise; `-` = saved by an older version), the least RAM',
+            'the organ can take ("RAM min": every saving option of the load box - 16-bit, 32 kHz on',
+            'loading, releases at half the rate, packed samples - estimated by the program from the',
+            'loaded samples; the price is polyphony, see the manual) and the',
             'routes - the perspectives as the configuration names them (`default` = a single',
             'perspective) and `auxiliary` when a division uses that route; what each one carries, the',
             'README of the organ says. The triangles in the header sort the table by that column.',
@@ -127,10 +137,10 @@ def main():
             'on every change; do not edit by hand. How to use and publish one: [README.md](README.md).',
             '',
             '| ' + ' | '.join(header) + ' |',
-            '|---|---:|---:|---:|---|',
+            '|---|---:|---:|---:|---:|---|',
         ]
-        for title, folder, divisions, count, perspectives, ram_bytes in ordered:
-            lines.append('| [%s](%s/README.md) | %d | %d | %s | %s |' % (title.replace('|', '\\|'), folder, divisions, count, ram_text(ram_bytes), perspectives))
+        for title, folder, divisions, count, perspectives, ram_bytes, ram_min in ordered:
+            lines.append('| [%s](%s/README.md) | %d | %d | %s | %s | %s |' % (title.replace('|', '\\|'), folder, divisions, count, ram_text(ram_bytes), ram_text(ram_min), perspectives))
         lines.append('')
         lines.append('%d configuration(s).' % len(ordered))
         lines.append('')
