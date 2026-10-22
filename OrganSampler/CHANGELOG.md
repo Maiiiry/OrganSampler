@@ -30,6 +30,13 @@ title shows the version. Released executables are named `OrganSampler_<version>.
   size cap of 480 px left the buttons a negative height ("tiny buttons"). The
   buttons and the file row are laid out first with fixed heights, the two text
   fields share the rest; the texts are shorter.
+- Packing the samples in RAM is 2.2 times faster (15 -> 6.7 ns per frame and
+  channel on the Ryzen: one pass measures the three predictors, the bits go
+  into a pre-sized buffer; the format is unchanged, `--kerneltest` checks it),
+  and the "Packed samples" log line names the thread time it took. What a
+  load costs beyond the disk: packing about a tenth, 32 kHz on loading about
+  four times the decoding (the sinc resampler), measured on the Doesburg
+  demo from the disk cache.
 - Development hooks for the grid: `ORGAN_DUMP_GRID=1` logs every button and
   free cell in screen coordinates, `ORGAN_TEST_DROP="<manual>|<stop>|<target
   manual>|<column>|<row>"` drops a stop on a cell as the mouse would,

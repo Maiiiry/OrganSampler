@@ -12,6 +12,7 @@
 #if JUCE_MSVC
  #pragma warning(pop)
 #endif
+#include <chrono>
 #include <cmath>
 #include <complex>
 #include <algorithm>
@@ -735,51 +736,70 @@ namespace
 
     void packChannel(const int16_t* x, int64_t numFrames, Sample::PackedChannel& packed)
     {
+        // 0.8.153: one pass over a block measures the three predictors at once (the
+        // widths come from the OR of the residual magnitudes) and the bits go into a
+        // buffer sized for the worst case through a pointer - the three passes and
+        // the byte-by-byte push_back of 0.8.145 cost 15 ns per frame (Doesburg 63 s
+        // of thread time). The format is unchanged.
         const int64_t blocks = (numFrames + Sample::kPackBlock - 1) / Sample::kPackBlock;
-        packed.data.clear();
-        packed.data.reserve((size_t)numFrames * 2 + 16);
+        // The chosen width never exceeds 16 (a wider order-1/2 width always loses to
+        // order 0 at 16 bits): 2 bytes a frame + header and warm-up per block + guard.
+        packed.data.assign((size_t)numFrames * 2 + (size_t)blocks * 8 + 64, 0);
         packed.blockOffsets.clear();
         packed.blockOffsets.reserve((size_t)blocks + 1);
-        BitWriter writer(packed.data);
+        uint8_t* out = packed.data.data();
+        size_t pos = 0;
         for (int64_t b = 0; b < blocks; ++b)
         {
             const int16_t* block = x + b * Sample::kPackBlock;
             const int n = (int)juce::jmin<int64_t>(Sample::kPackBlock, numFrames - b * Sample::kPackBlock);
-            // The best order: the fewest bits for the block.
+            uint32_t or0 = 0, or1 = 0, or2 = 0;
+            bool nz0 = false, nz1 = false, nz2 = false;
+            auto magnitude = [](int32_t r) noexcept { return r < 0 ? (uint32_t)(-(int64_t)r - 1) : (uint32_t)r; };
+            int32_t x1 = 0, x2 = 0;
+            for (int i = 0; i < n; ++i)
+            {
+                const int32_t v = block[i];
+                or0 |= magnitude(v); nz0 |= v != 0;
+                if (i >= 1) { const int32_t r1 = v - x1; or1 |= magnitude(r1); nz1 |= r1 != 0; }
+                if (i >= 2) { const int32_t r2 = v - 2 * x1 + x2; or2 |= magnitude(r2); nz2 |= r2 != 0; }
+                x2 = x1; x1 = v;
+            }
+            // The best order: the fewest bits for the block (a tie keeps the lower order).
+            const int widths[3] = { nz0 ? bitLength(or0) + 1 : 0, nz1 ? bitLength(or1) + 1 : 0, nz2 ? bitLength(or2) + 1 : 0 };
             int bestOrder = 0, bestWidth = 32;
             int64_t bestBits = std::numeric_limits<int64_t>::max();
             for (int order = 0; order <= 2; ++order)
             {
                 if (n <= order) break;
-                int width = 0;
-                bool allZero = true;
-                for (int i = order; i < n; ++i)
-                {
-                    const int32_t r = packResidual(block, i, order);
-                    if (r != 0) { allZero = false; width = juce::jmax(width, residualWidth(r)); }
-                }
-                if (allZero) width = 0;
-                const int64_t bits = 8 + 16 * order + (int64_t)(n - order) * width;
-                if (bits < bestBits) { bestBits = bits; bestOrder = order; bestWidth = width; }
+                const int64_t bits = 8 + 16 * order + (int64_t)(n - order) * widths[order];
+                if (bits < bestBits) { bestBits = bits; bestOrder = order; bestWidth = widths[order]; }
             }
-            packed.blockOffsets.push_back((uint32_t)packed.data.size());
-            packed.data.push_back((uint8_t)(bestOrder | (bestWidth << 2)));
+            packed.blockOffsets.push_back((uint32_t)pos);
+            out[pos++] = (uint8_t)(bestOrder | (bestWidth << 2));
             for (int i = 0; i < bestOrder; ++i)
             {
                 const uint16_t u = (uint16_t)block[i];
-                packed.data.push_back((uint8_t)(u & 0xff));
-                packed.data.push_back((uint8_t)(u >> 8));
+                out[pos++] = (uint8_t)(u & 0xff);
+                out[pos++] = (uint8_t)(u >> 8);
             }
             if (bestWidth > 0)
             {
                 const int32_t bias = 1 << (bestWidth - 1);
+                uint64_t acc = 0;
+                int bits = 0;
                 for (int i = bestOrder; i < n; ++i)
-                    writer.put((uint32_t)(packResidual(block, i, bestOrder) + bias), bestWidth);
-                writer.flush();
+                {
+                    acc |= (uint64_t)(uint32_t)(packResidual(block, i, bestOrder) + bias) << bits;
+                    bits += bestWidth;
+                    while (bits >= 8) { out[pos++] = (uint8_t)(acc & 0xff); acc >>= 8; bits -= 8; }
+                }
+                if (bits > 0) out[pos++] = (uint8_t)(acc & 0xff);
             }
         }
-        packed.blockOffsets.push_back((uint32_t)packed.data.size());
-        for (int i = 0; i < 8; ++i) packed.data.push_back(0);   // the bit reader may fetch a few bytes past a block
+        packed.blockOffsets.push_back((uint32_t)pos);
+        jassert(pos + 8 <= packed.data.size());
+        packed.data.resize(pos + 8);   // the bit reader may fetch a few bytes past a block (zeros)
         packed.data.shrink_to_fit();
     }
 }
@@ -8566,8 +8586,10 @@ void SamplerEngine::packIfEnabled(Sample& sample) noexcept
     if (!compressSamples || sample.compressed || sample.storesFloat) return;
     const int64_t raw = (int64_t)sample.frameBytes();
     size_t packedBytes = 0;
+    const auto started = std::chrono::steady_clock::now();
     try { packedBytes = sample.compress16(); }
     catch (...) { packedBytes = 0; }   // out of memory for the packed copy: the raw data stays
+    packNanoseconds.fetch_add((int64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count(), std::memory_order_relaxed);
     if (packedBytes == 0) { if (sample.numFrames >= Sample::kPackBlock) packFailed.fetch_add(1, std::memory_order_relaxed); return; }
     packRawBytes.fetch_add(raw, std::memory_order_relaxed);
     packPackedBytes.fetch_add((int64_t)packedBytes, std::memory_order_relaxed);
@@ -8581,7 +8603,9 @@ void SamplerEngine::notePackStats(const juce::String& what)
     const double saved = stats.rawBytes > 0 ? 100.0 * (1.0 - (double)stats.packedBytes / (double)stats.rawBytes) : 0.0;
     CrashHandler::note("Packed samples: " + what + ": " + juce::String(stats.samples) + " samples, "
         + juce::File::descriptionOfSizeInBytes(stats.rawBytes) + " -> " + juce::File::descriptionOfSizeInBytes(stats.packedBytes)
-        + " (" + juce::String(saved, 1) + " % saved)" + (stats.failed > 0 ? ", " + juce::String(stats.failed) + " left raw (the check failed)" : juce::String()));
+        + " (" + juce::String(saved, 1) + " % saved)" + (stats.failed > 0 ? ", " + juce::String(stats.failed) + " left raw (the check failed)" : juce::String())
+        + ", " + juce::String((double)stats.nanoseconds * 1.0e-9, 1) + " s of thread time ("
+        + juce::String(stats.rawBytes > 0 ? (double)stats.nanoseconds / ((double)stats.rawBytes / 2.0) : 0.0, 2) + " ns per frame and channel)");
 }
 
 SamplerEngine::PackStats SamplerEngine::takePackStats() noexcept
@@ -8591,6 +8615,7 @@ SamplerEngine::PackStats SamplerEngine::takePackStats() noexcept
     stats.packedBytes = packPackedBytes.exchange(0, std::memory_order_relaxed);
     stats.samples = packSamples.exchange(0, std::memory_order_relaxed);
     stats.failed = packFailed.exchange(0, std::memory_order_relaxed);
+    stats.nanoseconds = packNanoseconds.exchange(0, std::memory_order_relaxed);
     return stats;
 }
 

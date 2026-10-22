@@ -686,7 +686,7 @@ public:
     MinimumRamEstimate estimateMinimumRam() const;
     // Packing statistics since the last call: raw bytes in, packed bytes out,
     // samples packed, samples left raw because the check failed.
-    struct PackStats { int64_t rawBytes = 0, packedBytes = 0; int samples = 0, failed = 0; };
+    struct PackStats { int64_t rawBytes = 0, packedBytes = 0; int samples = 0, failed = 0; int64_t nanoseconds = 0; };
     PackStats takePackStats() noexcept;
     // Logs the statistics taken ("Packed samples: <what>: N samples, X -> Y (Z % saved)"), nothing when none.
     void notePackStats(const juce::String& what);
@@ -1451,6 +1451,7 @@ private:
     bool compressSamples = false;   // 0.8.145: pack the 16-bit samples in RAM (Sample::compress16)
     std::atomic<int64_t> packRawBytes{ 0 }, packPackedBytes{ 0 };
     std::atomic<int> packSamples{ 0 }, packFailed{ 0 };
+    std::atomic<int64_t> packNanoseconds{ 0 };   // thread time spent packing since the last takePackStats (0.8.153: what the option costs at the load)
     std::atomic<int> halfRateReleases{ 0 }, halfRateKeptFull{ 0 }, halfRateSincHeads{ 0 };   // 0.8.146: releases stored at half the rate / kept full for their treble
     std::function<void(const juce::String&)> loadStatusCallback;
     bool tuneAllTo440 = false;
