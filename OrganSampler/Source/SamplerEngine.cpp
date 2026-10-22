@@ -11426,7 +11426,7 @@ SamplerEngine::MinimumRamEstimate SamplerEngine::estimateMinimumRam() const
     for (const auto& item : items) e.bytesNow += (int64_t)item.sample->frameBytes();
     if (items.empty()) return e;
     constexpr double lowRate = 32000.0;   // the lowest "Sample rate on loading" of the load box
-    const size_t step = juce::jmax<size_t>(1, items.size() / 160);
+    const size_t step = std::max<size_t>(1, items.size() / 160);   // not juce::jmax<size_t>: juce_dsp's SIMD overload takes the explicit argument (macOS build)
     double nowTested = 0.0, minTested = 0.0;
     std::vector<int16_t> scratch;
     for (size_t i = 0; i < items.size(); i += step)
