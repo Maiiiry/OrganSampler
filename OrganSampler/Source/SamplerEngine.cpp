@@ -1375,6 +1375,83 @@ namespace
         }
     }
 
+    // An 8-tap windowed-sinc interpolator (0.8.147) for samples stored at a lower
+    // rate than the route's (releases at half the rate, 36/32 kHz storage): the
+    // linear kernel, a two-point interpolator, lets the images of what the file
+    // holds through at only 7-11 dB below it (a 24 kHz file played at 48 kHz
+    // mirrors 6-12 kHz into 12-18 kHz - the "digital ringing" at the start of a
+    // reed's release). Eight taps of a Kaiser-windowed sinc put them 40-50 dB
+    // down. Used for the first 1.3 s of such a sample (where the treble lives),
+    // linear after. 128 phases, taps at idx - 3 .. idx + 4.
+    struct PlaySincTable
+    {
+        static constexpr int phases = 128, taps = 8;
+        float h[phases][taps];
+        PlaySincTable()
+        {
+            constexpr double beta = 6.0, cutoff = 0.45;   // cycles per input frame: a little under the file's Nyquist
+            auto besselI0 = [](double x) { double sum = 1.0, term = 1.0; for (int k = 1; k < 60; ++k) { const double f = x / (2.0 * k); term *= f * f; sum += term; if (term < 1.0e-12 * sum) break; } return sum; };
+            const double i0Beta = besselI0(beta);
+            for (int q = 0; q < phases; ++q)
+            {
+                const double frac = (double)q / (double)phases;
+                double sum = 0.0;
+                for (int k = 0; k < taps; ++k)
+                {
+                    const double t = (double)(k - 3) - frac;
+                    const double x = t / 4.0;
+                    const double window = std::abs(x) < 1.0 ? besselI0(beta * std::sqrt(1.0 - x * x)) / i0Beta : 0.0;
+                    const double arg = 2.0 * cutoff * t;
+                    const double sinc = std::abs(arg) < 1.0e-12 ? 1.0 : std::sin(juce::MathConstants<double>::pi * arg) / (juce::MathConstants<double>::pi * arg);
+                    h[q][k] = (float)(2.0 * cutoff * sinc * window);
+                    sum += h[q][k];
+                }
+                for (int k = 0; k < taps; ++k) h[q][k] = (float)(h[q][k] / sum);
+            }
+        }
+    };
+    const PlaySincTable& playSincTable() { static const PlaySincTable table; return table; }
+
+    template <typename T>
+    inline float sincAt(const float (*table)[PlaySincTable::taps], const T* s, uint32_t idx, float frac) noexcept
+    {
+        const float* h = table[(int)(frac * (float)(PlaySincTable::phases - 1) + 0.5f)];
+        const T* p = s + idx - 3;
+        float acc = 0.0f;
+        for (int k = 0; k < PlaySincTable::taps; ++k) acc += (float)p[k] * h[k];
+        return acc;
+    }
+
+    template <typename T>
+    inline void kernelMonoSinc(const T* s, float* out, int n, uint64_t& pos, int64_t& inc, int64_t incStep, float g, float gStep) noexcept
+    {
+        const auto& table = playSincTable().h;
+        for (int i = 0; i < n; ++i)
+        {
+            out[i] += sincAt(table, s, (uint32_t)(pos >> 32), fracOf(pos)) * g;
+            g += gStep;
+            pos += (uint64_t)inc;
+            inc += incStep;
+        }
+    }
+
+    template <typename T>
+    inline void kernelStereoSinc(const T* s0, const T* s1, float* out0, float* out1, int n,
+        uint64_t& pos, int64_t& inc, int64_t incStep, float g, float gStep) noexcept
+    {
+        const auto& table = playSincTable().h;
+        for (int i = 0; i < n; ++i)
+        {
+            const uint32_t idx = (uint32_t)(pos >> 32);
+            const float frac = fracOf(pos);
+            out0[i] += sincAt(table, s0, idx, frac) * g;
+            out1[i] += sincAt(table, s1, idx, frac) * g;
+            g += gStep;
+            pos += (uint64_t)inc;
+            inc += incStep;
+        }
+    }
+
     template <typename T>
     inline float hermiteAt(const T* s, uint32_t idx, float frac) noexcept
     {
@@ -2088,6 +2165,11 @@ namespace
 
         const int64_t incStepF = n > 0 ? (incEndF - incStartF) / n : 0;
         const uint64_t endPosF = (uint64_t)(s.numFrames - 3) << 32;
+        // A sample stored below the route's rate (releases at half the rate, 36/32 kHz
+        // storage): its first 1.3 s through the windowed-sinc kernel (0.8.147), the
+        // rest - and every loop splice and cubic (filled pipe) span - as before.
+        const bool lowRate = s.sampleRate < c.routeRate * 0.8;
+        const uint64_t sincEndF = lowRate ? (uint64_t)(1.3 * s.sampleRate) << 32 : 0;
         const bool hasLoops = v.loopEnabled && !s.loops.empty();
         // A sustained sample without loop points plays as one big loop: it fades
         // out over its last 50 ms (no click at the end), starts again from the
@@ -2355,7 +2437,8 @@ namespace
             const float k0 = shelfActive ? shelf0 + (shelf1 - shelf0) * blockFrac0 : 0.0f;
             const float k1 = shelfActive ? shelf0 + (shelf1 - shelf0) * blockFrac1 : 0.0f;
             const float kStep = shelfActive ? (k1 - k0) / (float)span : 0.0f;
-            const bool viaTmp = shelfActive && (blend || v.cubic);
+            const bool sinc = lowRate && !blend && !v.cubic && sampleChans <= 2 && v.pos < sincEndF && (v.pos >> 32) >= 4;
+            const bool viaTmp = shelfActive && (blend || v.cubic || sinc);
             float* o0 = out0 + produced;
             float* o1 = out1 + produced;
             if (viaTmp)
@@ -2363,7 +2446,13 @@ namespace
                 juce::FloatVectorOperations::clear(spanTmp0, span); o0 = spanTmp0;
                 if (sampleChans == 2) { juce::FloatVectorOperations::clear(spanTmp1, span); o1 = spanTmp1; }
             }
-            if (v.cubic && sampleChans <= 2)
+            if (sinc)
+            {
+                if (sampleChans == 1) kernelMonoSinc<T>(src0, o0, span, pos, inc, incStepF, g0, gStep);
+                else kernelStereoSinc<T>(src0, src1, o0, o1, span, pos, inc, incStepF, g0, gStep);
+                v.pos = pos + posBase;
+            }
+            else if (v.cubic && sampleChans <= 2)
             {
                 // A filled pipe resampled by semitones: cubic interpolation.
                 if (sampleChans == 1)
@@ -6690,9 +6779,11 @@ juce::String SamplerEngine::runKernelSelfCheck()
                 }
                 endPos = v->pos;
             };
+            for (const double rateOfSample : { 48000.0, 24000.0 })   // 24 kHz: the sinc kernel of the first 1.3 s (0.8.147)
             for (const bool cubic : { false, true })
                 for (const double ratio : { 0.75, 1.0, 1.4983, 2.6 })
                 {
+                    raw->sampleRate = packedS->sampleRate = rateOfSample;
                     std::vector<float> r0, r1, p0, p1;
                     uint64_t endRaw = 0, endPacked = 0;
                     renderWith(*raw, cubic, ratio, r0, r1, endRaw);
@@ -6710,7 +6801,7 @@ juce::String SamplerEngine::runKernelSelfCheck()
         }
         result << "Packed samples: " << juce::String((double)packedBytes / (double)(pf * 4) * 100.0, 1) << " % of the raw size, packed in "
                << juce::String(packMs, 1) << " ms, " << windowsChecked << " windows unpacked as stored, unpacking " << juce::String(unpackNsPerFrame, 2)
-               << " ns per frame; a voice rendered from the packed sample against the raw one (plain, splices, cubic, ratios 0.75-2.6): largest difference "
+               << " ns per frame; a voice rendered from the packed sample against the raw one (plain, splices, cubic, sinc at 24 kHz, ratios 0.75-2.6): largest difference "
                << juce::String(worstRender * 100.0f, 5) << " % of the peak, end positions " << (positionsSame ? "identical" : "DIFFERENT") << " -> "
                << (ok ? "OK" : "*** MISMATCH ***") << "\n";
     }
@@ -10225,7 +10316,11 @@ namespace
             temp.clear();
             if (!reader->read(&temp, 0, (int)frames, 0, true, true)) return nullptr;
             double targetRate = baseRate;
-            if (fullRate > baseRate + 0.5 && energyAboveDb(temp, sourceRate, 0.42 * baseRate) > -30.0)
+            // 0.8.147: the sinc kernel plays the first 1.3 s of a halved file without
+            // the images, so only a file whose treble above the halved rate's reach
+            // is a real part of it (louder than -18 dB of the whole: a reed in the
+            // treble) keeps the full rate; the -30 dB rule of 0.8.146 kept too many.
+            if (fullRate > baseRate + 0.5 && energyAboveDb(temp, sourceRate, 0.46 * baseRate) > -18.0)
             {
                 targetRate = fullRate;
                 if (keptFull != nullptr) *keptFull = true;
@@ -10956,7 +11051,7 @@ void SamplerEngine::loadManualFolder(const juce::File& topFolder, int manualInde
         const int half = halfRateReleases.exchange(0, std::memory_order_relaxed), full = halfRateKeptFull.exchange(0, std::memory_order_relaxed);
         if (half + full > 0)
             CrashHandler::note("Releases at half the rate in the tree " + topFolder.getFileName() + ": " + juce::String(half) + " stored at half, "
-                + juce::String(full) + " kept at the full rate for their treble (energy above 0.42 x the half rate louder than -30 dB)");
+                + juce::String(full) + " kept at the full rate for their treble (energy above 0.46 x the half rate louder than -18 dB)");
     }
     for (auto& [groupManual, group] : groups) impl->pendingDivisions.push_back(std::move(group.division));
 }

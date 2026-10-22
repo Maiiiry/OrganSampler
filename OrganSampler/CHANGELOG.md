@@ -12,6 +12,38 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.147] - 2026-10-22
+
+### Changed
+- After a polyphony measurement (finished or cancelled) the level stays at
+  the measurement's -52 dB for four seconds while the release tails die, then
+  rises 4.5 dB a second - in decibels, about twelve seconds to normal. The
+  linear "three seconds" of 0.8.146 was at -20 dB after a third of a second:
+  a jump into thousands of tails.
+- Samples stored below the route's rate (releases at half the rate, 36 and
+  32 kHz storage) play their first 1.3 seconds through an eight-tap
+  windowed-sinc kernel: the images the two-point linear kernel let through at
+  7-11 dB below the signal (the "digital ringing" at the start of a reed's
+  release) are 40-50 dB down. Linear after that, where the treble has died.
+  With that, only a release whose treble above 11 kHz is louder than -18 dB
+  of the whole keeps the full rate (the -30 dB rule of 0.8.146 kept too many).
+- A Hauptwerk import's crescendo switches the extensions it makes (the
+  transmissions standing for the definition's extension stops) as the
+  definition's stages draw them; before, a stage drawing "Tuba 8" switched
+  nothing.
+
+### Fixed
+- A configuration made on Windows loaded on Linux with "13 folder trees not
+  on this computer" although they were there: the file said "002293/ped",
+  the disk had "002293/Ped" (#57). A missing folder is now looked for by its
+  name ignoring the case of the letters, part by part.
+- A second Report a problem right after the first took no typing: the box
+  left by the first report (modal) kept the keyboard (#58). The dialog closes
+  that box first.
+- The user manual has a section of advice on the polyphony measurement: what
+  moves the figure (buffer, the device path, the packing, two-core laptops),
+  what the measurement cannot see (a shared-mode mixer's dropouts).
+
 ## [0.8.146] - 2026-10-22
 
 ### Added

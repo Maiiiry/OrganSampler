@@ -1682,6 +1682,40 @@ callback is late. A value of several hundred percent means the audio thread
 was kept waiting by something else on the computer, not that the voices took
 that long; the activity log notes every such event.
 
+### What moves the measured figure, and what the measurement cannot see
+
+Lessons from many runs on four computers (two-core laptops, a 16-core
+desktop, a 16-core notebook), 2026-10:
+
+- **The buffer size** is the first thing: on the same computer and organ a
+  buffer of 256 gave 1000 voices, 512 gave 2300-2900 and 1024 gave 3100-3800
+  (two cores); 49 000 / 64 000 / 74 000 on sixteen cores. Compare runs only
+  at the same buffer.
+- **The device path.** Linux: PipeWire's "Default ALSA Output" is one layer
+  further from the card than the card's own ALSA device ("Direct hardware
+  device") or JACK; on two cores half the runs on the default output ended
+  on a single callback of 107-130 % of its period (the system took the core
+  for a moment), none did on the direct device or on JACK. Measure on the
+  direct device or JACK. Windows: ASIO or one Windows Audio device for all
+  routes; macOS: Built-in Output or the card's own device.
+- **Compress samples in RAM** halves the figure, on a big organ more (Caen on
+  the 16-core notebook: 60 000 -> 25 000). Measure with it off unless you
+  will play with it on.
+- **Two-core laptops** scatter by a third between runs: the render worker
+  on the second core is taken by the system now and then (the report shows
+  it as "the latest a lane joined a job" of several milliseconds). Take the
+  median of three runs, not the best.
+- **What the measurement cannot see.** It judges every callback of the
+  program's own audio threads (its length against the period, late calls).
+  A dropout made after our buffer leaves the program - a shared-mode mixer
+  of the system with many streams on one endpoint, an exclusive-mode device
+  of ours opened on the same endpoint and getting no callbacks, a USB card
+  starved by the system - is inaudible to it: the run is "clean" and the
+  sound is not. Such a case shows in the activity log as "Audio callback
+  anomaly: ... no callbacks" for a route, or not at all; the cure is the
+  device layout (one driver for everything, ASIO where there is one, no
+  unused routes left open on the same endpoint), not the limit.
+
 ---
 
 # 6. Playing aids
@@ -2055,11 +2089,15 @@ hiss. *16-bit integer, releases at half the rate* (0.8.143) stores the
 release samples - a large part of a set and a decaying tail - at half the
 storage rate: they lose what lies above 12 kHz (at the 48 kHz base) and take
 a quarter of the RAM they would; nothing is requantised, the room noise of
-the tail stays as recorded. A release whose first second carries treble
-above 10 kHz louder than -30 dB of the whole (reeds, bright treble pipes)
-keeps the full rate (0.8.146): halved, it would ring with the images of what
-was cut. The log says how many went each way. Takes effect the next time a
-division's folders are loaded.
+the tail stays as recorded. The first 1.3 seconds of a halved release play
+through an eight-tap windowed-sinc kernel (0.8.147): the plain linear kernel
+let the images of what the file holds through at only 7-11 dB below it - a
+digital ringing at the start of a reed's release - and the sinc puts them
+40-50 dB down; after 1.3 s, where the treble has died, the linear kernel
+takes over. Only a release whose treble above 11 kHz is louder than -18 dB
+of the whole (a reed in the treble) keeps the full rate; the log says how
+many went each way. The same kernel serves the 36 and 32 kHz storage. Takes
+effect the next time a division's folders are loaded.
 
 ### Compress samples in RAM (lossless)
 
@@ -2235,9 +2273,10 @@ happens:
    slider is yours afterwards: lower it for more headroom (couplers, long
    releases, other programs running), raise it if you dare. The
    registration and the two attack settings are restored; the release tails
-   of the run ring out and the level comes back over three seconds from the
-   end of the run (the same after Cancel), and the new limit takes effect
-   eight seconds later, once the tails are gone.
+   of the run ring out at the measurement's low level for four seconds, then
+   the level rises 4.5 dB a second - about twelve seconds to normal (the
+   same after Cancel) - and the new limit takes effect eight seconds after
+   the end, once the tails are gone.
 5. The report names the result and gives advice: every route on a Windows
    Audio device (rendered by its own thread alone) and every auxiliary route
    with a device (every pipe once more), with the share of its period it

@@ -373,6 +373,23 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   single callbacks at 107-130 % (the OS scheduled something else) plus lane join delays up to 4.6 ms (the worker
   preempted) - no wake-ahead bug (inactive on 2 cores). The Projucer resave and the VS2026 files are NOT updated
   for 0.8.146 (Linux session): do it on Windows next.
+  0.8.147 (Windows): the level after a measurement is held at -52 dB for 4 s (`outputGainHoldUntilMs`) and then
+  glides up IN DECIBELS, 4.5 dB/s (~12 s to 0 dB) - the callback's `factor = 10^(4.5 * blockSeconds / 20)`; a linear
+  glide (0.8.146 "3 s") reached -20 dB in a third of a second and the user heard a jump into the tails. NEVER a
+  linear gain ramp upward. `SincTable` + `sincAt/kernelMonoSinc/kernelStereoSinc` (8 taps, 128 phases, Kaiser 6,
+  cutoff 0.45): `renderVoiceSpans` uses them when `s.sampleRate < 0.8 x routeRate` (halved releases, 36/32 kHz
+  storage) for the first 1.3 s of the sample (`sincEndF`), not for splices/cubic; the images of linear interpolation
+  (7-11 dB under the signal for a 2x upsample) go to -40..-50 dB; the full-rate rule is now -18 dB above 0.46 x the
+  halved rate. `--kerneltest` renders at 24 kHz too (the sinc path packed vs raw). The import's crescendo writes
+  "transmissions" [{manual, enabled}] on the owner row for its extensions (`extensionsOfOwner`, the order of
+  `hauptwerkExtensions` = the engine's transmission order; `storedTransmissionsOn` counts ordinals the same way).
+  `resolveCaseInsensitive` in `firstExistingDirectory` (#57: Windows "ped" vs disk "Ped" on Linux). `gAfterReportBox`
+  closed by `showProblemReportDialog` (#58: the modal box kept the keyboard). Manual 5.8 "What moves the measured
+  figure" (buffer, device path, packing, two cores, what the measurement cannot see). #59 (Aggregated WASAPI, Doesburg,
+  breakups at one pipe, the measurement clean): the breakups happen after our buffer (15 shared streams on ONE endpoint
+  "ADAT (7+8)" + five "default" routes with a dead Windows Audio device on the same endpoint: "Audio callback anomaly:
+  no callbacks") - asked the user to try default routes = none, Aggregated lanes = 1, ASIO; the measurement cannot see
+  a mixer dropout (documented). Linux #58 multi-monitor placement still open (file manager "not found" by title).
   0.8.144 - LESSON: the 0.8.143 wake-ahead used `periodTicks` (the smoothed gap between CONSECUTIVE JOBS = the gap
   between the routes of one callback, ~0.3 ms with 8 routes) as the period -> workers woke every few hundred us and
   spun: #48 Core 2 Duo Linux 2900 (was 2500-2600 ok), #49 Mac 5000 but kernel 9.7 us/voice (3x), #50 Ultra 7 8 routes

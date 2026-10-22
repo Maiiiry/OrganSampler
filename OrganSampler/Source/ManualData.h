@@ -1702,6 +1702,40 @@ static const char* const kManualText_part8 =
     "was kept waiting by something else on the computer, not that the voices took\n"
     "that long; the activity log notes every such event.\n"
     "\n"
+    "### What moves the measured figure, and what the measurement cannot see\n"
+    "\n"
+    "Lessons from many runs on four computers (two-core laptops, a 16-core\n"
+    "desktop, a 16-core notebook), 2026-10:\n"
+    "\n"
+    "- **The buffer size** is the first thing: on the same computer and organ a\n"
+    "  buffer of 256 gave 1000 voices, 512 gave 2300-2900 and 1024 gave 3100-3800\n"
+    "  (two cores); 49 000 / 64 000 / 74 000 on sixteen cores. Compare runs only\n"
+    "  at the same buffer.\n"
+    "- **The device path.** Linux: PipeWire's \"Default ALSA Output\" is one layer\n"
+    "  further from the card than the card's own ALSA device (\"Direct hardware\n"
+    "  device\") or JACK; on two cores half the runs on the default output ended\n"
+    "  on a single callback of 107-130 % of its period (the system took the core\n"
+    "  for a moment), none did on the direct device or on JACK. Measure on the\n"
+    "  direct device or JACK. Windows: ASIO or one Windows Audio device for all\n"
+    "  routes; macOS: Built-in Output or the card's own device.\n"
+    "- **Compress samples in RAM** halves the figure, on a big organ more (Caen on\n"
+    "  the 16-core notebook: 60 000 -> 25 000). Measure with it off unless you\n"
+    "  will play with it on.\n"
+    "- **Two-core laptops** scatter by a third between runs: the render worker\n"
+    "  on the second core is taken by the system now and then (the report shows\n"
+    "  it as \"the latest a lane joined a job\" of several milliseconds). Take the\n"
+    "  median of three runs, not the best.\n"
+    "- **What the measurement cannot see.** It judges every callback of the\n"
+    "  program's own audio threads (its length against the period, late calls).\n"
+    "  A dropout made after our buffer leaves the program - a shared-mode mixer\n"
+    "  of the system with many streams on one endpoint, an exclusive-mode device\n"
+    "  of ours opened on the same endpoint and getting no callbacks, a USB card\n"
+    "  starved by the system - is inaudible to it: the run is \"clean\" and the\n"
+    "  sound is not. Such a case shows in the activity log as \"Audio callback\n"
+    "  anomaly: ... no callbacks\" for a route, or not at all; the cure is the\n"
+    "  device layout (one driver for everything, ASIO where there is one, no\n"
+    "  unused routes left open on the same endpoint), not the limit.\n"
+    "\n"
     "---\n"
     "\n"
     "# 6. Playing aids\n"
@@ -1784,6 +1818,8 @@ static const char* const kManualText_part8 =
     "*Record* in the top bar records the stereo mix to a WAV file; click again to\n"
     "stop (the recording ends with a short fade).\n"
     "\n"
+    ;
+static const char* const kManualText_part9 =
     "---\n"
     "\n"
     "# 7. Filled pipes, extensions and the transposition methods\n"
@@ -1818,8 +1854,6 @@ static const char* const kManualText_part8 =
     "differences most clearly; a 16' extension of an 8' reed is the typical case.\n"
     "\n"
     "**Resampling (pitch and length change together).** The sample is played faster\n"
-    ;
-static const char* const kManualText_part9 =
     "or slower at every key press, like a tape. Every harmonic exact, nothing added,\n"
     "nothing to build: it plays at once. Weaknesses: an octave down lasts twice as\n"
     "long - the attack speaks slowly, the room decays for twice the time, two\n"
@@ -1986,6 +2020,8 @@ static const char* const kManualText_part9 =
     "### This computer\n"
     "\n"
     "The processor, its physical cores and logical CPUs, and the RAM. Information\n"
+    ;
+static const char* const kManualText_part10 =
     "only; it tells what the thread settings below can use.\n"
     "\n"
     "### Render threads\n"
@@ -2020,8 +2056,6 @@ static const char* const kManualText_part9 =
     "workers and the control thread run at audio priority on every system (Linux:\n"
     "SCHED_FIFO when the system allows it - the activity log says \"Render worker:\n"
     "SCHED_FIFO\" or \"REFUSED\" with what to allow; macOS: a time-constraint thread\n"
-    ;
-static const char* const kManualText_part10 =
     "like CoreAudio's own), and on one or two cores the device thread yields the\n"
     "core while it waits for a lane and the lanes take small chunks, so the second\n"
     "thread helps instead of holding the block up.\n"
@@ -2079,11 +2113,15 @@ static const char* const kManualText_part10 =
     "release samples - a large part of a set and a decaying tail - at half the\n"
     "storage rate: they lose what lies above 12 kHz (at the 48 kHz base) and take\n"
     "a quarter of the RAM they would; nothing is requantised, the room noise of\n"
-    "the tail stays as recorded. A release whose first second carries treble\n"
-    "above 10 kHz louder than -30 dB of the whole (reeds, bright treble pipes)\n"
-    "keeps the full rate (0.8.146): halved, it would ring with the images of what\n"
-    "was cut. The log says how many went each way. Takes effect the next time a\n"
-    "division's folders are loaded.\n"
+    "the tail stays as recorded. The first 1.3 seconds of a halved release play\n"
+    "through an eight-tap windowed-sinc kernel (0.8.147): the plain linear kernel\n"
+    "let the images of what the file holds through at only 7-11 dB below it - a\n"
+    "digital ringing at the start of a reed's release - and the sinc puts them\n"
+    "40-50 dB down; after 1.3 s, where the treble has died, the linear kernel\n"
+    "takes over. Only a release whose treble above 11 kHz is louder than -18 dB\n"
+    "of the whole (a reed in the treble) keeps the full rate; the log says how\n"
+    "many went each way. The same kernel serves the 36 and 32 kHz storage. Takes\n"
+    "effect the next time a division's folders are loaded.\n"
     "\n"
     "### Compress samples in RAM (lossless)\n"
     "\n"
@@ -2184,6 +2222,8 @@ static const char* const kManualText_part10 =
     "   keyboards), so that as many releases as possible sound at the same time:\n"
     "   that produces the highest polyphony. Remember:\n"
     "   the longer the release, the more polyphony it costs, because every voice\n"
+    ;
+static const char* const kManualText_part11 =
     "   keeps its place in the polyphony until its release has died away\n"
     "   completely.\n"
     "3. Watch *DSP* and *PEAK* while you do it. At the moment the audio starts to\n"
@@ -2222,8 +2262,6 @@ static const char* const kManualText_part10 =
     "   by the engine at every change (a stroke's attacks over the releases of\n"
     "   the last one), the same figure the limit is compared with. Whenever they stop rising below the current target, the\n"
     "   stimulus grows at once - more keys spread over the compass (up to every\n"
-    ;
-static const char* const kManualText_part11 =
     "   key of every division), then a faster rate (up to 16 strikes a second).\n"
     "   No coupler is used: every division is struck itself. A wet set with several perspectives and\n"
     "   long releases reaches tens of thousands of voices with a handful of keys;\n"
@@ -2261,9 +2299,10 @@ static const char* const kManualText_part11 =
     "   slider is yours afterwards: lower it for more headroom (couplers, long\n"
     "   releases, other programs running), raise it if you dare. The\n"
     "   registration and the two attack settings are restored; the release tails\n"
-    "   of the run ring out and the level comes back over three seconds from the\n"
-    "   end of the run (the same after Cancel), and the new limit takes effect\n"
-    "   eight seconds later, once the tails are gone.\n"
+    "   of the run ring out at the measurement's low level for four seconds, then\n"
+    "   the level rises 4.5 dB a second - about twelve seconds to normal (the\n"
+    "   same after Cancel) - and the new limit takes effect eight seconds after\n"
+    "   the end, once the tails are gone.\n"
     "5. The report names the result and gives advice: every route on a Windows\n"
     "   Audio device (rendered by its own thread alone) and every auxiliary route\n"
     "   with a device (every pipe once more), with the share of its period it\n"
@@ -2385,6 +2424,8 @@ static const char* const kManualText_part11 =
     "### Wind: volume change per cent of sag\n"
     "\n"
     "How much quieter a pipe gets for every cent the wind sag lowers its pitch (0\n"
+    ;
+static const char* const kManualText_part12 =
     "to 0.6 dB per cent, default 0.2). Together with the division's *Wind: depth*\n"
     "it decides how strongly a full chord sags in level.\n"
     "\n"
@@ -2424,8 +2465,6 @@ static const char* const kManualText_part11 =
     "later, 180 = the tone dips when the level peaks. Real tremulants differ here;\n"
     "listen with a soft flute.\n"
     "\n"
-    ;
-static const char* const kManualText_part12 =
     "### Key velocity: fade-in at the lowest velocity\n"
     "\n"
     "An organ key never plays softer when it is struck gently. Instead, a gentle\n"
@@ -2587,6 +2626,8 @@ static const char* const kManualText_part12 =
     "\n"
     "### Filled pipes: resampling quality\n"
     "\n"
+    ;
+static const char* const kManualText_part13 =
     "How the sample of a neighbouring pipe is played at another pitch. *Linear* is\n"
     "the interpolation of every other voice (cheapest, audible images at large\n"
     "shifts). *Cubic interpolation* lowers the interpolation images by about 20 dB\n"
@@ -2626,8 +2667,6 @@ static const char* const kManualText_part12 =
     "the number forgets everything about the removed divisions (folders, audio,\n"
     "MIDI, grid); a division added later starts empty, with the wind and tremulant\n"
     "profiles of a neighbouring division.\n"
-    ;
-static const char* const kManualText_part13 =
     "\n"
     "### Combination pistons\n"
     "\n"
@@ -2789,6 +2828,8 @@ static const char* const kManualText_part13 =
     "perspective. Every prefix that belongs to the same perspective must stand on\n"
     "that one line, separated by semicolons; the perspective takes its name from\n"
     "the first entry of the line (\"Direct;01-dirMk2H-;dir\" makes folders with any\n"
+    ;
+static const char* const kManualText_part14 =
     "of the three prefixes the perspective \"Direct\"). Defaults: Direct, Diffuse and\n"
     "Rear. Prefixes found in a newly loaded set are added here by themselves (a\n"
     "prefix that shares its stem with a known perspective joins its line; an\n"
@@ -2828,8 +2869,6 @@ static const char* const kManualText_part13 =
     "the top velocity layer (see \"Velocity layers\"). For consoles whose keys send\n"
     "unreliable velocities.\n"
     "\n"
-    ;
-static const char* const kManualText_part14 =
     "### Bass octave layout\n"
     "\n"
     "How the lowest octave of the keyboard is laid out, for playing historic music\n"
@@ -2991,6 +3030,8 @@ static const char* const kManualText_part14 =
     "list is in `system.txt` of `logs.zip` in any case. A free\n"
     "GitHub account is needed to submit; the report is public, like every issue\n"
     "of a free program.\n"
+    ;
+static const char* const kManualText_part15 =
     "\n"
     "GitHub may first ask you to sign in or to make the account, and after that\n"
     "it sometimes lands on another page instead of the form. The message that\n"
@@ -3030,8 +3071,6 @@ static const char* const kManualText_part14 =
     "`CrashLogs/activity.log` is the activity log, `CrashLogs/crash-<date>.txt`\n"
     "a crash report with the stack of the crash; macOS writes its own report as\n"
     "well, in `~/Library/Logs/DiagnosticReports` (named `OrganSampler_...`).\n"
-    ;
-static const char* const kManualText_part15 =
     "`settings.json` is the state of the program, `settings-<date>.json` the\n"
     "snapshot of each of the last seven days. If the program crashes at every\n"
     "start, move `settings.json` away (keep it for the report) and it starts\n"

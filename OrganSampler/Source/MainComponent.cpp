@@ -501,12 +501,26 @@ public:
         float gainEnd = target;
         if (gainStart != target)
         {
-            // Down in 50 ms (before the first strike of the measurement), up over 3 s
-            // (as soon as the run ends: the release tails come up gently, 0.8.146).
+            // Down in 50 ms (before the first strike of the measurement). Up (0.8.147):
+            // held at the low level while outputGainHoldUntilMs says so (the run's
+            // release tails die away at -52 dB first), then 4.5 dB a second - a
+            // glide in decibels, from -52 dB to 0 dB in about twelve seconds. A
+            // linear glide (0.8.146, "3 s") was at -20 dB after a third of a second:
+            // a jump to the ear, with thousands of tails sounding.
             const double rate = expectedRate.load(std::memory_order_relaxed);
-            const double seconds = target < gainStart ? 0.05 : 3.0;
-            const float maxStep = (float)(numSamples / juce::jmax(1000.0, rate) / seconds);
-            gainEnd = gainStart + juce::jlimit(-maxStep, maxStep, target - gainStart);
+            const double blockSeconds = numSamples / juce::jmax(1000.0, rate);
+            if (target < gainStart)
+            {
+                const float maxStep = (float)(blockSeconds / 0.05);
+                gainEnd = gainStart + juce::jlimit(-maxStep, maxStep, target - gainStart);
+            }
+            else if (juce::Time::getMillisecondCounterHiRes() < owner.outputGainHoldUntilMs.load(std::memory_order_relaxed))
+                gainEnd = gainStart;
+            else
+            {
+                const float factor = (float)std::pow(10.0, 4.5 * blockSeconds / 20.0);
+                gainEnd = juce::jmin(target, juce::jmax(gainStart, 0.0025f) * factor);
+            }
         }
         outputGain = gainEnd;
         const bool unity = gainStart >= 1.0f && gainEnd >= 1.0f;
@@ -4719,6 +4733,14 @@ void MainComponent::arrangeReportWindows(const juce::File& folder)
    #endif
 }
 
+namespace
+{
+    // The box after a report, if it is still up: a modal box blocks the keyboard
+    // of a second Report a problem dialog (#58: nothing could be typed), so the
+    // dialog closes it first.
+    juce::Component::SafePointer<juce::AlertWindow> gAfterReportBox;
+}
+
 void MainComponent::showAfterReport(const juce::URL& url, const juce::File& folder)
 {
     // Stays until "Done": GitHub may ask the user to sign in (or to make a free
@@ -4732,6 +4754,7 @@ void MainComponent::showAfterReport(const juce::URL& url, const juce::File& fold
     window->addButton("Open the GitHub form", 1, juce::KeyPress(juce::KeyPress::returnKey));
     window->addButton("Open the report folder", 2);
     window->addButton("Done", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    gAfterReportBox = window;
     window->enterModalState(true, juce::ModalCallbackFunction::create([url, folder](int result)
     {
         if (result == 1) { url.launchInDefaultBrowser(); juce::Timer::callAfterDelay(1500, [folder] { arrangeReportWindows(folder); }); showAfterReport(url, folder); }
@@ -4758,6 +4781,7 @@ void MainComponent::showProblemReportDialog()
     // What happened, how to reproduce it, the program's own screenshots
     // (recommended: keep the dialog in question open) and screenshot files of
     // the user's own; "Create report" writes the folder and opens GitHub.
+    if (gAfterReportBox != nullptr) { gAfterReportBox->exitModalState(0); gAfterReportBox = nullptr; }   // a second report right after the first (#58)
     struct Content final : public juce::Component
     {
         explicit Content(MainComponent& o) : owner(o)
@@ -10324,6 +10348,10 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
             for (const auto& assignment : safeThis->engine.scanTreeAssignments(tree, false))
                 automaticNameOfFolder[assignment.folder.getFullPathName().toLowerCase()] = assignment.stopName;
         std::map<int, std::pair<int, juce::String>> rowOfStop;   // ODF stop id -> division, row name
+        // ODF stop id of an owner -> its extensions (ODF stop id, our division), in the
+        // order they are made (= the order of the owner's transmissions): the crescendo
+        // steps switch them as the definition's stages draw them (0.8.147).
+        std::map<int, std::vector<std::pair<int, int>>> extensionsOfOwner;
     // The grid cells from the jamb page (0.8.142): per division, row name -> "column,row" (the voicer's stopGrid).
     std::map<int, juce::DynamicObject::Ptr> gridOf;
     auto gridCell = [&gridOf](int manual, const juce::String& key, const HauptwerkOdf::PlanStop& s)
@@ -10413,7 +10441,10 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
                         // (applyHauptwerkVoicing), as a transmission into this division.
                         const auto owner = rowOfStop.find(stop.extensionOfStopId);
                         if (owner != rowOfStop.end())
+                        {
                             safeThis->hauptwerkExtensions.push_back({ i, owner->second.first, owner->second.second, stop.shift, stop.name, stop.gridColumn, stop.gridRow });
+                            extensionsOfOwner[stop.extensionOfStopId].push_back({ stop.stopId, i });
+                        }
                         continue;
                     }
                     // The folders of a row: one per perspective, from the ranks.
@@ -10549,6 +10580,21 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
                     state->setProperty("perspective", juce::String());   // any
                     state->setProperty("enabled", on.count(stopId) > 0);
                     state->setProperty("primaryManual", row.first);
+                    // The owner's extensions (transmissions made after the load), each on
+                    // when the stage draws the definition's extension stop (0.8.147; before,
+                    // a stage drawing "Tuba 8 (Ext.)" switched nothing).
+                    if (const auto ext = extensionsOfOwner.find(stopId); ext != extensionsOfOwner.end())
+                    {
+                        juce::Array<juce::var> transmissions;
+                        for (const auto& [extensionStopId, targetManual] : ext->second)
+                        {
+                            juce::DynamicObject::Ptr t = new juce::DynamicObject();
+                            t->setProperty("manual", targetManual);
+                            t->setProperty("enabled", on.count(extensionStopId) > 0);
+                            transmissions.add(juce::var(t.get()));
+                        }
+                        state->setProperty("transmissions", transmissions);
+                    }
                     stopStates.add(juce::var(state.get()));
                 }
                 juce::DynamicObject::Ptr item = new juce::DynamicObject();
@@ -11044,10 +11090,43 @@ namespace
         }
         return candidates;
     }
+    // A folder whose path exists but for the case of its letters (0.8.147, #57: a
+    // configuration made on Windows says "002293/ped", the disk on Linux has
+    // "002293/Ped" - NTFS does not care, ext4 and Linux's NTFS driver do): from
+    // the deepest folder that exists, each missing part matched ignoring case.
+    juce::File resolveCaseInsensitive(const juce::File& wanted)
+    {
+        if (wanted.isDirectory()) return wanted;
+        juce::StringArray missing;
+        juce::File dir = wanted;
+        for (int depth = 0; !dir.isDirectory(); ++depth)
+        {
+            const auto parent = dir.getParentDirectory();
+            if (depth > 32 || parent == dir || parent.getFullPathName().isEmpty()) return {};
+            missing.insert(0, dir.getFileName());
+            dir = parent;
+        }
+        for (const auto& part : missing)
+        {
+            juce::File next;
+            for (const auto& entry : juce::RangedDirectoryIterator(dir, false, "*", juce::File::findDirectories))
+                if (entry.getFile().getFileName().equalsIgnoreCase(part)) { next = entry.getFile(); break; }
+            if (next == juce::File()) return {};
+            dir = next;
+        }
+        return dir;
+    }
+
     juce::File firstExistingDirectory(const juce::Array<juce::File>& candidates)
     {
         for (const auto& candidate : candidates)
             if (candidate.isDirectory()) return candidate;
+        for (const auto& candidate : candidates)
+            if (const auto found = resolveCaseInsensitive(candidate); found != juce::File())
+            {
+                CrashHandler::note("Sample folder tree found by its name ignoring the case of the letters: " + candidate.getFullPathName() + " -> " + found.getFullPathName());
+                return found;
+            }
         return {};
     }
 }
@@ -19325,7 +19404,8 @@ void MainComponent::finishPolyphonyMeasurement(bool cancelled)
     // glides up to normal over three seconds from now, report or no report.
     for (int manual = 0; manual <= manualCount; ++manual)
         for (int note = 36; note <= 96; ++note) routeKeyboardNote(manual, note, 0, false);
-    outputGainTarget.store(1.0f);
+    outputGainHoldUntilMs.store(juce::Time::getMillisecondCounterHiRes() + 4000.0);   // the tails die at -52 dB first (0.8.147)
+    outputGainTarget.store(1.0f);                                                       // ... then 4.5 dB a second up to normal
     engine.setAttackMinimumMs((float)state->previousAttackMinimumMs);
     engine.setAttackMinimumDelayMs((float)state->previousAttackDelayMs);
     applyRegistrationState(state->registration, false);
