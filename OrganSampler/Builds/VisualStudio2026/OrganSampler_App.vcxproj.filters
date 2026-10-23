@@ -967,6 +967,9 @@
     <ClCompile Include="..\..\Source\ArchiveExtract.cpp">
       <Filter>OrganSampler\Source</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\Source\SampleFiles.cpp">
+      <Filter>OrganSampler\Source</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\Source\HauptwerkOdf.cpp">
       <Filter>OrganSampler\Source</Filter>
     </ClCompile>
@@ -5176,6 +5179,9 @@
       <Filter>OrganSampler\Source</Filter>
     </ClInclude>
     <ClInclude Include="..\..\Source\ArchiveExtract.h">
+      <Filter>OrganSampler\Source</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Source\SampleFiles.h">
       <Filter>OrganSampler\Source</Filter>
     </ClInclude>
     <ClInclude Include="..\..\Source\HauptwerkOdf.h">

@@ -7,10 +7,14 @@
 #endif
 #include <unordered_map>
 #include <algorithm>
+#include <atomic>
+#include <cstring>
+#include <thread>
 #include <juce_audio_formats/juce_audio_formats.h>
 #include "AggregatedWASAPIAudio.h"
 #include "PlatformAudio.h"
 #include "ArchiveExtract.h"
+#include "SampleFiles.h"
 
 namespace
 {
@@ -25,8 +29,9 @@ namespace
     // exact path is not there each component is matched regardless of case.
     juce::File childCaseInsensitive(const juce::File& base, const juce::String& relative)
     {
+        // The folders may lie in RAR archives (0.8.157): SampleFiles answers for both.
         const juce::File exact = base.getChildFile(relative);
-        if (exact.exists() || juce::File::getSeparatorChar() == '\\') return exact;
+        if (SampleFiles::isDirectory(exact) || SampleFiles::existsAsFile(exact) || juce::File::getSeparatorChar() == '\\') return exact;
         juce::File current = base;
         juce::StringArray parts;
         parts.addTokens(slashes(relative), "/", "");
@@ -36,11 +41,14 @@ namespace
             if (part == ".") continue;
             if (part == "..") { current = current.getParentDirectory(); continue; }
             juce::File next = current.getChildFile(part);
-            if (!next.exists())
+            if (!SampleFiles::isDirectory(next) && !SampleFiles::existsAsFile(next))
             {
                 bool found = false;
-                for (const auto& entry : juce::RangedDirectoryIterator(current, false, "*", juce::File::findFilesAndDirectories))
-                    if (entry.getFile().getFileName().equalsIgnoreCase(part)) { next = entry.getFile(); found = true; break; }
+                for (const auto& child : SampleFiles::childDirectories(current))
+                    if (child.getFileName().equalsIgnoreCase(part)) { next = child; found = true; break; }
+                if (!found)
+                    for (const auto& name : SampleFiles::fileNames(current))
+                        if (name.equalsIgnoreCase(part)) { next = current.getChildFile(name); found = true; break; }
                 if (!found) return exact;
             }
             current = next;
@@ -1303,6 +1311,7 @@ MainComponent::MainComponent()
     memoriesJsonFile = appDataDir.getChildFile("memories.json");
     lastDirFile = appDataDir.getChildFile("lastdir.json");
     settingsFile = appDataDir.getChildFile("settings.json");
+    SampleFiles::setIndexFolder(appDataDir.getChildFile("ArchiveIndex"));   // the indexes of RAR archives of sample folders (0.8.157)
     // Safe start: a crash while a device was being opened leaves the marker
     // behind (see beginDeviceOpen). That device is opened with the default
     // buffer and rate this once, so a buffer the driver cannot take does not
@@ -1635,6 +1644,103 @@ MainComponent::MainComponent()
             CrashHandler::note("ORGAN_LOAD_TREE: " + tree.getFullPathName() + " into division " + juce::String(division));
             safeThis->loadTreeIntoDivision(tree, division);
         });
+    }
+    // ORGAN_TEST_ARCHIVE=<rar> (tests, 0.8.157): the volumes, the index and the
+    // top-level folders of a RAR archive of sample folders, logged 2 s after start.
+    if (const char* env = std::getenv("ORGAN_TEST_ARCHIVE"))
+    {
+        const juce::File archive(juce::String::fromUTF8(env));
+        juce::Timer::callAfterDelay(2000, [archive]
+        {
+            juce::StringArray volumes;
+            for (const auto& v : SampleFiles::volumesOf(archive)) volumes.add(v.getFileName());
+            CrashHandler::note("ORGAN_TEST_ARCHIVE: " + archive.getFullPathName() + " first volume " + (SampleFiles::isFirstVolume(archive) ? "yes" : "NO")
+                + "; volumes: " + volumes.joinIntoString(", "));
+            auto readBytes = []() -> juce::int64
+            {
+               #if JUCE_WINDOWS
+                IO_COUNTERS counters{};
+                if (GetProcessIoCounters(GetCurrentProcess(), &counters)) return (juce::int64)counters.ReadTransferCount;
+               #endif
+                return 0;
+            };
+            const juce::int64 readBefore = readBytes();
+            const double started = juce::Time::getMillisecondCounterHiRes();
+            juce::StringArray tops;
+            for (const auto& t : SampleFiles::topLevelFoldersOf(archive)) tops.add(t);
+            CrashHandler::note("ORGAN_TEST_ARCHIVE: index took " + juce::String(juce::Time::getMillisecondCounterHiRes() - started, 0) + " ms and read "
+                + juce::String((readBytes() - readBefore) >> 20) + " MB from the disk; " + SampleFiles::archiveSummary(archive));
+            // ORGAN_TEST_ARCHIVE_CHECK=<disk folder>: the archive's wav files read through
+            // SampleFiles and compared byte by byte with the unpacked copies under that folder.
+            if (const char* checkEnv = std::getenv("ORGAN_TEST_ARCHIVE_CHECK"))
+            {
+                const juce::File diskRoot(juce::String::fromUTF8(checkEnv));
+                const auto beside = archive.getParentDirectory();
+                const auto names = SampleFiles::entriesOf(archive, [](const juce::String& p) { return p.endsWithIgnoreCase(".wav"); });
+                int compared = 0, differ = 0, missing = 0, unread = 0;
+                juce::int64 bytes = 0;
+                const double checkStart = juce::Time::getMillisecondCounterHiRes();
+                juce::StringArray bad;
+                for (size_t i = 0; i < names.size(); ++i)
+                {
+                    if (i >= 80 && (i % 50) != 0) continue;   // the first 80 and every 50th
+                    const auto inside = beside.getChildFile(names[i].replaceCharacter('/', juce::File::getSeparatorChar()));
+                    const auto onDisk = diskRoot.getChildFile(names[i].replaceCharacter('/', juce::File::getSeparatorChar()));
+                    if (!onDisk.existsAsFile()) { ++missing; continue; }
+                    auto block = SampleFiles::readFile(inside);
+                    if (block == nullptr) { ++unread; if (bad.size() < 5) bad.add(names[i] + " (unread)"); continue; }
+                    juce::MemoryBlock expected;
+                    onDisk.loadFileAsData(expected);
+                    ++compared;
+                    bytes += (juce::int64)block->getSize();
+                    if (expected.getSize() != block->getSize() || std::memcmp(expected.getData(), block->getData(), expected.getSize()) != 0)
+                    {
+                        ++differ;
+                        if (bad.size() < 5) bad.add(names[i] + " (" + juce::String((juce::int64)block->getSize()) + " vs " + juce::String((juce::int64)expected.getSize()) + " bytes)");
+                    }
+                }
+                const double seconds = (juce::Time::getMillisecondCounterHiRes() - checkStart) / 1000.0;
+                CrashHandler::note("ORGAN_TEST_ARCHIVE_CHECK: " + juce::String(compared) + " compared, " + juce::String(differ) + " differ, " + juce::String(unread) + " unread, "
+                    + juce::String(missing) + " missing on the disk; " + juce::String(bytes >> 20) + " MB in " + juce::String(seconds, 1) + " s"
+                    + (seconds > 0 ? " = " + juce::String((double)bytes / 1048576.0 / seconds, 0) + " MB/s" : juce::String())
+                    + (bad.isEmpty() ? juce::String() : "; " + bad.joinIntoString(", ")));
+            }
+            juce::StringArray odfs;
+            for (const auto& e : SampleFiles::entriesOf(archive, [](const juce::String& p) { return p.endsWithIgnoreCase(".Organ_Hauptwerk_xml"); })) odfs.add(e);
+            CrashHandler::note("ORGAN_TEST_ARCHIVE: top-level folders: " + tops.joinIntoString(", ") + "; definitions: " + odfs.joinIntoString(", "));
+            const auto beside = archive.getParentDirectory();
+            for (const auto& t : tops)
+            {
+                const auto tree = beside.getChildFile(t);
+                const auto subs = SampleFiles::childDirectories(tree);
+                CrashHandler::note("ORGAN_TEST_ARCHIVE: " + tree.getFullPathName() + (SampleFiles::isDirectory(tree) ? " is a folder" : " is NOT a folder")
+                    + " in " + SampleFiles::archiveNameOf(tree) + ", " + juce::String((int)subs.size()) + " subfolder(s), "
+                    + juce::String(SampleFiles::totalBytes(tree, { ".wav" }, true) >> 20) + " MB of wav");
+            }
+        });
+    }
+    // ORGAN_TEST_LOAD_ARCHIVES="<division>|<rar>" (tests): the Load folder path with that
+    // archive chosen (index job, then its top-level folders as trees), 3 s after start.
+    if (const char* env = std::getenv("ORGAN_TEST_LOAD_ARCHIVES"))
+    {
+        const auto parts = juce::StringArray::fromTokens(juce::String::fromUTF8(env), "|", "");
+        if (parts.size() >= 2)
+        {
+            const int division = parts[0].getIntValue();
+            const juce::File archive(parts[1]);
+            juce::Component::SafePointer<MainComponent> safeThis(this);
+            juce::Timer::callAfterDelay(3000, [safeThis, division, archive]
+            {
+                if (safeThis != nullptr) safeThis->loadChosenIntoDivision({}, { archive }, false, {}, division);
+            });
+        }
+    }
+    // ORGAN_OPEN_LOAD_FOLDER=<division> (tests): the Load folder window 2 s after start.
+    if (const char* env = std::getenv("ORGAN_OPEN_LOAD_FOLDER"))
+    {
+        const int division = juce::String(env).getIntValue();
+        juce::Component::SafePointer<MainComponent> safeThis(this);
+        juce::Timer::callAfterDelay(2000, [safeThis, division] { if (safeThis != nullptr) safeThis->selectManualFolder(division); });
     }
     // ORGAN_TEST_REPORT_WINDOWS=<folder> (tests, 0.8.149): the report box and the
     // window placement (browser left, file manager right) for that folder, 4 s
@@ -4548,7 +4654,8 @@ juce::File MainComponent::writeProblemReport(const juce::String& what, const juc
            << "polyphony limit: " << engine.getMaxPolyphony() << "\n"
            << "configuration: " << (currentConfigurationName.isNotEmpty() ? currentConfigurationName : juce::String("(none)")) << "\n"
            << "divisions: " << (manualCount + 1) << ", stops: " << engine.getStops().size() << ", folder trees: " << (int)sampleTrees.size() << "\n";
-    for (const auto& tree : sampleTrees) system << "  tree: " << tree << (juce::File(tree).isDirectory() ? "" : "  (not found)") << "\n";
+    for (const auto& tree : sampleTrees)
+        system << "  tree: " << tree << (SampleFiles::isDirectory(juce::File(tree)) ? (SampleFiles::inArchive(juce::File(tree)) ? "  (in " + SampleFiles::archiveNameOf(juce::File(tree)) + ")" : juce::String()) : juce::String("  (not found)")) << "\n";
     juce::String audio;
     int routeLines = 0;
     static const juce::String names[8]{ "Pedal", "I.", "II.", "III.", "IV.", "V.", "VI.", "VII." };
@@ -5257,9 +5364,7 @@ bool MainComponent::checkMemoryForFolders(const std::vector<juce::File>& folders
 {
    #if JUCE_WINDOWS
     juce::int64 bytes = 0;
-    for (const auto& folder : folders)
-        for (const auto& entry : juce::RangedDirectoryIterator(folder, true, "*.wav;*.flac;*.aiff", juce::File::findFiles))
-            bytes += entry.getFileSize();
+    for (const auto& folder : folders) bytes += SampleFiles::totalBytes(folder, { ".wav", ".flac", ".aiff" }, true);   // disk or archive (0.8.157)
     // Rough estimate only (24-bit files grow by 4/3 as float, FLAC files by
     // more): it is written to the activity log and never blocks loading. If the
     // memory really runs out, the engine stops at that point, keeps every stop
@@ -9958,7 +10063,7 @@ void MainComponent::launchConfigurationLoadChooser()
     if (const char* env = std::getenv("ORGAN_LOAD_CONFIGURATION"))
     {
         const juce::File chosen(juce::String::fromUTF8(env));
-        if (chosen.existsAsFile())
+        if (SampleFiles::existsAsFile(chosen))   // on the disk, or a definition inside a RAR archive (0.8.157)
         {
             CrashHandler::note("Load Configuration: file taken from ORGAN_LOAD_CONFIGURATION");
             juce::MessageManager::callAsync([safeThis, chosen] { if (safeThis != nullptr) safeThis->loadConfigurationFile(chosen); });
@@ -9979,8 +10084,9 @@ void MainComponent::launchConfigurationLoadChooser()
 void MainComponent::loadConfigurationFile(const juce::File& file)
 {
     // The chosen configuration file (Load Configuration): parsed, checked, applied.
-    if (!file.existsAsFile()) return;
+    if (!SampleFiles::existsAsFile(file)) return;   // a Hauptwerk definition may lie inside a RAR archive (0.8.157)
     if (HauptwerkOdf::looksLikeOdf(file)) { importHauptwerkOdf(file); return; }
+    if (!file.existsAsFile()) return;
     auto configuration = juce::JSON::parse(file.loadFileAsString());
     if (!configuration.isObject()
         || !configuration.getProperty("manualKeyboards", juce::var()).isArray())
@@ -10139,10 +10245,10 @@ void MainComponent::savePortableConfiguration(const juce::File& file, bool inclu
         for (const auto& itemVar : *array)
         {
             const juce::File folder(itemVar.getProperty("folderPath", "").toString());
-            if (folder.isDirectory()) folders.push_back(folder);
+            if (SampleFiles::isDirectory(folder)) folders.push_back(folder);
             if (auto* extras = itemVar.getProperty("extraFolderPaths", juce::var()).getArray())
                 for (const auto& extra : *extras)
-                    if (juce::File(extra.toString()).isDirectory()) folders.push_back(juce::File(extra.toString()));
+                    if (SampleFiles::isDirectory(juce::File(extra.toString()))) folders.push_back(juce::File(extra.toString()));
         }
     juce::File libraryRoot;
     if (!folders.empty())
@@ -10187,7 +10293,7 @@ void MainComponent::savePortableConfiguration(const juce::File& file, bool inclu
                 const juce::File folder(item->getProperty("folderPath").toString());
                 bool folderRelativeWritten = false;
                 item->removeProperty("folderRelativePath");
-                if (folder.isDirectory() && libraryRoot != juce::File())
+                if (SampleFiles::isDirectory(folder) && libraryRoot != juce::File())
                 {
                     const auto relative = slashes(folder.getRelativePathFrom(libraryRoot));
                     if (!juce::File::isAbsolutePath(relative))
@@ -10203,7 +10309,7 @@ void MainComponent::savePortableConfiguration(const juce::File& file, bool inclu
                     for (const auto& extra : *extras)
                     {
                         const juce::File extraFolder(extra.toString());
-                        if (!extraFolder.isDirectory()) continue;
+                        if (!SampleFiles::isDirectory(extraFolder)) continue;
                         const auto relative = libraryRoot != juce::File() ? slashes(extraFolder.getRelativePathFrom(libraryRoot)) : juce::String();
                         if (relative.isNotEmpty() && !juce::File::isAbsolutePath(relative)) extraRelative.add(relative);
                         else { extraAbsolute.add(extraFolder.getFullPathName()); absoluteOnly.add(extraFolder.getFullPathName()); }
@@ -11254,10 +11360,10 @@ namespace
     // the deepest folder that exists, each missing part matched ignoring case.
     juce::File resolveCaseInsensitive(const juce::File& wanted)
     {
-        if (wanted.isDirectory()) return wanted;
+        if (SampleFiles::isDirectory(wanted)) return wanted;   // on the disk or in a RAR archive (0.8.157)
         juce::StringArray missing;
         juce::File dir = wanted;
-        for (int depth = 0; !dir.isDirectory(); ++depth)
+        for (int depth = 0; !SampleFiles::isDirectory(dir); ++depth)
         {
             const auto parent = dir.getParentDirectory();
             if (depth > 32 || parent == dir || parent.getFullPathName().isEmpty()) return {};
@@ -11267,8 +11373,8 @@ namespace
         for (const auto& part : missing)
         {
             juce::File next;
-            for (const auto& entry : juce::RangedDirectoryIterator(dir, false, "*", juce::File::findDirectories))
-                if (entry.getFile().getFileName().equalsIgnoreCase(part)) { next = entry.getFile(); break; }
+            for (const auto& child : SampleFiles::childDirectories(dir))
+                if (child.getFileName().equalsIgnoreCase(part)) { next = child; break; }
             if (next == juce::File()) return {};
             dir = next;
         }
@@ -11278,7 +11384,7 @@ namespace
     juce::File firstExistingDirectory(const juce::Array<juce::File>& candidates)
     {
         for (const auto& candidate : candidates)
-            if (candidate.isDirectory()) return candidate;
+            if (SampleFiles::isDirectory(candidate)) return candidate;
         for (const auto& candidate : candidates)
             if (const auto found = resolveCaseInsensitive(candidate); found != juce::File())
             {
@@ -11780,11 +11886,11 @@ void MainComponent::beginStartupFolderLoading()
     {
         if (manualConfigs[(size_t)manual].stopBuild.active) { mapped.insert(manual); continue; }
         const juce::File folder(manualConfigs[(size_t)manual].folderPath);
-        if (folder.isDirectory()) { jobs.push_back({ manual, folder, false, nullptr }); folders.push_back(folder); }
+        if (SampleFiles::isDirectory(folder)) { jobs.push_back({ manual, folder, false, nullptr }); folders.push_back(folder); }
         for (const auto& extra : manualConfigs[(size_t)manual].extraFolderPaths)
         {
             const juce::File extraFolder(extra);
-            if (!extraFolder.isDirectory()) continue;
+            if (!SampleFiles::isDirectory(extraFolder)) continue;
             const bool hasPreviousTree = !jobs.empty() && jobs.back().manual == manual;
             jobs.push_back({ manual, extraFolder, hasPreviousTree, nullptr });
             folders.push_back(extraFolder);
@@ -11803,7 +11909,7 @@ void MainComponent::beginStartupFolderLoading()
         for (const auto& path : sampleTrees)
         {
             const juce::File tree(path);
-            if (treesUsed.count(path) == 0 || !tree.isDirectory()) continue;
+            if (treesUsed.count(path) == 0 || !SampleFiles::isDirectory(tree)) continue;
             jobs.push_back({ -1, tree, true, map });
             folders.push_back(tree);
         }
@@ -11960,21 +12066,190 @@ void MainComponent::beginStartupFolderLoading()
 
 void MainComponent::selectManualFolder(int manualIndex)
 {
+    // Load folder... (0.8.157): one window with the path(s) - a folder tree, or RAR
+    // archive(s) of the sample folders - and two Browse buttons; the archives are
+    // read as the folders they hold unless "unpack first" is ticked.
     if (manualIndex < 0 || manualIndex > manualCount) return;
-    folderChooser = std::make_unique<juce::FileChooser>(
-        "Select sample folder for this division",
-        manualConfigs[(size_t)manualIndex].folderPath.isNotEmpty()
-            ? juce::File(manualConfigs[(size_t)manualIndex].folderPath) : juce::File(), "", true);
-    folderChooser->launchAsync(juce::FileBrowserComponent::openMode
-        | juce::FileBrowserComponent::canSelectDirectories,
-        [this, manualIndex](const juce::FileChooser& chooser)
+    struct Panel final : public juce::Component
+    {
+        MainComponent& owner;
+        const int manual;
+        juce::Label pathsLabel, destinationLabel, hint;
+        juce::TextEditor paths, destination;
+        juce::TextButton browseFolder{ "Browse folder..." }, browseArchives{ "Browse archives..." }, browseDestination{ "Browse..." }, load{ "Load" }, cancel{ "Cancel" };
+        juce::ToggleButton unpackFirst{ "Unpack the archives into a folder first (otherwise the samples are read from the archives)" };
+        std::unique_ptr<juce::FileChooser> chooser;
+        static juce::File fileOf(const juce::String& text)
         {
-            const auto folder = chooser.getResult();
-            if (!folder.isDirectory()) return;
-            // The tree joins the pool (once for the whole organ); its stops go to
-            // this division's table and only this tree is loaded.
-            loadTreeIntoDivision(folder, manualIndex);
+            const auto trimmed = text.trim().unquoted();
+            return juce::File::isAbsolutePath(trimmed) ? juce::File(trimmed) : juce::File();
+        }
+        void chosen(std::vector<juce::File>& folders, std::vector<juce::File>& archives) const
+        {
+            for (const auto& line : juce::StringArray::fromLines(paths.getText()))
+            {
+                const auto file = fileOf(line);
+                if (file == juce::File()) continue;
+                if (file.existsAsFile() && ArchiveExtractor::looksLikeArchive(file)) { if (std::find(archives.begin(), archives.end(), file) == archives.end()) archives.push_back(file); }
+                else if (SampleFiles::isDirectory(file)) { if (std::find(folders.begin(), folders.end(), file) == folders.end()) folders.push_back(file); }
+            }
+        }
+        Panel(MainComponent& o, int m, const juce::File& start) : owner(o), manual(m)
+        {
+            pathsLabel.setText("The sample folder tree, or the RAR archive(s) of the sample folders - one path per line:", juce::dontSendNotification);
+            destinationLabel.setText("Unpack into this folder:", juce::dontSendNotification);
+            hint.setText("An archive is read as the folders it holds (RAR 4 and 5, multi-volume sets by their first part). A Hauptwerk organ definition "
+                "found inside is offered for import. The folder tree is the folder that holds the stops' folders, or the division folders.", juce::dontSendNotification);
+            hint.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+            hint.setJustificationType(juce::Justification::topLeft);
+            hint.setFont(juce::FontOptions(14.0f));
+            paths.setMultiLine(true, false);
+            paths.setReturnKeyStartsNewLine(true);
+            paths.setScrollbarsShown(true);
+            paths.setTextToShowWhenEmpty("a folder, or .rar file(s): Browse..., or paste the paths", juce::Colours::grey);
+            if (start != juce::File()) paths.setText(start.getFullPathName(), false);
+            paths.onTextChange = [this] { refresh(); };
+            destination.onTextChange = [this] { refresh(); };
+            unpackFirst.onClick = [this] { refresh(); };
+            browseFolder.onClick = [this]
+            {
+                std::vector<juce::File> folders, archives;
+                chosen(folders, archives);
+                chooser = std::make_unique<juce::FileChooser>("The sample folder tree of this division",
+                    !folders.empty() ? folders.front() : (!archives.empty() ? archives.front().getParentDirectory() : juce::File()), "", true);
+                chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories, [this](const juce::FileChooser& c)
+                {
+                    const auto folder = c.getResult();
+                    if (folder == juce::File()) return;
+                    paths.setText(folder.getFullPathName(), false);
+                    refresh();
+                });
+            };
+            browseArchives.onClick = [this]
+            {
+                std::vector<juce::File> folders, archives;
+                chosen(folders, archives);
+                chooser = std::make_unique<juce::FileChooser>("The RAR archive(s) of the sample folders - select several with Ctrl or Shift",
+                    !archives.empty() ? archives.front() : (!folders.empty() ? folders.front() : juce::File()), ArchiveExtractor::fileFilter());
+                chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::canSelectMultipleItems,
+                    [this](const juce::FileChooser& c)
+                {
+                    juce::StringArray lines;
+                    for (const auto& file : c.getResults()) if (file.existsAsFile()) lines.add(file.getFullPathName());
+                    if (lines.isEmpty()) return;
+                    paths.setText(lines.joinIntoString("\n"), false);
+                    if (destination.getText().trim().isEmpty()) destination.setText(juce::File(lines[0]).getParentDirectory().getFullPathName(), false);
+                    refresh();
+                });
+            };
+            browseDestination.onClick = [this]
+            {
+                const auto known = fileOf(destination.getText());
+                chooser = std::make_unique<juce::FileChooser>("The folder to unpack into", known.isDirectory() ? known : juce::File(), "*");
+                chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories, [this](const juce::FileChooser& c)
+                {
+                    const auto folder = c.getResult();
+                    if (folder == juce::File()) return;
+                    destination.setText(folder.getFullPathName(), false);
+                    refresh();
+                });
+            };
+            load.onClick = [this]
+            {
+                std::vector<juce::File> folders, archives;
+                chosen(folders, archives);
+                if (folders.empty() && archives.empty()) return;
+                const bool unpack = unpackFirst.getToggleState() && !archives.empty();
+                const auto where = fileOf(destination.getText());
+                if (unpack && where == juce::File()) return;
+                juce::Component::SafePointer<MainComponent> safeOwner(&owner);
+                const int m = manual;
+                close();
+                juce::MessageManager::callAsync([safeOwner, folders, archives, unpack, where, m]
+                {
+                    if (safeOwner != nullptr) safeOwner->loadChosenIntoDivision(folders, archives, unpack, where, m);
+                });
+            };
+            cancel.onClick = [this] { close(); };
+            for (auto* c : std::initializer_list<juce::Component*>{ &pathsLabel, &paths, &browseFolder, &browseArchives, &unpackFirst, &destinationLabel, &destination,
+                &browseDestination, &hint, &load, &cancel })
+                addAndMakeVisible(c);
+            refresh();
+            setSize(760, 400);
+        }
+        void refresh()
+        {
+            std::vector<juce::File> folders, archives;
+            chosen(folders, archives);
+            const bool unpack = unpackFirst.getToggleState() && !archives.empty();
+            unpackFirst.setEnabled(!archives.empty());
+            destinationLabel.setEnabled(unpack);
+            destination.setEnabled(unpack);
+            browseDestination.setEnabled(unpack);
+            load.setEnabled((!folders.empty() || !archives.empty()) && (!unpack || fileOf(destination.getText()) != juce::File()));
+            load.setButtonText(!archives.empty() ? (unpack ? "Unpack and load" : "Load from the archive" + juce::String(archives.size() > 1 ? "s" : "")) : juce::String("Load"));
+        }
+        void close()
+        {
+            if (auto* window = findParentComponentOfClass<juce::DialogWindow>()) window->closeButtonPressed();
+        }
+        void resized() override
+        {
+            auto area = getLocalBounds().reduced(14, 12);
+            pathsLabel.setBounds(area.removeFromTop(24));
+            auto row = area.removeFromTop(84);
+            auto buttons = row.removeFromRight(150);
+            browseFolder.setBounds(buttons.removeFromTop(28));
+            buttons.removeFromTop(6);
+            browseArchives.setBounds(buttons.removeFromTop(28));
+            row.removeFromRight(8);
+            paths.setBounds(row);
+            area.removeFromTop(10);
+            unpackFirst.setBounds(area.removeFromTop(26));
+            row = area.removeFromTop(28);
+            destinationLabel.setBounds(row.removeFromLeft(150));
+            browseDestination.setBounds(row.removeFromRight(110));
+            row.removeFromRight(8);
+            destination.setBounds(row);
+            area.removeFromTop(10);
+            auto bottom = area.removeFromBottom(30);
+            cancel.setBounds(bottom.removeFromRight(110));
+            bottom.removeFromRight(8);
+            load.setBounds(bottom.removeFromRight(200));
+            area.removeFromBottom(8);
+            hint.setBounds(area);
+        }
+    };
+    struct LoadWindow final : public juce::DialogWindow
+    {
+        LoadWindow() : juce::DialogWindow("Load folder", juce::Colours::darkgrey, true, true) {}
+        void closeButtonPressed() override { delete this; }
+    };
+    juce::File start = manualConfigs[(size_t)manualIndex].folderPath.isNotEmpty() ? juce::File(manualConfigs[(size_t)manualIndex].folderPath) : juce::File();
+    if (start == juce::File() && lastSettingsDirectory.isDirectory()) start = lastSettingsDirectory;
+    auto* window = new LoadWindow();
+    auto* panel = new Panel(*this, manualIndex, start);
+    window->setContentOwned(panel, true);
+    window->setUsingNativeTitleBar(true);
+    window->setResizable(true, false);
+    placeDialog(*window, "loadFolder", 760, 400);
+    window->setVisible(true);
+    window->toFront(true);
+    if (const char* png = std::getenv("ORGAN_TEST_SNAPSHOT"))   // tests: a picture of the window's content
+    {
+        const juce::File file = juce::File(juce::String(png) + ".loadfolder.png");
+        juce::Component::SafePointer<Panel> safePanel(panel);
+        juce::Timer::callAfterDelay(1500, [safePanel, file]
+        {
+            if (safePanel == nullptr) return;
+            const juce::Image snapshot = safePanel->createComponentSnapshot(safePanel->getLocalBounds(), false, 1.0f);
+            juce::Image image(juce::Image::RGB, snapshot.getWidth(), snapshot.getHeight(), true);
+            { juce::Graphics g(image); g.fillAll(juce::Colour(0xff2b2b2b)); g.drawImageAt(snapshot, 0, 0); }
+            file.deleteFile();
+            juce::FileOutputStream stream(file);
+            if (stream.openedOk()) juce::PNGImageFormat().writeImageToStream(image, stream);
         });
+    }
 }
 
 void MainComponent::unloadManualTree(int manualIndex, const juce::String& treePath)
@@ -12114,7 +12389,8 @@ bool MainComponent::isHeaderButtonShown(const juce::String& key) const
 {
     const auto found = headerButtonShown.find(key);
     if (found != headerButtonShown.end()) return found->second;
-    return !(key == "stopMerging" || key == "loadVoicing" || key == "saveVoicing" || key == "shutdown");   // Unpack archive shown by default (0.8.112): the first thing a newcomer needs
+    // Unpack archive is hidden by default since 0.8.157: Load folder... of the Stop List reads RAR archives itself (and unpacks on request).
+    return !(key == "stopMerging" || key == "loadVoicing" || key == "saveVoicing" || key == "shutdown" || key == "unpackArchive");
 }
 
 // "Unpack archive": a RAR archive of sample folders is unpacked by libarchive
@@ -12277,7 +12553,8 @@ void MainComponent::unpackArchiveDialog()
     window->toFront(true);
 }
 
-void MainComponent::startUnpack(const juce::Array<juce::File>& archives, const juce::File& destination)
+void MainComponent::startUnpack(const juce::Array<juce::File>& archives, const juce::File& destination,
+    std::function<void(const std::vector<juce::File>&, bool)> afterwards)
 {
     if (archives.isEmpty()) return;
     juce::Component::SafePointer<MainComponent> safeThis(this);
@@ -12313,7 +12590,7 @@ void MainComponent::startUnpack(const juce::Array<juce::File>& archives, const j
     job->launchThread();   // returns at once; the window closes itself when run() ends
     // Poll for the end (the thread's own callback is not available before JUCE 8 on every platform).
     auto poll = std::make_shared<std::function<void()>>();
-    *poll = [safeThis, job, poll]
+    *poll = [safeThis, job, poll, afterwards]
     {
         if (job->isThreadRunning()) { juce::Timer::callAfterDelay(200, [poll] { (*poll)(); }); return; }
         juce::MessageManager::callAsync([keep = poll] { *keep = nullptr; });   // cleared after this call returns, never while it runs
@@ -12339,6 +12616,15 @@ void MainComponent::startUnpack(const juce::Array<juce::File>& archives, const j
              << juce::String(bytes / (1024 * 1024)) << " MB, unpacked into\n" << job->destination.getFullPathName();
         if (skipped > 0) text << "\n" << skipped << " entr(ies) skipped (not files or folders, or names leading outside the folder).";
         if (!topFolders.isEmpty()) text << "\n\nThe archives' folder(s):\n" << topFolders.joinIntoString("\n");
+        if (afterwards)
+        {
+            // Load folder... unpacking first (0.8.157): the unpacked folders are loaded next; only a failure is reported here.
+            std::vector<juce::File> tops;
+            for (const auto& top : topFolders) tops.push_back(juce::File(top));
+            if (failed) juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Unpack archive", text, "OK", safeThis.getComponent());
+            afterwards(tops, !failed);
+            return;
+        }
         text << "\n\nNext: Stop List > Load folder... and choose the folder tree of the samples (the folder that holds the "
                 "stops' folders, or the division folders), or Load Configuration when a configuration came with the samples.";
         juce::AlertWindow::showMessageBoxAsync(failed ? juce::MessageBoxIconType::WarningIcon : juce::MessageBoxIconType::InfoIcon,
@@ -12624,7 +12910,7 @@ std::shared_ptr<std::vector<SamplerEngine::FolderAssignment>> MainComponent::sto
 
 void MainComponent::relocateTree(int poolIndex, const juce::File& tree)
 {
-    if (poolIndex < 0 || poolIndex >= (int)sampleTrees.size() || !tree.isDirectory() || activeFolderLoader != nullptr) return;
+    if (poolIndex < 0 || poolIndex >= (int)sampleTrees.size() || !SampleFiles::isDirectory(tree) || activeFolderLoader != nullptr) return;
     const size_t index = (size_t)poolIndex;
     const juce::File old(sampleTrees[index]);
     if (old == tree) return;
@@ -12670,7 +12956,7 @@ void MainComponent::showMissingTreesMenu(int manual)
     for (const auto& path : divisionTrees(manual))
     {
         const int index = poolIndexOf(path);
-        if (index < 0 || path.isEmpty() || juce::File(path).isDirectory()) continue;
+        if (index < 0 || path.isEmpty() || SampleFiles::isDirectory(juce::File(path))) continue;
         missing.push_back(index);
         menu.addItem(index + 1, "Replace \"" + tail(path) + "\" with a folder on this computer...");
     }
@@ -12765,7 +13051,7 @@ void MainComponent::loadTreeIntoDivision(const juce::File& tree, int manual)
 {
     // A tree enters the pool once; its folders join the division's table by the
     // automatic rules and only this tree is loaded (nothing else is touched).
-    if (manual < 0 || manual > manualCount || !tree.isDirectory()) return;
+    if (manual < 0 || manual > manualCount || !SampleFiles::isDirectory(tree)) return;   // on the disk or in a RAR archive (0.8.157)
     if (poolIndexOf(tree.getFullPathName()) >= 0)
     {
         juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, "Load folder",
@@ -12794,9 +13080,15 @@ void MainComponent::loadTreeIntoDivision(const juce::File& tree, int manual)
         for (size_t index = 0; index < sampleTrees.size() && relocate < 0; ++index)
         {
             const juce::File old(sampleTrees[index]);
-            if (!old.isDirectory() && tail(old, components) == tail(tree, components)) relocate = (int)index;
+            if (!SampleFiles::isDirectory(old) && tail(old, components) == tail(tree, components)) relocate = (int)index;
         }
     if (relocate >= 0) { relocateTree(relocate, tree); return; }
+    if (addTreeToDivisionTable(tree, manual)) reloadDivisions({ manual }, tree.getFullPathName());
+}
+
+bool MainComponent::addTreeToDivisionTable(const juce::File& tree, int manual)
+{
+    if (manual < 0 || manual > manualCount || !SampleFiles::isDirectory(tree) || poolIndexOf(tree.getFullPathName()) >= 0) return false;
     auto& config = manualConfigs[(size_t)manual];
     if (!config.stopBuild.active)
     {
@@ -12807,9 +13099,129 @@ void MainComponent::loadTreeIntoDivision(const juce::File& tree, int manual)
     const int index = addTreeToPool(tree.getFullPathName());
     extendStopBuildWithTree(manual, tree, index);
     syncDivisionTreeLists();
-    CrashHandler::note("Tree " + tree.getFullPathName() + " joins the pool (index " + juce::String(index) + ") for division " + juce::String(manual));
+    CrashHandler::note("Tree " + tree.getFullPathName() + " joins the pool (index " + juce::String(index) + ") for division " + juce::String(manual)
+        + (SampleFiles::inArchive(tree) ? " (in the archive " + SampleFiles::archiveNameOf(tree) + ")" : juce::String()));
     saveSettings();
-    reloadDivisions({ manual }, tree.getFullPathName());
+    return true;
+}
+
+void MainComponent::loadTreesIntoDivision(const std::vector<juce::File>& trees, int manual)
+{
+    // Several trees at once (the folders of one or more RAR archives, 0.8.157):
+    // each joins the pool and the table, then the division loads once.
+    if (trees.empty() || activeFolderLoader != nullptr) return;
+    if (trees.size() == 1) { loadTreeIntoDivision(trees.front(), manual); return; }
+    if (!checkMemoryForFolders(trees)) return;
+    bool any = false;
+    for (const auto& tree : trees) any = addTreeToDivisionTable(tree, manual) || any;
+    if (any) reloadDivisions({ manual });
+    else juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, "Load folder",
+        "These folder trees are already loaded. Their folders are assigned in the Stop List.");
+}
+
+void MainComponent::loadChosenIntoDivision(const std::vector<juce::File>& folders, const std::vector<juce::File>& archives, bool unpackFirst,
+    const juce::File& destination, int manual)
+{
+    if (manual < 0 || manual > manualCount) return;
+    if (!archives.empty() && unpackFirst)
+    {
+        // The archives unpacked into the folder first, their folder trees loaded then.
+        juce::Array<juce::File> list;
+        for (const auto& archive : archives) list.add(archive);
+        juce::Component::SafePointer<MainComponent> safeThis(this);
+        startUnpack(list, destination, [safeThis, manual, folders](const std::vector<juce::File>& tops, bool ok)
+        {
+            if (safeThis == nullptr || !ok) return;
+            std::vector<juce::File> trees = folders;
+            for (const auto& top : tops) if (std::find(trees.begin(), trees.end(), top) == trees.end()) trees.push_back(top);
+            safeThis->loadTreesIntoDivision(trees, manual);
+        });
+        return;
+    }
+    // The archives' contents are read first (a walk of the headers on a thread: minutes
+    // for a big set on a hard disk, cached afterwards), then they are loaded.
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    indexArchivesThen(archives, [safeThis, folders, archives, manual]
+    {
+        if (safeThis != nullptr) safeThis->loadIndexedIntoDivision(folders, archives, manual);
+    });
+}
+
+void MainComponent::indexArchivesThen(const std::vector<juce::File>& archives, std::function<void()> then)
+{
+    if (archives.empty()) { then(); return; }
+    struct IndexJob final : public juce::ThreadWithProgressWindow
+    {
+        IndexJob(const std::vector<juce::File>& a, juce::Component* over)
+            : juce::ThreadWithProgressWindow("Reading the archives", false, false, 10000, {}, over), archives(a) {}
+        void run() override
+        {
+            // The walk itself cannot be interrupted; the status shows where it is.
+            std::thread worker([this] { SampleFiles::indexArchives(archives); done.store(true); });
+            while (!done.load())
+            {
+                const auto progress = SampleFiles::indexingProgress();
+                setStatusMessage(progress.isNotEmpty() ? progress : juce::String("Reading the contents of the archive(s)..."));
+                juce::Thread::sleep(200);
+            }
+            worker.join();
+        }
+        std::vector<juce::File> archives;
+        std::atomic<bool> done{ false };
+    };
+    auto job = std::make_shared<IndexJob>(archives, this);
+    job->launchThread();
+    auto poll = std::make_shared<std::function<void()>>();
+    *poll = [job, poll, then]
+    {
+        if (job->isThreadRunning()) { juce::Timer::callAfterDelay(200, [poll] { (*poll)(); }); return; }
+        juce::MessageManager::callAsync([keep = poll] { *keep = nullptr; });   // cleared after this call returns, never while it runs
+        then();
+    };
+    juce::Timer::callAfterDelay(300, [poll] { if (*poll) (*poll)(); });
+}
+
+void MainComponent::loadIndexedIntoDivision(const std::vector<juce::File>& folders, const std::vector<juce::File>& archives, int manual)
+{
+    // The archives read as the folders they hold: their top-level folders, as paths
+    // beside the archive (SampleFiles finds them inside). A Hauptwerk definition in an
+    // archive is offered instead: the whole organ in one go.
+    std::vector<juce::File> trees = folders;
+    std::vector<juce::File> definitions;
+    for (const auto& archive : archives)
+    {
+        const auto beside = archive.getParentDirectory();
+        for (const auto& entry : SampleFiles::entriesOf(archive, [](const juce::String& path) { return path.endsWithIgnoreCase(".Organ_Hauptwerk_xml"); }))
+            definitions.push_back(beside.getChildFile(entry.replaceCharacter('/', juce::File::getSeparatorChar())));
+        for (const auto& top : SampleFiles::topLevelFoldersOf(archive))
+        {
+            const auto tree = beside.getChildFile(top);
+            if (std::find(trees.begin(), trees.end(), tree) == trees.end()) trees.push_back(tree);
+        }
+    }
+    if (!definitions.empty() && std::getenv("ORGAN_TEST_LOAD_ARCHIVES") != nullptr)   // tests: the folders, no box
+    {
+        CrashHandler::note("ORGAN_TEST_LOAD_ARCHIVES: definition(s) found, the folders loaded instead");
+        definitions.clear();
+    }
+    if (!definitions.empty())
+    {
+        juce::String names;
+        for (size_t i = 0; i < definitions.size() && i < 6; ++i) names << "\n" << definitions[i].getFileName();
+        juce::Component::SafePointer<MainComponent> safeThis(this);
+        const auto odf = definitions.front();
+        juce::AlertWindow::showOkCancelBox(juce::MessageBoxIconType::QuestionIcon, "Load folder",
+            "The archive holds a Hauptwerk organ definition:" + names + "\n\nImport it (the whole organ, every division, read from the archives) "
+            "instead of loading the archives' folders into the division?", "Import the definition", "Load the folders", this,
+            juce::ModalCallbackFunction::create([safeThis, odf, trees, manual](int result)
+            {
+                if (safeThis == nullptr) return;
+                if (result == 1) safeThis->importHauptwerkOdf(odf);
+                else safeThis->loadTreesIntoDivision(trees, manual);
+            }));
+        return;
+    }
+    loadTreesIntoDivision(trees, manual);
 }
 
 void MainComponent::unloadTreeFromPool(const juce::String& path)
@@ -12922,7 +13334,7 @@ MainComponent::ManualConfig::StopBuild MainComponent::deriveStopBuildFromEngine(
         {
             const juce::File tree(path);
             const int treeIndex = poolIndexOf(path);
-            if (!tree.isDirectory() || treeIndex < 0) continue;
+            if (!SampleFiles::isDirectory(tree) || treeIndex < 0) continue;
             for (const auto& assignment : const_cast<SamplerEngine&>(engine).scanTreeAssignments(tree, false))
             {
                 const juce::String perspective = assignment.perspective.isEmpty() ? juce::String("default") : assignment.perspective;
@@ -13592,7 +14004,7 @@ void MainComponent::reloadDivisions(const std::vector<int>& manualsIn, const juc
         for (const auto& path : divisionTrees(manual))
         {
             const juce::File tree(path);
-            if (!tree.isDirectory() || (onlyTree.isNotEmpty() && juce::File(onlyTree) != tree)) continue;
+            if (!SampleFiles::isDirectory(tree) || (onlyTree.isNotEmpty() && juce::File(onlyTree) != tree)) continue;
             jobs.push_back({ manual, tree, !first, nullptr });
             first = false;
         }
@@ -13608,7 +14020,7 @@ void MainComponent::reloadDivisions(const std::vector<int>& manualsIn, const juc
         for (const auto& path : sampleTrees)   // pool order
         {
             const juce::File tree(path);
-            if (treesUsed.count(path) == 0 || !tree.isDirectory()) continue;
+            if (treesUsed.count(path) == 0 || !SampleFiles::isDirectory(tree)) continue;
             if (onlyTree.isNotEmpty() && juce::File(onlyTree) != tree) continue;
             jobs.push_back({ -1, tree, true, map });
         }
@@ -15435,7 +15847,7 @@ void MainComponent::showStopBuildingDialog(int)
                 menu.addSeparator();
                 for (int t = 0; t < (int)pool.size(); ++t)
                     menu.addItem(2001 + t, "Replace \"" + juce::File(pool[(size_t)t]).getFileName() + "\" with another folder..."
-                        + (juce::File(pool[(size_t)t]).isDirectory() ? juce::String() : juce::String("   (not on this computer)")));
+                        + (SampleFiles::isDirectory(juce::File(pool[(size_t)t])) ? (SampleFiles::inArchive(juce::File(pool[(size_t)t])) ? "   (in " + SampleFiles::archiveNameOf(juce::File(pool[(size_t)t])) + ")" : juce::String()) : juce::String("   (not on this computer)")));
             }
             juce::Component::SafePointer<StopListDialog> safeThis(this);
             menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&unloadFolderButton), [safeThis](int result)
@@ -15996,9 +16408,8 @@ void MainComponent::loadSettings()
     if (auto* shown = parsed.getProperty("headerButtons", juce::var()).getDynamicObject())
         for (const auto& property : shown->getProperties())
             headerButtonShown[property.name.toString()] = (bool)property.value;
-    // 0.8.112: Unpack archive is shown by default - once also for settings saved
-    // before (they stored every button's state, this one as hidden).
-    if (!(bool)parsed.getProperty("unpackArchiveShownOnce", false)) headerButtonShown["unpackArchive"] = true;
+    // 0.8.112 showed Unpack archive once for older settings; since 0.8.157 it is
+    // hidden by default (Load folder... reads the archives), the stored state stays.
     divisionScreen.fill(0);
     if (auto* screens = parsed.getProperty("divisionScreen", juce::var()).getArray())
         for (int i = 0; i < SamplerEngine::maxManuals && i < screens->size(); ++i) divisionScreen[(size_t)i] = juce::jlimit(0, 1, (int)screens->getReference(i));
@@ -16393,14 +16804,14 @@ void MainComponent::loadSettings()
         }
     }
     for (auto& path : sampleTrees)
-        if (!juce::File(path).isDirectory())
+        if (!SampleFiles::isDirectory(juce::File(path)))
             for (int manual = 0; manual < SamplerEngine::maxManuals; ++manual)
                 for (const auto& tree : manualConfigs[(size_t)manual].stopBuild.legacyTrees)
-                    if (juce::File(tree).isDirectory() && leafName(tree) == leafName(path)) path = tree;
+                    if (SampleFiles::isDirectory(juce::File(tree)) && leafName(tree) == leafName(path)) path = tree;
     for (int manual = 0; manual < SamplerEngine::maxManuals; ++manual)   // trees of divisions without a table are pool trees too
         if (!manualConfigs[(size_t)manual].stopBuild.active)
             for (const auto& tree : manualConfigs[(size_t)manual].stopBuild.legacyTrees)
-                if (juce::File(tree).isDirectory()) addTreeToPool(tree);
+                if (SampleFiles::isDirectory(juce::File(tree))) addTreeToPool(tree);
     syncDivisionTreeLists();
 
     // A list that is missing or empty in the settings means the defaults
@@ -16890,7 +17301,7 @@ juce::String MainComponent::missingTreeNotice(int manual, bool detail) const
     for (const auto& path : divisionTrees(manual))
     {
         const juce::File tree(path);
-        if (path.isEmpty() || tree.isDirectory()) continue;
+        if (path.isEmpty() || SampleFiles::isDirectory(tree)) continue;
         // The last three components ("003136\pipe\HW"): a set's trees often share
         // their leaf names (PE, HW of two editions), so the leaf alone would not say which.
         juce::StringArray parts;

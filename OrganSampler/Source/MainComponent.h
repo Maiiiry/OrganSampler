@@ -89,7 +89,17 @@ private:
     LeftOnlyTextButton shutdownButton{ "Shut down PC" };   // saves, quits and shuts the computer down (hidden by default)
     LeftOnlyTextButton unpackArchiveButton{ "Unpack archive" };   // RAR sample archives unpacked by libarchive (hidden by default)
     void unpackArchiveDialog();
-    void startUnpack(const juce::Array<juce::File>& archives, const juce::File& destination);   // the work (one archive after another) with its progress window, then the report
+    void startUnpack(const juce::Array<juce::File>& archives, const juce::File& destination,
+        std::function<void(const std::vector<juce::File>& topFolders, bool ok)> afterwards = {});   // the work (one archive after another) with its progress window, then the report (or 'afterwards')
+    // Load folder... of the Stop List (0.8.157): a folder tree, or RAR archives read as
+    // the folders they hold (a Hauptwerk definition inside is offered for import), or
+    // the archives unpacked first on request.
+    void loadChosenIntoDivision(const std::vector<juce::File>& folders, const std::vector<juce::File>& archives, bool unpackFirst, const juce::File& destination, int manual);
+    // The archives' indexes built on a thread with a progress window, then 'then' on the message thread.
+    void indexArchivesThen(const std::vector<juce::File>& archives, std::function<void()> then);
+    void loadIndexedIntoDivision(const std::vector<juce::File>& folders, const std::vector<juce::File>& archives, int manual);
+    void loadTreesIntoDivision(const std::vector<juce::File>& trees, int manual);
+    bool addTreeToDivisionTable(const juce::File& tree, int manual);   // the tree into the pool and the division's table; false = nothing to reload
     juce::Component::SafePointer<juce::DialogWindow> unpackWindow;   // the Unpack archive window (not modal: a file chooser beside it must keep the focus)
     std::unique_ptr<juce::FileChooser> archiveChooser;
     // Every button of the grid (stops, transmissions, extensions, stop folders

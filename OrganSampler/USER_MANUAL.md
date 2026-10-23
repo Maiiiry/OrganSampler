@@ -223,7 +223,9 @@ that keyboard - the device and the channel are taken from it.
 
 Click *Stop List* in the top bar, then *Load folder...* and choose the top
 folder of the samples for one division (the folder that holds that division's
-stop folders, see "How the sample folders must be organised"). The program
+stop folders, see "How the sample folders must be organised") - or the RAR
+archive(s) the samples came in, which the program reads as the folders they
+hold (see "Sample archives (RAR)"). The program
 asks which division its stops go to. Repeat for every division; or load one
 tree holding everything and move stops between divisions in the table. Click
 *Apply and reload*. The stops appear as buttons on the grid. This step comes
@@ -445,35 +447,49 @@ Principal 8
   Stars at both ends match anywhere, like no star at all. Capital letters do
   not matter; underscores and other characters count exactly as written.
 
-### Unpacking sample archives (RAR)
+### Sample archives (RAR)
 
-Sample folders are mostly distributed as RAR archives, and the program loads
-folders, not archives: unpack the archive first, then *Load folder...* the
-folder tree it contained. Three ways:
+Sample folders are mostly distributed as RAR archives. They need not be
+unpacked: *Load folder...* in the Stop List takes the `.rar` file(s) as well
+as a folder, and reads the samples out of the archives.
 
-- **In OrganSampler:** the top-bar button *Unpack archive* (Configuration
-  Editor > Console hides it, and the same row has a button that does the same
-  without the top bar). One window: at the top the `.rar` file or files -
-  *Browse...* (select several with Ctrl or Shift), or paste the paths, one
-  per line - under it the folder to unpack into (proposed: the folder of the
-  first archive; each archive's own folder tree is created inside it), then
-  *Unpack*. Several archives are unpacked one after another with one
-  progress bar; it can be cancelled, and at the end the program says where
-  the folders are.
-  RAR 4 and RAR 5 archives, solid or not, are read by libarchive (BSD
-  licence), the files written as they are - no password-protected archives,
-  and a multi-part archive (`.part1.rar`, `.part2.rar` ...) is unpacked from
-  its first part only when the parts lie together. Nothing else is needed:
-  this is the way on macOS, which has no unpacker with a window of its own.
+- **Reading from the archives:** in *Load folder...* choose *Browse
+  archives...* (several with Ctrl or Shift; a multi-volume set by its first
+  part, `.part1.rar` or `.part01.rar`, the other parts lying beside it) or
+  paste the paths, one per line, and click *Load from the archive*. The
+  archive is read as the folders it holds: its top-level folders become
+  folder trees "beside" the archive, as if it had been unpacked there, and
+  the program finds their contents inside the archive. A configuration names
+  those folders exactly as it would name unpacked ones, so the same
+  configuration serves an unpacked and a packed set (a folder that is on the
+  disk always wins over the archive). When the archive holds a Hauptwerk
+  organ definition, the program offers to import it - the whole organ, read
+  from the archives.
+  The contents of an archive are indexed once (the program's own walk of the
+  headers: seconds on an SSD, a few minutes for a 60 GB set on a hard disk,
+  with a progress window) and the index is kept under the settings folder.
+  Every file is then read on its own, so the loader reads the files in
+  parallel; a set that was stored without compression reads as fast as plain
+  files, a compressed one at the speed of the decompression (100-200 MB per
+  second and core). RAR 4 and RAR 5; a solid archive is read in sequence,
+  which is slower; password-protected archives are refused.
+- **Unpacking in OrganSampler:** tick *Unpack the archives into a folder
+  first* in the same window, choose the folder (proposed: the folder of the
+  first archive; each archive's own folder tree is created inside it) and
+  click *Unpack and load*: the archives are unpacked one after another with
+  one progress bar (it can be cancelled), then their folder trees are loaded.
+  The top-bar button *Unpack archive* does the unpacking alone; it is hidden
+  by default (Configuration Editor > Console shows it).
 - **With a free program:** 7-Zip on Windows (https://www.7-zip.org), Keka or
   The Unarchiver on macOS, `unrar x` or `7z x` in a terminal on Linux. WinRAR
   itself unpacks as well (as a trial). Right-click the archive, choose
   "Extract to ...".
 - **A zip** needs no program at all: every system opens it by a double-click.
 
-Unpack onto a fast disk with room for the whole set (a large organ is many
-gigabytes), and keep the folder structure as it comes out: the configurations
-published for a set name its folders as the archive created them.
+Unpacked or not, keep the folder structure as the archive has it: the
+configurations published for a set name its folders as the archive created
+them. Unpacked samples load faster from a fast disk (no decompression) and
+the archives can go; packed ones save the disk space.
 
 ## 1.5 Configurations and settings
 
@@ -1164,7 +1180,10 @@ folder that plays that perspective of the stop.
 ## 4.1 Folder trees and the pool
 
 - **Load folder...** loads a folder tree (the samples of an organ, or a part of them) and
-  asks which division its stops go to. A tree is loaded once and its folders
+  asks which division its stops go to. One window: the folder tree, or the
+  RAR archive(s) the samples came in - read as the folders they hold, or
+  unpacked first when the switch says so (see "Sample archives (RAR)").
+  A tree is loaded once and its folders
   can serve any division. When a tree of the organ is missing on this
   computer (a configuration from elsewhere: the division header says
   "Sample folder not found"), a loaded folder of the same name takes the
@@ -2760,10 +2779,11 @@ fires from its learned MIDI control, which is how a headless console uses it.
 
 ### Top bar: Unpack archive
 
-Shows or hides the Unpack archive button (see "Unpacking sample archives
-(RAR)"): RAR archives of sample folders unpacked by the program into a
-folder of your choice. Shown by default; the button beside this switch does
-the same without the top bar.
+Shows or hides the Unpack archive button (see "Sample archives (RAR)"): RAR
+archives of sample folders unpacked by the program into a folder of your
+choice. Hidden by default since *Load folder...* reads the archives itself
+(and unpacks on request); the button beside this switch does the same
+without the top bar.
 
 ### Top bar: GLOBAL RESET
 

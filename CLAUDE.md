@@ -424,11 +424,38 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   Never verify this by the sound's pitch (the user: "je to podle jména souboru ... zřejmé z ODF"). Organs imported
   before 0.8.155 keep offset 0: load the definition again or type the column. Dev hook `ORGAN_TEST_OFFSET=
   "<manual>|<stop prefix>|<offset>"` (the voicing path); the grid dump prints "notes a..b files N" per stop.
-  RAR PLAN (agreed, not coded): the configuration never names an archive; a tree path is resolved on disk first, then
-  in an index of the rars under the library root (= the organ's folder with its rars; multi-volume RAR 4/5, non-solid
-  read in parallel per file through libarchive handles; solid sequential; encrypted refused); right-click on "Unpack
-  archive" = "Load from RAR": an ODF inside -> the Hauptwerk import from the archive, else the wav trees. Caen rars
-  22.0 GB vs 45.5 GB unpacked, RAR 4 non-solid, unrar t 74 MB/s packed per thread.
+  0.8.157 RAR (`Source/SampleFiles.{h,cpp}`, jucer ids SmFls1/SmFls2 + CMakeLists): a configuration never names an
+  archive; every path is a disk path, `locate()` walks up to the nearest existing ancestor folder and looks the rest up
+  in the indexes of the first-volume `.rar` files of that folder (the disk wins; `archivesIn`, `volumesOf` = partN /
+  .r00 sets). The INDEX is OUR OWN header walk (`Walker::walk4/walk5`: RAR 4 blocks CRC/TYPE/FLAGS/SIZE[/ADD_SIZE],
+  RAR 5 CRC32/vint size/type/flags/extra/data; one 1 KB read per block, seeks over the data; FILE/NEWSUB/SERVICE/
+  ENDARC; split before/after -> `Entry::pieces` {volume, headerOffset/Length, dataOffset/Length}; per volume the
+  main block and the end block offsets; `solid`, `stored` (RAR4 method 0x30 / RAR5 method 0), `encrypted` (RAR4
+  FHD_PASSWORD, RAR5 extra record 1, CRYPT block -> refused), RAR4 unicode names ported from libarchive's
+  decoder). Cache `%APPDATA%\OrganSampler\ArchiveIndex\<hash>.idx` v2 ("V main|end" per volume, "D path",
+  "F order|size|stored|encrypted|pieces|path"), keyed by the first volume's size+mtime; written through a
+  MemoryOutputStream (a juce::String appended 18 000 times took MINUTES - O(n^2)). READING: `readEntryAlone` - a
+  stored file straight from the volumes; a packed one through libarchive fed by `VirtualStream` with the file's
+  bytes alone ([sig+main][file header][data] and between the pieces [end block][next sig+main][continuation
+  header][data], 4 KB of zeros at the end for the RAR 5 reader's 512-byte look-ahead) - one handle per file, so the
+  loader's parallelFor reads files in parallel (`FileData::archived` + `SampleFiles::readFile` in
+  `loadSamplesIntoStop`; a solid archive is read in sequence by the old cursor, `readEntriesInSequence`). Measured
+  (Re_glockenton 189 MB in 8 variants: RAR4/5, volumes, recovery record, stored): byte-exact against the disk,
+  100-120 MB/s unpacked per thread packed, 1 GB/s stored; Caen DEMO import from its rar 7 s (was 47 s with the
+  sequential cursor). WHY OUR OWN WALK: libarchive 3.8.9's RAR 5 `scan_for_signature` checks 504 of every 512-byte
+  chunk, so the next volume's signature on a chunk edge is missed (Ashton 14 x 4.48 GB, all volumes a multiple of
+  512: the index ended after 27 GB and 34 GB were read through) and its RAR 4 reader fails ("Bad RAR file") on the
+  18 zero bytes WinRAR leaves after the end block of a volume with a recovery record (-rr); libarchive is a git
+  submodule with a prebuilt archive.lib - never patch it, feed it. `indexArchivesThen` (MainComponent) builds the
+  indexes on a ThreadWithProgressWindow ("Reading the archives", `SampleFiles::indexingProgress`) before
+  `loadIndexedIntoDivision`; E: on this machine is a 16 TB Toshiba HDD (3 ms per seek): a walk of 18 000 headers
+  is a minute there. Dev: `ORGAN_TEST_ARCHIVE=<rar>` (volumes, index time, bytes read, top folders, definitions),
+  `ORGAN_TEST_ARCHIVE_CHECK=<disk root>` (every 50th wav + the first 80 compared byte by byte - Rar.exe stores
+  the path from the drive root, so the root is `D:\` for the rartest sets in %TEMP%\rartest made by
+  `C:\Program Files\WinRAR\Rar.exe a -ma5 -m3 -v40m -rr3`), `ORGAN_TEST_LOAD_ARCHIVES="<division>|<rar>"` (the
+  Load folder path, the definition box skipped), `ORGAN_OPEN_LOAD_FOLDER=<division>` + ORGAN_TEST_SNAPSHOT. The
+  Unpack archive top-bar button is hidden by default (the 0.8.112 one-time forcing is gone); Load folder's switch
+  "Unpack the archives into a folder first" + destination does the unpacking (`startUnpack` with a continuation).
   0.8.154: merge grid - `baseShown` (MainComponentMerge.cpp, the base's non-child table rows per division) decides the
   "last row"; the added organ's first row lands at lastRow + 1 (Beziers stood 11 empty rows under Caen: stale cells
   of stops gone/pooled/indented counted). The move between divisions keeps the arrange mode (`dropStopReferences()`

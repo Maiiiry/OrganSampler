@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
 <JUCERPROJECT id="TSAADV" name="OrganSampler" projectType="guiapp" useAppConfig="0"
-              version="0.8.156" companyName="OrganSampler" addUsingNamespaceToJuceHeader="0"
+              version="0.8.157" companyName="OrganSampler" addUsingNamespaceToJuceHeader="0"
               jucerFormatVersion="1" headerPath="../../../ASIOSDK/common;../../../ASIOSDK/host;../../../ASIOSDK/host/pc;../../../ThirdParty/signalsmith;../../../ThirdParty/libarchive/libarchive">
   <MAINGROUP id="bQGqRZ" name="OrganSampler">
     <GROUP id="{1CF4E020-5D96-48D3-C007-4FEDB9856EFD}" name="Source">
@@ -38,6 +38,8 @@
       <FILE id="p9tslD" name="asio.cpp" compile="1" resource="0" file="../ASIOSDK/common/asio.cpp"/>
       <FILE id="ArXtr1" name="ArchiveExtract.h" compile="0" resource="0" file="Source/ArchiveExtract.h"/>
       <FILE id="ArXtr2" name="ArchiveExtract.cpp" compile="1" resource="0" file="Source/ArchiveExtract.cpp"/>
+        <FILE id="SmFls1" name="SampleFiles.h" compile="0" resource="0" file="Source/SampleFiles.h"/>
+        <FILE id="SmFls2" name="SampleFiles.cpp" compile="1" resource="0" file="Source/SampleFiles.cpp"/>
       <FILE id="HwOdf1" name="HauptwerkOdf.h" compile="0" resource="0" file="Source/HauptwerkOdf.h"/>
       <FILE id="HwOdf2" name="HauptwerkOdf.cpp" compile="1" resource="0" file="Source/HauptwerkOdf.cpp"/>
       <FILE id="McMrg1" name="MainComponentMerge.cpp" compile="1" resource="0" file="Source/MainComponentMerge.cpp"/>

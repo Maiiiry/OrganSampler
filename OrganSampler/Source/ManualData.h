@@ -229,7 +229,9 @@ static const char* const kManualText_part1 =
     "\n"
     "Click *Stop List* in the top bar, then *Load folder...* and choose the top\n"
     "folder of the samples for one division (the folder that holds that division's\n"
-    "stop folders, see \"How the sample folders must be organised\"). The program\n"
+    "stop folders, see \"How the sample folders must be organised\") - or the RAR\n"
+    "archive(s) the samples came in, which the program reads as the folders they\n"
+    "hold (see \"Sample archives (RAR)\"). The program\n"
     "asks which division its stops go to. Repeat for every division; or load one\n"
     "tree holding everything and move stops between divisions in the table. Click\n"
     "*Apply and reload*. The stops appear as buttons on the grid. This step comes\n"
@@ -402,10 +404,10 @@ static const char* const kManualText_part1 =
     "        036-C.wav\n"
     "        ...\n"
     "```\n"
-    "\n"
-    "  A set with one release per pipe has just the folder `rel`. A stop without any\n"
     ;
 static const char* const kManualText_part2 =
+    "\n"
+    "  A set with one release per pipe has just the folder `rel`. A stop without any\n"
     "  release folder plays as well: when the key is let go the sound fades out\n"
     "  (the *Sustain fade-out* of Global sound) and the voice falls silent, with no\n"
     "  room decay.\n"
@@ -453,35 +455,49 @@ static const char* const kManualText_part2 =
     "  Stars at both ends match anywhere, like no star at all. Capital letters do\n"
     "  not matter; underscores and other characters count exactly as written.\n"
     "\n"
-    "### Unpacking sample archives (RAR)\n"
+    "### Sample archives (RAR)\n"
     "\n"
-    "Sample folders are mostly distributed as RAR archives, and the program loads\n"
-    "folders, not archives: unpack the archive first, then *Load folder...* the\n"
-    "folder tree it contained. Three ways:\n"
+    "Sample folders are mostly distributed as RAR archives. They need not be\n"
+    "unpacked: *Load folder...* in the Stop List takes the `.rar` file(s) as well\n"
+    "as a folder, and reads the samples out of the archives.\n"
     "\n"
-    "- **In OrganSampler:** the top-bar button *Unpack archive* (Configuration\n"
-    "  Editor > Console hides it, and the same row has a button that does the same\n"
-    "  without the top bar). One window: at the top the `.rar` file or files -\n"
-    "  *Browse...* (select several with Ctrl or Shift), or paste the paths, one\n"
-    "  per line - under it the folder to unpack into (proposed: the folder of the\n"
-    "  first archive; each archive's own folder tree is created inside it), then\n"
-    "  *Unpack*. Several archives are unpacked one after another with one\n"
-    "  progress bar; it can be cancelled, and at the end the program says where\n"
-    "  the folders are.\n"
-    "  RAR 4 and RAR 5 archives, solid or not, are read by libarchive (BSD\n"
-    "  licence), the files written as they are - no password-protected archives,\n"
-    "  and a multi-part archive (`.part1.rar`, `.part2.rar` ...) is unpacked from\n"
-    "  its first part only when the parts lie together. Nothing else is needed:\n"
-    "  this is the way on macOS, which has no unpacker with a window of its own.\n"
+    "- **Reading from the archives:** in *Load folder...* choose *Browse\n"
+    "  archives...* (several with Ctrl or Shift; a multi-volume set by its first\n"
+    "  part, `.part1.rar` or `.part01.rar`, the other parts lying beside it) or\n"
+    "  paste the paths, one per line, and click *Load from the archive*. The\n"
+    "  archive is read as the folders it holds: its top-level folders become\n"
+    "  folder trees \"beside\" the archive, as if it had been unpacked there, and\n"
+    "  the program finds their contents inside the archive. A configuration names\n"
+    "  those folders exactly as it would name unpacked ones, so the same\n"
+    "  configuration serves an unpacked and a packed set (a folder that is on the\n"
+    "  disk always wins over the archive). When the archive holds a Hauptwerk\n"
+    "  organ definition, the program offers to import it - the whole organ, read\n"
+    "  from the archives.\n"
+    "  The contents of an archive are indexed once (the program's own walk of the\n"
+    "  headers: seconds on an SSD, a few minutes for a 60 GB set on a hard disk,\n"
+    "  with a progress window) and the index is kept under the settings folder.\n"
+    "  Every file is then read on its own, so the loader reads the files in\n"
+    "  parallel; a set that was stored without compression reads as fast as plain\n"
+    "  files, a compressed one at the speed of the decompression (100-200 MB per\n"
+    "  second and core). RAR 4 and RAR 5; a solid archive is read in sequence,\n"
+    "  which is slower; password-protected archives are refused.\n"
+    "- **Unpacking in OrganSampler:** tick *Unpack the archives into a folder\n"
+    "  first* in the same window, choose the folder (proposed: the folder of the\n"
+    "  first archive; each archive's own folder tree is created inside it) and\n"
+    "  click *Unpack and load*: the archives are unpacked one after another with\n"
+    "  one progress bar (it can be cancelled), then their folder trees are loaded.\n"
+    "  The top-bar button *Unpack archive* does the unpacking alone; it is hidden\n"
+    "  by default (Configuration Editor > Console shows it).\n"
     "- **With a free program:** 7-Zip on Windows (https://www.7-zip.org), Keka or\n"
     "  The Unarchiver on macOS, `unrar x` or `7z x` in a terminal on Linux. WinRAR\n"
     "  itself unpacks as well (as a trial). Right-click the archive, choose\n"
     "  \"Extract to ...\".\n"
     "- **A zip** needs no program at all: every system opens it by a double-click.\n"
     "\n"
-    "Unpack onto a fast disk with room for the whole set (a large organ is many\n"
-    "gigabytes), and keep the folder structure as it comes out: the configurations\n"
-    "published for a set name its folders as the archive created them.\n"
+    "Unpacked or not, keep the folder structure as the archive has it: the\n"
+    "configurations published for a set name its folders as the archive created\n"
+    "them. Unpacked samples load faster from a fast disk (no decompression) and\n"
+    "the archives can go; packed ones save the disk space.\n"
     "\n"
     "## 1.5 Configurations and settings\n"
     "\n"
@@ -590,6 +606,8 @@ static const char* const kManualText_part2 =
     "- a Cornet from c1 up, a stop of several pieces as their union - and the\n"
     "keys of the division outside them are switched off in the stop's voicing,\n"
     "so they stay silent and no filled pipes are made for them (switch them on\n"
+    ;
+static const char* const kManualText_part3 =
     "again in the voicing dialog if you want them filled). The speed of the\n"
     "definition's tremulant (the middle of the range it wanders in) becomes the\n"
     "tremulant rate of every division whose pipes it modulates; the tremulant\n"
@@ -606,8 +624,6 @@ static const char* const kManualText_part2 =
     "the folder structure decides the organ, as always. Tremmed samples (the\n"
     "\"tremmed\" ranks, the `trem` folders, the `..._TR` sibling folders of the\n"
     "divisions, the `...tr` / `...TREM` siblings of the stop folders) are left out\n"
-    ;
-static const char* const kManualText_part3 =
     "and the configuration starts with the default Ignored Patterns; OrganSampler\n"
     "has its own tremulant. (A stop the definition plays from folders named TREM\n"
     "only - Billerbeck's \"Grosse flute 32\" - is taken as Hauptwerk has it, and the\n"
@@ -792,6 +808,8 @@ static const char* const kManualText_part3 =
     "  see \"8. Configuration Editor reference\".\n"
     "\n"
     "## 2.2 The combination row\n"
+    ;
+static const char* const kManualText_part4 =
     "\n"
     "The row holds the combination pistons (their number is set in *Configuration\n"
     "Editor > Console > Combination pistons*), the *Set* button, the *<<* and *>>*\n"
@@ -808,8 +826,6 @@ static const char* const kManualText_part3 =
     "## 2.3 The crescendo\n"
     "\n"
     "The crescendo display is a row of segments, one per step (30 by default).\n"
-    ;
-static const char* const kManualText_part4 =
     "Drag it, or move a learned MIDI controller (right-click the display: *Learn\n"
     "MIDI continuous controller*). *Cresc.* switches the crescendo on: switching it\n"
     "on remembers the registration set by hand, switching it off brings that\n"
@@ -994,6 +1010,8 @@ static const char* const kManualText_part4 =
     "  the lit bar is created straight inside the folder. Dragging an item out of\n"
     "  an open voicing onto a cell of the grid takes it out of the folder.\n"
     "- A **free cell** (dashed) offers, on a click, \"New stop folder here\" (an empty\n"
+    ;
+static const char* const kManualText_part5 =
     "  stop ready to take children), \"New stop here\" with the ready-made stops of\n"
     "  the loaded folders that no division of the instrument uses yet, and the\n"
     "  division's pooled stops and transmissions, which return to the grid in that\n"
@@ -1010,8 +1028,6 @@ static const char* const kManualText_part4 =
     "sliders:\n"
     "\n"
     "- **Rank count [II]** (right after the button on every opened stop; it can be\n"
-    ;
-static const char* const kManualText_part5 =
     "  switched where the button carries a count: a stop folder, or a stop with\n"
     "  items indented under it) - whether the button carries the Roman numeral of\n"
     "  the ranks that sound with it. Off: the name alone. On by default; saved\n"
@@ -1178,7 +1194,10 @@ static const char* const kManualText_part5 =
     "## 4.1 Folder trees and the pool\n"
     "\n"
     "- **Load folder...** loads a folder tree (the samples of an organ, or a part of them) and\n"
-    "  asks which division its stops go to. A tree is loaded once and its folders\n"
+    "  asks which division its stops go to. One window: the folder tree, or the\n"
+    "  RAR archive(s) the samples came in - read as the folders they hold, or\n"
+    "  unpacked first when the switch says so (see \"Sample archives (RAR)\").\n"
+    "  A tree is loaded once and its folders\n"
     "  can serve any division. When a tree of the organ is missing on this\n"
     "  computer (a configuration from elsewhere: the division header says\n"
     "  \"Sample folder not found\"), a loaded folder of the same name takes the\n"
@@ -1193,6 +1212,8 @@ static const char* const kManualText_part5 =
     "  folder names and the perspective prefixes), so it shows what was\n"
     "  recognised, and it can be corrected where the rules could not pair the\n"
     "  folders - when the perspectives of one stop live in two folder trees, for\n"
+    ;
+static const char* const kManualText_part6 =
     "  example.\n"
     "- The info line at the bottom counts the sample folders found in all trees,\n"
     "  how many the table uses and how many are free.\n"
@@ -1212,8 +1233,6 @@ static const char* const kManualText_part5 =
     "  loaded trees (a folder serves one cell only); the small x beside a cell\n"
     "  frees its folder. A cell can also be dragged onto another cell (empty: takes\n"
     "  the folder; occupied: swaps). The whole path appears in a tip while the\n"
-    ;
-static const char* const kManualText_part6 =
     "  mouse rests on the cell.\n"
     "- **Transmissions:** the cell shows where the stop's transmissions go\n"
     "  (division and transposition); click it to add one into any division (its\n"
@@ -1395,6 +1414,8 @@ static const char* const kManualText_part6 =
     "  impulse response on its routes. Give the auxiliary route the rear speakers\n"
     "  and a *different* IR than the main routes (a rear or more distant impulse\n"
     "  response): the result is a fake \"Rear\" perspective that the set never had.\n"
+    ;
+static const char* const kManualText_part7 =
     "\n"
     "What it costs: an auxiliary route with a device means every sounding pipe is\n"
     "rendered twice (once in its perspective, once in the mix), so it uses up the\n"
@@ -1414,8 +1435,6 @@ static const char* const kManualText_part6 =
     "and it can even **mix different kinds of driver** in one organ. An organ can\n"
     "spread over every output of every interface in the room: the Hauptwerk\n"
     "division on an RME, the R\xC3\xBC""ckpositiv on a second card, the pedal on a third,\n"
-    ;
-static const char* const kManualText_part7 =
     "headphones on the on-board sound chip. Which drivers there are and how to\n"
     "set them up differs by operating system: see \"Audio on Windows\", \"Audio on\n"
     "Linux\" and \"Audio on macOS\" below. Two things hold everywhere:\n"
@@ -1597,6 +1616,8 @@ static const char* const kManualText_part7 =
     "  at least one buffer. If the JACK type lists no device at all, the JACK\n"
     "  library was not found: install `pipewire-jack` as above, or start the\n"
     "  program with `pw-jack ./OrganSampler`.\n"
+    ;
+static const char* const kManualText_part8 =
     "- Moving a route from JACK to ALSA on the same card: PipeWire keeps the\n"
     "  card for a few seconds after the last JACK client left it, so the ALSA\n"
     "  entry stays listed for that while and the program waits up to seven\n"
@@ -1616,8 +1637,6 @@ static const char* const kManualText_part7 =
     "  the audio tab (where Windows has the driver control panel button) lists\n"
     "  everything regardless; the same switch is in the settings editor as *Audio\n"
     "  devices: list also the ALSA devices that cannot be opened*.\n"
-    ;
-static const char* const kManualText_part8 =
     "\n"
     "A menu entry with the icon, so that the program starts from the\n"
     "application menu like any other: *Install menu entry and icon* in the\n"
@@ -1799,6 +1818,8 @@ static const char* const kManualText_part8 =
     "## 6.3 Temperaments\n"
     "\n"
     "*Temperaments* (top bar) opens the temperament dialog: a list of thirty\n"
+    ;
+static const char* const kManualText_part9 =
     "historical temperaments (Werckmeister, Kirnberger, Valotti, Neidhardt,\n"
     "meantone, Pythagorean, Silbermann, Sorge ...) and the custom ones you add. The\n"
     "\"+\" beside a temperament shows its cent deviations per pitch class; those of a\n"
@@ -1818,8 +1839,6 @@ static const char* const kManualText_part8 =
     "  row of every stop reports what its own ranks were found to be in\n"
     "  (\"temperament = ...\"), which helps the choice. \"Equal\" is reported whenever\n"
     "  the recording matches equal temperament.\n"
-    ;
-static const char* const kManualText_part9 =
     "- **The target temperament** is the temperament the organ *plays* in. A\n"
     "  **single click** on a temperament selects it (or *Target temperament* in\n"
     "  the Configuration Editor). Every pipe is then retuned by the difference\n"
@@ -2001,6 +2020,8 @@ static const char* const kManualText_part9 =
     "every copy that is built is also written to a file, and at the next load\n"
     "of the same stops with the same settings the copies are read from the files\n"
     "instead of being computed: the build after loading takes seconds instead of\n"
+    ;
+static const char* const kManualText_part10 =
     "minutes. A long build that is interrupted (by an operation in the voicing)\n"
     "still writes the pipes it has finished.\n"
     "\n"
@@ -2020,8 +2041,6 @@ static const char* const kManualText_part9 =
     "  to get the disk space back, or after replacing the samples wholesale; the\n"
     "  copies are built again (and cached again) the next time they are needed.\n"
     "  Nothing else is lost.\n"
-    ;
-static const char* const kManualText_part10 =
     "- *Filled pipes cache: files of stops not loaded now* - **Remove them**\n"
     "  deletes only the files of ranks that are not loaded at the moment: the\n"
     "  stops of other configurations, of folders you have unloaded or deleted.\n"
@@ -2203,6 +2222,8 @@ static const char* const kManualText_part10 =
     "at a quarter of the sample rate (half when the high cut of the wet signal\n"
     "lies above 2.5 kHz, so that the wet band stays intact), trims the IR where\n"
     "its energy has fallen 60 dB below the whole (a church IR of 7 s is there\n"
+    ;
+static const char* const kManualText_part11 =
     "after 3.5 s; what follows is inaudible under the organ) and reduces a true\n"
     "stereo IR to its direct channels - a small fraction of the work, the same\n"
     "room, a little less air in the top of the reverb. *Automatic* (default)\n"
@@ -2222,8 +2243,6 @@ static const char* const kManualText_part10 =
     "channels, with the same impulse response, dry/wet, wet volume, high and low\n"
     "cut, pre-delay, decay and fade-out. Convolution is linear - the reverb of the\n"
     "summed dry signal of such routes is the sum of their reverbs - so the sound is\n"
-    ;
-static const char* const kManualText_part11 =
     "the same and the work is paid once per group: Rural Organ's three divisions on\n"
     "one device, each with its default and its auxiliary route, run two\n"
     "convolutions instead of six. The IR caption of a route that rides on\n"
@@ -2405,6 +2424,8 @@ static const char* const kManualText_part11 =
     "### Sustain fade-out on key release\n"
     "\n"
     "How long the sounding pipe fades out when its key is released and the release\n"
+    ;
+static const char* const kManualText_part12 =
     "sample takes over (default 70 ms). Too short and the join clicks or the pipe\n"
     "stops unnaturally; too long and the release sounds smeared. The value is for\n"
     "the sounding c1 (MIDI 60 of an 8' rank, the rank's footage counted in): pipes\n"
@@ -2424,8 +2445,6 @@ static const char* const kManualText_part11 =
     "position \"-inf\" silences them. Quieter releases make a drier organ without\n"
     "losing the room entirely.\n"
     "\n"
-    ;
-static const char* const kManualText_part12 =
     "### Release cutting\n"
     "\n"
     "Release samples are faded out over this share of their length and end there\n"
@@ -2607,6 +2626,8 @@ static const char* const kManualText_part12 =
     "level relation the source pipe's release has to its sustain (measured when the\n"
     "copy was built), so the step at the key release is the real pipe's. Off\n"
     "(default): the copy plays at its own level. Applied at playback, nothing is\n"
+    ;
+static const char* const kManualText_part13 =
     "rebuilt; switch it on when the releases of an extension are clearly louder or\n"
     "softer than those of the real pipes beside them.\n"
     "\n"
@@ -2626,8 +2647,6 @@ static const char* const kManualText_part12 =
     "\n"
     "Pitch shift methods. On (default): every shifted copy is brought to the\n"
     "loudness of its source sample, so a filled pipe is as strong as the pipe it was\n"
-    ;
-static const char* const kManualText_part13 =
     "made from. Off: the copy keeps whatever level the shift left it with (a copy\n"
     "with its formants moved down loses level).\n"
     "\n"
@@ -2790,10 +2809,11 @@ static const char* const kManualText_part13 =
     "\n"
     "### Top bar: Unpack archive\n"
     "\n"
-    "Shows or hides the Unpack archive button (see \"Unpacking sample archives\n"
-    "(RAR)\"): RAR archives of sample folders unpacked by the program into a\n"
-    "folder of your choice. Shown by default; the button beside this switch does\n"
-    "the same without the top bar.\n"
+    "Shows or hides the Unpack archive button (see \"Sample archives (RAR)\"): RAR\n"
+    "archives of sample folders unpacked by the program into a folder of your\n"
+    "choice. Hidden by default since *Load folder...* reads the archives itself\n"
+    "(and unpacks on request); the button beside this switch does the same\n"
+    "without the top bar.\n"
     "\n"
     "### Top bar: GLOBAL RESET\n"
     "\n"
@@ -2808,6 +2828,8 @@ static const char* const kManualText_part13 =
     "\n"
     "### Melody couplers: legato grace time\n"
     "\n"
+    ;
+static const char* const kManualText_part14 =
     "On: when the highest key changes in legato playing, the melody coupler waits a\n"
     "moment before moving to the new key, so a brief overlap of two keys does not\n"
     "make the solo stop jump. Off: it follows at once.\n"
@@ -2828,8 +2850,6 @@ static const char* const kManualText_part13 =
     "a wrong base temperament puts the whole organ slightly out of tune. See\n"
     "\"Temperaments\".\n"
     "\n"
-    ;
-static const char* const kManualText_part14 =
     "### Target temperament\n"
     "\n"
     "The temperament the organ *plays* in (see \"Temperaments\"). Every pipe is retuned by the\n"
@@ -3010,6 +3030,8 @@ static const char* const kManualText_part14 =
     "The sag is reached with many stops engaged and many keys held, the shares being\n"
     "set in Advanced global audio. 0 switches the wind model off for this division.\n"
     "\n"
+    ;
+static const char* const kManualText_part15 =
     "### Wind: oscillation frequency\n"
     "\n"
     "The frequency the wind pressure oscillates at after a key stroke (4 to 10 Hz,\n"
@@ -3030,8 +3052,6 @@ static const char* const kManualText_part14 =
     "400 ms, default 255). The same lag governs the volume glide when a pipe held\n"
     "through several routes passes from one route to another.\n"
     "\n"
-    ;
-static const char* const kManualText_part15 =
     "### Wind: also affects divisions\n"
     "\n"
     "Tick the other divisions fed from this wind supply: they receive half of this\n"

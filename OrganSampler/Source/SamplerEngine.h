@@ -1473,7 +1473,7 @@ private:
     void loadSamplesIntoStop(Stop* stop, const juce::File& folder, bool isRelease, int releaseMaxHoldMs);
     // Attack samples of rank->folder plus its rel* release folders.
     void loadRankSamples(Stop* rank);
-    static SmplInfo parseSmpl(const juce::File& file);
+    static SmplInfo parseSmpl(const juce::File& file, std::shared_ptr<juce::MemoryBlock> data = nullptr);   // data: the file's bytes out of an archive (0.8.157)
     // Fills tuning440Cents / measuredDiapasonHz of every rank of one organ
     // (all ranks loaded from the same folder share one diapason).
     static void computeTuning440(const std::vector<Stop*>& ranksOfOrgan);

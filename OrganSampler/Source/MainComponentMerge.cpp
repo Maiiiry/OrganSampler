@@ -9,6 +9,7 @@
 #include "MainComponent.h"
 #include "CrashHandler.h"
 #include "MemoryInfo.h"
+#include "SampleFiles.h"
 
 #if JUCE_WINDOWS
  #include <windows.h>
@@ -35,10 +36,7 @@ namespace
     // of this; loops and copies of filled pipes add a little).
     juce::int64 wavBytesUnder(const juce::File& folder)
     {
-        juce::int64 bytes = 0;
-        for (const auto& entry : juce::RangedDirectoryIterator(folder, true, "*.wav;*.WAV;*.flac;*.FLAC", juce::File::findFiles))
-            bytes += entry.getFileSize();
-        return bytes;
+        return SampleFiles::totalBytes(folder, { ".wav", ".flac" }, true);   // disk or archive (0.8.157)
     }
 }
 
@@ -74,10 +72,10 @@ void MainComponent::warnIfMemoryShortForTrees(std::vector<juce::String> trees, c
             for (const auto& other : done) if (tree == other || juce::File(tree).isAChildOf(juce::File(other))) below = true;
             if (below) continue;
             const juce::File folder(tree);
-            if (!folder.isDirectory()) continue;
+            if (!SampleFiles::isDirectory(folder)) continue;
             bytes += wavBytesUnder(folder);
             done.push_back(tree);
-            if (headers < 48)
+            if (headers < 48 && folder.isDirectory())   // the headers from the disk alone (an archive tree: the usual 24 bit / 48 kHz)
                 for (const auto& entry : juce::RangedDirectoryIterator(folder, true, "*.wav;*.WAV", juce::File::findFiles))
                 {
                     juce::FileInputStream in(entry.getFile());

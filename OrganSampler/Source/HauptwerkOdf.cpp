@@ -1,5 +1,6 @@
 #include "HauptwerkOdf.h"
 #include "CrashHandler.h"
+#include "SampleFiles.h"
 #include "StopNames.h"
 
 #include <algorithm>
@@ -228,24 +229,25 @@ namespace
 //==============================================================================
 bool HauptwerkOdf::looksLikeOdf(const juce::File& file)
 {
-    if (!file.existsAsFile()) return false;
+    if (!SampleFiles::existsAsFile(file)) return false;   // on the disk or in a RAR archive (0.8.157)
     if (file.getFileName().endsWithIgnoreCase(".Organ_Hauptwerk_xml")) return true;
     if (!file.hasFileExtension("xml")) return false;
-    juce::FileInputStream in(file);
-    if (!in.openedOk()) return false;
+    auto in = SampleFiles::openInput(file);
+    if (in == nullptr) return false;
     char head[4096]{};
-    const int n = in.read(head, (int)sizeof(head) - 1);
+    const int n = in->read(head, (int)sizeof(head) - 1);
     return n > 0 && juce::String::fromUTF8(head, n).contains("<Hauptwerk");
 }
 
 juce::File HauptwerkOdf::hauptwerkRootFor(const juce::File& odf)
 {
+    // The folders may lie in RAR archives beside each other (0.8.157): SampleFiles sees them as folders.
     auto folder = odf.getParentDirectory();
-    if (folder.getFileName().equalsIgnoreCase("OrganDefinitions") && folder.getParentDirectory().getChildFile("OrganInstallationPackages").isDirectory())
+    if (folder.getFileName().equalsIgnoreCase("OrganDefinitions") && SampleFiles::isDirectory(folder.getParentDirectory().getChildFile("OrganInstallationPackages")))
         return folder.getParentDirectory();
     for (int up = 0; up < 5 && folder != juce::File(); ++up)
     {
-        if (folder.getChildFile("OrganInstallationPackages").isDirectory()) return folder;
+        if (SampleFiles::isDirectory(folder.getChildFile("OrganInstallationPackages"))) return folder;
         const auto parent = folder.getParentDirectory();
         if (parent == folder) break;
         folder = parent;
@@ -257,9 +259,9 @@ juce::File HauptwerkOdf::packageFolder(const juce::File& hauptwerkRoot, int pack
 {
     const auto packages = hauptwerkRoot.getChildFile("OrganInstallationPackages");
     const auto padded = packages.getChildFile(juce::String(packageId).paddedLeft('0', 6));
-    if (padded.isDirectory()) return padded;
+    if (SampleFiles::isDirectory(padded)) return padded;
     const auto bare = packages.getChildFile(juce::String(packageId));
-    return bare.isDirectory() ? bare : padded;
+    return SampleFiles::isDirectory(bare) ? bare : padded;
 }
 
 // A relative path with every part spelt as the folder on the disk is (a
@@ -277,11 +279,12 @@ juce::String HauptwerkOdf::spelledAsOnDisk(const juce::File& base, const juce::S
         juce::File next = dir.getChildFile(part);
         juce::String name = part;
         bool found = false;
-        for (const auto& entry : juce::RangedDirectoryIterator(dir, false, "*", juce::File::findDirectories))
-            if (entry.getFile().getFileName() == part) { found = true; break; }
+        const auto children = SampleFiles::childDirectories(dir);   // disk or archive (0.8.157)
+        for (const auto& child : children)
+            if (child.getFileName() == part) { found = true; break; }
         if (!found)
-            for (const auto& entry : juce::RangedDirectoryIterator(dir, false, "*", juce::File::findDirectories))
-                if (entry.getFile().getFileName().equalsIgnoreCase(part)) { name = entry.getFile().getFileName(); next = entry.getFile(); found = true; break; }
+            for (const auto& child : children)
+                if (child.getFileName().equalsIgnoreCase(part)) { name = child.getFileName(); next = child; found = true; break; }
         if (!found) return {};
         spelt.add(name);
         dir = next;
@@ -337,7 +340,9 @@ HauptwerkOdf HauptwerkOdf::parse(const juce::File& file, const std::function<boo
 {
     HauptwerkOdf odf;
     juce::MemoryBlock data;
-    if (!file.loadFileAsData(data) || data.getSize() < 16) { odf.error = "The file could not be read."; return odf; }
+    // The definition from the disk, or out of a RAR archive (0.8.157).
+    if (auto stream = SampleFiles::openInput(file)) stream->readIntoMemoryBlock(data);
+    if (data.getSize() < 16) { odf.error = "The file could not be read."; return odf; }
     const char* text = (const char*)data.getData();
     if (juce::String::fromUTF8(text, (int)juce::jmin((size_t)4096, data.getSize())).indexOf("<Hauptwerk") < 0)
     {
@@ -1246,7 +1251,7 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
             for (const int packageId : packages)
             {
                 const auto folder = packageFolder(hauptwerkRoot, packageId).getChildFile(stopRelative);
-                if (folder.isDirectory()) folders.push_back(folder);
+                if (SampleFiles::isDirectory(folder)) folders.push_back(folder);
             }
         }
         if (folders.empty()) folders = rankFolders;   // the perspectives above the stops, or nothing in common

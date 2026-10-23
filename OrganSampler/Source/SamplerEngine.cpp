@@ -12,6 +12,7 @@
 #if JUCE_MSVC
  #pragma warning(pop)
 #endif
+#include "SampleFiles.h"
 #include <chrono>
 #include <cmath>
 #include <complex>
@@ -69,6 +70,8 @@ namespace
     }
     std::vector<juce::File> subdirectoriesRecursive(const juce::File& top)
     {
+        // A tree in RAR archives (0.8.157): the paths below it are served by SampleFiles.
+        if (!top.isDirectory() || !SampleFiles::archivesIn(top).empty()) return SampleFiles::subdirectoriesRecursive(top);
         std::vector<juce::File> result;
         collectSubdirectories(fsPath(top), result);
         return result;
@@ -76,6 +79,7 @@ namespace
     // The names of the plain files of a folder (no stat).
     std::vector<juce::String> fileNamesOf(const juce::File& folder)
     {
+        if (!folder.isDirectory()) return SampleFiles::fileNames(folder);   // an archive folder (0.8.157)
         std::vector<juce::String> names;
         std::error_code error;
         for (std::filesystem::directory_iterator it(fsPath(folder), std::filesystem::directory_options::skip_permission_denied, error), end;
@@ -113,12 +117,15 @@ namespace
     }
     std::vector<juce::File> subdirectoriesRecursive(const juce::File& top)
     {
+        // A tree in RAR archives (0.8.157): the paths below it are served by SampleFiles.
+        if (!top.isDirectory() || !SampleFiles::archivesIn(top).empty()) return SampleFiles::subdirectoriesRecursive(top);
         std::vector<juce::File> result;
         collectSubdirectories(top.getFullPathName().toStdString(), result);
         return result;
     }
     std::vector<juce::String> fileNamesOf(const juce::File& folder)
     {
+        if (!folder.isDirectory()) return SampleFiles::fileNames(folder);   // an archive folder (0.8.157)
         std::vector<juce::String> names;
         const std::string dir = folder.getFullPathName().toStdString();
         DIR* d = opendir(dir.c_str());
@@ -10328,10 +10335,13 @@ namespace
     // 12-16 kHz sat 20 dB under the signal). `keptFull` tells the caller.
     std::unique_ptr<Sample> decodeSampleFile(const juce::File& file, juce::AudioFormatManager& manager,
         bool asFloat, SmplInfo smpl, bool resampleToBase = true, double baseRate = kBaseSampleRate,
-        double fullRate = 0.0, bool* keptFull = nullptr)
+        double fullRate = 0.0, bool* keptFull = nullptr, std::shared_ptr<juce::MemoryBlock> data = nullptr)
     {
         std::vector<LoopPoints> loops = std::move(smpl.loops);
-        std::unique_ptr<juce::AudioFormatReader> reader(manager.createReaderFor(file));
+        // The file from the disk, or its bytes read out of a RAR archive (0.8.157).
+        std::unique_ptr<juce::AudioFormatReader> reader(data != nullptr
+            ? manager.createReaderFor(std::make_unique<juce::MemoryInputStream>(data->getData(), data->getSize(), false))
+            : manager.createReaderFor(file));
         if (reader == nullptr || reader->lengthInSamples <= 0 || reader->numChannels == 0) return nullptr;
         if (reader->lengthInSamples > (int64_t)1 << 30) return nullptr;   // > 2^30 frames: not a pipe sample
         const int channels = (int)juce::jmin<unsigned int>(reader->numChannels, 8u);
@@ -10438,10 +10448,13 @@ namespace
 
 }
 
-SmplInfo SamplerEngine::parseSmpl(const juce::File& file)
+SmplInfo SamplerEngine::parseSmpl(const juce::File& file, std::shared_ptr<juce::MemoryBlock> data)
 {
     SmplInfo info;
-    std::unique_ptr<juce::InputStream> stream(file.createInputStream());
+    // The file from the disk, or its bytes read out of a RAR archive (0.8.157).
+    std::unique_ptr<juce::InputStream> stream = data != nullptr
+        ? std::unique_ptr<juce::InputStream>(new juce::MemoryInputStream(data->getData(), data->getSize(), false))
+        : std::unique_ptr<juce::InputStream>(file.createInputStream());
     if (!stream) return info;
     char header[12];
     if (stream->read(header, 12) < 12) return info;
@@ -10484,15 +10497,18 @@ SmplInfo SamplerEngine::parseSmpl(const juce::File& file)
 
 void SamplerEngine::loadSamplesIntoStop(Stop* stop, const juce::File& folder, bool isRelease, int releaseMaxHoldMs)
 {
-    struct Entry { juce::File file; int midi; int velocityLayer; };
+    struct Entry { juce::File file; int midi; int velocityLayer; std::shared_ptr<juce::MemoryBlock> data; bool archived; };
     std::vector<Entry> entries;
-    for (const auto& entry : juce::RangedDirectoryIterator(folder, false, "*.wav;*.flac;*.aiff", juce::File::findFiles))
+    // The folder's files: from the disk, or (0.8.157) read out of the RAR archive
+    // the folder lies in - each file by the thread that decodes it (a solid
+    // archive comes read already), the data in memory until decoded.
+    for (const auto& found : SampleFiles::readFolderFiles(folder, { ".wav", ".flac", ".aiff" }))
     {
-        const int midi = extractMidiFromFilename(entry.getFile().getFileName());
+        const int midi = extractMidiFromFilename(found.name);
         // "_NNN" at the end: a velocity layer (attacks and releases alike).
-        const int layer = extractVelocityLayerFromFilename(entry.getFile().getFileName());
+        const int layer = extractVelocityLayerFromFilename(found.name);
         // Files whose key (number - offset) lies off the 0..127 range are not decoded.
-        if (midi >= 0 && midi - stop->sampleOffset >= 0 && midi - stop->sampleOffset < 128) entries.push_back({ entry.getFile(), midi, layer });
+        if (midi >= 0 && midi - stop->sampleOffset >= 0 && midi - stop->sampleOffset < 128) entries.push_back({ folder.getChildFile(found.name), midi, layer, found.data, found.archived });
     }
     std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b)
     {
@@ -10535,10 +10551,13 @@ void SamplerEngine::loadSamplesIntoStop(Stop* stop, const juce::File& folder, bo
         }
         try
         {
+            if (entries[(size_t)index].archived && entries[(size_t)index].data == nullptr) entries[(size_t)index].data = SampleFiles::readFile(entries[(size_t)index].file);
+            if (entries[(size_t)index].archived && entries[(size_t)index].data == nullptr) return;   // could not be read from the archive (logged)
             bool keptFull = false;
             decoded[(size_t)index] = decodeSampleFile(entries[(size_t)index].file, *manager, asFloat,
-                parseSmpl(entries[(size_t)index].file), resample || baseRate < kBaseSampleRate - 0.5, baseRate,
-                halfRate ? storageSampleRate : 0.0, &keptFull);
+                parseSmpl(entries[(size_t)index].file, entries[(size_t)index].data), resample || baseRate < kBaseSampleRate - 0.5, baseRate,
+                halfRate ? storageSampleRate : 0.0, &keptFull, entries[(size_t)index].data);
+            entries[(size_t)index].data.reset();   // the archive bytes go as soon as the sample is decoded
             if (halfRate && decoded[(size_t)index] != nullptr)
             {
                 (keptFull ? halfRateKeptFull : halfRateReleases).fetch_add(1, std::memory_order_relaxed);
@@ -10910,7 +10929,7 @@ void SamplerEngine::loadManualFolder(const juce::File& topFolder, int manualInde
                 if (assignment.folder == topFolder) { groupFor(manual).assignments.push_back(assignment); ++totalAssignments; }
                 continue;
             }
-            if (!assignment.folder.isAChildOf(topFolder) || !assignment.folder.isDirectory()) continue;
+            if (!assignment.folder.isAChildOf(topFolder) || !SampleFiles::isDirectory(assignment.folder)) continue;   // disk or archive (0.8.157)
             if (!folderHasNumberedSamples(assignment.folder)) continue;
             FolderAssignment copy = assignment;
             copy.grouped = true;
@@ -10920,6 +10939,24 @@ void SamplerEngine::loadManualFolder(const juce::File& topFolder, int manualInde
             ++totalAssignments;
         }
         if (groups.empty()) groupFor(baseManual);   // nothing of this tree is used: an empty batch keeps the bookkeeping
+        // Folders inside a RAR archive (0.8.157) are read in the archive's order: the
+        // reader keeps its place and never goes back when the stops come in that order.
+        for (auto& [groupManual, group] : groups)
+        {
+            std::vector<std::pair<juce::int64, size_t>> order;
+            bool anyArchive = false;
+            for (size_t i = 0; i < group.assignments.size(); ++i)
+            {
+                const juce::int64 position = group.assignments[i].container ? -1 : SampleFiles::archiveOrderOf(group.assignments[i].folder);
+                if (position >= 0) anyArchive = true;
+                order.push_back({ position < 0 ? std::numeric_limits<juce::int64>::max() : position, i });
+            }
+            if (!anyArchive) continue;
+            std::stable_sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+            std::vector<FolderAssignment> sorted;
+            for (const auto& [position, i] : order) sorted.push_back(group.assignments[i]);
+            group.assignments = std::move(sorted);
+        }
     }
     else
     {
@@ -11423,12 +11460,11 @@ namespace
     bool folderHasNumberedWavFiles(const juce::File& folder)
     {
         bool foundWav = false;
-        for (const auto& entry : juce::RangedDirectoryIterator(folder, false, "*", juce::File::findFiles))
+        for (const auto& name : fileNamesOf(folder))   // disk or archive (0.8.157)
         {
-            const auto file = entry.getFile();
-            if (!file.hasFileExtension(".wav")) continue;
+            if (!name.endsWithIgnoreCase(".wav")) continue;
             foundWav = true;
-            const auto fileName = file.getFileNameWithoutExtension();
+            const auto fileName = name.dropLastCharacters(4);
             if (fileName.length() < 3) return false;
             for (int i = 0; i < 3; ++i)
                 if (!juce::CharacterFunctions::isDigit(fileName[i])) return false;
@@ -11532,9 +11568,8 @@ void SamplerEngine::loadRankSamples(Stop* rank)
 {
     rank->storageSignature = storageSignature();
     loadSamplesIntoStop(rank, rank->folder, false, 99999);
-    for (const auto& relEntry : juce::RangedDirectoryIterator(rank->folder, false, "*", juce::File::findDirectories))
+    for (const auto& relFolder : SampleFiles::childDirectories(rank->folder))   // disk or archive (0.8.157)
     {
-        const juce::File relFolder = relEntry.getFile();
         const juce::String relName = relFolder.getFileName();
         if (!relName.startsWithIgnoreCase("rel") || !folderHasNumberedWavFiles(relFolder)) continue;
         int maxHoldMs = extractReleaseHoldMs(relName);

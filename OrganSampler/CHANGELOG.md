@@ -12,6 +12,37 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.157] - 2026-10-23
+
+### Added
+- Samples straight from RAR archives: *Load folder...* in the Stop List is
+  one window that takes a folder tree or the `.rar` file(s) of the sample
+  folders (RAR 4 and RAR 5, multi-volume sets by their first part, several
+  archives at once). An archive is read as the folders it holds - its
+  top-level folders become folder trees beside the archive, and a
+  configuration names those folders as if they were unpacked, so one
+  configuration serves the packed and the unpacked layout alike (an
+  unpacked copy on the disk always wins). A Hauptwerk organ definition found
+  inside is offered for import: the whole organ read from the archives.
+  "Unpack the archives into a folder first" (off by default) does what the
+  Unpack archive button did; that button is now hidden by default (the
+  Configuration Editor's Console shows it again).
+- The contents of an archive are indexed once by the program's own walk of
+  the headers (seconds on an SSD, a few minutes for a 60 GB set on a hard
+  disk - with a progress window) and kept under the settings folder; every
+  file is then read on its own, so the loader decompresses files in parallel
+  (Caen demo, 6.5 GB packed: 7 s from the page cache against 47 s read in
+  sequence). Stored (uncompressed) files are read without decompression.
+  Solid archives are read in sequence; encrypted ones are refused.
+
+### Fixed
+- libarchive, used for the reading, was found to miss the signature of the
+  next volume when it fell on a 512-byte chunk edge (an index of a 14-part
+  set ended after 27 of 61 GB and the rest was read through for nothing) and
+  to stop on the padding after the end block of a RAR 4 volume with a
+  recovery record ("Bad RAR file"). The program's own header walk feeds
+  libarchive only the bytes of the file being read, so neither can happen.
+
 ## [0.8.156] - 2026-10-23
 
 ### Fixed
