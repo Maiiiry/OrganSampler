@@ -64,17 +64,19 @@ public:
         std::function<void(juce::Component*, juce::Point<int>, bool duplicate)> hover;   // while dragging: shows where an indent would happen (duplicate: the drag makes a copy)
     };
     void setArrangeHooks(ArrangeHooks hooks) { arrange = std::move(hooks); }
-    // "Files vs keys" chosen in the voicing (0.8.155): the owner sets it on the
-    // Stop List row and the engine, which loads the stop's samples again.
-    std::function<void(Stop*, int)> sampleOffsetRequest;
+    // The stop's Transposition chosen in the voicing (0.8.158): the owner sets it
+    // on the Stop List row and the engine, which loads the stop's samples again.
+    std::function<void(Stop*, int)> transpositionRequest;
+    // The One-shot switch of a stop (0.8.158): on/off, overriding the One-shot Patterns.
+    std::function<void(Stop*, bool)> oneShotRequest;
     juce::Rectangle<int> getStopButtonBounds() const { return stopButton.getBounds(); }
     // Development (ORGAN_DUMP_GRID): where the first line's widgets are and whether they show.
     juce::String describeLineOne() const
     {
         auto one = [](const juce::String& name, const juce::Component& c)
         { return name + (c.isVisible() ? " " : " hidden ") + c.getBounds().toString(); };
-        return "row " + getBounds().toString() + " | " + one("rankCount", rankCountToggle) + (rankCountToggle.isEnabled() ? "" : " disabled")
-            + " | " + one("diapason", diapasonLabel) + " | " + one("alias", aliasBox);
+        return "row " + getBounds().toString() + " | " + one("transposition", shiftBox) + " | " + one("diapason", diapasonLabel) + " | " + one("alias", aliasBox)
+            + " | " + one("oneShot", oneShotToggle) + (oneShotToggle.getToggleState() ? " on" : " off") + " | " + one("rankCount", rankCountToggle);
     }
     // Expanded rows carry two lines of controls above the per-key sliders.
     static constexpr int expandedControlsHeight = 104;
@@ -145,8 +147,11 @@ public:
         stopButton.setButtonText(caption());   // "[N]" on a stop folder's button
         // The rank-count switch is enabled where the button can carry a count: known
         // only now, the getters come after construction (0.8.153: it stayed greyed).
-        rankCountToggle.setEnabled((childrenGetter && !childrenGetter(stop).empty())
-            || (childTransmissionsGetter && !childTransmissionsGetter(stop).empty()));
+        const bool folder = (childrenGetter && !childrenGetter(stop).empty())
+            || (childTransmissionsGetter && !childTransmissionsGetter(stop).empty());
+        rankCountToggle.setEnabled(folder);
+        rankCountToggle.setVisible(isExpanded() && !isTransmission() && folder);   // shown on stop folders only (0.8.158)
+        resized();
     }
 
 private:
@@ -196,8 +201,9 @@ private:
     std::array<juce::ComboBox, SamplerEngine::maxManuals> transmissionBoxes;   // how many transmissions (new stop buttons) per division
     std::function<void(Stop*, int)> transmissionRemover;
     void transmissionCountChanged(int manual);
-    // Transmission rows: transposition instead of the transmission counts, and the
-    // source stop instead of the pitch information.
+    // Transposition: a transmission's shift, or (0.8.158) the stop's own; the
+    // list holds the pure intervals with the footage each gives. Transmission
+    // rows show the source stop instead of the pitch information.
     juce::Label transpositionLabel, sourceLabel;
     juce::ComboBox shiftBox;
     std::unique_ptr<juce::LookAndFeel> shiftMenuLookAndFeel;   // bold octave steps in the list
@@ -205,9 +211,8 @@ private:
     juce::Label aliasLabel;
     juce::ComboBox aliasBox;
     void aliasChanged();
-    juce::ToggleButton rankCountToggle;   // a stop folder's "[II]" on its button (0.8.146)
-    juce::Label sampleOffsetLabel;        // "Files vs keys:" before the box (0.8.155)
-    juce::ComboBox sampleOffsetBox;       // the stop's sample offset, -24..+24, settable here (the Stop List column too)
+    juce::ToggleButton rankCountToggle;   // a stop folder's "[II]" on its button (0.8.146; shown on stop folders only)
+    juce::ToggleButton oneShotToggle;     // the stop plays each sample once through (0.8.158; overrides the One-shot Patterns)
     juce::Label ranksLabel;
     juce::OwnedArray<juce::ToggleButton> rankButtons;
     // Velocity layers ("_070" files): one tick box per layer of the stop; unticked,
@@ -376,7 +381,8 @@ public:
     // Arrange mode: a click on a free grid cell asked for a new empty stop (a stop
     // folder) there. The owner adds its Stop List row and reloads; the cell is set.
     std::function<void(int manual, int column, int row)> newStopFolderRequest;
-    std::function<void(Stop*, int)> sampleOffsetRequest;   // "Files vs keys" chosen in a stop's voicing (0.8.155)
+    std::function<void(Stop*, int)> transpositionRequest;   // a stop's Transposition chosen in its voicing (0.8.158)
+    std::function<void(Stop*, bool)> oneShotRequest;        // a stop's One-shot switch (0.8.158)
     // Arrange mode: a stop folder dropped under a stop (after the question was
     // answered "Merge"): the owner moves its children under that stop, the folder
     // itself too when it has pipes, otherwise the empty folder row is removed.

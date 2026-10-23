@@ -424,6 +424,47 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   Never verify this by the sound's pitch (the user: "je to podle jména souboru ... zřejmé z ODF"). Organs imported
   before 0.8.155 keep offset 0: load the definition again or type the column. Dev hook `ORGAN_TEST_OFFSET=
   "<manual>|<stop prefix>|<offset>"` (the voicing path); the grid dump prints "notes a..b files N" per stop.
+  0.8.158 TRANSPOSITION (the user's rule, three messages): "Files vs keys" IS the transposition - ONE number,
+  `Stop::sampleOffset` (= file number - key, the engine's `keyShift()`), named Transposition everywhere (voicing box
+  `shiftBox` shared with the transmission rows, Stop List column "Transp."), counted against the REAL footage the files
+  have on their own numbers (smpl pitch - file number), never against the name: Doesburg quintaton "16" = files 024..
+  sounding 8' on their numbers -> "-12 -> 16'" (the ODF says -12, the auto-detection says -12, the box shows -12).
+  `Stop::footageSemitones` (computeTuning440, `footageSounding`, `footageBreaks`, `lowestFootageSemitones`) is the REAL
+  footage of the files on their own numbers (pitch - file number = pitch - (key + sampleOffset)) - the Orig. Pitch
+  line shows it (quintaton "8'"); what sounds on the keys is real + sampleOffset (`stopFootageSemitones`, `fadeScale`,
+  `displayName`). `untransposedFootageSemitones` = stopFootageSemitones - sampleOffset is the box's base ("0 -> 8' (as
+  the original)"); `cleanIntervals()` = {-24,-17,-12,-8,-5,-2,0,2,4,7,10,12,14,16,19,22,24} (+ the
+  current odd value) are the ONLY steps offered in both boxes (the user: "14.25' at -10" is nonsense). Auto-detection
+  in `loadRankSamples` when the row carries no value (`FolderAssignment/Entry/Stop::sampleOffsetSet` false = the json
+  key "sampleOffset" absent; the Hauptwerk import writes it ALWAYS, also 0 - the ODF has precedence): mode of
+  round(smplPitch - key) over >= 3 samples with >= 70 % agreement vs `footageFromName(displayFolderName(folder))` or the
+  stop name -> offset += named - sounding, samples re-placed, `sampleOffsetDetected` -> `takeDetectedSampleOffsets()`
+  (StartupFolderLoader afterCommit) writes it into the Stop List rows (set). No footage in the name -> nothing. Verified
+  on Pokusny (001313): "NachtHorn 8" (files 024.. sounding 4' on their numbers) -> -12 = Doesburg's ODF value; 001313 smpl
+  unity notes are the real pitch (echoBurdon 024 -> 35.98, quintaton16 024 -> 23.98). Caption footage: untransposed
+  stops keep the name's footage as ever; a transposed stop shows the MEASURED footage (`Stop::displayName`,
+  `nameWithFootage`), else name + offset. The Hauptwerk import strips the footage from aliases (`nameWithoutFootage`:
+  stops, children, extensions) so the caption's footage is the sounding one. ONE-SHOT: `finishNoteOff` skips
+  `isOneShot` stops (a key up never releases or fades them - the user's rule; the engine never had it, the first commit
+  released them too); `Stop::oneShotManual` (-1 auto by the patterns / 0 / 1; voicing state "oneShot", `setStopOneShot`,
+  `updateOneShotFlags` honours it), voicing row toggle "One-shot" after the alias (`oneShotToggle`, every stop with
+  pipes). "Rank count [II]" only on stop folders (visibility set in `setChildrenGetter` - the getter comes after
+  construction), after the alias. CONFIGURATION PLACEMENT: `HauptwerkOdf::configurationFolderFor(root)` =
+  OrganConfigurations beside the folder ABOVE HauptwerkSampleSetsAndComponents (`D:\OrganConfigurations` for
+  D:\Hauptwerk\...), else beside the root (rar set E:\sonus\HW2\caen\dEMO -> E:\sonus\HW2\caen\OrganConfigurations);
+  never inside Hauptwerk's tree (the user's rule). ARCHIVES ELSEWHERE: `SampleFiles::setSearchFolders` +
+  `locate()` suffix matching (>= 2 path parts, longest first) over the archives of: the configuration's folder, the
+  lines of its `ArchiveFolders.txt`, `OrganRarPackages` beside, the settings folder's ArchiveFolders.txt
+  (`MainComponent::refreshArchiveSearchFolders` at start/apply/load, `registerArchiveFolder` on every archive chosen
+  in Load folder / Load Configuration, the rar import writes the list beside the new configuration). Load Configuration
+  takes `*.rar` (`loadConfigurationFromArchive`: index job, .json (not .bak) first, then ODFs, several -> PopupMenu;
+  a .json inside is read via SampleFiles::openInput). Dev hook `ORGAN_TEST_TRANSPOSITION="<manual>|<prefix>|<st>"`
+  (was ORGAN_TEST_OFFSET). Manual audit of 0.8.158 fixed: master default -18, melody/bass new-key default ON, "Hide
+  all voicing" only folds, Stop volume slider, combination row (Bank, Tutti, X, Pistons), Measurement limit + ALSA
+  switch in 8.1, Show settings.json / Refresh values, the Divisions dialog's own captions, "_128"; code tooltips
+  -52 dB and "Fletna", master label "-18.0". The user's settings `configurationFile` pointed at my Adlington test
+  configuration (E:\sonus\HW2\Adlington\10\OrganConfigurations) - restored to F:\Stralsund_Jakobi_Wegscheider.portable.json;
+  every test run must back up AND restore settings.json (a load retargets it).
   0.8.157 RAR (`Source/SampleFiles.{h,cpp}`, jucer ids SmFls1/SmFls2 + CMakeLists): a configuration never names an
   archive; every path is a disk path, `locate()` walks up to the nearest existing ancestor folder and looks the rest up
   in the indexes of the first-volume `.rar` files of that folder (the disk wins; `archivesIn`, `volumesOf` = partN /

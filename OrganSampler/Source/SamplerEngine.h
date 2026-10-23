@@ -140,10 +140,19 @@ struct Stop
     juce::String name;      // from the folder: the stop's identity in every saved state
     juce::String alias;     // shown instead of the name when set (voicing "Alias")
     bool showRankCount = true;   // a stop folder's button shows its rank count "[II]" (voicing, 0.8.146)
-    // The sample files' numbers minus the keys they play on (0.8.155, Stop List
-    // "Files vs keys"; the Hauptwerk import reads it from the definition): the
-    // loader puts file 024 on key 36 when it is -12. 0 = the number is the key.
+    // The stop's TRANSPOSITION (0.8.158; "Files vs keys" in 0.8.155-0.8.157): the
+    // sample files' numbers minus the keys they land on, semitones. The files
+    // placed by their numbers are "the original" - they sound at the footage the
+    // smpl pitches say; -12 puts the file 024 on key 36, an octave down (a 16' of
+    // files that sound 8' on their own numbers - Doesburg), +12 an octave up.
+    // From a Hauptwerk definition (its pipe notes against the file names), else
+    // found by the loader from the smpl pitches against the footage in the
+    // folder's name, else the voicing's Transposition box / the Stop List column
+    // "Transp.". Transmissions and extensions add their own shift on top.
     int sampleOffset = 0;
+    bool sampleOffsetDetected = false;   // set by the loader when it found the offset itself (the Stop List row takes it)
+    bool sampleOffsetSet = false;        // the offset is known (a definition, the user, or found already): the loader leaves it
+    int keyShift() const { return sampleOffset; }   // file number - the key the file lands on
     // The alias, else the name with its foot mark; when neither carries a
     // footage, the footage measured from the smpl pitch of the lowest pipe is appended.
     juce::String displayName() const;
@@ -395,7 +404,8 @@ struct Stop
     std::array<float, 128> perNoteToneDb{};
     std::array<std::atomic<float>, 128> perNoteTone;
 
-    bool isOneShot = false;
+    bool isOneShot = false;                // plays each sample once through, whenever the key is released (chimes, harp)
+    int oneShotManual = -1;                // the voicing's own One-shot switch: -1 = by the One-shot Patterns, 0 off, 1 on (saved)
     int primaryManual = 0;                 // home division: P., I., II., III., IV., V.
     // Transmissions: additional stop buttons (in any division, the home division
     // included) that play this stop's pipes, optionally transposed. A shift of
@@ -542,7 +552,9 @@ struct Stop
     // detune at the a1 key expressed as beats per second (0 = not a celeste).
     float detectedCelesteBeats = 0.0f;
     // Footage of the rank from the smpl pitches: semitones the pipes sound above
-    // their keys (0 = 8', 12 = 4', 19 = 2 2/3' fifth, 28 = 1 3/5' third, ...).
+    // their FILE NUMBERS - the real footage of the samples on their own numbers
+    // (0 = 8', 12 = 4', 19 = 2 2/3' fifth, 28 = 1 3/5' third, ...); what sounds on
+    // the keys is this plus sampleOffset (0.8.158).
     bool footageKnown = false;
     int footageSemitones = 0;
     // The footage the lowest pipes really sound at: the smpl pitch of a mixture
@@ -742,6 +754,7 @@ public:
         // The sample files' numbers minus the keys they play on (0.8.155): Doesburg
         // names the file of key 36 "024" - the offset is -12, the key = number - offset.
         int sampleOffset = 0;
+        bool sampleOffsetSet = false;   // the row carries the offset (a definition or the user); unset: the loader finds it from the smpl pitches (0.8.158)
     };
     // 'replacing': divisions whose stops the commit replaces with the loaded
     // ones (their old stops stay until then and lend their samples and copies
@@ -1245,6 +1258,22 @@ public:
     // Footage of a stop in semitones above its keys (0 = 8'): from the smpl
     // analysis when available, else from the footage written in its name.
     static int stopFootageSemitones(const Stop* stop);
+    // The footage the files sound at on their own numbers - before the stop's
+    // transposition (the base the Transposition box counts from: "0 -> 8' (as
+    // the original)"; the measured footage holds the transposition already).
+    static int untransposedFootageSemitones(const Stop* stop);
+    // The name without its footage ("Prestant 8" -> "Prestant"): the Hauptwerk
+    // import's aliases, so the footage shown follows the transposition (0.8.158).
+    static juce::String nameWithoutFootage(const juce::String& name);
+    // The name with its footage token replaced by the label of 'semitones'
+    // (appended when the name has none); a division prefix is skipped.
+    static juce::String nameWithFootage(const juce::String& name, int semitones);
+    // The transposition steps offered: pure intervals of the harmonic series
+    // within -24..24 (octaves, fifths, thirds, sevenths, ninths), never a
+    // semitone that gives no organ footage.
+    static const std::vector<int>& cleanIntervals();
+    // The voicing's One-shot switch: -1 = by the patterns, 0 off, 1 on.
+    void setStopOneShot(Stop* stop, int manual);
     // The footage the stop's caption shows (written in its name or alias, else the
     // measured one that displayName() appends, else the smpl footage): the base
     // for the footage of its transmissions, so both agree.

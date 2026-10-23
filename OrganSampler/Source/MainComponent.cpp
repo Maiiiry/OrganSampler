@@ -1014,7 +1014,7 @@ MainComponent::MainComponent()
 
     addAndMakeVisible(masterLabel);
     masterLabel.setJustificationType(juce::Justification::centred);
-    masterLabel.setText("Master: -20.0 dB", juce::dontSendNotification);
+    masterLabel.setText("Master: -18.0 dB", juce::dontSendNotification);
 
     addAndMakeVisible(releaseFadeOutSlider);
     releaseFadeOutSlider.setRange(10.0, 500.0, 1.0);
@@ -1312,6 +1312,7 @@ MainComponent::MainComponent()
     lastDirFile = appDataDir.getChildFile("lastdir.json");
     settingsFile = appDataDir.getChildFile("settings.json");
     SampleFiles::setIndexFolder(appDataDir.getChildFile("ArchiveIndex"));   // the indexes of RAR archives of sample folders (0.8.157)
+    refreshArchiveSearchFolders(currentConfigurationFile);   // the archive folders remembered for this configuration (0.8.158)
     // Safe start: a crash while a device was being opened leaves the marker
     // behind (see beginDeviceOpen). That device is opened with the default
     // buffer and rate this once, so a buffer the driver cannot take does not
@@ -1483,7 +1484,14 @@ MainComponent::MainComponent()
     voicer->indentStopRequest = [this](Stop* stop, Stop* master) { indentStopUnder(stop, master); };
     voicer->outdentStopRequest = [this](Stop* stop) { outdentStop(stop); };
     voicer->newStopFolderRequest = [this](int manual, int column, int row) { createStopFolderOnGrid(manual, column, row); };
-    voicer->sampleOffsetRequest = [this](Stop* stop, int offset) { setStopSampleOffset(stop, offset); };
+    voicer->transpositionRequest = [this](Stop* stop, int semitones) { setStopSampleOffset(stop, semitones); };
+    voicer->oneShotRequest = [this](Stop* stop, bool on)
+    {
+        // The voicing's One-shot switch (0.8.158): kept in the voicing state, applied at once.
+        if (stop == nullptr) return;
+        engine.setStopOneShot(stop, on ? 1 : 0);
+        voicingSaveAt = juce::Time::getMillisecondCounterHiRes() + 350.0;   // saved with the voicing state
+    };
     voicer->readyStopNames = [this](int manual)
     {
         std::vector<juce::String> names;
@@ -9623,6 +9631,7 @@ void MainComponent::saveStopSettings()
                 stopObj->setProperty("perspective", stop->perspective);
                 stopObj->setProperty("alias", stop->alias);
                 if (!stop->showRankCount) stopObj->setProperty("showRankCount", false);
+                if (stop->oneShotManual >= 0) stopObj->setProperty("oneShot", stop->oneShotManual == 1);   // the voicing's own switch (0.8.158)
                 stopObj->setProperty(juce::Identifier("globalDb"), stop->db);
                 stopObj->setProperty(juce::Identifier("gainDb"), stop->gainDb);
                 stopObj->setProperty(juce::Identifier("attackMs"), stop->attackMs);
@@ -9770,6 +9779,7 @@ void MainComponent::loadStopSettings()
                         stop->attackFadeoutMs = (float)attackFadeoutMs;
                         stop->alias = stopObj->getProperty("alias").toString();
                         stop->showRankCount = !stopObj->hasProperty("showRankCount") || (bool)stopObj->getProperty("showRankCount");
+                        engine.setStopOneShot(stop, stopObj->hasProperty("oneShot") ? ((bool)stopObj->getProperty("oneShot") ? 1 : 0) : -1);
                         engine.setStopRandomPitchError(stop, randomPitchErrorCents, true);
                         engine.replaceTransmissions(stop, Voicer::transmissionsFromVar(stopVar, stop->primaryManual));
                         if (stopObj->hasProperty("ranks"))
@@ -10071,7 +10081,7 @@ void MainComponent::launchConfigurationLoadChooser()
         }
     }
     configurationFileChooser = std::make_unique<juce::FileChooser>(
-        "Load organ configuration (OrganSampler .json, or a Hauptwerk organ definition)", start, "*.json;*.Organ_Hauptwerk_xml;*.xml");
+        "Load organ configuration (OrganSampler .json, a Hauptwerk organ definition, or a RAR archive holding one)", start, "*.json;*.Organ_Hauptwerk_xml;*.xml;*.rar");
     configurationFileChooser->launchAsync(juce::FileBrowserComponent::openMode
         | juce::FileBrowserComponent::canSelectFiles,
         [safeThis](const juce::FileChooser& chooser)
@@ -10084,10 +10094,15 @@ void MainComponent::launchConfigurationLoadChooser()
 void MainComponent::loadConfigurationFile(const juce::File& file)
 {
     // The chosen configuration file (Load Configuration): parsed, checked, applied.
+    if (file.existsAsFile() && ArchiveExtractor::looksLikeArchive(file)) { loadConfigurationFromArchive(file); return; }   // a .rar: what is inside (0.8.158)
+    refreshArchiveSearchFolders(file);
     if (!SampleFiles::existsAsFile(file)) return;   // a Hauptwerk definition may lie inside a RAR archive (0.8.157)
     if (HauptwerkOdf::looksLikeOdf(file)) { importHauptwerkOdf(file); return; }
-    if (!file.existsAsFile()) return;
-    auto configuration = juce::JSON::parse(file.loadFileAsString());
+    juce::String text;
+    if (file.existsAsFile()) text = file.loadFileAsString();
+    else if (auto in = SampleFiles::openInput(file)) text = in->readEntireStreamAsString();   // a configuration inside an archive (0.8.158)
+    else return;
+    auto configuration = juce::JSON::parse(text);
     if (!configuration.isObject()
         || !configuration.getProperty("manualKeyboards", juce::var()).isArray())
     {
@@ -10100,6 +10115,85 @@ void MainComponent::loadConfigurationFile(const juce::File& file)
     {
         if (safeThis != nullptr) safeThis->resolveAndApplyPortableConfiguration(chosen, file);
     });
+}
+
+void MainComponent::loadConfigurationFromArchive(const juce::File& archive)
+{
+    // Load Configuration given a .rar (0.8.158): the archive is indexed, then an
+    // OrganSampler configuration inside is loaded, else a Hauptwerk definition
+    // inside is imported - both read from the archive; several -> a choice. The
+    // archive's folder is remembered, so the paths find it on the next start.
+    registerArchiveFolder(archive.getParentDirectory());
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    indexArchivesThen({ archive }, [safeThis, archive]
+    {
+        if (safeThis == nullptr) return;
+        const auto beside = archive.getParentDirectory();
+        std::vector<juce::String> candidates;
+        const std::function<bool(const juce::String&)> isConfiguration = [](const juce::String& p) { return p.endsWithIgnoreCase(".json") && !p.endsWithIgnoreCase(".bak"); };
+        const std::function<bool(const juce::String&)> isDefinition = [](const juce::String& p) { return p.endsWithIgnoreCase(".Organ_Hauptwerk_xml"); };
+        const auto configurations = SampleFiles::entriesOf(archive, isConfiguration);
+        const auto definitions = SampleFiles::entriesOf(archive, isDefinition);
+        candidates.insert(candidates.end(), configurations.begin(), configurations.end());
+        candidates.insert(candidates.end(), definitions.begin(), definitions.end());
+        auto fileOf = [beside](const juce::String& entry) { return beside.getChildFile(entry.replaceCharacter('/', juce::File::getSeparatorChar())); };
+        if (candidates.empty())
+        {
+            juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Load Configuration",
+                archive.getFileName() + " holds no OrganSampler configuration (.json) and no Hauptwerk organ definition.\n\n"
+                "Its sample folders can be loaded in the Stop List: Load folder... > Browse archives...", "OK", safeThis.getComponent());
+            return;
+        }
+        if (candidates.size() == 1) { safeThis->loadConfigurationFile(fileOf(candidates.front())); return; }
+        juce::PopupMenu menu;
+        for (size_t i = 0; i < candidates.size(); ++i) menu.addItem((int)i + 1, candidates[i]);
+        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(safeThis.getComponent()), [safeThis, candidates, fileOf](int result)
+        {
+            if (safeThis == nullptr || result <= 0 || result > (int)candidates.size()) return;
+            safeThis->loadConfigurationFile(fileOf(candidates[(size_t)result - 1]));
+        });
+    });
+}
+
+void MainComponent::refreshArchiveSearchFolders(const juce::File& configurationFile)
+{
+    std::vector<juce::File> folders;
+    auto addList = [&folders](const juce::File& list)
+    {
+        if (!list.existsAsFile()) return;
+        juce::StringArray lines;
+        lines.addLines(list.loadFileAsString());
+        for (const auto& line : lines)
+            if (line.trim().isNotEmpty() && !line.trim().startsWithChar('#')) folders.push_back(juce::File(line.trim()));
+    };
+    const auto own = configurationFile != juce::File() ? configurationFile.getParentDirectory() : juce::File();
+    if (own != juce::File())
+    {
+        folders.push_back(own);
+        addList(own.getChildFile("ArchiveFolders.txt"));
+        folders.push_back(own.getParentDirectory().getChildFile("OrganRarPackages"));
+        folders.push_back(own.getSiblingFile("OrganRarPackages"));
+    }
+    addList(juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile("OrganSampler").getChildFile("ArchiveFolders.txt"));
+    SampleFiles::setSearchFolders(folders);
+}
+
+void MainComponent::registerArchiveFolder(const juce::File& folder)
+{
+    if (!folder.isDirectory()) return;
+    // Beside the loaded configuration when there is one (its OrganConfigurations
+    // folder), else in the settings folder; one path per line, each once.
+    const juce::File list = (currentConfigurationFile != juce::File() && currentConfigurationFile.getParentDirectory().isDirectory()
+        ? currentConfigurationFile.getParentDirectory()
+        : juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile("OrganSampler")).getChildFile("ArchiveFolders.txt");
+    juce::StringArray lines;
+    if (list.existsAsFile()) lines.addLines(list.loadFileAsString());
+    for (const auto& line : lines) if (juce::File(line.trim()) == folder) { refreshArchiveSearchFolders(currentConfigurationFile); return; }
+    if (lines.isEmpty()) lines.add("# Folders of RAR archives of sample folders OrganSampler looks into when a sample folder is not on the disk (one per line).");
+    lines.add(folder.getFullPathName());
+    list.replaceWithText(lines.joinIntoString("\n") + "\n");
+    CrashHandler::note("Archive folder remembered in " + list.getFullPathName() + ": " + folder.getFullPathName());
+    refreshArchiveSearchFolders(currentConfigurationFile);
 }
 
 void MainComponent::askLoadOptions(juce::var configuration, const juce::String& what, std::function<void(juce::var)> proceed)
@@ -10741,10 +10835,10 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
                             if (folders.isEmpty()) continue;
                             juce::DynamicObject::Ptr entry = new juce::DynamicObject();
                             entry->setProperty("name", childNames != childRowsOfStop.end() && (int)c < childNames->second.size() ? childNames->second[(int)c] : child.name);
-                            entry->setProperty("alias", child.name);      // the rank name without its perspective ("Rec: Quintaton 16 (L component)")
+                            entry->setProperty("alias", SamplerEngine::nameWithoutFootage(child.name));   // the rank name without its perspective and footage (0.8.158: the footage follows the transposition)
                             entry->setProperty("customName", false);
                             entry->setProperty("child", true);
-                            if (child.sampleOffset != 0) entry->setProperty("sampleOffset", child.sampleOffset);
+                            entry->setProperty("sampleOffset", child.sampleOffset);   // always: the definition's offset rules, the loader never guesses one (0.8.158)
                             entry->setProperty("folders", folders);
                             childEntries.add(juce::var(entry.get()));
                         }
@@ -10765,10 +10859,10 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
                     juce::DynamicObject::Ptr entry = new juce::DynamicObject();
                     entry->setProperty("name", row != rowOfStop.end() ? row->second.second : stop.name);
                     gridCell((int)i, row != rowOfStop.end() ? row->second.second : stop.name, stop);
-                    entry->setProperty("alias", stop.name);           // the Hauptwerk stop name on the button
+                    entry->setProperty("alias", SamplerEngine::nameWithoutFootage(stop.name));   // the Hauptwerk stop name on the button, its footage added by the program (0.8.158)
                     entry->setProperty("customName", false);
                     entry->setProperty("child", false);
-                    if (stop.sampleOffset != 0) entry->setProperty("sampleOffset", stop.sampleOffset);
+                    entry->setProperty("sampleOffset", stop.sampleOffset);   // always: the definition's offset rules (0.8.158)
                     entry->setProperty("folders", folders);
                     entries.add(juce::var(entry.get()));
                 }
@@ -10919,10 +11013,28 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
                 [safeThis, odf] { if (safeThis != nullptr) safeThis->applyHauptwerkVoicing(odf, {}, {}, false); });
             return;
         }
-        // Written into OrganConfigurations beside the Hauptwerk folders (0.8.125;
-        // the installation package before - nobody finds a numbered folder) and
-        // loaded from there; the Hauptwerk folders stay untouched.
+        // Written into OrganConfigurations outside the Hauptwerk folders (0.8.158;
+        // 0.8.125 beside OrganDefinitions, the installation package before) and
+        // loaded from there; the Hauptwerk folders stay untouched. A definition read
+        // out of an archive: the archive's folder is noted beside the configuration.
         plan.configurationFile.getParentDirectory().createDirectory();
+        if (SampleFiles::inArchive(odfFile))
+        {
+            const auto list = plan.configurationFile.getParentDirectory().getChildFile("ArchiveFolders.txt");
+            juce::StringArray lines;
+            if (list.existsAsFile()) lines.addLines(list.loadFileAsString());
+            const auto archiveFolder = odfFile.getParentDirectory();
+            juce::File folder = archiveFolder;
+            while (folder != juce::File() && !folder.isDirectory() && folder.getParentDirectory() != folder) folder = folder.getParentDirectory();   // the disk folder holding the archive
+            bool known = false;
+            for (const auto& line : lines) if (juce::File(line.trim()) == folder) known = true;
+            if (!known && folder.isDirectory())
+            {
+                if (lines.isEmpty()) lines.add("# Folders of RAR archives of sample folders OrganSampler looks into when a sample folder is not on the disk (one per line).");
+                lines.add(folder.getFullPathName());
+                list.replaceWithText(lines.joinIntoString("\n") + "\n");
+            }
+        }
         if (!plan.configurationFile.replaceWithText(juce::JSON::toString(configuration, true)))
         {
             juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Hauptwerk organ definition",
@@ -11094,7 +11206,7 @@ void MainComponent::applyHauptwerkVoicing(std::shared_ptr<HauptwerkOdf> odf, con
         const int index = engine.addTransmission(owner, extension.manual, extension.shift);
         if (index < 0) { extensionsMissed.add(extension.alias); continue; }
         std::vector<Stop::Transmission> list = owner->transmissions;
-        list[(size_t)index].alias = extension.alias;
+        list[(size_t)index].alias = SamplerEngine::nameWithoutFootage(extension.alias);   // the footage comes from the shift (0.8.158)
         engine.replaceTransmissions(owner, list);
         if (voicer != nullptr && extension.column >= 0) voicer->setGridCell(extension.manual, Voicer::transmissionKey(owner, index), extension.column, extension.row);   // its cell from the jamb page
         ++extensionsMade;
@@ -11662,6 +11774,7 @@ void MainComponent::applyPortableConfiguration(juce::var configuration,
     saveLastDirectory();
     setCurrentConfigurationName(configurationFile.getFileNameWithoutExtension());
     currentConfigurationFile = configurationFile;
+    refreshArchiveSearchFolders(configurationFile);   // the archive folders remembered beside it (0.8.158)
     configurationUsedThisSession = true;
     saveSettings();
     markConfigurationClean();
@@ -12894,7 +13007,7 @@ std::shared_ptr<std::vector<SamplerEngine::FolderAssignment>> MainComponent::sto
         {
             const auto folder = resolveStopBuildFolder(manual, ref);
             if (folder == juce::File()) continue;
-            map->push_back({ folder, entry.name, perspective, true, false, manual, entry.sampleOffset });
+            map->push_back({ folder, entry.name, perspective, true, false, manual, entry.sampleOffset, entry.sampleOffsetSet });
         }
     }
     return map;
@@ -13139,7 +13252,9 @@ void MainComponent::loadChosenIntoDivision(const std::vector<juce::File>& folder
         return;
     }
     // The archives' contents are read first (a walk of the headers on a thread: minutes
-    // for a big set on a hard disk, cached afterwards), then they are loaded.
+    // for a big set on a hard disk, cached afterwards), then they are loaded. Their
+    // folders are remembered (0.8.158): the paths find the archives on the next start.
+    for (const auto& archive : archives) registerArchiveFolder(archive.getParentDirectory());
     juce::Component::SafePointer<MainComponent> safeThis(this);
     indexArchivesThen(archives, [safeThis, folders, archives, manual]
     {
@@ -13313,6 +13428,7 @@ MainComponent::ManualConfig::StopBuild MainComponent::deriveStopBuildFromEngine(
         entry.alias = stop->alias;
         entry.child = stop->groupMaster.isNotEmpty();
         entry.sampleOffset = stop->sampleOffset;
+        entry.sampleOffsetSet = stop->sampleOffsetSet;
         if (stop->container) { build.entries.push_back(entry); continue; }   // a stop folder without pipes: a row without folders
         auto place = [&](const Stop* rank)
         {
@@ -13622,10 +13738,27 @@ void MainComponent::setStopSampleOffset(Stop* stop, int offset)
     auto& config = manualConfigs[(size_t)manual];
     if (!config.stopBuild.active) { config.stopBuild = deriveStopBuildFromEngine(manual); config.stopBuild.active = true; }
     for (auto& entry : config.stopBuild.entries)
-        if (!entry.isTransmission() && stopBuildKey(entry.name) == stopBuildKey(stop->name)) entry.sampleOffset = offset;
+        if (!entry.isTransmission() && stopBuildKey(entry.name) == stopBuildKey(stop->name)) { entry.sampleOffset = offset; entry.sampleOffsetSet = true; }
     engine.setStopSampleOffset(stop, offset);
     configurationDirty = true;
     finishInPlaceStopEdit({ manual });
+}
+
+void MainComponent::takeDetectedSampleOffsets()
+{
+    // The loader found the files' offset of a stop from the smpl pitches (0.8.158):
+    // the Stop List row takes it, so the next load needs no measuring.
+    for (auto* stop : engine.getStops())
+    {
+        if (stop == nullptr || !stop->sampleOffsetDetected) continue;
+        stop->sampleOffsetDetected = false;
+        const int manual = stop->primaryManual;
+        if (manual < 0 || manual >= SamplerEngine::maxManuals) continue;
+        auto& config = manualConfigs[(size_t)manual];
+        if (!config.stopBuild.active) continue;
+        for (auto& entry : config.stopBuild.entries)
+            if (!entry.isTransmission() && stopBuildKey(entry.name) == stopBuildKey(stop->name)) { entry.sampleOffset = stop->sampleOffset; entry.sampleOffsetSet = true; configurationDirty = true; }
+    }
 }
 
 void MainComponent::createStopFolderOnGrid(int manual, int column, int row)
@@ -14062,6 +14195,7 @@ void MainComponent::reloadDivisions(const std::vector<int>& manualsIn, const juc
     // next paint comes - rebuilt at once, before the loading dialog's next step.
     loader->afterCommit = [this]
     {
+        takeDetectedSampleOffsets();   // the files' offsets the loader found (0.8.158) into the Stop List rows
         if (voicer == nullptr) return;
         voicer->dropStopReferences();
         voicer->rebuildUI(stopsContent, stopsViewport);
@@ -14282,7 +14416,7 @@ juce::var MainComponent::stopBuildToVar(const ManualConfig::StopBuild& build)
         item->setProperty("alias", entry.alias);
         item->setProperty("customName", entry.customName);
         item->setProperty("child", entry.child);
-        if (entry.sampleOffset != 0) item->setProperty("sampleOffset", entry.sampleOffset);
+        if (entry.sampleOffsetSet || entry.sampleOffset != 0) item->setProperty("sampleOffset", entry.sampleOffset);   // present = known (0.8.158)
         juce::Array<juce::var> folders;
         for (const auto& [perspective, ref] : entry.folders)
         {
@@ -14316,6 +14450,7 @@ MainComponent::ManualConfig::StopBuild MainComponent::stopBuildFromVar(const juc
             entry.customName = item.getProperty("customName", false);
             entry.child = item.getProperty("child", false);
             entry.sampleOffset = juce::jlimit(-48, 48, (int)item.getProperty("sampleOffset", 0));
+            entry.sampleOffsetSet = item.hasProperty("sampleOffset");
             if (auto* folders = item.getProperty("folders", juce::var()).getArray())
                 for (const auto& folder : *folders)
                 {
@@ -14482,7 +14617,7 @@ void MainComponent::showStopBuildingDialog(int)
                 "indented under it (empty stop folders, stops whose folder tree was unloaded). Rows are never dropped otherwise.",
                 [this] { removeEmptyStops(); });
             setup(aliasesButton, "Aliases from folders", "Every stop without an alias gets the bare name of its sample folder as its "
-                "alias: no parent folders (\"TA - fletna\" becomes \"fletna\"), no perspective prefix, the footage with its foot mark. "
+                "alias: no parent folders (\"TA - fletna\" becomes \"Fletna\"), no perspective prefix, the footage with its foot mark. "
                 "Aliases you typed stay. Applied with \"Apply and reload\".", [this]
             {
                 commitEditors();
@@ -14740,7 +14875,8 @@ void MainComponent::showStopBuildingDialog(int)
             std::set<int> changed;
             auto sameEntry = [](const Build::Entry& a, const Build::Entry& b)
             {
-                if (a.name != b.name || a.alias != b.alias || a.customName != b.customName || a.child != b.child || a.folders.size() != b.folders.size()) return false;
+                if (a.name != b.name || a.alias != b.alias || a.customName != b.customName || a.child != b.child || a.folders.size() != b.folders.size()
+                    || a.sampleOffset != b.sampleOffset || a.sampleOffsetSet != b.sampleOffsetSet) return false;
                 for (const auto& [perspective, ref] : a.folders)
                 {
                     const auto found = b.folders.find(perspective);
@@ -15142,9 +15278,10 @@ void MainComponent::showStopBuildingDialog(int)
             header(divisionHeader, "Division");
             header(nameHeader, "Stop (name in every saved state)");
             header(aliasHeader, "Alias (shown instead)");
-            header(offsetHeader, "Files vs keys");
-            offsetHeader.setTooltip("The sample files' numbers minus the keys they play on: -12 when the file 024 is to sound on key 36 "
-                "(Doesburg). 0 or empty: the number in the file name is the key. A Hauptwerk import reads it from the definition.");
+            header(offsetHeader, "Transp.");
+            offsetHeader.setTooltip("The stop's transposition in semitones against the files on their own numbers: -12 puts the file 024 on key 36 "
+                "(an octave down - Doesburg's 8' stops, a 16' of files sounding 8'), +12 an octave up. Empty: found by the program (the samples' pitch against "
+                "the footage in the folder's name, or a Hauptwerk definition). The voicing's Transposition box is the same setting; transmissions add their own.");
             header(transmissionHeader, "Transmissions");
             for (size_t p = 0; p < perspectives.size(); ++p)
             {
@@ -15336,18 +15473,24 @@ void MainComponent::showStopBuildingDialog(int)
             grid.addAndMakeVisible(*row->alias);
             if (!transmission && !entry.folders.empty())
             {
-                // "Files vs keys" (0.8.155): the files' numbers minus the keys they play on.
+                // "Transp." (0.8.158): the stop's own transposition in semitones.
                 row->offset = std::make_unique<juce::TextEditor>();
                 row->offset->setFont(juce::Font(juce::FontOptions(16.0f)));
                 row->offset->setInputRestrictions(3, "-+0123456789");
                 row->offset->setJustification(juce::Justification::centred);
                 row->offset->setText(entry.sampleOffset != 0 ? juce::String(entry.sampleOffset) : juce::String(), false);
-                row->offset->setTextToShowWhenEmpty("0", juce::Colours::grey);
-                row->offset->setTooltip("Files vs keys: the sample files' numbers minus the keys they play on. -12: the file 024 sounds on key 36 "
-                    "(Doesburg). Empty or 0: the number in the file name is the key. Applied with \"Apply and reload\".");
+                row->offset->setTextToShowWhenEmpty(entry.sampleOffsetSet ? "0" : "auto", juce::Colours::grey);
+                row->offset->setTooltip("Transposition of the stop in semitones against the files on their own numbers (a pure interval: -12 puts the file 024 on key 36, "
+                    "an octave down; +12 an octave up; +7 a fifth). Empty: found by the program from the samples' pitch and the footage in the folder's name, "
+                    "or from a Hauptwerk definition. The voicing's Transposition box is the same setting. Applied with \"Apply and reload\".");
                 row->offset->onTextChange = [this, i]
                 {
-                    if (auto* e = entryOf(i)) e->sampleOffset = juce::jlimit(-48, 48, rows[i]->offset->getText().trim().getIntValue());
+                    if (auto* e = entryOf(i))
+                    {
+                        const auto text = rows[i]->offset->getText().trim();
+                        e->sampleOffset = juce::jlimit(-48, 48, text.getIntValue());
+                        e->sampleOffsetSet = text.isNotEmpty();   // cleared: the loader finds it again
+                    }
                     updateApplyState();
                 };
                 grid.addAndMakeVisible(*row->offset);
@@ -18772,7 +18915,7 @@ void MainComponent::executeGlobalReset(bool clearMidiLearn, bool resetAudioOutpu
     // Global sound controls.
     masterVolumeSlider.setValue(kDefaultMasterDb, juce::dontSendNotification);
     masterGainLinear.store(juce::Decibels::decibelsToGain((float)kDefaultMasterDb));
-    masterLabel.setText("Master: -20.0 dB", juce::dontSendNotification);
+    masterLabel.setText("Master: -18.0 dB", juce::dontSendNotification);
     pitchSlider.setValue(0.0, juce::dontSendNotification);
     pitchLabel.setText("Pitch: 0 cents", juce::dontSendNotification);
     releaseFadeOutSlider.setValue(70.0, juce::dontSendNotification);
@@ -21773,7 +21916,7 @@ void MainComponent::showConfigurationEditor()
                 "limit it sets breaks up on the first callback that runs a little longer. Fit for seeing how far the computer goes.");
             addButton("Measure the maximum polyphony", "Measure...", [&o] { o.startPolyphonyMeasurement(); },
                 "Finds the limit for THIS organ on THIS computer: with the loaded samples, every stop engaged and the "
-                "keys struck repeatedly on every division (heard very quietly, at -42 dB), the limit is raised step by step "
+                "keys struck repeatedly on every division (heard very quietly, at -52 dB), the limit is raised step by step "
                 "until the busiest audio thread exceeds the measurement limit above (85 % unless set otherwise) or the driver calls late, then narrowed down; the "
                 "maximum polyphony is set to the highest clean limit (lower it on the slider for more headroom, raise it if you dare). "
                 "The reachable polyphony depends on the whole configuration - the number of audio routes (every perspective "

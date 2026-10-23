@@ -116,6 +116,7 @@ namespace
     juce::String gIndexingName;             // the archive being walked (set under gMutex before the walk)
     std::map<juce::String, std::shared_ptr<ArchiveIndex>> gIndexes;      // lower-case first-volume path -> index
     std::map<juce::String, std::vector<juce::File>> gArchivesOfFolder;   // lower-case disk folder -> its first volumes (scanned once)
+    std::vector<juce::File> gSearchFolders;   // folders whose archives serve paths elsewhere (0.8.158)
 
     // ---- the RAR header walk ------------------------------------------------------------
     const juce::uint8 kSignature4[7] = { 'R', 'a', 'r', '!', 0x1a, 0x07, 0x00 };
@@ -652,6 +653,31 @@ namespace
             rest = ancestor.getFileName() + "/" + rest;
             ancestor = parent;
         }
+        // Elsewhere (0.8.158): the archives of the search folders, by the longest
+        // tail of the path they hold (at least two parts: "002735/pipes/PE" yes,
+        // a bare folder name no).
+        std::lock_guard<std::mutex> lock(gMutex);
+        if (gSearchFolders.empty()) return place;
+        juce::StringArray parts = juce::StringArray::fromTokens(slashes(path.getFullPathName()), "/", "");
+        parts.removeEmptyStrings();
+        if (parts.size() > 0 && parts[0].endsWithChar(':')) parts.remove(0);
+        for (const auto& folder : gSearchFolders)
+        {
+            if (!folder.isDirectory()) continue;
+            for (const auto& archive : archivesOfFolderLocked(folder))
+            {
+                auto index = indexOfLocked(archive);
+                if (index == nullptr || !index->valid) continue;
+                for (int start = 0; start + 2 <= parts.size(); ++start)
+                {
+                    juce::String key;
+                    for (int i = start; i < parts.size(); ++i) key << (i > start ? "/" : "") << parts[i];
+                    key = lower(key);
+                    if (index->dirs.count(key) != 0) { place.index = index; place.relative = index->spelling[key]; place.isDir = true; return place; }
+                    if (index->byPath.count(key) != 0) { place.index = index; place.relative = index->spelling[key]; place.isFile = true; return place; }
+                }
+            }
+        }
         return place;
     }
 
@@ -880,6 +906,14 @@ namespace
 namespace SampleFiles
 {
     void setIndexFolder(const juce::File& folder) { std::lock_guard<std::mutex> lock(gMutex); gIndexFolder = folder; }
+
+    void setSearchFolders(const std::vector<juce::File>& folders)
+    {
+        std::lock_guard<std::mutex> lock(gMutex);
+        gSearchFolders.clear();
+        for (const auto& folder : folders)
+            if (folder != juce::File() && std::find(gSearchFolders.begin(), gSearchFolders.end(), folder) == gSearchFolders.end()) gSearchFolders.push_back(folder);
+    }
 
     void forgetArchives()
     {

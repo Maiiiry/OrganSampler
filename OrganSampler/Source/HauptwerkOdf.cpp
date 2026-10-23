@@ -255,6 +255,18 @@ juce::File HauptwerkOdf::hauptwerkRootFor(const juce::File& odf)
     return {};
 }
 
+juce::File HauptwerkOdf::configurationFolderFor(const juce::File& hauptwerkRoot)
+{
+    // Beside the folder above HauptwerkSampleSetsAndComponents (the user's
+    // "Hauptwerk" folder, whatever its name); a root without that level (a set
+    // unpacked or archived on its own) puts it beside the root itself. A drive
+    // root has no "beside": inside it then.
+    const juce::File above = hauptwerkRoot.getFileName().equalsIgnoreCase("HauptwerkSampleSetsAndComponents") ? hauptwerkRoot.getParentDirectory() : hauptwerkRoot;
+    juce::File beside = above.getParentDirectory();
+    if (beside == juce::File() || beside == above) beside = above;
+    return beside.getChildFile("OrganConfigurations");
+}
+
 juce::File HauptwerkOdf::packageFolder(const juce::File& hauptwerkRoot, int packageId)
 {
     const auto packages = hauptwerkRoot.getChildFile("OrganInstallationPackages");
@@ -1796,15 +1808,17 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
             result.perspectivePatterns.push_back(line);
         }
     }
-    // Where the configuration goes: OrganConfigurations beside OrganDefinitions
-    // and OrganInstallationPackages (0.8.125; before, the organ's main package
-    // folder - right, but nobody finds "001318"). The library root stays
-    // OrganInstallationPackages, reached from there as "../OrganInstallationPackages"
-    // (sampleLibraryRootRelative), so the file works from that folder and from
-    // anywhere else the root is known.
+    // Where the configuration goes: OrganConfigurations OUTSIDE the Hauptwerk folders
+    // (0.8.158: beside the folder that holds HauptwerkSampleSetsAndComponents -
+    // "Hauptwerk", whatever its name - so nothing of ours lands inside Hauptwerk's
+    // tree; 0.8.125-0.8.157 put it beside OrganDefinitions, before that into the
+    // numbered package). The library root stays OrganInstallationPackages, reached
+    // by a relative path (sampleLibraryRootRelative), so the file works from that
+    // folder and from anywhere else the root is known. Archives of the organ lie
+    // beside: the same OrganConfigurations serves the unpacked and the packed set.
     juce::String fileName = result.organName;
     for (const auto c : juce::String("\\/:*?\"<>|")) fileName = fileName.replaceCharacter(c, '-');
-    result.configurationFile = hauptwerkRoot.getChildFile("OrganConfigurations").getChildFile(fileName.trim() + ".json");
+    result.configurationFile = configurationFolderFor(hauptwerkRoot).getChildFile(fileName.trim() + ".json");
     if (encryptedSamples > 0)
         result.error = juce::String(encryptedSamples) + " of " + juce::String(sampleCount) + " samples are encrypted (.hbw): Hauptwerk's encrypted sample sets cannot be played by OrganSampler.";
     return result;

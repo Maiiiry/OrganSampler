@@ -124,6 +124,8 @@ struct HauptwerkOdf
     // The Hauptwerk root (the folder holding OrganDefinitions and
     // OrganInstallationPackages) for an ODF at this path, or an empty file.
     static juce::File hauptwerkRootFor(const juce::File& odf);
+    // The OrganConfigurations folder for a root: outside the Hauptwerk folders (0.8.158).
+    static juce::File configurationFolderFor(const juce::File& hauptwerkRoot);
     static juce::File packageFolder(const juce::File& hauptwerkRoot, int packageId);
     static juce::String spelledAsOnDisk(const juce::File& base, const juce::String& relative);   // the parts as the disk spells them (0.8.149)
     // The perspective a rank name tells ("Front A (direct): HW. Octave 2" -> "Direct",

@@ -464,15 +464,39 @@ as a folder, and reads the samples out of the archives.
   configuration serves an unpacked and a packed set (a folder that is on the
   disk always wins over the archive). When the archive holds a Hauptwerk
   organ definition, the program offers to import it - the whole organ, read
-  from the archives.
-  The contents of an archive are indexed once (the program's own walk of the
-  headers: seconds on an SSD, a few minutes for a 60 GB set on a hard disk,
-  with a progress window) and the index is kept under the settings folder.
+  from the archives. *Load Configuration* takes a `.rar` as well: a
+  configuration or a definition inside it is loaded straight from the archive.
+  Two steps happen, and they read different things. *Reading the archives*
+  reads the archive's headers only - what files it holds, how big they are
+  and where their bytes lie (a few megabytes: seconds on an SSD, a few
+  minutes for a 60 GB set on a hard disk, where every header is a seek). That
+  index is made once and kept under the settings folder; the next load finds
+  it there. *Loading saved divisions* then reads the samples themselves,
+  as any load does. The index must come first: the program has to know
+  which folders the archive holds before a definition can be planned or a
+  Stop List built from them.
   Every file is then read on its own, so the loader reads the files in
   parallel; a set that was stored without compression reads as fast as plain
   files, a compressed one at the speed of the decompression (100-200 MB per
-  second and core). RAR 4 and RAR 5; a solid archive is read in sequence,
-  which is slower; password-protected archives are refused.
+  second and core, all cores at once). RAR 4 and RAR 5; a solid archive is
+  read in sequence, which is slower; password-protected archives are refused.
+  What you gain: the disk space (a packed set is a half to two thirds of the
+  unpacked one), fewer bytes read from a slow disk, and nothing to unpack.
+  What you pay: the first load indexes the archive, and a compressed set
+  takes the decompression time at every load - from a fast SSD an unpacked
+  set loads faster.
+- **Where the archives may lie:** beside the organ's folders (the
+  configuration's paths find them there), or anywhere else the program is
+  told: the folder of every archive you choose in *Load folder...* or *Load
+  Configuration* is written into `ArchiveFolders.txt` beside the open
+  configuration (in its `OrganConfigurations` folder; without a configuration
+  into the settings folder, one path per line, editable by hand), and a
+  folder `OrganRarPackages` beside `OrganConfigurations` is always looked
+  into. A sample folder that is not on the disk is then looked for in those
+  archives by the tail of its path (`OrganInstallationPackages/002735/pipes`
+  ...). So the recommended layout is `OrganConfigurations`, `OrganRarPackages`
+  and the `Hauptwerk` folder side by side - and an archive folder on another
+  disk works just as well once it is in the list.
 - **Unpacking in OrganSampler:** tick *Unpack the archives into a folder
   first* in the same window, choose the folder (proposed: the folder of the
   first archive; each archive's own folder tree is created inside it) and
@@ -496,7 +520,10 @@ the archives can go; packed ones save the disk space.
 A **configuration** is one file holding everything about an instrument: the
 folder trees, the Stop List, voicing, audio and MIDI settings, couplers,
 combinations, crescendo, window layout - the organ definition, written by the
-program. *Save Configuration* and *Load Configuration* are in the top bar. A
+program. *Save Configuration* and *Load Configuration* are in the top bar;
+*Load Configuration* takes a configuration (`.json`), a Hauptwerk organ
+definition (see "Hauptwerk organ definitions") or a RAR archive holding
+either, read straight from the archive. A
 configuration counts as open once it was loaded or saved in the session (its
 name is in the window title). When you quit, or load another configuration,
 while the open configuration has unsaved changes, the program asks whether to
@@ -625,15 +652,22 @@ played and the import says so.
 The samples must lie where Hauptwerk keeps them: the definition in
 `OrganDefinitions`, the packages in `OrganInstallationPackages/<six-digit
 id>` beside it (`D:\Hauptwerk\HauptwerkSampleSetsAndComponents\...` on a
-usual installation). The configuration is written as `<organ name>.json`
-into an `OrganConfigurations` folder beside `OrganDefinitions` and
-`OrganInstallationPackages` (made when it is not there; 0.8.125 - before,
-it went into the organ's numbered installation package, where nobody looks
-for it), so all your Hauptwerk organs are found in one place; the
-`OrganInstallationPackages` folder is its library root, reached from there
-by a relative path, so the file works from that folder and from any other
-place the root is known. It is loaded at once and saved again with the
-voicing once the folders are loaded. Then check
+usual installation) - or in the RAR archives the set came in, read without
+unpacking (see "Sample archives (RAR)"). The configuration is written as
+`<organ name>.json` into an `OrganConfigurations` folder OUTSIDE the
+Hauptwerk folders: beside the folder that holds
+`HauptwerkSampleSetsAndComponents` (`D:\OrganConfigurations` for the usual
+`D:\Hauptwerk\...`; made when it is not there), so nothing of ours lands
+inside Hauptwerk's tree and all your organs are found in one place, the
+unpacked and the archived ones alike. The `OrganInstallationPackages` folder
+is its library root, reached by a relative path
+(`../Hauptwerk/HauptwerkSampleSetsAndComponents/OrganInstallationPackages`),
+so the file works from that folder and from any other place the root is
+known. Versions 0.8.125-0.8.157 wrote the file beside `OrganDefinitions`,
+earlier ones into the numbered package; those files keep working where they
+are. The transpositions the definition implies (its pipe notes against the
+sample file names) are taken as they are. It is loaded at once and saved
+again with the voicing once the folders are loaded. Then check
 the Stop List, give the perspectives their audio routes and the divisions
 their MIDI keyboards, and *Save Configuration* - as a portable one to
 publish it.
@@ -778,8 +812,8 @@ fired from a MIDI control: right-click it and choose *Learn MIDI On trigger*
   (building the organ)".
 - **Couplers...** opens the couplers dialog: see "Couplers".
 - **Temperaments** opens the temperament dialog: see "Temperaments".
-- **Hide all voicing / Show all voicing** folds or unfolds every voicing row
-  on the grid.
+- **Hide all voicing** folds every open voicing row on the grid (each row
+  opens again with its own corner button).
 - **Perspective Patterns..., Ignored Patterns..., One-shot Patterns...** edit
   the folder-name lists (the same lists as in the Configuration Editor, see
   "Folder name patterns (one per line)").
@@ -799,15 +833,19 @@ fired from a MIDI control: right-click it and choose *Learn MIDI On trigger*
 
 ## 2.2 The combination row
 
-The row holds the combination pistons (their number is set in *Configuration
-Editor > Console > Combination pistons*), the *Set* button, the *<<* and *>>*
-stepping buttons, *Save* and *Load* for combination files, and the crescendo.
+The row holds the combination pistons (their number is set with the
+*Pistons* box in the row, or in *Configuration Editor > Console > Combination
+pistons*), the *Set* button, the *<<* and *>>* stepping buttons, the bank
+buttons (*Bank ▼* / *Bank ▲* with the bank's number), the display of the
+combination in use, *Tutti* and *X* (all stops on / all off), *Save* and
+*Load* for combination files, and the crescendo.
 
 - Click a piston to recall its registration (stops, transmissions, couplers,
   tremulants, Unison Off).
 - With *Set* on, clicking a piston stores the current registration in it.
-- *<<* and *>>* step through the pistons; both are MIDI-learnable, as is every
-  piston (right-click).
+- *<<* and *>>* step through the pistons, the bank buttons through the banks
+  of pistons; all are MIDI-learnable, as is every piston (right-click).
+- *Tutti* switches every stop on, *X* every stop off.
 - *Save* / *Load* write and read all pistons as one file. Combinations are also
   part of the configuration.
 
@@ -1009,31 +1047,54 @@ their filled pipes.
 
 ## 3.3 The voicing row
 
-Open it with the corner button. Its first line shows the alias, the
-perspectives and, for a stop with velocity layers, one tick box per layer. The
-sliders:
+Open it with the corner button. Its first line shows the transposition, the
+perspectives, for a stop with velocity layers one tick box per layer, the
+pitch information, the alias and the switches; the second line the sliders:
 
-- **Rank count [II]** (right after the button on every opened stop; it can be
-  switched where the button carries a count: a stop folder, or a stop with
-  items indented under it) - whether the button carries the Roman numeral of
-  the ranks that sound with it. Off: the name alone. On by default; saved
-  with the configuration.
-- **Files vs keys** (every stop with pipes, next to the rank count) - the
-  sample files' numbers minus the keys they play on. Most sample folders
-  name the file of key 36 "036" and the setting is 0; Doesburg names it
-  "024" on every stop, so the setting is -12 - without it the organ sounds an
-  octave high and its lowest octave lies off the keyboard. A change loads the
+- **Transposition** (right after the button of every stop with pipes) - the
+  stop's transposition against its sample files on their own numbers (the
+  file "036" on key 36), as a pure interval of the harmonic series, with the
+  footage each step gives: "0 -> 8' (as the original)", "-12 -> 16'",
+  "+12 -> 4'", "+7 -> 5 1/3'", "+19 -> 2 2/3'" ... (octaves printed bold;
+  only steps that give an organ footage are offered). "The original" is what
+  the samples' own pitch (the smpl chunk) says the files sound at on their
+  numbers. -12 puts the file 024 on key 36, an octave down. The *Orig. Pitch*
+  line of the row shows that real footage of the files; the footage in
+  the button's caption follows the transposition, and so do the stop's transmissions and
+  extensions, which add their own transposition on top. A change loads the
   stop's samples again on their keys at once (the fills follow). The same
-  setting is the Stop List column "Files vs keys", where a Hauptwerk import
-  writes what the definition says for every stop. Each key's tooltip in the
-  rows below names the file it plays.
+  setting is the Stop List column "Transp.". Each key's tooltip in the rows
+  below names the file it plays.
+  The program sets it by itself where it can: a Hauptwerk import takes it
+  from the definition (its pipe notes against the file names: Doesburg's
+  files sound 8' on their numbers and the definition puts "024" on key 36,
+  so its 8' stops read "-12 -> 8'" and its 16' stops "-12 -> 16'"); a folder
+  loaded on its own gets it from the samples' pitch against the footage
+  written in the folder's name - "quintaton 16" whose files sound 8' on
+  their numbers gets -12, and the activity log says so ("Transposition of
+  ..."). The value found is kept in the configuration; a folder without a
+  footage in its name is left at 0 - transpose it yourself. Clearing the
+  Stop List cell makes the program find it again at the next load.
 - **Alias** - the caption of the button. *Automatic* shows the folder name;
   type any text to show that instead (an alias without a footage gets the
-  stop's footage appended). The alias is only a caption: saved states,
+  stop's footage appended, and a footage written in the alias follows the
+  transposition). The alias is only a caption: saved states,
   combinations and MIDI learn keep using the stop's real name, so renaming
-  breaks nothing.
+  breaks nothing. A Hauptwerk import writes the definition's stop names
+  without their footage, so the footage shown is always the sounding one.
+- **One-shot** (after the alias, every stop with pipes) - the stop plays each
+  sample once from start to end whenever the key is released (chimes, harp,
+  celesta): nothing of it is cut or faded by the key going up. The switch
+  starts as the *One-shot Patterns* say for the folder's name and overrides
+  them for this stop once touched; saved with the voicing.
+- **Rank count [II]** (after the alias; shown on stop folders only, and on a
+  stop with items indented under it) - whether the button carries the Roman
+  numeral of the ranks that sound with it. Off: the name alone. On by
+  default; saved with the configuration.
 - **Perspectives** - the microphone perspectives this stop has, each with its
-  own on/off and volume.
+  own on/off tick box (their volumes are the routes' volumes in the Divisions
+  dialog).
+- **Stop volume** (-24 to +12 dB, default 0) - the level of the whole stop.
 - **Velocity layers** - a tick box per layer and one for the plain files; see
   "Velocity layers" below.
 - **Attack Gain** (-6 to +6 dB) - the start of every note is raised or
@@ -1086,9 +1147,11 @@ cell of the stop's row) or on the grid (a right-button or Shift drag in arrange
 mode). Each transmission has its own voicing row, opened like a stop's, with:
 
 - **Transposition (extension)** - the key sounds the pipe this many semitones
-  away, -24 to +24 (octaves printed bold). -12 makes a 16' extension of an 8'
-  stop, +12 a 4' one; the button caption follows: "Principal 16' (Ext.)" in
-  the stop's own division, "Principal 16' (Trsm.)" in another division.
+  away, the pure intervals between -24 and +24 (octaves printed bold; only
+  steps that give an organ footage are offered). -12 makes a 16' extension of
+  an 8' stop, +12 a 4' one; the button caption follows: "Principal 16' (Ext.)"
+  in the stop's own division, "Principal 16' (Trsm.)" in another division.
+  It counts from the source stop as it sounds, its own transposition included.
   The shifted pipe is retuned so that the new footage is a pure interval of
   the played key (a 2 2/3' shifted by +5 gives an exact 2'), the temperament
   follows the played key, wind, tremulant and detune stay with the pipe.
@@ -1142,7 +1205,8 @@ from the rel folder; a velocity without a release of its own takes the nearest
 one that exists. Filled pipes follow the layers as well.
 
 The voicing row of a stop with layers shows a tick box per layer, named by the
-suffix ("_070"), and one for the plain files, the top layer. Unticked, a
+suffix ("_070"), and one for the plain files, the top layer (its box reads
+"_128"). Unticked, a
 layer's velocities use the next layer up or the plain samples; the plain layer
 unticked sends its velocities to the highest ticked layer. When nothing is
 ticked the plain files play anyway - a key never falls silent. The choice is
@@ -1245,11 +1309,14 @@ folder that plays that perspective of the stop.
 - **Name:** derived from the folders; a typed name is kept until the field is
   cleared. The name is the stop's identity in voicing, combinations and
   configurations; the alias is only what is shown.
-- **Files vs keys:** the sample files' numbers minus the keys they play on,
-  0 (empty) when the number in a file name is the key - as in most sample
-  folders. Doesburg names the file of key 36 "024": -12. A Hauptwerk import
-  fills the column from the definition; the voicing of every stop offers the
-  same setting and applies it at once. Applied here with *Apply and reload*.
+- **Transp.:** the stop's transposition in semitones against its files on
+  their own numbers; a pure interval: -12 puts the file 024 on key 36 (an
+  octave down: Doesburg's stops, a 16' made of files that sound 8'), +12 an
+  octave up, +7 a fifth. Empty ("auto"): found by the program from the
+  samples' pitch and the footage in the folder's name, or from a Hauptwerk
+  definition, and written here once found. The voicing of every stop offers
+  the same setting (with the footage each step gives) and applies it at once;
+  applied here with *Apply and reload* (see "The voicing row").
 
 ## 4.3 Apply and reload
 
@@ -2045,7 +2112,18 @@ chapter), the program's licence and, in full, the licences of the software it
 contains. Every change is applied and saved at once; double-click a slider to
 return to its default.
 
+Beside it *Show settings.json* opens the settings file in the system's
+editor and *Refresh values* reads every control again from the program (after
+a change made elsewhere, a MIDI-learned control for example).
+
 ## 8.1 Engine
+
+### Audio devices: list also the ALSA devices that cannot be opened (Linux)
+
+Linux only. Off: the audio device lists hold only the ALSA devices the program
+could open when it looked. On: every device ALSA names is listed, a device
+in use by another program or without a working configuration included - for
+a device that shows up only once another program lets it go.
 
 ### This computer
 
@@ -2241,7 +2319,10 @@ reset), *DSP* (the load) and *LIMIT* (this setting).
 The value belongs to the organ, not to the computer alone: the number of
 audio routes, the auxiliary routes, the IR reverbs, the drivers and the buffer
 sizes all change it (see "Getting the most polyphony"). It is saved with the
-configuration. The easiest way to find it is the button below it,
+configuration. Under it, *Measurement limit* (60-100 %, default 85 %) is the
+share of its period the longest driver callback may take before the
+measurement counts a level as broken - see "Measuring the maximum polyphony".
+The easiest way to find the polyphony is the button below,
 "Measure the maximum polyphony", once the organ is loaded and its audio
 outputs are configured. On a computer where the full registration breaks
 the sound up at the very first strike (no second stays clean), the
@@ -2386,7 +2467,7 @@ MIDI-learnable (right-click the slider on the main panel).
 
 ### Master volume
 
-The level of the whole organ, -60 to +12 dB (default -20 dB). Lower it when the
+The level of the whole organ, -60 to +12 dB (default -18 dB). Lower it when the
 output clips with full registration; the perspective and division volumes set
 the balance below it.
 
@@ -2732,7 +2813,8 @@ Shows or hides the Temperaments button (see "Temperaments").
 
 ### Top bar: Hide/Show all voicing
 
-Shows or hides the button that folds or unfolds every voicing row.
+Shows or hides the *Hide all voicing* button, which folds every open voicing
+row.
 
 ### Top bar: Perspective Patterns
 
@@ -2791,9 +2873,9 @@ Shows or hides the GLOBAL RESET button (see "GLOBAL RESET").
 
 ### Melody/bass couplers: new extreme key only
 
-On: a melody (bass) coupler couples a key only when it becomes the new highest
-(lowest) key held; when that key is released the coupler does not fall back to
-the next one. Off (default): the coupled note always follows the highest
+On (default): a melody (bass) coupler couples a key only when it becomes the
+new highest (lowest) key held; when that key is released the coupler does not
+fall back to the next one. Off: the coupled note always follows the highest
 (lowest) key currently held.
 
 ### Melody couplers: legato grace time
@@ -2893,6 +2975,7 @@ The MIDI channel (1 to 16) of the division on that device.
 
 ### Ignore MIDI velocity (organ keys)
 
+(The Divisions dialog names the same switch *Disable MIDI velocity*.)
 On: every key is sent as full velocity, so there is never a velocity fade-in
 or treble cut (see "Key velocity: fade-in at the lowest velocity") and always
 the top velocity layer (see "Velocity layers"). For consoles whose keys send
@@ -2966,12 +3049,14 @@ channels carry the same sum.
 
 ### Random tuning error of pipes
 
+(The Divisions dialog names it *Allow Random Tuning Error*.)
 On: the pipes of this division get the small random detune set per stop
 (*Random pitch error* in the voicing). Off: every pipe speaks exactly at its
 pitch.
 
 ### Pipe coupling (detuned pipes pull together)
 
+(The Divisions dialog names it *Allow Pipe Coupling*.)
 On: pipes of the same pitch sounding together pull each other into tune a
 little, as neighbouring pipes on one chest do. Off: every pipe keeps its own
 detune.

@@ -386,30 +386,46 @@ StopRow::StopRow(Stop* stop, SamplerEngine& engine, int noteMin, int noteMax, in
     addAndMakeVisible(undulationLabel);
     refreshUndulationLabel();
 
-    // Transmission rows: the transposition and the source stop take the place of
-    // the transmission counts and the pitch information.
-    if (auto* t = transmission())
+    // Transposition: a transmission's shift (its pipes borrowed from the source
+    // stop), or (0.8.158) the stop's own - the key plays the pipe meant for the key
+    // this many semitones away, its transmissions add their shift on top. The list
+    // holds the pure intervals of the harmonic series with the footage each gives.
     {
+        auto* t = transmission();
         transpositionLabel.setText("Transposition:", juce::dontSendNotification);
         transpositionLabel.setJustificationType(juce::Justification::centredRight);
-        transpositionLabel.setTooltip("Extension: the key sounds the pipe this many semitones away, as a pure interval "
-            "of the key (harmonic series). -12 makes a 16' extension of an 8' stop, +12 a 4' one.");
+        transpositionLabel.setTooltip(t != nullptr
+            ? "Extension: the key sounds the pipe this many semitones away, as a pure interval of the key (harmonic series). "
+              "-12 makes a 16' extension of an 8' stop, +12 a 4' one."
+            : "The stop's transposition against its files on their own numbers (0 = the file 036 on key 36, at the footage the samples' pitch says), "
+              "as a pure interval: -12 puts the file 024 on key 36 - an octave down (Doesburg: files sounding 8' on their numbers make a 16' this way), "
+              "+12 an octave up. Found by the program from the samples' pitch and the footage in the folder's name, or from a Hauptwerk definition; "
+              "its transmissions and extensions add their own on top. A change loads the samples again on their keys.");
         addAndMakeVisible(transpositionLabel);
         auto lnf = makeBoldOctavesLookAndFeel();
-        const int footage = SamplerEngine::stopFootageSemitones(stop);
-        for (int shift = -Stop::Transmission::maxShift; shift <= Stop::Transmission::maxShift; ++shift)
+        const int base = t != nullptr ? SamplerEngine::stopFootageSemitones(stop) : SamplerEngine::untransposedFootageSemitones(stop);
+        const int current = t != nullptr ? t->shift : stop->sampleOffset;
+        std::vector<int> steps = SamplerEngine::cleanIntervals();
+        if (std::find(steps.begin(), steps.end(), current) == steps.end()) { steps.push_back(current); std::sort(steps.begin(), steps.end()); }
+        for (const int shift : steps)
         {
-            juce::String text = (shift > 0 ? "+" : "") + juce::String(shift) + "  ->  " + SamplerEngine::footageLabel(footage + shift);
-            if (shift == 0) text = "0  ->  " + SamplerEngine::footageLabel(footage) + " (as the original)";
+            juce::String text = (shift > 0 ? "+" : "") + juce::String(shift) + "  ->  " + SamplerEngine::footageLabel(base + shift);
+            if (shift == 0) text = "0  ->  " + SamplerEngine::footageLabel(base) + " (as the original)";
             if (shift % 12 == 0) lnf->boldTexts.insert(text);
-            shiftBox.addItem(text, shift + Stop::Transmission::maxShift + 1);
+            shiftBox.addItem(text, shift + 100);
         }
         shiftMenuLookAndFeel = std::move(lnf);
         shiftBox.setLookAndFeel(shiftMenuLookAndFeel.get());
-        shiftBox.setSelectedId(t->shift + Stop::Transmission::maxShift + 1, juce::dontSendNotification);
+        shiftBox.setSelectedId(current + 100, juce::dontSendNotification);
         shiftBox.onChange = [this]
         {
-            const int shift = shiftBox.getSelectedId() - Stop::Transmission::maxShift - 1;
+            const int shift = shiftBox.getSelectedId() - 100;
+            if (!isTransmission())
+            {
+                if (shift == this->stop->sampleOffset) return;
+                if (transpositionRequest) transpositionRequest(this->stop, shift);   // the owner reloads the samples and rebuilds the rows
+                return;
+            }
             this->engine.setTransmissionShift(this->stop, transmissionIndex, shift);
             stopButton.setButtonText(caption());
             if (this->stateChanged) this->stateChanged();
@@ -426,11 +442,14 @@ StopRow::StopRow(Stop* stop, SamplerEngine& engine, int noteMin, int noteMax, in
             }
         };
         addAndMakeVisible(shiftBox);
-        sourceLabel.setText("Taken from: " + stop->displayName() + " (" + divisionNames[juce::jlimit(0, SamplerEngine::maxManuals - 1, stop->primaryManual)]
-            + "), " + (stop->footageKnown ? "smpl pitch: " : "name: ") + SamplerEngine::footageLabel(footage),
-            juce::dontSendNotification);
-        sourceLabel.setJustificationType(juce::Justification::centredLeft);
-        addAndMakeVisible(sourceLabel);
+        if (t != nullptr)
+        {
+            sourceLabel.setText("Taken from: " + stop->displayName() + " (" + divisionNames[juce::jlimit(0, SamplerEngine::maxManuals - 1, stop->primaryManual)]
+                + "), " + (stop->footageKnown ? "smpl pitch: " : "name: ") + SamplerEngine::footageLabel(base),
+                juce::dontSendNotification);
+            sourceLabel.setJustificationType(juce::Justification::centredLeft);
+            addAndMakeVisible(sourceLabel);
+        }
     }
     // Alias: the caption shown on the button instead of the automatic name.
     aliasLabel.setText("Alias:", juce::dontSendNotification);
@@ -458,24 +477,15 @@ StopRow::StopRow(Stop* stop, SamplerEngine& engine, int noteMin, int noteMax, in
         if (this->relayout) this->relayout(this->stop);
     };
     addAndMakeVisible(rankCountToggle);
-    // The sample offset (0.8.155): "Files -12 vs keys" when the files' numbers do not
-    // name the keys (Doesburg); set in the Stop List, read from a Hauptwerk definition.
-    sampleOffsetLabel.setText("Files vs keys:", juce::dontSendNotification);
-    const juce::String offsetTip = "The sample files' numbers minus the keys they play on (the Stop List column \"Files vs keys\" is the same setting): "
-        "-12 puts the file 024 on key 36 (Doesburg). A change loads this stop's samples again on their keys; each key's tooltip below names its file.";
-    sampleOffsetLabel.setTooltip(offsetTip);
-    addAndMakeVisible(sampleOffsetLabel);
-    for (int offset = -24; offset <= 24; ++offset)
-        sampleOffsetBox.addItem(offset == 0 ? juce::String("0 (the number is the key)") : (offset > 0 ? "+" : "") + juce::String(offset), offset + 100);
-    sampleOffsetBox.setSelectedId(juce::jlimit(-24, 24, this->stop->sampleOffset) + 100, juce::dontSendNotification);
-    sampleOffsetBox.setTooltip(offsetTip);
-    sampleOffsetBox.onChange = [this]
-    {
-        const int chosen = sampleOffsetBox.getSelectedId() - 100;
-        if (chosen == this->stop->sampleOffset) return;
-        if (sampleOffsetRequest) sampleOffsetRequest(this->stop, chosen);
-    };
-    addAndMakeVisible(sampleOffsetBox);
+    // One-shot (0.8.158): the stop plays each sample once through, whenever the
+    // key goes up (chimes, harp). The switch starts as the One-shot Patterns say
+    // and overrides them once touched.
+    oneShotToggle.setButtonText("One-shot");
+    oneShotToggle.setToggleState(this->stop->isOneShot, juce::dontSendNotification);
+    oneShotToggle.setTooltip("The stop plays each sample once from start to end, whenever the key is released (chimes, harp, celesta). "
+        "Set by the One-shot Patterns from the folder's name; this switch overrides them for this stop.");
+    oneShotToggle.onClick = [this] { if (oneShotRequest) oneShotRequest(this->stop, oneShotToggle.getToggleState()); };
+    addAndMakeVisible(oneShotToggle);
 
     for (int manual = 0; manual < SamplerEngine::maxManuals; ++manual)
     {
@@ -835,19 +845,16 @@ StopRow::StopRow(Stop* stop, SamplerEngine& engine, int noteMin, int noteMax, in
     for (int manual = 0; manual < SamplerEngine::maxManuals; ++manual)
         transmissionBoxes[(size_t)manual].setVisible(stopControls && manual < activeManualCount);
     diapasonLabel.setVisible(showVoicing && !isTransmission());
-    transpositionLabel.setVisible(transmissionControls);
-    shiftBox.setVisible(transmissionControls);
+    transpositionLabel.setVisible(transmissionControls || stopControls);
+    shiftBox.setVisible(transmissionControls || stopControls);
     sourceLabel.setVisible(transmissionControls);
     aliasLabel.setVisible(showVoicing);
     aliasBox.setVisible(showVoicing);
-    // Every expanded stop row carries the switch (0.8.153: the user looked for it on
-    // every stop); it is enabled where the button can show a count - a stop folder
-    // or a stop with items indented under it.
-    rankCountToggle.setVisible(showVoicing && !isTransmission());
-    rankCountToggle.setEnabled((childrenGetter && !childrenGetter(stop).empty())
-        || (childTransmissionsGetter && !childTransmissionsGetter(stop).empty()));
-    sampleOffsetLabel.setVisible(withPipes && !isTransmission());
-    sampleOffsetBox.setVisible(withPipes && !isTransmission());
+    // The rank-count switch only where the button can show a count (0.8.158): a
+    // stop folder, or a stop with items indented under it.
+    rankCountToggle.setVisible(showVoicing && !isTransmission() && ((childrenGetter && !childrenGetter(stop).empty())
+        || (childTransmissionsGetter && !childTransmissionsGetter(stop).empty())));
+    oneShotToggle.setVisible(stopControls);
     globalSlider.setVisible(withPipes); globalLabel.setVisible(withPipes);
     gainSlider.setVisible(stopControls); gainLabel.setVisible(stopControls);
     attackSlider.setVisible(stopControls); attackLabel.setVisible(stopControls);
@@ -1355,26 +1362,17 @@ void StopRow::resized()
     removeButton.setBounds(margin + 1, 1, 18, 18);                     // top-left corner, arrange mode only
     removeButton.setVisible(arrange.active && arrange.active(this));
     int x = margin + buttonWidth + sliderSpacing;
-    if (!isTransmission())
-    {
-        // The rank-count switch right after the button (0.8.153): behind the alias it
-        // stood past the band's edge on a stop with rank boxes and a long pitch text.
-        rankCountToggle.setBounds(x, 13, 140, 23);
-        x += 146;
-        if (!stop->container)
-        {
-            sampleOffsetLabel.setBounds(x, 13, 96, 23);
-            x += 98;
-            sampleOffsetBox.setBounds(x, 13, 150, 23);
-            x += 158;
-        }
-    }
-    if (isTransmission())
+    // The Transposition box right after the button (a transmission's shift, or the
+    // stop's own - 0.8.158); a transmission row shows its source stop after it.
+    if (isTransmission() || !stop->container)
     {
         transpositionLabel.setBounds(x, 13, 100, 23);
         x += 104;
         shiftBox.setBounds(x, 13, 250, 23);
         x += 258;
+    }
+    if (isTransmission())
+    {
         sourceLabel.setBounds(x, 13, 520, 23);
         x += 528;
     }
@@ -1402,6 +1400,21 @@ void StopRow::resized()
     x += 48;
     aliasBox.setBounds(x, 13, 190, 23);
     x += 196;
+    if (!isTransmission())
+    {
+        // After the alias: the One-shot switch of a stop with pipes, and the rank
+        // count of a stop folder (0.8.158: the switches sit by the alias, at the end).
+        if (!stop->container)
+        {
+            oneShotToggle.setBounds(x, 13, 92, 23);
+            x += 96;
+        }
+        if (rankCountToggle.isVisible())
+        {
+            rankCountToggle.setBounds(x, 13, 140, 23);
+            x += 146;
+        }
+    }
 
     // A stop folder with pipes of its own: its voicing steps right of the tree
     // lines that join its children to it.
@@ -1759,7 +1772,10 @@ void Voicer::rebuildUI(juce::Component& container, juce::Viewport& viewport)
                     if (row->getStop()->hasNoteInAnyRank(note)) { if (firstNote < 0) firstNote = note; lastNote = note; }
                 CrashHandler::note("Grid item: manual " + juce::String(row->getStop()->primaryManual) + (row->isTransmission() ? " transmission " : " stop ")
                     + row->getStop()->name + " button " + s.toString() + " notes " + juce::String(firstNote) + ".." + juce::String(lastNote)
-                    + (row->getStop()->sampleOffset != 0 ? " files " + juce::String(row->getStop()->sampleOffset) : juce::String())
+                    + (row->getStop()->sampleOffset != 0 ? " transposition " + juce::String(row->getStop()->sampleOffset) : juce::String())
+                    + (row->getStop()->footageKnown ? " footage " + juce::String(row->getStop()->footageSemitones) : juce::String(" footage unknown"))
+                    + " caption \"" + row->getStop()->displayName() + "\""
+                    + (row->getStop()->isOneShot ? " one-shot" : "")
                     + (row->isExpanded() ? " EXPANDED " + row->describeLineOne() : juce::String()));
                 if (const char* png = std::getenv("ORGAN_TEST_SNAPSHOT"); png != nullptr && row->isExpanded())
                 {
@@ -1840,8 +1856,9 @@ void Voicer::rebuildUI(juce::Component& container, juce::Viewport& viewport)
                     }
             }
             // ORGAN_TEST_OFFSET="<manual>|<stop name>|<offset>": "Files vs keys" as the voicing box would set it (once).
+            // ORGAN_TEST_TRANSPOSITION="<manual>|<stop prefix>|<semitones>" (tests): the voicing's Transposition path.
             static bool offsetDone = false;
-            if (const char* test = std::getenv("ORGAN_TEST_OFFSET"); test != nullptr && !offsetDone && !compactCells.empty())
+            if (const char* test = std::getenv("ORGAN_TEST_TRANSPOSITION"); test != nullptr && !offsetDone && !compactCells.empty())
             {
                 const auto parts = juce::StringArray::fromTokens(juce::String(test), "|", "");
                 for (auto* r : stopRows)
@@ -1849,8 +1866,8 @@ void Voicer::rebuildUI(juce::Component& container, juce::Viewport& viewport)
                         && r->getStop()->primaryManual == parts[0].getIntValue() && r->getStop()->name.startsWith(parts[1]))
                     {
                         offsetDone = true;
-                        CrashHandler::note("ORGAN_TEST_OFFSET: " + r->getStop()->name + " -> " + parts[2]);
-                        if (sampleOffsetRequest) sampleOffsetRequest(r->getStop(), parts[2].getIntValue());
+                        CrashHandler::note("ORGAN_TEST_TRANSPOSITION: " + r->getStop()->name + " -> " + parts[2]);
+                        if (transpositionRequest) transpositionRequest(r->getStop(), parts[2].getIntValue());
                         break;
                     }
             }
@@ -2542,7 +2559,8 @@ void Voicer::layoutScreen(int screen, juce::Component& container, juce::Viewport
                 { scrollTarget = target; if (uiContainer != nullptr && uiViewport != nullptr) rebuildUI(*uiContainer, *uiViewport); },
                 activeManualCount, stateChanged, transmissionIndex);
             row->setArrangeHooks(hooksFor(manual, key));
-            row->sampleOffsetRequest = [this](Stop* target, int offset) { if (sampleOffsetRequest) sampleOffsetRequest(target, offset); };
+            row->transpositionRequest = [this](Stop* target, int semitones) { if (transpositionRequest) transpositionRequest(target, semitones); };
+            row->oneShotRequest = [this](Stop* target, bool on) { if (oneShotRequest) oneShotRequest(target, on); };
             row->setTransmissionRemover([this](Stop* target, int index) { removeTransmission(target, index); });
             row->setChildrenGetter([this](const Stop* master) { return groupChildren(master); },
                 [this](const Stop* master) { return groupChildTransmissions(master); });

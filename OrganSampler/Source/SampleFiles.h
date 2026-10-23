@@ -60,6 +60,12 @@ namespace SampleFiles
     juce::String indexingProgress();
     // "RAR 5, 17938 file(s), 27081 MB" (tests and the log).
     juce::String archiveSummary(const juce::File& archive);
+    // Folders whose archives serve paths lying ELSEWHERE (0.8.158): a path not on
+    // the disk and not in an archive beside it is looked for in these archives by
+    // the longest tail of the path they hold ("OrganInstallationPackages/002735/
+    // pipes/PE"). The owner sets them from the configuration's folder: the folder
+    // itself, the folders listed in its ArchiveFolders.txt, OrganRarPackages beside.
+    void setSearchFolders(const std::vector<juce::File>& folders);
     // The folder the archive indexes are kept in (under the settings folder).
     void setIndexFolder(const juce::File& folder);
     void forgetArchives();   // drops the open cursors and the indexes in memory (the files on the disk stay)

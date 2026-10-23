@@ -5425,7 +5425,7 @@ struct SamplerEngine::Impl
     // the rank's footage - a filled pipe counts as the pipe it stands for.
     static float fadeScale(const Stop* rank, int pipe)
     {
-        const int sounding = pipe + (rank != nullptr && rank->footageKnown ? rank->footageSemitones : 0);
+        const int sounding = pipe + (rank != nullptr && rank->footageKnown ? rank->footageSemitones + rank->sampleOffset : 0);   // the pipe's real footage plus the transposition
         const double octavesBelow = juce::jmax(0.0, (60.0 - (double)sounding) / 12.0);
         return (float)std::pow(1.5, octavesBelow);
     }
@@ -5456,6 +5456,9 @@ struct SamplerEngine::Impl
         for (auto* stop : owner.stops)
         {
             if (onlyStop != nullptr && stop != onlyStop) continue;
+            // A one-shot stop (chimes, harp) sounds each sample once through to its
+            // end whenever the key goes up: nothing of it is released or faded.
+            if (stop->isOneShot && updateNoteBookkeeping) continue;
             int shiftCount;
             if (manualIndex < 0) { shifts[0] = 0; shiftCount = 1; }
             else shiftCount = collectRouteShifts(stop, manualIndex, shifts);
@@ -10007,9 +10010,30 @@ bool SamplerEngine::footageFromName(const juce::String& name, int& semitones)
 int SamplerEngine::stopFootageSemitones(const Stop* stop)
 {
     if (stop == nullptr) return 0;
-    if (stop->footageKnown) return stop->footageSemitones;
+    if (stop->footageKnown) return stop->footageSemitones + stop->sampleOffset;   // the files' real footage, transposed = what sounds on the keys
     int semitones = 0;
     return footageFromName(stop->name, semitones) ? semitones : 0;
+}
+
+int SamplerEngine::untransposedFootageSemitones(const Stop* stop)
+{
+    // Measured: the real footage of the files on their own numbers. Not measured:
+    // the name is taken as the sounding footage, the transposition taken off.
+    return stop == nullptr ? 0 : stopFootageSemitones(stop) - stop->sampleOffset;
+}
+
+juce::String SamplerEngine::nameWithoutFootage(const juce::String& name)
+{
+    int start = 0, end = 0;
+    double feet = 0.0;
+    if (!findFootageToken(name, start, end, feet)) return name;
+    return (name.substring(0, start).trimEnd() + " " + name.substring(end).trimStart()).trim();
+}
+
+const std::vector<int>& SamplerEngine::cleanIntervals()
+{
+    static const std::vector<int> steps{ -24, -17, -12, -8, -5, -2, 0, 2, 4, 7, 10, 12, 14, 16, 19, 22, 24 };
+    return steps;
 }
 
 juce::String footageDisplayName(const juce::String& name)
@@ -10041,14 +10065,25 @@ juce::String Stop::displayName() const
     // An alias gets its foot mark like a name ("I. Quintadeen 8" reads "I. Quintadeen 8'").
     const juce::String base = footageDisplayName(alias.isNotEmpty() ? alias : name);
     int written = 0;
-    if (SamplerEngine::footageFromName(base, written)) return base;   // the name (or alias) says the footage itself
+    if (SamplerEngine::footageFromName(base, written))   // the name (or alias) says the footage itself ...
+    {
+        // ... and a transposed stop shows the footage it really sounds at (0.8.158):
+        // the measured one when the samples carry a pitch, else the name's plus the
+        // transposition. Untransposed stops keep the name's footage as ever.
+        if (sampleOffset == 0) return base;
+        const Stop* measured = footageKnown ? this : nullptr;
+        if (measured == nullptr)
+            for (const auto& rank : ranks)
+                if (rank->footageKnown) { measured = rank.get(); break; }
+        return SamplerEngine::nameWithFootage(base, measured != nullptr ? measured->footageSemitones + sampleOffset : written + sampleOffset);
+    }
     // No footage in the caption: the one measured from the lowest pipe's smpl pitch.
     const Stop* measured = footageKnown ? this : nullptr;
     if (measured == nullptr)
         for (const auto& rank : ranks)
             if (rank->footageKnown) { measured = rank.get(); break; }
     if (measured == nullptr) return base;
-    return base + " " + SamplerEngine::footageLabel(measured->lowestFootageSemitones);
+    return base + " " + SamplerEngine::footageLabel(measured->lowestFootageSemitones + sampleOffset);   // the real footage, transposed
 }
 
 int SamplerEngine::displayedFootageSemitones(const Stop* stop)
@@ -10065,7 +10100,12 @@ juce::String SamplerEngine::transposedStopName(const Stop* stop, int shift)
     const juce::String name = stop->displayName();   // an aliased stop passes its alias on; the footage carries its mark
     if (shift == 0) return name;
     // The transposition counts from the footage the Transposition box counts from.
-    const juce::String newFootage = footageLabel(displayedFootageSemitones(stop) + shift);   // always with the foot mark
+    return nameWithFootage(name, displayedFootageSemitones(stop) + shift);
+}
+
+juce::String SamplerEngine::nameWithFootage(const juce::String& name, int semitones)
+{
+    const juce::String newFootage = footageLabel(semitones);   // always with the foot mark
     // A division prefix ("4. Tuba 8", "P. tuba 4", "Rec: Hautbois 8") carries no
     // footage: the search starts after it (0.8.142: "4. Tuba 8" shifted an
     // octave came out as "2'. Tuba 8" - the "4." taken for the footage).
@@ -10128,6 +10168,8 @@ void SamplerEngine::updateOneShotFlags()
         bool isOneShot = stop->folder.getFileName().containsIgnoreCase("chiff");
         for (const auto& pattern : oneShotPatterns)
             if (folderNameMatchesPattern(stop->folder.getFileName(), pattern)) isOneShot = true;
+        // The voicing's own switch (0.8.158) overrides the patterns.
+        if (stop->oneShotManual >= 0) isOneShot = stop->oneShotManual == 1;
         stop->isOneShot = isOneShot;
     }
 }
@@ -10508,7 +10550,7 @@ void SamplerEngine::loadSamplesIntoStop(Stop* stop, const juce::File& folder, bo
         // "_NNN" at the end: a velocity layer (attacks and releases alike).
         const int layer = extractVelocityLayerFromFilename(found.name);
         // Files whose key (number - offset) lies off the 0..127 range are not decoded.
-        if (midi >= 0 && midi - stop->sampleOffset >= 0 && midi - stop->sampleOffset < 128) entries.push_back({ folder.getChildFile(found.name), midi, layer, found.data, found.archived });
+        if (midi >= 0 && midi - stop->keyShift() >= 0 && midi - stop->keyShift() < 128) entries.push_back({ folder.getChildFile(found.name), midi, layer, found.data, found.archived });
     }
     std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b)
     {
@@ -10588,10 +10630,10 @@ void SamplerEngine::loadSamplesIntoStop(Stop* stop, const juce::File& folder, bo
     for (size_t i = 0; i < entries.size(); ++i)
     {
         if (decoded[i] == nullptr) continue;
-        // The key the file plays on: its number minus the stop's offset (0.8.155:
-        // Doesburg's "024" on key 36 with -12; before, the number was the key and
-        // the organ sounded an octave high, its lowest octave off the keyboard).
-        const int midi = entries[i].midi - stop->sampleOffset;
+        // The key the file plays on: its number minus the stop's transposition
+        // (0.8.155: Doesburg's "024" on key 36 with -12; before, the number was the
+        // key and the organ sounded an octave high, its lowest octave off the keyboard).
+        const int midi = entries[i].midi - stop->keyShift();
         if (midi < 0 || midi > 127) continue;
         if (isRelease) stop->getOrCreateReleaseLayer(releaseMaxHoldMs, entries[i].velocityLayer > 0 ? entries[i].velocityLayer : -1)
             .samplesByNote[(size_t)midi].push_back(std::move(decoded[i]));
@@ -10883,15 +10925,15 @@ void SamplerEngine::loadManualFolder(const juce::File& topFolder, int manualInde
     const juce::String signatureNow = storageSignature();
     // ... and with the same "Files vs keys" offset (0.8.155): samples keyed for
     // another offset are decoded afresh, never adopted.
-    auto hasLoadedRankForFolder = [this, &signatureNow](int manual, const juce::File& folder, int sampleOffset)
+    auto hasLoadedRankForFolder = [this, &signatureNow](int manual, const juce::File& folder, int keyShift)
     {
         const juce::ScopedLock sl(controlLock);
         for (auto* stop : stops)
         {
             if (stop->primaryManual != manual) continue;
-            if (!stop->container && stop->folder == folder && !stop->samplesUnloaded && stop->storageSignature == signatureNow && stop->sampleOffset == sampleOffset) return true;
+            if (!stop->container && stop->folder == folder && !stop->samplesUnloaded && stop->storageSignature == signatureNow && stop->keyShift() == keyShift) return true;
             for (const auto& rank : stop->ranks)
-                if (rank->folder == folder && !rank->samplesUnloaded && rank->storageSignature == signatureNow && rank->sampleOffset == sampleOffset) return true;
+                if (rank->folder == folder && !rank->samplesUnloaded && rank->storageSignature == signatureNow && rank->keyShift() == keyShift) return true;
         }
         return false;
     };
@@ -10908,7 +10950,7 @@ void SamplerEngine::loadManualFolder(const juce::File& topFolder, int manualInde
         // again: the commit adopts the old rank's samples, copies and analysis.
         const bool replaces = !append || (replacing != nullptr && replacing->count(manualIndex) != 0);
         if (isPooledStop(manualIndex, rank->name)) rank->samplesUnloaded = true;
-        else if (replaces && hasLoadedRankForFolder(manualIndex, stopFolder, rank->sampleOffset)) { rank->samplesUnloaded = true; rank->adoptSamples = true; }
+        else if (replaces && hasLoadedRankForFolder(manualIndex, stopFolder, rank->keyShift())) { rank->samplesUnloaded = true; rank->adoptSamples = true; }
         else loadRankSamples(rank);
         rank->folderHash = (uint32_t)stopFolder.getFullPathName().hashCode();
         rank->windContribution = windStopContribution(rank->name);
@@ -11040,7 +11082,9 @@ void SamplerEngine::loadManualFolder(const juce::File& topFolder, int manualInde
                     auto rank = std::make_unique<Stop>(found->second->name, stopFolder);
                     rank->perspective = assignment.perspective;
                     rank->sampleOffset = assignment.sampleOffset;
+                    rank->sampleOffsetSet = assignment.sampleOffsetSet;
                     loadRank(rank.get(), stopFolder, groupManual);
+                    if (!found->second->sampleOffsetDetected && rank->sampleOffsetDetected) { found->second->sampleOffset = rank->sampleOffset; found->second->sampleOffsetDetected = true; found->second->sampleOffsetSet = true; }
                     found->second->isOneShot = found->second->isOneShot || rank->isOneShot;
                     found->second->ranks.push_back(std::move(rank));
                     continue;
@@ -11048,6 +11092,7 @@ void SamplerEngine::loadManualFolder(const juce::File& topFolder, int manualInde
                 auto mainStop = std::make_unique<Stop>(stopName, stopFolder);
                 mainStop->perspective = assignment.perspective;
                 mainStop->sampleOffset = assignment.sampleOffset;
+                mainStop->sampleOffsetSet = assignment.sampleOffsetSet;
                 loadRank(mainStop.get(), stopFolder, groupManual);
                 perspectiveStops[groupKey] = mainStop.get();
                 newStops.add(mainStop.release());
@@ -11234,9 +11279,9 @@ void SamplerEngine::commitPendingDivisions()
                 const juce::String wanted = storageSignature();
                 for (auto* old : retiring)
                 {
-                    if (!old->container && old->folder == rank->folder && !old->samplesUnloaded && old->storageSignature == wanted && old->sampleOffset == rank->sampleOffset) source = old;
+                    if (!old->container && old->folder == rank->folder && !old->samplesUnloaded && old->storageSignature == wanted && old->keyShift() == rank->keyShift()) source = old;
                     for (auto& r : old->ranks)
-                        if (source == nullptr && r->folder == rank->folder && !r->samplesUnloaded && r->storageSignature == wanted && r->sampleOffset == rank->sampleOffset) source = r.get();
+                        if (source == nullptr && r->folder == rank->folder && !r->samplesUnloaded && r->storageSignature == wanted && r->keyShift() == rank->keyShift()) source = r.get();
                     if (source != nullptr) break;
                 }
                 rank->adoptSamples = false;
@@ -11260,6 +11305,7 @@ void SamplerEngine::commitPendingDivisions()
                 rank->footageSemitones = source->footageSemitones;
                 rank->lowestFootageSemitones = source->lowestFootageSemitones;
                 rank->sampleOffset = source->sampleOffset;
+                rank->sampleOffsetSet = true;
                 rank->soundingHarmonic = source->soundingHarmonic;
                 rank->soundingMeasured = source->soundingMeasured;
                 rank->footageSounding = source->footageSounding;
@@ -11568,6 +11614,40 @@ void SamplerEngine::loadRankSamples(Stop* rank)
 {
     rank->storageSignature = storageSignature();
     loadSamplesIntoStop(rank, rank->folder, false, 99999);
+    // The automatic transposition (0.8.158): when the row carries none (no
+    // definition, nothing chosen), the smpl pitches tell at what footage the
+    // files sound on their own numbers and the footage in the folder's name
+    // what they should - Doesburg's "024" (sounding C of key 36) in a folder
+    // named "... 8" goes on key 36: -12, as the Hauptwerk definition says too.
+    // Without a footage in the name, or without pitches, nothing moves.
+    if (!rank->sampleOffsetSet && !rank->samplesUnloaded)
+    {
+        std::map<int, int> counts;
+        int measured = 0;
+        for (int key = 0; key < 128; ++key)
+        {
+            const auto& variants = rank->samplesByNote[(size_t)key];
+            if (variants.empty() || variants[0] == nullptr || !std::isfinite(variants[0]->smplPitch)) continue;
+            ++counts[juce::roundToInt(variants[0]->smplPitch) - key];
+            ++measured;
+        }
+        int sounding = 0, best = 0;
+        for (const auto& [offset, count] : counts) if (count > best) { best = count; sounding = offset; }
+        int named = 0;
+        const bool nameKnown = footageFromName(displayFolderName(rank->folder.getFileName()), named) || footageFromName(rank->name, named);
+        if (nameKnown && measured >= 3 && best * 10 >= measured * 7 && sounding != named)
+        {
+            const int offset = juce::jlimit(-48, 48, rank->sampleOffset + (named - sounding));
+            CrashHandler::note("Transposition of \"" + rank->name + "\" (" + rank->folder.getFileName() + "): the files sound at " + footageLabel(sounding - rank->sampleOffset)
+                + " on their own numbers, the name says " + footageLabel(named) + " - transposed by " + juce::String(offset));
+            rank->sampleOffset = offset;
+            rank->sampleOffsetDetected = true;
+            for (auto& variants : rank->samplesByNote) variants.clear();
+            rank->velocityLayers.clear();
+            loadSamplesIntoStop(rank, rank->folder, false, 99999);
+        }
+        rank->sampleOffsetSet = true;
+    }
     for (const auto& relFolder : SampleFiles::childDirectories(rank->folder))   // disk or archive (0.8.157)
     {
         const juce::String relName = relFolder.getFileName();
@@ -11635,10 +11715,18 @@ void SamplerEngine::setStopSampleOffset(Stop* stop, int offset)
     {
         const juce::ScopedLock sl(controlLock);
         stop->sampleOffset = offset;
-        for (auto& rank : stop->ranks) rank->sampleOffset = offset;
+        stop->sampleOffsetSet = true;
+        for (auto& rank : stop->ranks) { rank->sampleOffset = offset; rank->sampleOffsetSet = true; }
     }
-    CrashHandler::note("Files vs keys of \"" + stop->name + "\" set to " + juce::String(offset) + ": its samples are loaded again on their keys");
+    CrashHandler::note("Transposition of \"" + stop->name + "\" set to " + juce::String(offset) + ": its samples are loaded again on their keys");
     reloadStopSamples(stop, true);
+}
+
+void SamplerEngine::setStopOneShot(Stop* stop, int manual)
+{
+    if (stop == nullptr) return;
+    stop->oneShotManual = juce::jlimit(-1, 1, manual);
+    updateOneShotFlags();
 }
 
 void SamplerEngine::reloadStopSamples(Stop* stop, bool evenIfLoaded)
@@ -11665,7 +11753,12 @@ void SamplerEngine::reloadStopSamples(Stop* stop, bool evenIfLoaded)
     std::vector<std::pair<Stop*, std::unique_ptr<Stop>>> staged;
     staged.emplace_back(stop, std::make_unique<Stop>(stop->name, stop->folder));
     for (auto& rank : stop->ranks) staged.emplace_back(rank.get(), std::make_unique<Stop>(rank->name, rank->folder));
-    for (auto& entry : staged) { entry.second->sampleOffset = entry.first->sampleOffset; loadRankSamples(entry.second.get()); }
+    for (auto& entry : staged)
+    {
+        entry.second->sampleOffset = entry.first->sampleOffset;
+        entry.second->sampleOffsetSet = true;   // a reload keeps the transposition as it is
+        loadRankSamples(entry.second.get());
+    }
     impl->suspend();
     {
         const juce::ScopedLock sl(controlLock);
@@ -11993,7 +12086,10 @@ void SamplerEngine::computeTuning440(const std::vector<Stop*>& ranksOfOrgan)
             int count = 0;
             for (const auto& sample : rank->samplesByNote[(size_t)note])
                 if (sample != nullptr && std::isfinite(sample->smplPitch)) { sum += sample->smplPitch; ++count; }
-            if (count > 0) rd.notes.push_back({ note, sum / count - note });
+            // The REAL footage of the files (0.8.158): recorded pitch minus the file's
+            // own number (= the key plus the stop's transposition), so a transposed
+            // stop measures what its samples are, not where they were put.
+            if (count > 0) rd.notes.push_back({ note, sum / count - (note + rank->sampleOffset) });
         }
         // Usable only when the chunks carry measured pitches: enough notes, not
         // all "unity = key, fraction 0", and not one constant unity note.

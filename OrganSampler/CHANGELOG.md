@@ -12,6 +12,51 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.158] - 2026-10-23
+
+### Added
+- **Transposition** of a stop: the voicing row's box right after the button
+  (and the Stop List column "Transp.") - the stop's transposition against its
+  sample files on their own numbers, as a pure interval with the footage each
+  step gives: "0 -> 8' (as the original)", "-12 -> 16'", "+12 -> 4'",
+  "+7 -> 5 1/3'" (both this box and a transmission's offer only the steps
+  that give an organ footage, never a 14.25'). The caption's footage follows,
+  and the stop's transmissions and extensions add their own transposition on
+  top. It is the "Files vs keys" of 0.8.155 under its musical name, and the
+  program sets it by itself where it can: from a Hauptwerk definition as
+  before (Doesburg's stops read "-12"), and for a folder loaded on its own
+  from the samples' pitch against the footage in the folder's name
+  ("quintaton 16" whose files sound 8' on their numbers gets -12; the log
+  says so). Clearing the Stop List cell lets the program find it again. The
+  Orig. Pitch line shows the real footage of the files (8' there), the
+  caption the transposed one (16').
+- **One-shot** switch in every stop's voicing row, after the alias: the stop
+  plays each sample once through whenever the key is released (chimes, harp,
+  celesta); it starts as the One-shot Patterns say and overrides them for
+  the stop. The key going up no longer cuts or fades a one-shot stop.
+- *Load Configuration* takes a `.rar`: a configuration or a Hauptwerk
+  definition inside is loaded straight from the archive. The folder of every
+  archive chosen (there or in Load folder...) is remembered in
+  `ArchiveFolders.txt` beside the open configuration, and `OrganRarPackages`
+  beside `OrganConfigurations` is always looked into: a sample folder not on
+  the disk is found in those archives by the tail of its path.
+
+### Changed
+- The configuration of a Hauptwerk import is written OUTSIDE the Hauptwerk
+  folders: `OrganConfigurations` beside the folder that holds
+  `HauptwerkSampleSetsAndComponents` (`D:\OrganConfigurations` for the usual
+  `D:\Hauptwerk\...`), the same place for an unpacked and an archived set;
+  files written beside OrganDefinitions by earlier versions keep working.
+- A Hauptwerk import writes the definition's stop names without their
+  footage: the footage shown is the sounding one and follows a transposition.
+- "Rank count [II]" is shown on stop folders only, after the alias.
+- The manual follows the program again: master volume default -18 dB,
+  "Melody/bass couplers: new extreme key only" on by default, Hide all
+  voicing (it only folds), the Stop volume slider, the combination row's bank
+  buttons, Tutti and X, the Measurement limit and the Linux ALSA switch of the
+  Engine section, Show settings.json / Refresh values, the Divisions dialog's
+  own captions; two stale tooltips in the program fixed (-52 dB, "Fletna").
+
 ## [0.8.157] - 2026-10-23
 
 ### Added

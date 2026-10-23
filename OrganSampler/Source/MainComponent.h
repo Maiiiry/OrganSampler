@@ -330,7 +330,8 @@ private:
                 juce::String name, alias;
                 bool customName = false;                      // typed by the user, not derived from the folders
                 bool child = false;                           // indented under the previous non-child row (stop folder)
-                int sampleOffset = 0;                         // the files' numbers minus the keys they play on ("Files vs keys", 0.8.155)
+                int sampleOffset = 0;                         // the stop's transposition: the files' numbers minus the keys they land on (0.8.155; Stop List "Transp.")
+                bool sampleOffsetSet = false;                 // known ("sampleOffset" in the file: a definition, the user, or found before); unset: the loader finds it from the smpl pitches (0.8.158)
                 std::map<juce::String, FolderRef> folders;    // perspective -> folder
                 // A transmission shown as a row of its receiving division (Stop List
                 // "Show Trsm."): never written into the table, applied to the engine.
@@ -399,7 +400,14 @@ private:
     // Arrange mode: a click on a free grid cell makes a new empty stop (a stop
     // folder) there; its Stop List row is added and the division reloads.
     void createStopFolderOnGrid(int manual, int column, int row);
-    void setStopSampleOffset(Stop* stop, int offset);   // "Files vs keys" from the voicing (0.8.155)
+    void setStopSampleOffset(Stop* stop, int offset);   // the stop's Transposition from the voicing (0.8.155 "Files vs keys", 0.8.158)
+    void takeDetectedSampleOffsets();   // the offsets the loader found from the smpl pitches go into the Stop List rows (0.8.158)
+    // RAR archives elsewhere (0.8.158): the folders whose archives serve the
+    // configuration's paths - its own folder, the folders in its ArchiveFolders.txt,
+    // OrganRarPackages beside it, and the program-wide list in the settings folder.
+    void refreshArchiveSearchFolders(const juce::File& configurationFile);
+    void registerArchiveFolder(const juce::File& folder);   // a folder of archives the user chose: remembered for the next start
+    void loadConfigurationFromArchive(const juce::File& archive);   // Load Configuration given a .rar: the configuration or definition inside
     // A ready-made stop the loaded folder trees hold: its name and the folder of
     // every perspective, as a Stop List row would carry them.
     struct ReadyStop
