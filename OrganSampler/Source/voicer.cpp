@@ -405,7 +405,10 @@ StopRow::StopRow(Stop* stop, SamplerEngine& engine, int noteMin, int noteMax, in
         auto lnf = makeBoldOctavesLookAndFeel();
         const int base = t != nullptr ? SamplerEngine::stopFootageSemitones(stop) : SamplerEngine::untransposedFootageSemitones(stop);
         const int current = t != nullptr ? t->shift : stop->sampleOffset;
-        std::vector<int> steps = SamplerEngine::cleanIntervals();
+        // Every semitone from -24 to +24, each a pure interval with the fraction it
+        // gives (octaves printed bold), as the transmission rows had it since 0.8.111.
+        std::vector<int> steps;
+        for (int shift = -Stop::Transmission::maxShift; shift <= Stop::Transmission::maxShift; ++shift) steps.push_back(shift);
         if (std::find(steps.begin(), steps.end(), current) == steps.end()) { steps.push_back(current); std::sort(steps.begin(), steps.end()); }
         for (const int shift : steps)
         {

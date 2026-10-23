@@ -9841,7 +9841,12 @@ double SamplerEngine::pureDeviationCents(int semitones)
             const double cents = 1200.0 * std::log2((double)m * std::pow(2.0, (double)k));
             if (juce::roundToInt(cents / 100.0) == semitones) return cents - 100.0 * semitones;
         }
-    return 0.0;   // not a harmonic footage: tempered
+    // Not a harmonic footage: the pure (just) interval of that semitone class
+    // (16/15, 9/8, 6/5, 5/4, 4/3, 7/5, 3/2, 8/5, 5/3, 9/5, 15/8), octaves added
+    // (0.8.159; tempered before - the transposition is meant pure).
+    const int octaves = (int)std::floor(semitones / 12.0);
+    const int cls = semitones - 12 * octaves;
+    return 1200.0 * std::log2((double)justIntervalNumerator(cls) / (double)justIntervalDenominator(cls)) + 1200.0 * octaves - 100.0 * semitones;
 }
 
 juce::String SamplerEngine::footageLabel(int semitones)
@@ -10030,11 +10035,6 @@ juce::String SamplerEngine::nameWithoutFootage(const juce::String& name)
     return (name.substring(0, start).trimEnd() + " " + name.substring(end).trimStart()).trim();
 }
 
-const std::vector<int>& SamplerEngine::cleanIntervals()
-{
-    static const std::vector<int> steps{ -24, -17, -12, -8, -5, -2, 0, 2, 4, 7, 10, 12, 14, 16, 19, 22, 24 };
-    return steps;
-}
 
 juce::String footageDisplayName(const juce::String& name)
 {
@@ -10737,17 +10737,33 @@ std::vector<SamplerEngine::FolderAssignment> SamplerEngine::scanTreeAssignments(
         // "01-dirMk2H-OW_" with the rest of the name as the stop.
         struct PrefixCandidate { std::set<juce::String> stops; juce::String spelling; };
         std::map<juce::String, PrefixCandidate> byPrefix;   // lower-case prefix (separators included)
+        // The L and R halves of a stereo stop ("quintaton16L" beside "quintaton16R",
+        // 0.8.159): one stop for the comparison, else a perspective seen only with
+        // its left half never matched the one with the right ("AB_glockentonL" and
+        // "AB_glockentonR" against "Re_glockenton" kept AB and Re from being learned).
+        auto componentOf = [&folderKeys](const juce::File& folder) -> juce::String
+        {
+            const auto name = folder.getFileName();
+            if (name.length() < 3) return {};
+            const juce::juce_wchar last = name.getLastCharacter();
+            if (!(last == 'L' || last == 'l' || last == 'R' || last == 'r') || !juce::CharacterFunctions::isDigit(name[name.length() - 2])) return {};
+            const juce::String other = name.dropLastCharacters(1) + ((last == 'L' || last == 'l') ? "R" : "L");
+            if (folderKeys.count(folder.getSiblingFile(other).getFullPathName().toLowerCase()) == 0
+                && folderKeys.count(folder.getSiblingFile(other.toLowerCase()).getFullPathName().toLowerCase()) == 0) return {};
+            return juce::String::charToString(juce::CharacterFunctions::toUpperCase(last));
+        };
         for (const juce::File& stopFolder : allFolders)
         {
             const auto name = stopFolder.getFileName();
             if (name.startsWithIgnoreCase("rel") || isIgnoredFolderName(name) || isTremmedVariantFolder(stopFolder, folderKeys) || !folderHasValidWavFiles(stopFolder)) continue;
             if (patternMatches(name)) continue;   // already a known perspective
             auto isSeparator = [](juce::juce_wchar c) { return c == '-' || c == '_' || c == ' '; };
+            const bool component = componentOf(stopFolder).isNotEmpty();
             for (int i = 1; i < name.length() && i <= 24; ++i)
             {
                 if (!isSeparator(name[i - 1]) || isSeparator(name[i])) continue;   // cut right after a separator run
                 const auto prefix = name.substring(0, i);
-                const auto stop = comparableFolderName(name.substring(i));
+                const auto stop = comparableFolderName(component ? name.substring(i).dropLastCharacters(1) : name.substring(i));
                 if (stop.isEmpty() || comparableFolderName(prefix).isEmpty()) continue;
                 auto& candidate = byPrefix[prefix.toLowerCase()];
                 candidate.stops.insert(stop);
@@ -12134,8 +12150,13 @@ void SamplerEngine::computeTuning440(const std::vector<Stop*>& ranksOfOrgan)
         std::vector<double> offsets(rd.notes.size(), 0.0);
         for (size_t i = 0; i < rd.notes.size(); ++i)
             if (const auto* c = nearest(rd.notes[i].raw - organ, false)) offsets[i] = c->semitones;
-        // A run of fewer than three equal offsets between two runs of one other
-        // value is a mistuned pipe, not a break.
+        // A break needs at least three pipes in a row at the new footage (the
+        // user's rule, 0.8.159): a run of fewer than three equal offsets is a
+        // mistuned pipe (or a wrong unity note), not a break, wherever it lies -
+        // at the start or the end of the compass too (Adlington's "Ch. Flute": the
+        // B and C# at the bottom carry pitches a third low, and the C between them
+        // was swallowed into their "break", so every C came out a semitone off).
+        // It takes the value of its longer neighbouring run.
         for (int pass = 0; pass < 8; ++pass)
         {
             bool changed = false;
@@ -12144,10 +12165,20 @@ void SamplerEngine::computeTuning440(const std::vector<Stop*>& ranksOfOrgan)
             {
                 size_t j = i;
                 while (j < offsets.size() && std::abs(offsets[j] - offsets[i]) < 1.0e-9) ++j;
-                if (j - i < 3 && i > 0 && j < offsets.size() && std::abs(offsets[i - 1] - offsets[j]) < 1.0e-9)
+                if (j - i < 3 && j - i < offsets.size())
                 {
-                    for (size_t k = i; k < j; ++k) offsets[k] = offsets[i - 1];
-                    changed = true;
+                    size_t previousLength = 0, nextLength = 0;
+                    for (size_t p = i; p > 0 && std::abs(offsets[p - 1] - offsets[i - 1]) < 1.0e-9; --p) ++previousLength;
+                    for (size_t n = j; n < offsets.size() && std::abs(offsets[n] - offsets[j]) < 1.0e-9; ++n) ++nextLength;
+                    if (previousLength > 0 || nextLength > 0)
+                    {
+                        const double value = previousLength >= nextLength && i > 0 ? offsets[i - 1] : (j < offsets.size() ? offsets[j] : offsets[i - 1]);
+                        if (std::abs(value - offsets[i]) > 1.0e-9)
+                        {
+                            for (size_t k = i; k < j; ++k) offsets[k] = value;
+                            changed = true;
+                        }
+                    }
                 }
                 i = j;
             }
@@ -12326,7 +12357,11 @@ void SamplerEngine::computeTuning440(const std::vector<Stop*>& ranksOfOrgan)
         {
             const int pitchClass = ((rd.notes[i].note % 12) + 12) % 12;
             // detrended (celeste) and relative to this rank's own diapason
-            sum[(size_t)pitchClass] += residualCents[i] - trendCents[i] - (rankDiapason - organ) * 100.0;
+            const double deviation = residualCents[i] - trendCents[i] - (rankDiapason - organ) * 100.0;
+            // A pipe far off (a wrong unity note, a pipe a third low - Adlington's
+            // bottom B and C#) is a mistuned pipe, never the temperament (0.8.159).
+            if (std::abs(deviation) > 50.0) continue;
+            sum[(size_t)pitchClass] += deviation;
             count[(size_t)pitchClass] += 1.0;
         }
         int classes = 0;
@@ -12396,21 +12431,35 @@ juce::String SamplerEngine::footageName(int semitones)
         { 50, "4/9' (ninth)" }, { 62, "2/9' (ninth)" }, { 74, "1/9' (ninth)" } };
     const auto it = names.find(semitones);
     if (it != names.end()) return it->second;
-    const double feet = 8.0 * std::pow(2.0, -semitones / 12.0);
-    if (feet < 1.0)
-    {
-        // Below one foot a footage reads as a fraction: the nearest 1/N (N up to 64)
-        // when it is within three per cent, else the nearest small fraction M/N.
-        const int n = juce::jlimit(1, 64, juce::roundToInt(1.0 / feet));
-        if (std::abs(1.0 / (double)n - feet) <= 0.03 * feet) return "1/" + juce::String(n) + "' (" + juce::String(semitones) + " st)";
-        for (int denominator = 2; denominator <= 16; ++denominator)
-        {
-            const int numerator = juce::roundToInt(feet * denominator);
-            if (numerator >= 1 && std::abs((double)numerator / denominator - feet) <= 0.03 * feet)
-                return juce::String(numerator) + "/" + juce::String(denominator) + "' (" + juce::String(semitones) + " st)";
-        }
-    }
-    return juce::String(feet, 2) + "' (" + juce::String(semitones) + " st)";
+    // Every other semitone is a pure (just) interval of the 8' and reads as the
+    // fraction it gives, never a decimal (0.8.159, the user's rule: the pure
+    // minor second 16/15 = 7 1/2', the minor third 6/5 = 6 2/3', the fourth 4/3 =
+    // 6', the tritone 7/5 = 5 5/7', the minor sixth 8/5 = 5', the major sixth
+    // 5/3 = 4 4/5', the major seventh 15/8 = 4 4/15'; an octave lower doubles).
+    int octaves = (int)std::floor(semitones / 12.0);
+    const int cls = semitones - 12 * octaves;   // 0..11
+    juce::int64 numerator = 8 * (juce::int64)justIntervalDenominator(cls), denominator = justIntervalNumerator(cls);   // feet = 8 / (num/den) / 2^octaves
+    for (; octaves > 0; --octaves) denominator *= 2;
+    for (; octaves < 0; ++octaves) numerator *= 2;
+    const juce::int64 g = std::gcd(numerator, denominator);
+    numerator /= g; denominator /= g;
+    const juce::int64 whole = numerator / denominator, rest = numerator % denominator;
+    juce::String text;
+    if (whole > 0) text << whole;
+    if (rest > 0) text << (whole > 0 ? " " : "") << rest << "/" << denominator;
+    return text + "' (" + juce::String(semitones) + " st)";
+}
+
+int SamplerEngine::justIntervalNumerator(int semitoneClass)
+{
+    static const int numerators[12]{ 1, 16, 9, 6, 5, 4, 7, 3, 8, 5, 9, 15 };
+    return numerators[((semitoneClass % 12) + 12) % 12];
+}
+
+int SamplerEngine::justIntervalDenominator(int semitoneClass)
+{
+    static const int denominators[12]{ 1, 15, 8, 5, 4, 3, 5, 2, 5, 3, 5, 8 };
+    return denominators[((semitoneClass % 12) + 12) % 12];
 }
 
 void SamplerEngine::setUndulationBeatRatio(float ratio)

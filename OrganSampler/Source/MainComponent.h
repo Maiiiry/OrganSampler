@@ -407,7 +407,7 @@ private:
     // OrganRarPackages beside it, and the program-wide list in the settings folder.
     void refreshArchiveSearchFolders(const juce::File& configurationFile);
     void registerArchiveFolder(const juce::File& folder);   // a folder of archives the user chose: remembered for the next start
-    void loadConfigurationFromArchive(const juce::File& archive);   // Load Configuration given a .rar: the configuration or definition inside
+    void loadConfigurationFromArchives(const std::vector<juce::File>& archives, bool merge);   // Load Configuration / Merge given .rar files: one configuration or definition inside them, chosen
     // A ready-made stop the loaded folder trees hold: its name and the folder of
     // every perspective, as a Stop List row would carry them.
     struct ReadyStop
@@ -772,8 +772,9 @@ private:
     std::shared_ptr<HauptwerkOdf> hauptwerkImport;   // the organ definition being imported (until its voicing is applied)
     // The extensions/transmissions of the definition (stops playing another
     // stop's ranks shifted): made as transmissions once the owner stops are loaded.
-    struct HauptwerkExtension { int manual = 0, ownerManual = 0; juce::String ownerName; int shift = 0; juce::String alias; int column = -1, row = -1; };   // column/row: the grid cell from the jamb page (0.8.142), -1 none
+    struct HauptwerkExtension { int manual = 0, ownerManual = 0; juce::String ownerName; int shift = 0; juce::String alias; int column = -1, row = -1; int lowKey = -1, highKey = -1; };   // column/row: the grid cell from the jamb page (0.8.142), -1 none; lowKey/highKey: the keys of its rows (0.8.159)
     std::vector<HauptwerkExtension> hauptwerkExtensions;
+    std::map<std::pair<int, juce::String>, std::pair<int, int>> hauptwerkCompass;   // (division, row key) -> the keys of the stop's own rows in the definition (0.8.159)
     std::unique_ptr<juce::FileChooser> configurationRootChooser;
     juce::File lastSettingsDirectory;
 

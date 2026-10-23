@@ -10,6 +10,7 @@
 #include "CrashHandler.h"
 #include "MemoryInfo.h"
 #include "SampleFiles.h"
+#include "ArchiveExtract.h"
 
 #if JUCE_WINDOWS
  #include <windows.h>
@@ -180,20 +181,27 @@ void MainComponent::mergeConfigurationDialog()
         : juce::File::getSpecialLocation(juce::File::userDocumentsDirectory);
     juce::Component::SafePointer<MainComponent> safeThis(this);
     configurationFileChooser = std::make_unique<juce::FileChooser>(
-        "Merge another configuration into the loaded one (OrganSampler .json, or a Hauptwerk organ definition)", start, "*.json;*.Organ_Hauptwerk_xml;*.xml");
-    configurationFileChooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+        "Merge another configuration into the loaded one (OrganSampler .json, a Hauptwerk organ definition, or RAR archives holding one)", start, "*.json;*.Organ_Hauptwerk_xml;*.xml;*.rar");
+    configurationFileChooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::canSelectMultipleItems,
         [safeThis](const juce::FileChooser& chooser)
         {
             if (safeThis == nullptr) return;
+            // RAR archives (0.8.159): what is inside is merged, archive after archive if need be.
+            std::vector<juce::File> archives;
+            for (const auto& file : chooser.getResults()) if (file.existsAsFile() && ArchiveExtractor::looksLikeArchive(file)) archives.push_back(file);
+            if (!archives.empty()) { safeThis->loadConfigurationFromArchives(archives, true); return; }
             safeThis->mergeConfigurationFile(chooser.getResult());
         });
 }
 
 void MainComponent::mergeConfigurationFile(const juce::File& file)
 {
-    if (!file.existsAsFile()) return;
+    if (!SampleFiles::existsAsFile(file)) return;   // on the disk or inside a RAR archive (0.8.159)
     if (HauptwerkOdf::looksLikeOdf(file)) { importHauptwerkOdf(file, true); return; }
-    auto configuration = juce::JSON::parse(file.loadFileAsString());
+    juce::String text;
+    if (file.existsAsFile()) text = file.loadFileAsString();
+    else if (auto in = SampleFiles::openInput(file)) text = in->readEntireStreamAsString();
+    auto configuration = juce::JSON::parse(text);
     if (!configuration.isObject() || !configuration.getProperty("manualKeyboards", juce::var()).isArray())
     {
         juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,

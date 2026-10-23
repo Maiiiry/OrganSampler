@@ -12,6 +12,43 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.159] - 2026-10-23
+
+### Fixed
+- Hauptwerk import: a division played by several keyboards belongs to the
+  keyboard with the most keys (Adlington: the 25-key "Pedal" keyboard and the
+  "2. manual" both play the division "Pedal" - the manual owns it, the pedal
+  keyboard is a pull-down and P. stays empty; before, the organ came out as
+  P. + I. instead of I. + II.). Several definitions in the chosen archives:
+  the user picks one (Load folder..., Load Configuration, Merge), never the
+  first one by itself.
+- Hauptwerk import: every stop plays the keys of ITS OWN rows in the
+  definition - a rank folder used by a bass stop and a treble stop is loaded
+  whole and each stop's other keys are switched off in its voicing (an
+  extension's too); before, the rows of every stop using the folder were
+  united, so nothing was ever limited.
+- Tuning analysis: a footage break needs at least three pipes in a row, at
+  the start and the end of the compass as well, and a pipe far off (more than
+  50 cents) never enters the recorded temperament. Adlington's "Ch. Flute"
+  carries pitches a third low on its bottom B and C#; they were taken for a
+  break that swallowed the C between them, so every C came out a semitone
+  off and the temperament was not recognised.
+- Transposition boxes (a stop's and a transmission's) offer every semitone
+  from -24 to +24 again, each a pure interval of the harmonic 8' written as
+  the fraction it gives (the minor second 16/15 = 7 1/2', the minor third
+  6/5 = 6 2/3', the fourth 6', the tritone 7/5 = 5 5/7', the major sixth 5/3
+  = 4 4/5' ...), never a decimal; the retune of such a transposition is that
+  pure interval too (tempered before). 0.8.158 had cut the list down.
+- Perspective prefixes are learned again when the stops come as L and R
+  halves ("AB_glockentonL" + "AB_glockentonR" against "Re_glockenton"): the
+  halves count as one stop for the comparison.
+- Merge another configuration takes RAR archives (what is inside is merged,
+  archive after archive when an organ comes in several); Load Configuration
+  and Merge accept several archives at once, the paths then look into all of
+  them.
+- The loading dialog shows two lines: the division's percentages stay on the
+  first, what the program does right now on the second (#79).
+
 ## [0.8.158] - 2026-10-23
 
 ### Added

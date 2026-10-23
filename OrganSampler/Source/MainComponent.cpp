@@ -10083,10 +10083,14 @@ void MainComponent::launchConfigurationLoadChooser()
     configurationFileChooser = std::make_unique<juce::FileChooser>(
         "Load organ configuration (OrganSampler .json, a Hauptwerk organ definition, or a RAR archive holding one)", start, "*.json;*.Organ_Hauptwerk_xml;*.xml;*.rar");
     configurationFileChooser->launchAsync(juce::FileBrowserComponent::openMode
-        | juce::FileBrowserComponent::canSelectFiles,
+        | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::canSelectMultipleItems,
         [safeThis](const juce::FileChooser& chooser)
         {
             if (safeThis == nullptr) return;
+            // Several .rar files at once (0.8.159): an organ split over archives.
+            std::vector<juce::File> archives;
+            for (const auto& file : chooser.getResults()) if (file.existsAsFile() && ArchiveExtractor::looksLikeArchive(file)) archives.push_back(file);
+            if (archives.size() > 1) { safeThis->loadConfigurationFromArchives(archives, false); return; }
             safeThis->loadConfigurationFile(chooser.getResult());
         });
 }
@@ -10094,7 +10098,7 @@ void MainComponent::launchConfigurationLoadChooser()
 void MainComponent::loadConfigurationFile(const juce::File& file)
 {
     // The chosen configuration file (Load Configuration): parsed, checked, applied.
-    if (file.existsAsFile() && ArchiveExtractor::looksLikeArchive(file)) { loadConfigurationFromArchive(file); return; }   // a .rar: what is inside (0.8.158)
+    if (file.existsAsFile() && ArchiveExtractor::looksLikeArchive(file)) { loadConfigurationFromArchives({ file }, false); return; }   // a .rar: what is inside (0.8.158)
     refreshArchiveSearchFolders(file);
     if (!SampleFiles::existsAsFile(file)) return;   // a Hauptwerk definition may lie inside a RAR archive (0.8.157)
     if (HauptwerkOdf::looksLikeOdf(file)) { importHauptwerkOdf(file); return; }
@@ -10117,40 +10121,58 @@ void MainComponent::loadConfigurationFile(const juce::File& file)
     });
 }
 
-void MainComponent::loadConfigurationFromArchive(const juce::File& archive)
+void MainComponent::loadConfigurationFromArchives(const std::vector<juce::File>& archives, bool merge)
 {
-    // Load Configuration given a .rar (0.8.158): the archive is indexed, then an
-    // OrganSampler configuration inside is loaded, else a Hauptwerk definition
-    // inside is imported - both read from the archive; several -> a choice. The
-    // archive's folder is remembered, so the paths find it on the next start.
-    registerArchiveFolder(archive.getParentDirectory());
+    // Load Configuration (or Merge) given .rar files (0.8.158; several at once
+    // 0.8.159 - an organ split over archives): every archive is indexed and its
+    // folder remembered, then ONE configuration or definition out of all of them
+    // is chosen by the user - never the first one by itself - and loaded (or
+    // merged) straight from the archives; the other archives serve its paths.
+    if (archives.empty()) return;
+    for (const auto& archive : archives) registerArchiveFolder(archive.getParentDirectory());
     juce::Component::SafePointer<MainComponent> safeThis(this);
-    indexArchivesThen({ archive }, [safeThis, archive]
+    indexArchivesThen(archives, [safeThis, archives, merge]
     {
         if (safeThis == nullptr) return;
-        const auto beside = archive.getParentDirectory();
-        std::vector<juce::String> candidates;
+        std::vector<juce::File> candidates;
+        juce::StringArray captions;
         const std::function<bool(const juce::String&)> isConfiguration = [](const juce::String& p) { return p.endsWithIgnoreCase(".json") && !p.endsWithIgnoreCase(".bak"); };
         const std::function<bool(const juce::String&)> isDefinition = [](const juce::String& p) { return p.endsWithIgnoreCase(".Organ_Hauptwerk_xml"); };
-        const auto configurations = SampleFiles::entriesOf(archive, isConfiguration);
-        const auto definitions = SampleFiles::entriesOf(archive, isDefinition);
-        candidates.insert(candidates.end(), configurations.begin(), configurations.end());
-        candidates.insert(candidates.end(), definitions.begin(), definitions.end());
-        auto fileOf = [beside](const juce::String& entry) { return beside.getChildFile(entry.replaceCharacter('/', juce::File::getSeparatorChar())); };
+        for (const auto& archive : archives)
+        {
+            const auto beside = archive.getParentDirectory();
+            auto add = [&](const std::vector<juce::String>& entries)
+            {
+                for (const auto& entry : entries)
+                {
+                    candidates.push_back(beside.getChildFile(entry.replaceCharacter('/', juce::File::getSeparatorChar())));
+                    captions.add((archives.size() > 1 ? archive.getFileName() + ":  " : juce::String()) + entry);
+                }
+            };
+            add(SampleFiles::entriesOf(archive, isConfiguration));
+            add(SampleFiles::entriesOf(archive, isDefinition));
+        }
+        const juce::String title = merge ? "Merge configuration" : "Load Configuration";
         if (candidates.empty())
         {
-            juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Load Configuration",
-                archive.getFileName() + " holds no OrganSampler configuration (.json) and no Hauptwerk organ definition.\n\n"
-                "Its sample folders can be loaded in the Stop List: Load folder... > Browse archives...", "OK", safeThis.getComponent());
+            juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, title,
+                juce::String(archives.size() == 1 ? "The archive holds" : "The archives hold") + " no OrganSampler configuration (.json) and no Hauptwerk organ definition.\n\n"
+                "Their sample folders can be loaded in the Stop List: Load folder... > Browse archives...", "OK", safeThis.getComponent());
             return;
         }
-        if (candidates.size() == 1) { safeThis->loadConfigurationFile(fileOf(candidates.front())); return; }
-        juce::PopupMenu menu;
-        for (size_t i = 0; i < candidates.size(); ++i) menu.addItem((int)i + 1, candidates[i]);
-        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(safeThis.getComponent()), [safeThis, candidates, fileOf](int result)
+        auto go = [safeThis, merge](const juce::File& chosen)
         {
-            if (safeThis == nullptr || result <= 0 || result > (int)candidates.size()) return;
-            safeThis->loadConfigurationFile(fileOf(candidates[(size_t)result - 1]));
+            if (safeThis == nullptr) return;
+            if (merge) safeThis->mergeConfigurationFile(chosen); else safeThis->loadConfigurationFile(chosen);
+        };
+        if (candidates.size() == 1) { go(candidates.front()); return; }
+        juce::PopupMenu menu;
+        menu.addSectionHeader(merge ? "Merge which one?" : "Load which one?");
+        for (int i = 0; i < captions.size(); ++i) menu.addItem(i + 1, captions[i]);
+        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(safeThis.getComponent()), [candidates, go](int result)
+        {
+            if (result <= 0 || result > (int)candidates.size()) return;
+            go(candidates[(size_t)result - 1]);
         });
     });
 }
@@ -10757,6 +10779,7 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
             }
         }
         safeThis->hauptwerkExtensions.clear();
+        safeThis->hauptwerkCompass.clear();
         juce::Array<juce::var> manuals;
         for (int i = 0; i < SamplerEngine::maxManuals; ++i)
         {
@@ -10790,7 +10813,7 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
                         const auto owner = rowOfStop.find(stop.extensionOfStopId);
                         if (owner != rowOfStop.end())
                         {
-                            safeThis->hauptwerkExtensions.push_back({ i, owner->second.first, owner->second.second, stop.shift, stop.name, stop.gridColumn, stop.gridRow });
+                            safeThis->hauptwerkExtensions.push_back({ i, owner->second.first, owner->second.second, stop.shift, stop.name, stop.gridColumn, stop.gridRow, stop.lowKey, stop.highKey });
                             extensionsOfOwner[stop.extensionOfStopId].push_back({ stop.stopId, i });
                         }
                         continue;
@@ -10835,6 +10858,7 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
                             if (folders.isEmpty()) continue;
                             juce::DynamicObject::Ptr entry = new juce::DynamicObject();
                             entry->setProperty("name", childNames != childRowsOfStop.end() && (int)c < childNames->second.size() ? childNames->second[(int)c] : child.name);
+                            if (child.lowKey >= 0) safeThis->hauptwerkCompass[{ (int)i, stopBuildKey(entry->getProperty("name").toString()) }] = { child.lowKey, child.highKey };
                             entry->setProperty("alias", SamplerEngine::nameWithoutFootage(child.name));   // the rank name without its perspective and footage (0.8.158: the footage follows the transposition)
                             entry->setProperty("customName", false);
                             entry->setProperty("child", true);
@@ -10859,6 +10883,7 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
                     juce::DynamicObject::Ptr entry = new juce::DynamicObject();
                     entry->setProperty("name", row != rowOfStop.end() ? row->second.second : stop.name);
                     gridCell((int)i, row != rowOfStop.end() ? row->second.second : stop.name, stop);
+                    if (stop.lowKey >= 0) safeThis->hauptwerkCompass[{ (int)i, stopBuildKey(entry->getProperty("name").toString()) }] = { stop.lowKey, stop.highKey };
                     entry->setProperty("alias", SamplerEngine::nameWithoutFootage(stop.name));   // the Hauptwerk stop name on the button, its footage added by the program (0.8.158)
                     entry->setProperty("customName", false);
                     entry->setProperty("child", false);
@@ -11180,7 +11205,11 @@ void MainComponent::applyHauptwerkVoicing(std::shared_ptr<HauptwerkOdf> odf, con
                 for (const auto& rank : stop->ranks) if (rank->folder != juce::File()) folders.push_back(rank->folder);
                 const auto& config = manualConfigs[(size_t)juce::jlimit(0, SamplerEngine::maxManuals - 1, stop->primaryManual)];
                 int low = 0, high = 127;
-                if (odf->compassForFolders(folders, config.compassLow, config.compassHigh, low, high)) limits.push_back({ stop, { low, high } });
+                // The stop's OWN rows in the definition (0.8.159: a rank folder shared by a
+                // bass and a treble stop gives each its own keys); else every row of the folders.
+                const auto own = hauptwerkCompass.find({ stop->primaryManual, stopBuildKey(stop->name) });
+                if (own != hauptwerkCompass.end()) limits.push_back({ stop, own->second });
+                else if (odf->compassForFolders(folders, config.compassLow, config.compassHigh, low, high)) limits.push_back({ stop, { low, high } });
             }
         }
         for (const auto& [stop, range] : limits)
@@ -11207,11 +11236,18 @@ void MainComponent::applyHauptwerkVoicing(std::shared_ptr<HauptwerkOdf> odf, con
         if (index < 0) { extensionsMissed.add(extension.alias); continue; }
         std::vector<Stop::Transmission> list = owner->transmissions;
         list[(size_t)index].alias = SamplerEngine::nameWithoutFootage(extension.alias);   // the footage comes from the shift (0.8.158)
+        if (extension.lowKey >= 0)   // the keys of its rows alone (0.8.159: a treble-only stop borrowing a bass stop's rank)
+        {
+            const auto& config = manualConfigs[(size_t)juce::jlimit(0, SamplerEngine::maxManuals - 1, extension.manual)];
+            for (int key = config.compassLow; key <= config.compassHigh; ++key)
+                if (key < extension.lowKey || key > extension.highKey) { list[(size_t)index].keyDisabled.set((size_t)juce::jlimit(0, 127, key)); ++compassKeys; }
+        }
         engine.replaceTransmissions(owner, list);
         if (voicer != nullptr && extension.column >= 0) voicer->setGridCell(extension.manual, Voicer::transmissionKey(owner, index), extension.column, extension.row);   // its cell from the jamb page
         ++extensionsMade;
     }
     hauptwerkExtensions.clear();
+    hauptwerkCompass.clear();
     if (voicer != nullptr) { voicer->updateStopStates(); voicer->rebuildUI(stopsContent, stopsViewport); }
     CrashHandler::note("Hauptwerk import: voicing applied to " + juce::String(voicedStops) + " stop(s), " + juce::String(voicedNotes) + " pipe level(s), route volumes "
         + routeVolumesSet.joinIntoString(", ") + "; compass limited on " + juce::String(compassStops) + " stop(s), " + juce::String(compassKeys) + " key(s) switched off; "
@@ -11866,6 +11902,7 @@ public:
         setStatusMessage("Preparing sample folders...");
     }
     std::vector<Phase> phases;   // set by the owner before launchThread()
+    juce::String progressLine, workLine;   // the two lines of the status (#79)
     // Runs right after the commit, before anything can paint: a reload retires
     // the old stops there, and the grid's rows must stop pointing at them.
     std::function<void()> afterCommit;
@@ -11881,24 +11918,26 @@ public:
     {
         static const juce::String names[8]{ "Pedal", "I.", "II.", "III.", "IV.", "V.", "VI.", "VII." };
         const double count = (double)juce::jmax(1, (int)jobs.size());
-        // The phases after decoding (analysis, fills) report themselves here too.
-        engine.setLoadStatusCallback([this](const juce::String& text) { setStatusMessage(text); });
+        // Two lines (#79, 0.8.159): the division and its percentages stay on the
+        // first, what the engine does right now (the phases after decoding: the
+        // analysis, the fills) comes under it - before, each overwrote the other.
+        auto show = [this] { setStatusMessage(progressLine + (workLine.isNotEmpty() ? "\n" + workLine : juce::String())); };
+        engine.setLoadStatusCallback([this, show](const juce::String& text) { workLine = text; show(); });
         for (size_t index = 0; index < jobs.size(); ++index)
         {
             const auto manual = jobs[index].manual;   // -1: a pool tree whose folders name their divisions
             const juce::String who = manual >= 0 && manual < SamplerEngine::maxManuals ? names[manual] : jobs[index].folder.getFileName();
-            setStatusMessage(who + ": scanning samples (folder tree "
-                + juce::String((int)index + 1) + "/" + juce::String((int)jobs.size()) + ")...");
+            progressLine = who + ": scanning samples (folder tree " + juce::String((int)index + 1) + "/" + juce::String((int)jobs.size()) + ")...";
+            workLine.clear();
+            show();
             engine.loadManualFolder(jobs[index].folder, juce::jmax(0, manual), sampleRate,
-                [this, index, count, who](double localProgress)
+                [this, index, count, who, show](double localProgress)
                 {
                     if (threadShouldExit()) engine.cancelLoading();   // the dialog's Cancel (0.8.139): the engine stops at the next stop, the rest compiles as usual
                     const double overall = ((double)index + localProgress) / count;
                     setProgress(overall);
-                    setStatusMessage(who + ": "
-                        + juce::String(juce::roundToInt(localProgress * 100.0))
-                        + "%   |   total "
-                        + juce::String(juce::roundToInt(overall * 100.0)) + "%");
+                    progressLine = who + ": " + juce::String(juce::roundToInt(localProgress * 100.0)) + "%   |   total " + juce::String(juce::roundToInt(overall * 100.0)) + "%";
+                    show();
                 }, jobs[index].append, jobs[index].map.get(), jobs[index].replacing.get());
         }
         setProgress(1.0);
@@ -13318,6 +13357,24 @@ void MainComponent::loadIndexedIntoDivision(const std::vector<juce::File>& folde
     {
         CrashHandler::note("ORGAN_TEST_LOAD_ARCHIVES: definition(s) found, the folders loaded instead");
         definitions.clear();
+    }
+    if (definitions.size() > 1)
+    {
+        // Several definitions in the archives (0.8.159): the user picks one - never
+        // the first one by itself - or loads the folders instead.
+        juce::PopupMenu menu;
+        menu.addSectionHeader("Import a Hauptwerk organ definition from the archives:");
+        for (size_t i = 0; i < definitions.size(); ++i) menu.addItem((int)i + 1, definitions[i].getFileNameWithoutExtension());
+        menu.addSeparator();
+        menu.addItem(1000, "Load the archives' folders into the division instead");
+        juce::Component::SafePointer<MainComponent> safeThis(this);
+        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this), [safeThis, definitions, trees, manual](int result)
+        {
+            if (safeThis == nullptr || result <= 0) return;
+            if (result == 1000) { safeThis->loadTreesIntoDivision(trees, manual); return; }
+            if (result <= (int)definitions.size()) safeThis->importHauptwerkOdf(definitions[(size_t)result - 1]);
+        });
+        return;
     }
     if (!definitions.empty())
     {

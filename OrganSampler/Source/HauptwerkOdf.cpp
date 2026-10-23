@@ -1099,6 +1099,9 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
     auto isPedal = [this](const Keyboard& k)
     {
         const auto divisionName = divisions.count(k.divisionId) > 0 ? divisions.at(k.divisionId).name : juce::String();
+        // A keyboard of more than 40 keys is a manual whatever its division is called
+        // (0.8.159: Adlington's "2. manual" plays the division named "Pedal").
+        if (k.highNote - k.lowNote + 1 > 40) return false;
         return k.name.containsIgnoreCase("ped") || divisionName.containsIgnoreCase("ped");
     };
     // Every division a keyboard plays (the ODF links them through switches,
@@ -1109,11 +1112,42 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
         if (ids.empty() && k.divisionId > 0) ids.push_back(k.divisionId);
         return ids;
     };
+    // A division reached by several keyboards belongs to the one with the most
+    // keys (0.8.159: Adlington's "Pedal" keyboard of 25 keys and its "2. manual"
+    // both play the division "Pedal" - the manual owns it, the pedal keyboard is
+    // a pull-down and stays an empty P.; before, the file's first keyboard took
+    // it and the organ came out as P. + I. instead of I. + II.).
+    std::map<int, int> ownerOfDivision;   // ODF division id -> keyboard id
+    for (const auto& k : keyboards)
+        for (const int id : divisionsOf(k))
+        {
+            const auto found = ownerOfDivision.find(id);
+            auto keysOf = [this](int keyboardId)
+            {
+                for (const auto& other : keyboards) if (other.id == keyboardId) return other.highNote - other.lowNote + 1;
+                return 0;
+            };
+            if (found == ownerOfDivision.end() || keysOf(k.id) > keysOf(found->second)) ownerOfDivision[id] = k.id;
+        }
+    Keyboard pedalPullDown;   // a pedal keyboard left without a division of its own
+    bool pedalPullDownFound = false;
     for (const auto& k : keyboards)
     {
         std::vector<int> ids;
-        for (const int id : divisionsOf(k)) if (divisionsUsed.count(id) == 0) ids.push_back(id);
-        if (ids.empty()) continue;   // a second keyboard of a division (a floating one) adds nothing
+        for (const int id : divisionsOf(k)) if (divisionsUsed.count(id) == 0 && ownerOfDivision[id] == k.id) ids.push_back(id);
+        if (ids.empty())
+        {
+            if (isPedal(k) && !pedalPullDownFound && !divisionsOf(k).empty())
+            {
+                pedalPullDown = k; pedalPullDownFound = true;
+                const int id = divisionsOf(k).front();
+                juce::String ownerName;
+                for (const auto& other : keyboards) if (other.id == ownerOfDivision[id]) ownerName = other.name;
+                result.notes.add("keyboard \"" + k.name + "\" plays the division \"" + (divisions.count(id) > 0 ? divisions.at(id).name : juce::String(id))
+                    + "\" of the keyboard \"" + ownerName + "\" (more keys): division P. stays empty, couple it from that manual");
+            }
+            continue;   // a second keyboard of a division (a floating one, a pull-down) adds nothing
+        }
         const auto divisionName = divisions.count(k.divisionId) > 0 ? divisions.at(k.divisionId).name : juce::String();
         bool hasStops = false;
         for (const auto& [id, stop] : stops) if (std::find(ids.begin(), ids.end(), stop.divisionId) != ids.end()) { hasStops = true; break; }
@@ -1150,8 +1184,10 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
     {
         // No pedal (a harpsichord, a demo): division P. stays empty, the manuals begin at I.
         Keyboard empty; empty.name = "Pedal"; empty.lowNote = 36; empty.highNote = 67;
+        if (pedalPullDownFound) { empty.name = pedalPullDown.name; empty.lowNote = pedalPullDown.lowNote; empty.highNote = pedalPullDown.highNote; }
+        empty.divisionId = 0; empty.divisionIds.clear();
         ordered.insert(ordered.begin(), empty);
-        result.notes.add("no pedal in the organ definition: division P. stays empty");
+        if (!pedalPullDownFound) result.notes.add("no pedal in the organ definition: division P. stays empty");
     }
     if (ordered.size() > 8) { result.notes.add(juce::String((int)ordered.size() - 8) + " division(s) beyond eight left out"); ordered.resize(8); }
     bool anyStops = false;
@@ -1429,6 +1465,16 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
                 extension.stopId = id; extension.name = StopNames::capitaliseAfterDivisionPrefix(stop.name);
                 extension.extensionOfStopId = bestOwner;
                 extension.shift = juce::jlimit(-24, 24, bestShift);
+                // The keys of its borrowed rows (0.8.159: a treble-only stop borrowing a
+                // bass stop's rank plays its own keys alone).
+                for (const auto& use : stop.rankUses)
+                {
+                    if (usableRank(use.rankId) == nullptr) continue;
+                    const int first = use.firstNote > 0 ? use.firstNote : k.lowNote;
+                    const int last = use.count > 0 ? first + use.count - 1 : k.highNote;
+                    extension.lowKey = extension.lowKey < 0 ? first : juce::jmin(extension.lowKey, first);
+                    extension.highKey = extension.highKey < 0 ? last : juce::jmax(extension.highKey, last);
+                }
                 division.stops.push_back(extension);
                 plannedStopIds.insert(id);
                 ++result.extensions;
@@ -1462,6 +1508,22 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
         };
         planStop.sampleOffset = sampleOffsetFor(rankIds);
         if (planStop.sampleOffset != 0) ++offsetStops;
+        // The keys of the stop's OWN rows for these ranks (0.8.159): a rank folder
+        // shared by a bass stop and a treble stop keeps every file, each stop
+        // plays its own keys (the others are switched off in its voicing).
+        auto keyRangeFor = [&](const std::vector<int>& ids, int& low, int& high)
+        {
+            low = -1; high = -1;
+            for (const auto& use : stop.rankUses)
+            {
+                if (use.increment != 0 || std::find(ids.begin(), ids.end(), use.rankId) == ids.end()) continue;
+                const int first = use.firstNote > 0 ? use.firstNote : k.lowNote;
+                const int last = use.count > 0 ? first + use.count - 1 : k.highNote;
+                low = low < 0 ? first : juce::jmin(low, first);
+                high = high < 0 ? last : juce::jmax(high, last);
+            }
+        };
+        keyRangeFor(rankIds, planStop.lowKey, planStop.highKey);
         // Several ranks in ONE perspective (Caen: a stereo stop recorded as
         // an "(L component)" and an "(R component)" rank, two folders for the
         // same perspective): OrganSampler's stop has one folder per
@@ -1510,6 +1572,7 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
                     {
                         PlanStop child;
                         child.stopId = id; child.name = StopNames::capitaliseAfterDivisionPrefix(key); child.rankIds = ids;
+                        keyRangeFor(ids, child.lowKey, child.highKey);
                         child.folders = foldersFor(ids);
                         child.sampleOffset = sampleOffsetFor(ids);
                         planStop.children.push_back(child);

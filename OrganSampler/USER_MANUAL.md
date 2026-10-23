@@ -464,8 +464,13 @@ as a folder, and reads the samples out of the archives.
   configuration serves an unpacked and a packed set (a folder that is on the
   disk always wins over the archive). When the archive holds a Hauptwerk
   organ definition, the program offers to import it - the whole organ, read
-  from the archives. *Load Configuration* takes a `.rar` as well: a
-  configuration or a definition inside it is loaded straight from the archive.
+  from the archives. *Load Configuration* takes `.rar` files as well - one,
+  or several at once when an organ comes in several archives: the
+  configurations and definitions found inside are listed and the one you
+  pick is loaded straight from the archives (the others serve its sample
+  folders). *Merge another configuration* (right-click Load Configuration)
+  takes archives the same way, so an organ can be put together archive after
+  archive.
   Two steps happen, and they read different things. *Reading the archives*
   reads the archive's headers only - what files it holds, how big they are
   and where their bytes lie (a few megabytes: seconds on an SSD, a few
@@ -666,7 +671,13 @@ so the file works from that folder and from any other place the root is
 known. Versions 0.8.125-0.8.157 wrote the file beside `OrganDefinitions`,
 earlier ones into the numbered package; those files keep working where they
 are. The transpositions the definition implies (its pipe notes against the
-sample file names) are taken as they are. It is loaded at once and saved
+sample file names) are taken as they are, and every stop plays the keys of
+its own rows in the definition: a rank folder used by a bass stop and a
+treble stop is loaded whole and the keys outside each stop's rows are
+switched off in its voicing (an extension's too). A division played by
+several keyboards belongs to the keyboard with the most keys; a pedal
+keyboard that only pulls a manual's division down leaves P. empty (a note
+says so - couple it from that manual). It is loaded at once and saved
 again with the voicing once the folders are loaded. Then check
 the Stop List, give the perspectives their audio routes and the divisions
 their MIDI keyboards, and *Save Configuration* - as a portable one to
@@ -1053,10 +1064,11 @@ pitch information, the alias and the switches; the second line the sliders:
 
 - **Transposition** (right after the button of every stop with pipes) - the
   stop's transposition against its sample files on their own numbers (the
-  file "036" on key 36), as a pure interval of the harmonic series, with the
-  footage each step gives: "0 -> 8' (as the original)", "-12 -> 16'",
-  "+12 -> 4'", "+7 -> 5 1/3'", "+19 -> 2 2/3'" ... (octaves printed bold;
-  only steps that give an organ footage are offered). "The original" is what
+  file "036" on key 36), every semitone from -24 to +24 as a pure interval
+  with the footage each step gives: "0 -> 8' (as the original)", "-12 -> 16'",
+  "+12 -> 4'", "+7 -> 5 1/3'", "+19 -> 2 2/3'", and for the other steps the
+  pure (just) interval's fraction - "+1 -> 7 1/2'", "+3 -> 6 2/3'",
+  "+5 -> 6'", "+9 -> 4 4/5'" (octaves printed bold). "The original" is what
   the samples' own pitch (the smpl chunk) says the files sound at on their
   numbers. -12 puts the file 024 on key 36, an octave down. The *Orig. Pitch*
   line of the row shows that real footage of the files; the footage in
@@ -1147,10 +1159,10 @@ cell of the stop's row) or on the grid (a right-button or Shift drag in arrange
 mode). Each transmission has its own voicing row, opened like a stop's, with:
 
 - **Transposition (extension)** - the key sounds the pipe this many semitones
-  away, the pure intervals between -24 and +24 (octaves printed bold; only
-  steps that give an organ footage are offered). -12 makes a 16' extension of
-  an 8' stop, +12 a 4' one; the button caption follows: "Principal 16' (Ext.)"
-  in the stop's own division, "Principal 16' (Trsm.)" in another division.
+  away, -24 to +24, every step a pure interval written as the footage it
+  gives (octaves printed bold). -12 makes a 16' extension of an 8' stop,
+  +12 a 4' one; the button caption follows: "Principal 16' (Ext.)" in the
+  stop's own division, "Principal 16' (Trsm.)" in another division.
   It counts from the source stop as it sounds, its own transposition included.
   The shifted pipe is retuned so that the new footage is a pure interval of
   the played key (a 2 2/3' shifted by +5 gives an exact 2'), the temperament

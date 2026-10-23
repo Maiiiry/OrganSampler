@@ -472,8 +472,13 @@ static const char* const kManualText_part2 =
     "  configuration serves an unpacked and a packed set (a folder that is on the\n"
     "  disk always wins over the archive). When the archive holds a Hauptwerk\n"
     "  organ definition, the program offers to import it - the whole organ, read\n"
-    "  from the archives. *Load Configuration* takes a `.rar` as well: a\n"
-    "  configuration or a definition inside it is loaded straight from the archive.\n"
+    "  from the archives. *Load Configuration* takes `.rar` files as well - one,\n"
+    "  or several at once when an organ comes in several archives: the\n"
+    "  configurations and definitions found inside are listed and the one you\n"
+    "  pick is loaded straight from the archives (the others serve its sample\n"
+    "  folders). *Merge another configuration* (right-click Load Configuration)\n"
+    "  takes archives the same way, so an organ can be put together archive after\n"
+    "  archive.\n"
     "  Two steps happen, and they read different things. *Reading the archives*\n"
     "  reads the archive's headers only - what files it holds, how big they are\n"
     "  and where their bytes lie (a few megabytes: seconds on an SSD, a few\n"
@@ -601,13 +606,13 @@ static const char* const kManualText_part2 =
     "configuration. The couplers of the definition (0.8.138: its KeyAction rows -\n"
     "the keys of one keyboard playing another keyboard or a division, shifted by\n"
     "0, 12 or -12 semitones, or the top note only) become the couplers of ours\n"
+    ;
+static const char* const kManualText_part3 =
     "that exist for them - a keyboard pulling a higher division at 8', 16', 4' or\n"
     "as a melody coupler, itself at 16' and 4', I from II or III - and only those are\n"
     "shown on the console; a coupler of the definition OrganSampler has no\n"
     "coupler for (one to a floating division whose stops lie in several\n"
     "divisions, a 24' coupler) is named in the import's report. The catalog of\n"
-    ;
-static const char* const kManualText_part3 =
     "couplers has the \"downward\" ones since 0.8.139 - a keyboard pulling a lower\n"
     "manual, I/II, I/III, II/III and so on at 8', 16', 4', as a melody or bass\n"
     "coupler, listed after the usual ones and hidden until shown (Couplers\n"
@@ -676,7 +681,13 @@ static const char* const kManualText_part3 =
     "known. Versions 0.8.125-0.8.157 wrote the file beside `OrganDefinitions`,\n"
     "earlier ones into the numbered package; those files keep working where they\n"
     "are. The transpositions the definition implies (its pipe notes against the\n"
-    "sample file names) are taken as they are. It is loaded at once and saved\n"
+    "sample file names) are taken as they are, and every stop plays the keys of\n"
+    "its own rows in the definition: a rank folder used by a bass stop and a\n"
+    "treble stop is loaded whole and the keys outside each stop's rows are\n"
+    "switched off in its voicing (an extension's too). A division played by\n"
+    "several keyboards belongs to the keyboard with the most keys; a pedal\n"
+    "keyboard that only pulls a manual's division down leaves P. empty (a note\n"
+    "says so - couple it from that manual). It is loaded at once and saved\n"
     "again with the voicing once the folders are loaded. Then check\n"
     "the Stop List, give the perspectives their audio routes and the divisions\n"
     "their MIDI keyboards, and *Save Configuration* - as a portable one to\n"
@@ -797,6 +808,8 @@ static const char* const kManualText_part3 =
     "The *GLOBAL RESET* button of the top bar offers what to reset, all unticked:\n"
     "*Unload everything* empties the instrument completely (stops, folders,\n"
     "transmissions, couplers, patterns, MIDI, audio routing); the other options\n"
+    ;
+static const char* const kManualText_part4 =
     "(audio, MIDI, transmissions, patterns, couplers, the grid) reset only what is\n"
     "ticked and keep the loaded stops.\n"
     "\n"
@@ -808,8 +821,6 @@ static const char* const kManualText_part3 =
     "global sound sliders with the polyphony display, and the stop workspace - one\n"
     "column per division with its header and its stop grid.\n"
     "\n"
-    ;
-static const char* const kManualText_part4 =
     "## 2.1 Top bar buttons\n"
     "\n"
     "Every button can be shown or hidden in *Configuration Editor > Console* (\"Top\n"
@@ -999,6 +1010,8 @@ static const char* const kManualText_part4 =
     "\n"
     "---\n"
     "\n"
+    ;
+static const char* const kManualText_part5 =
     "# 3. Stops on the grid and their voicing\n"
     "\n"
     "## 3.1 Stop buttons\n"
@@ -1010,8 +1023,6 @@ static const char* const kManualText_part4 =
     "\n"
     "A button carrying \"[+N]\" is a **stop folder**: a stop with N other stops\n"
     "indented under it; its button switches them all. Open its voicing and the\n"
-    ;
-static const char* const kManualText_part5 =
     "children appear under it, each with its own button (for voicing them one at a\n"
     "time) and voicing row.\n"
     "\n"
@@ -1067,10 +1078,11 @@ static const char* const kManualText_part5 =
     "\n"
     "- **Transposition** (right after the button of every stop with pipes) - the\n"
     "  stop's transposition against its sample files on their own numbers (the\n"
-    "  file \"036\" on key 36), as a pure interval of the harmonic series, with the\n"
-    "  footage each step gives: \"0 -> 8' (as the original)\", \"-12 -> 16'\",\n"
-    "  \"+12 -> 4'\", \"+7 -> 5 1/3'\", \"+19 -> 2 2/3'\" ... (octaves printed bold;\n"
-    "  only steps that give an organ footage are offered). \"The original\" is what\n"
+    "  file \"036\" on key 36), every semitone from -24 to +24 as a pure interval\n"
+    "  with the footage each step gives: \"0 -> 8' (as the original)\", \"-12 -> 16'\",\n"
+    "  \"+12 -> 4'\", \"+7 -> 5 1/3'\", \"+19 -> 2 2/3'\", and for the other steps the\n"
+    "  pure (just) interval's fraction - \"+1 -> 7 1/2'\", \"+3 -> 6 2/3'\",\n"
+    "  \"+5 -> 6'\", \"+9 -> 4 4/5'\" (octaves printed bold). \"The original\" is what\n"
     "  the samples' own pitch (the smpl chunk) says the files sound at on their\n"
     "  numbers. -12 puts the file 024 on key 36, an octave down. The *Orig. Pitch*\n"
     "  line of the row shows that real footage of the files; the footage in\n"
@@ -1161,10 +1173,10 @@ static const char* const kManualText_part5 =
     "mode). Each transmission has its own voicing row, opened like a stop's, with:\n"
     "\n"
     "- **Transposition (extension)** - the key sounds the pipe this many semitones\n"
-    "  away, the pure intervals between -24 and +24 (octaves printed bold; only\n"
-    "  steps that give an organ footage are offered). -12 makes a 16' extension of\n"
-    "  an 8' stop, +12 a 4' one; the button caption follows: \"Principal 16' (Ext.)\"\n"
-    "  in the stop's own division, \"Principal 16' (Trsm.)\" in another division.\n"
+    "  away, -24 to +24, every step a pure interval written as the footage it\n"
+    "  gives (octaves printed bold). -12 makes a 16' extension of an 8' stop,\n"
+    "  +12 a 4' one; the button caption follows: \"Principal 16' (Ext.)\" in the\n"
+    "  stop's own division, \"Principal 16' (Trsm.)\" in another division.\n"
     "  It counts from the source stop as it sounds, its own transposition included.\n"
     "  The shifted pipe is retuned so that the new footage is a pure interval of\n"
     "  the played key (a 2 2/3' shifted by +5 gives an exact 2'), the temperament\n"
@@ -1200,6 +1212,8 @@ static const char* const kManualText_part5 =
     "  that layer's own level - a gentle stroke selects the recording of a gentle\n"
     "  stroke.\n"
     "- A stop **without velocity layers** softens the attack of a gentle stroke,\n"
+    ;
+static const char* const kManualText_part6 =
     "  in volume and in colour, over its first few tens of milliseconds: the note\n"
     "  starts with a short fade-in (*Key velocity: fade-in at the lowest\n"
     "  velocity*, default 40 ms at the lowest velocity) and with its treble cut\n"
@@ -1212,8 +1226,6 @@ static const char* const kManualText_part5 =
     "A sample file is a velocity layer when its name ends in \"_NNN\" (two or three\n"
     "digits, 1 to 127, after an underscore): `060-C4_070.wav` plays for key\n"
     "velocities up to 70, above that the plain `060-C4.wav` plays, or the next\n"
-    ;
-static const char* const kManualText_part6 =
     "layer up when there are several (`_025`, `_070`, `_100`). A key that has layers\n"
     "but no plain file plays its highest layer for every velocity. Release files\n"
     "carry the same suffix: the release of a \"_070\" attack is the \"_070\" release\n"
@@ -1402,6 +1414,8 @@ static const char* const kManualText_part6 =
     "every key stroke shakes the wind with a random strength, so nothing repeats\n"
     "mechanically.\n"
     "\n"
+    ;
+static const char* const kManualText_part7 =
     "## 5.3 The audio tabs\n"
     "\n"
     "Every perspective of the division has an audio tab (the default perspective,\n"
@@ -1414,8 +1428,6 @@ static const char* const kManualText_part6 =
     "- **Perspective volume** (-31 dB switches the perspective off) and **Channel\n"
     "  separation**: at 100 % every pipe sounds only on its own channel pair (mono\n"
     "  samples are spread over the pairs, stereo samples keep theirs); below 100 %\n"
-    ;
-static const char* const kManualText_part7 =
     "  every channel of the route also carries that share of the other channels; at\n"
     "  0 % all channels carry the same sum.\n"
     "- **IR reverb**: *Load IR* (a WAV, AIFF or FLAC impulse response: mono,\n"
@@ -1604,6 +1616,8 @@ static const char* const kManualText_part7 =
     "  profile box.\n"
     "\n"
     "The desktop's own sounds then no longer go to that interface unless you\n"
+    ;
+static const char* const kManualText_part8 =
     "choose it as the system output; use the on-board chip for the desktop and\n"
     "the interface for the organ. After switching the profile the card appears\n"
     "under a new name (its own, \"Komplete Audio 6\" instead of \"Analog Stereo\n"
@@ -1616,8 +1630,6 @@ static const char* const kManualText_part7 =
     "Enter and your password:\n"
     "\n"
     "- Ubuntu, Debian, Mint, Pop!_OS: `sudo apt install pipewire-jack pipewire-bin pavucontrol`\n"
-    ;
-static const char* const kManualText_part8 =
     "- Fedora: `sudo dnf install pipewire-jack-audio-connection-kit pipewire-utils pavucontrol`\n"
     "- Arch, Manjaro: `sudo pacman -S pipewire-jack pavucontrol`\n"
     "- openSUSE: `sudo zypper install pipewire-libjack-0_3 pipewire-tools pavucontrol`\n"
@@ -1806,6 +1818,8 @@ static const char* const kManualText_part8 =
     "render of all its routes, the note bookkeeping of attacks and releases, the\n"
     "copies to the device - as a share of the device's period, held at its peak\n"
     "for a moment. That is what decides about dropouts: at 100 % the next\n"
+    ;
+static const char* const kManualText_part9 =
     "callback is late. A value of several hundred percent means the audio thread\n"
     "was kept waiting by something else on the computer, not that the voices took\n"
     "that long; the activity log notes every such event.\n"
@@ -1818,8 +1832,6 @@ static const char* const kManualText_part8 =
     "- **The buffer size** is the first thing: on the same computer and organ a\n"
     "  buffer of 256 gave 1000 voices, 512 gave 2300-2900 and 1024 gave 3100-3800\n"
     "  (two cores); 49 000 / 64 000 / 74 000 on sixteen cores. Compare runs only\n"
-    ;
-static const char* const kManualText_part9 =
     "  at the same buffer.\n"
     "- **The device path.** Linux: PipeWire's \"Default ALSA Output\" is one layer\n"
     "  further from the card than the card's own ALSA device (\"Direct hardware\n"
@@ -2008,6 +2020,8 @@ static const char* const kManualText_part9 =
     "source's duration (*time stretch of the attack*, *time stretch of the\n"
     "release*). Upwards the attack is left as resampled (shorter), which the ear\n"
     "accepts. Weaknesses: downwards the time stretch frays the attack - the\n"
+    ;
+static const char* const kManualText_part10 =
     "speaking of the pipe becomes rough or choppy, worse the larger the shift; try\n"
     "a lower attack stretch for such a stop, or the pitch shift method without\n"
     "stretch.\n"
@@ -2020,8 +2034,6 @@ static const char* const kManualText_part9 =
     "away the copy loses level and body; the attack's transient is smeared over the\n"
     "analysis block (half a second for a 32' pipe) and inharmonic content can\n"
     "tremulate. And it often breaks the loops: the loop points are kept, but the\n"
-    ;
-static const char* const kManualText_part10 =
     "vocoder's output at the loop end no longer matches the loop start exactly, so\n"
     "the seam becomes audible as a click or a bump at every repeat. The setting\n"
     "*Filled pipes: loop crossfade* exists for this - a long blend over the seam\n"
@@ -2210,6 +2222,8 @@ static const char* const kManualText_part10 =
     "`ORGAN_KERNEL=scalar`, `sse2`, `avx2` or `neon` sets the Automatic choice for\n"
     "one start (a script measuring one after another); the editor's choice wins\n"
     "over it. The self-test (`--kerneltest`) checks every kernel of the CPU against\n"
+    ;
+static const char* const kManualText_part11 =
     "the scalar code and tells its speed; the activity log says which kernel runs\n"
     "(\"Render kernel: ...\").\n"
     "\n"
@@ -2222,8 +2236,6 @@ static const char* const kManualText_part10 =
     "\n"
     "Windows only. The threads used by routes on an Aggregated WASAPI device (the virtual\n"
     "device that joins several Windows Audio endpoints). Every aggregated route\n"
-    ;
-static const char* const kManualText_part11 =
     "is a stream with a device thread of its own, so an organ with ten such\n"
     "routes already renders on ten threads beside each other; the default of 1\n"
     "(the device thread alone, no workers) is right for that layout, and more\n"
@@ -2412,6 +2424,8 @@ static const char* const kManualText_part11 =
     "3. The target grows in steps of 2 000 voices (a tenth above 20 000). Every\n"
     "   target reached is held for four seconds and judged: clean means every\n"
     "   callback of the busiest device - the render of all its routes, the note\n"
+    ;
+static const char* const kManualText_part12 =
     "   bookkeeping, everything on that thread - stayed within 85 % of its period,\n"
     "   no single route exceeded its budget, and the driver never called late (a\n"
     "   callback more than half a period behind its time is a dropout). The first\n"
@@ -2424,8 +2438,6 @@ static const char* const kManualText_part11 =
     "   a share of the registration is engaged - every button of the grid counts,\n"
     "   transmissions and extensions included - halved towards the clean side, up\n"
     "   to four times, so that the result is what the computer really renders, not\n"
-    ;
-static const char* const kManualText_part12 =
     "   the last coarse step below it. When the clean and the failing level differ\n"
     "   in the rate (every key was down already), the rate between them is split\n"
     "   first. A level whose callbacks stay between 85 and 100 % of the period for\n"
@@ -2614,6 +2626,8 @@ static const char* const kManualText_part12 =
     "at velocity 127. Stops with velocity layers pick the layer instead and get no\n"
     "fade-in. With *Ignore MIDI velocity* on for a division there is never any. See\n"
     "\"Velocity layers\".\n"
+    ;
+static const char* const kManualText_part13 =
     "\n"
     "### Key velocity: treble cut on the attack at the lowest velocity\n"
     "\n"
@@ -2626,8 +2640,6 @@ static const char* const kManualText_part12 =
     "\n"
     "How long the treble cut of a gentle key takes to open fully after the key goes\n"
     "down (5 to 1000 ms, default 80).\n"
-    ;
-static const char* const kManualText_part13 =
     "\n"
     "### Tremulant: volume change per cent of pitch\n"
     "\n"
@@ -2816,6 +2828,8 @@ static const char* const kManualText_part13 =
     "\n"
     "### Program windows\n"
     "\n"
+    ;
+static const char* const kManualText_part14 =
     "*One window*, or *Two windows*: a second program window opens, and every\n"
     "division section below gets *Shown in window* to move a division there. The\n"
     "second window's position is remembered; closing it returns to one window.\n"
@@ -2828,8 +2842,6 @@ static const char* const kManualText_part13 =
     "\n"
     "Shows or hides the Record button (the stereo mix to a WAV file).\n"
     "\n"
-    ;
-static const char* const kManualText_part14 =
     "### Top bar: Stop List\n"
     "\n"
     "Shows or hides the Stop List button (see \"4. The Stop List (building the\n"
@@ -3018,6 +3030,8 @@ static const char* const kManualText_part14 =
     "How the lowest octave of the keyboard is laid out, for playing historic music\n"
     "on a historic layout: *Standard*; *Short octave* (the bottom E key sounds C,\n"
     "F# sounds D, G# sounds E, the keys C to D# are silent); *C D D# ...* (no C#);\n"
+    ;
+static const char* const kManualText_part15 =
     "*C D E ...* (no C# and no D#). The compass of the division is set on the same\n"
     "line of the Divisions dialog.\n"
     "\n"
@@ -3030,8 +3044,6 @@ static const char* const kManualText_part14 =
     "silent. In the Divisions dialog the box is the last line of the MIDI column.\n"
     "\n"
     "### Swell pedal controller\n"
-    ;
-static const char* const kManualText_part15 =
     "\n"
     "The MIDI controller learned for this division's swell (right-click the swell\n"
     "bar in the division header to learn it). Information only.\n"
@@ -3220,10 +3232,12 @@ static const char* const kManualText_part15 =
     "`settings.json` is the state of the program, `settings-<date>.json` the\n"
     "snapshot of each of the last seven days. If the program crashes at every\n"
     "start, move `settings.json` away (keep it for the report) and it starts\n"
+    ;
+static const char* const kManualText_part16 =
     "clean; a crash while an audio device was being opened is caught by the\n"
     "program itself: the next start opens that device with the default buffer\n"
     "and rate and says so.\n"
     "\n"
     ;
-static const char* const kManualTextParts[] = { kManualText_part0, kManualText_part1, kManualText_part2, kManualText_part3, kManualText_part4, kManualText_part5, kManualText_part6, kManualText_part7, kManualText_part8, kManualText_part9, kManualText_part10, kManualText_part11, kManualText_part12, kManualText_part13, kManualText_part14, kManualText_part15 };
-static const int kManualTextPartCount = 16;
+static const char* const kManualTextParts[] = { kManualText_part0, kManualText_part1, kManualText_part2, kManualText_part3, kManualText_part4, kManualText_part5, kManualText_part6, kManualText_part7, kManualText_part8, kManualText_part9, kManualText_part10, kManualText_part11, kManualText_part12, kManualText_part13, kManualText_part14, kManualText_part15, kManualText_part16 };
+static const int kManualTextPartCount = 17;

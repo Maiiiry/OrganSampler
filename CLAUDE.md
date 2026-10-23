@@ -424,6 +424,32 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   Never verify this by the sound's pitch (the user: "je to podle jména souboru ... zřejmé z ODF"). Organs imported
   before 0.8.155 keep offset 0: load the definition again or type the column. Dev hook `ORGAN_TEST_OFFSET=
   "<manual>|<stop prefix>|<offset>"` (the voicing path); the grid dump prints "notes a..b files N" per stop.
+  0.8.159 ADLINGTON LESSONS (the user's seven complaints in one message): (1) the ODF had keyboards "Pedal" (25
+  keys) AND "2. manual" (52 keys) on the division named "Pedal": `plan()` now gives a division to the keyboard
+  with the MOST keys (`ownerOfDivision`), a pedal keyboard left without a division becomes the empty P. with its
+  compass (`pedalPullDown`, a note "couple it from that manual"), and `isPedal` is never true for > 40 keys - P. empty,
+  I. Pos, II. the 12 stops (was P. 12 stops + I.). (2) Stop key ranges from the stop's OWN StopRank rows
+  (`PlanStop::lowKey/highKey`, `keyRangeFor`; extensions from their borrowed rows) -> `hauptwerkCompass[(division,
+  row key)]` and `HauptwerkExtension::lowKey/highKey` -> `applyHauptwerkVoicing` switches the keys off per stop
+  (`setPipeEnabled`) and per extension (`Transmission::keyDisabled`); `compassForFolders` (union over EVERY stop
+  using the folders) stays as the fallback only - it never limited a shared folder. (3) Adlington's UW_Flute4 ("Ch.
+  Flute") has smpl pitches a THIRD low on 035-B and 037-C# (41.8 / 43.7 vs 45.8 / 47.8 expected at a1 = 409 Hz) and
+  correct on 036-C: `computeTuning440` took B+C# for a footage break and the lone C between them was smoothed INTO it
+  -> C at +404 cents, the pitch-class mean "C95" (all C a semitone off), temperament not recognised. Now a run < 3
+  takes the longer neighbour's offset wherever it lies (the first/last runs too) and |deviation| > 50 cents never
+  enters the temperament -> "footage 4'", Meantone (-1/4) RMS 0.8 c. (4) Transposition boxes: EVERY semitone -24..24
+  again (0.8.158's clean-interval list was a regression - the user: "tam bylo +-24 pt"); `footageName` gives the
+  pure (just) fraction for the non-harmonic semitones (`justIntervalNumerator/Denominator`: 16/15 9/8 6/5 5/4 4/3
+  7/5 3/2 8/5 5/3 9/5 15/8 -> 7 1/2', 6 2/3', 6', 5 5/7', 5', 4 4/5', 4 4/15' ...; never a decimal) and
+  `pureDeviationCents` retunes those shifts to the same just ratio (tempered before). (5) Perspective learning in
+  `scanTreeAssignments` treats "xxx16L"/"xxx16R" sibling folders as one stop for the prefix comparison (001313: AB
+  and Re were not learned because AB had glockentonL/R and quintaton16L/R). Components as ONE stop in the automatic
+  scan is NOT done (the Stop List holds one folder per perspective per row; it would need stop-folder rows from the
+  scan) - pending. (6) Load folder: several definitions in the archives -> a PopupMenu (never `definitions.front()`);
+  `loadConfigurationFromArchives(archives, merge)` for Load Configuration (multi-select .rar) and Merge (.rar in the
+  chooser, `mergeConfigurationFile` reads a json inside an archive). (7) #79: StartupFolderLoader `progressLine` +
+  `workLine` -> two-line status. Smpl facts: Adlington a1 = 409 Hz (smpl pitches absolute), 036-C_070 velocity layer
+  files exist; the "two tones a third apart" was the C36 retuned by -404 cents against its neighbours (tune-to-440).
   0.8.158 TRANSPOSITION (the user's rule, three messages): "Files vs keys" IS the transposition - ONE number,
   `Stop::sampleOffset` (= file number - key, the engine's `keyShift()`), named Transposition everywhere (voicing box
   `shiftBox` shared with the transmission rows, Stop List column "Transp."), counted against the REAL footage the files

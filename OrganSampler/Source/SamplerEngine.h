@@ -1268,10 +1268,10 @@ public:
     // The name with its footage token replaced by the label of 'semitones'
     // (appended when the name has none); a division prefix is skipped.
     static juce::String nameWithFootage(const juce::String& name, int semitones);
-    // The transposition steps offered: pure intervals of the harmonic series
-    // within -24..24 (octaves, fifths, thirds, sevenths, ninths), never a
-    // semitone that gives no organ footage.
-    static const std::vector<int>& cleanIntervals();
+    // The pure (just) ratio of a semitone class 0..11 (0.8.159): the footage name
+    // and the pure retune of a transposition outside the harmonic footages.
+    static int justIntervalNumerator(int semitoneClass);
+    static int justIntervalDenominator(int semitoneClass);
     // The voicing's One-shot switch: -1 = by the patterns, 0 off, 1 on.
     void setStopOneShot(Stop* stop, int manual);
     // The footage the stop's caption shows (written in its name or alias, else the

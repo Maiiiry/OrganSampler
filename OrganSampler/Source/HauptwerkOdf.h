@@ -149,6 +149,10 @@ struct HauptwerkOdf
         // a transmission of the owner into this division with that shift.
         int extensionOfStopId = 0;
         int shift = 0;
+        // The keys the stop plays by ITS OWN StopRank rows (0.8.159): a rank folder
+        // used by a bass stop and a treble stop is loaded whole, and the keys outside
+        // each stop's rows are switched off in its voicing (-1: every key).
+        int lowKey = -1, highKey = -1;
         // The sample files' numbers minus the keys they play on, from the ranks'
         // pipes (0.8.155): the Stop List row's "Files vs keys", the loader puts the
         // files on their keys (Doesburg: -12, before the organ sounded an octave high).
