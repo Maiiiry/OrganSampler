@@ -424,6 +424,11 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   Never verify this by the sound's pitch (the user: "je to podle jména souboru ... zřejmé z ODF"). Organs imported
   before 0.8.155 keep offset 0: load the definition again or type the column. Dev hook `ORGAN_TEST_OFFSET=
   "<manual>|<stop prefix>|<offset>"` (the voicing path); the grid dump prints "notes a..b files N" per stop.
+  SELF-TEST "Swap divisions ... WRONG" (seen in 0.8.162 and 0.8.163 and ONCE BEFORE, commit ee789c5): a fault of the
+  TEST, never of the engine - with one loaded division the routes of division 1 had no device key after the swap (a
+  route without a device gets no voices since 0.8.126), so "key 60 on division 1 -> 0 voices". Fixed for good in
+  EngineSelfTest.h (both divisions get the test's device key/channels/rate/block size after the swap). Never report it
+  as a regression again; if it fails, the test setup is what to read first.
   0.8.163 RETUNE BUSES (the user chose "variant A", no retune at load, no regression): `Route::Bus` (kMaxBuses 3 per
   route, kBusTaps 16, kBusPhases 128, kBusFifo 4 x kMaxBlockFrames + 32, kBusMinCents 25, kBusJoinCents 6). At every
   voice start (attack and release) `commonRetuneCents(stop, rank)` = globalPitchCents + (tuneTo440 ? 1200 log2(440 /

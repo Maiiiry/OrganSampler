@@ -1004,6 +1004,19 @@ namespace EngineSelfTest
             int inOne = 0, inZeroSwapped = 0;
             for (auto* stop : engine.getStops()) { if (stop->primaryManual == 1) ++inOne; if (stop->primaryManual == 0) ++inZeroSwapped; }
             for (auto* stop : engine.getStops()) engine.setStopEnabled(stop, true);
+            // The routes of the division the stops moved to were never set up when
+            // the test loaded one division only: a route without a device gets no
+            // voices (0.8.126), so key 60 there counted 0 and the test said WRONG
+            // (0.8.163, twice taken for an engine fault). Both divisions get the
+            // test's device key, channels, rate and block size here, like the setup.
+            for (int m = 0; m < 2; ++m)
+                for (const auto& perspective : engine.getPerspectivesForManual(m))
+                {
+                    engine.setPerspectiveOutputChannels(m, perspective, { 0, 1 });
+                    engine.setPerspectiveSampleRate(m, perspective, 48000.0);
+                    engine.setPerspectiveBlockSize(m, perspective, blockSize);
+                    engine.setPerspectiveDeviceKey(m, perspective, "selftest|" + perspective + "|" + juce::String(m));
+                }
             engine.noteOn(60, 127, 1);
             BlockStats s; renderBlocks(40, s);
             const int voicesNew = engine.getCurrentPolyphony();
