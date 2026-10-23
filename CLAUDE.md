@@ -424,6 +424,14 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   Never verify this by the sound's pitch (the user: "je to podle jména souboru ... zřejmé z ODF"). Organs imported
   before 0.8.155 keep offset 0: load the definition again or type the column. Dev hook `ORGAN_TEST_OFFSET=
   "<manual>|<stop prefix>|<offset>"` (the voicing path); the grid dump prints "notes a..b files N" per stop.
+  0.8.161: (1) `makeAntiAliasCopy` taps = 191 up to ratio 4, else 191 x ratio/4 (odd) in a std::vector - the fixed 191
+  Blackman taps (transition ~0.029 c/s) aliased at ratio 16 (cutoff 0.027, stopband from 0.041 > the fold 0.031): the
+  user's "+24 stop + +24 trsm = +4 octaves alias jako prase", +3 octaves fine. (2) MERGE GRID: `sharedStopNames`
+  ("<manual>|<added key>" -> the base row playing the same folder; `baseFolders` is a map now) - a division with any
+  shared stop is "the same organ in volumes": the added page's cells are taken for the WHOLE division (the shared rows
+  mapped to the base names, shift 0); no shared stop = another organ, block under lastRow as 0.8.154. The user's rule:
+  same stops "dissolve" into the new volume's grid; a different organ is pressed right under the last row. Never
+  compact a foreign organ's page rows.
   0.8.160 (the user's batch after 0.8.159): (1) COMPONENTS: `componentOf` (SamplerEngine.cpp, twice in
   `scanTreeAssignments` - the learning block and the assignment loop) = a single trailing L/l/R/r after a digit
   ("quintaton16L") or a CAPITAL L/R after a small letter ("glockentonL") with the sibling of the other half present;

@@ -12,6 +12,22 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.161] - 2026-10-23
+
+### Fixed
+- Filled pipes shifted up more than two octaves aliased: the anti-alias
+  kernel of the copy build had a fixed length (191 taps), whose transition
+  band is wider than the whole pass band at a ratio of 16 (an 8' stop with
+  +24 and a +24 extension on top). The kernel now grows with the ratio
+  (191 taps up to a ratio of 4, four times as many at 16), so the stopband
+  sits under the folding limit.
+- Merge of the same organ in volumes (Adlington Vol. 1 over Vol. 0): a
+  division where the added stops share folders with the loaded rows takes
+  the added volume's page as the layout of the whole division - the shared
+  rows take its cells too and nothing is shifted, so no empty rows stand
+  between the old and the new stops. Another organ (Beziers into Caen) keeps
+  its block right under the last row, as before.
+
 ## [0.8.160] - 2026-10-23
 
 ### Fixed

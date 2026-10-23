@@ -322,6 +322,7 @@ void MainComponent::mergeConfiguration(juce::var added, const juce::File& addedF
     const bool addedMidi = (bool)added.getProperty("containsMidiMappings", false);
     int stopsAdded = 0, stopsShared = 0, stopsRenamed = 0, perspectivesAdded = 0, perspectivesKept = 0;
     std::set<juce::String> keptStopKeys;   // "<manual>|<comparable name>" of the added stops that made it (for the voicing and the grid)
+    std::map<juce::String, juce::String> sharedStopNames;   // "<manual>|<comparable added name>" -> the base row's name playing the same folder (0.8.161: the same organ in volumes)
     std::map<int, std::set<juce::String>> baseShown;   // per division: comparable names of the base's own grid rows (not the children of stop folders)
     std::map<juce::String, juce::String> renamed;   // "<manual>|<old name>" -> new name
     juce::StringArray addedPerspectiveNames;
@@ -404,15 +405,16 @@ void MainComponent::mergeConfiguration(juce::var added, const juce::File& addedF
         }
         // Folders the base already plays: a stop of the added configuration that
         // uses one is shared and not added (its sound is already there).
-        std::set<juce::String> baseFolders;
+        std::map<juce::String, juce::String> baseFolders;   // "tree|path" -> the base row's name
         for (const auto& entry : baseBuild.entries)
             for (const auto& [perspective, ref] : entry.folders)
-                baseFolders.insert(juce::String(ref.tree) + "|" + pathKey(ref.relativePath));
+                baseFolders.emplace(juce::String(ref.tree) + "|" + pathKey(ref.relativePath), entry.name);
         for (auto entry : addedEntries)
         {
             bool shared = false;
             for (const auto& [perspective, ref] : entry.folders)
-                if (baseFolders.count(juce::String(ref.tree) + "|" + pathKey(ref.relativePath)) > 0) shared = true;
+                if (const auto found = baseFolders.find(juce::String(ref.tree) + "|" + pathKey(ref.relativePath)); found != baseFolders.end())
+                { shared = true; sharedStopNames[juce::String(manual) + "|" + stopBuildKey(entry.name)] = found->second; }
             if (shared) { ++stopsShared; ignored.add(divisionName + " " + entry.name + ": its sample folder is already loaded (shared) - not added"); continue; }
             const juce::String originalName = entry.name;
             for (int suffix = 2; ; ++suffix)
@@ -587,13 +589,22 @@ void MainComponent::mergeConfiguration(juce::var added, const juce::File& addedF
                         if (parts.size() == 2) firstAdded = juce::jmin(firstAdded, parts[1].getIntValue());
                     }
                 if (firstAdded == std::numeric_limits<int>::max()) firstAdded = 0;
-                const int shift = lastRow + 1 - firstAdded;
+                // The same organ in volumes (0.8.161: a division where the added stops
+                // share folders with the base's rows - Adlington Vol. 1 over Vol. 0):
+                // the added organ's page is the layout of the whole division, the
+                // shared rows take its cells too, nothing is shifted. Another organ
+                // (Beziers into Caen) keeps its block right under the last row.
+                bool sameOrgan = false;
+                for (const auto& [key, baseName] : sharedStopNames) if (key.startsWith(juce::String(manual) + "|")) sameOrgan = true;
+                const int shift = sameOrgan ? 0 : lastRow + 1 - firstAdded;
                 if (auto* addedCells = division.value.getDynamicObject())
                     for (const auto& cell : addedCells->getProperties())
                     {
                         auto key = cell.name.toString();
                         if (key.startsWith("tr:")) continue;   // a transmission's cell: placed afresh by the grid
-                        if (keptStopKeys.count(juce::String(manual) + "|" + stopBuildKey(key)) == 0) continue;
+                        const auto sharedName = sharedStopNames.find(juce::String(manual) + "|" + stopBuildKey(key));
+                        if (sameOrgan && sharedName != sharedStopNames.end()) key = sharedName->second;
+                        else if (keptStopKeys.count(juce::String(manual) + "|" + stopBuildKey(key)) == 0) continue;
                         const auto newName = renamed.find(juce::String(manual) + "|" + key);
                         if (newName != renamed.end()) key = newName->second;
                         const auto parts = juce::StringArray::fromTokens(cell.value.toString(), ",", "");

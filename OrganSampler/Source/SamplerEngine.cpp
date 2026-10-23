@@ -7500,8 +7500,12 @@ namespace
         if (frames <= 0) { copy->finaliseLoops(source.loops); return copy; }
         // Cutoff a little below the folding limit: the transition band must end there.
         const double cutoff = juce::jlimit(0.02, 0.49, 0.5 / juce::jmax(1.0, ratio) * 0.86);   // in cycles per sample
-        constexpr int taps = 191, half = taps / 2;
-        std::array<float, taps> h{};
+        // The kernel grows with the ratio beyond two octaves (0.8.161): 191 taps of a
+        // Blackman window have a transition band of ~0.029 cycles per sample - at a
+        // ratio of 16 (four octaves up) the cutoff is 0.027 and the stopband began at
+        // 0.041, above the folding limit of 0.031, so the band between aliased.
+        const int taps = ratio <= 4.0 ? 191 : (int)std::llround(191.0 * ratio / 4.0) | 1, half = taps / 2;
+        std::vector<float> h((size_t)taps, 0.0f);
         double sum = 0.0;
         for (int i = 0; i < taps; ++i)
         {

@@ -707,7 +707,12 @@ pedal joins your pedal, its first manual your first manual, and so on; a
 division you do not have yet is created. The added stops become further rows
 of the Stop List under the existing rows of their division (drag them where
 they belong), their folder trees join yours, and their voicing comes with
-them. What would collide is left as it is and listed in the message at the
+them. On the grid the added stops keep the layout they came with (a
+Hauptwerk definition's jamb page), set right under your last row; when the
+added configuration is the same organ in a further volume (its stops share
+folders with your rows), its page becomes the layout of the whole
+division - your rows take its cells too, so the picture is the full organ's
+page, without empty rows between the old and the new stops. What would collide is left as it is and listed in the message at the
 end: a stop whose sample folder is already loaded is shared and not added; a
 perspective your organ already has keeps its audio route and settings, a new
 perspective brings the added configuration's; a division that has stops
