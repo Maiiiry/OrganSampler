@@ -424,6 +424,30 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   Never verify this by the sound's pitch (the user: "je to podle jména souboru ... zřejmé z ODF"). Organs imported
   before 0.8.155 keep offset 0: load the definition again or type the column. Dev hook `ORGAN_TEST_OFFSET=
   "<manual>|<stop prefix>|<offset>"` (the voicing path); the grid dump prints "notes a..b files N" per stop.
+  0.8.162 "ALIASING" LESSON (the user: "+1 octave aliasing jako prase, regres"): measured, not guessed. Dev hooks:
+  `ORGAN_SELFTEST_RENDER="<stop part>|<key>|<shift>|<out.wav>[|<stop transposition>|<velocity>|late]"` (EngineSelfTest.h,
+  `--selftest <tree>` with ORGAN_SELFTEST_DIVISIONS=2: a transmission into the last division, the key rendered 2 s + 1 s
+  tail to a mono WAV, the copy of the filled pipe beside it as <out>.copy.wav; ORGAN_SELFTEST_INT16=1 for 16-bit) and
+  `ORGAN_TEST_RECORD="<manual>|<key>|<velocity>|<seconds>|<out.wav>|<stop prefix>[|notune]"` (voicer.cpp, needs
+  ORGAN_DUMP_GRID=1 like every grid hook: waits for the copy build, switches every other stop/transmission off, records
+  the routes' output through `engine.startRecording` = the whole GUI path with the loaded configuration). Analysis:
+  %TEMP%\alias_check.py / peaks.py (numpy in Python39: C:\Users\doma\AppData\Local\Programs\Python\Python39; the
+  lilypond python on PATH has no pip), %TEMP%\ospc_dump.py parses the FilledPipesCache .ospc files (JUCE little-endian
+  ints, string + NUL, per record pipe/offset/formant/sourceFrames/copies, each copy a length-prefixed block). Findings:
+  the engine alone renders ratio 2/4/8/16 copies CLEAN (16-bit too, offset applied late too, velocity 60 too). The GUI
+  showed inharmonic peaks = IMAGES OF THE LINEAR INTERPOLATION KERNEL: (a) with 32 kHz storage (the hook takes the
+  file's load options: Adlington's file says 32 kHz/halved/packed) the copies are 32 kHz and play at ratio 0.667 ->
+  images at 32000 - f (8740 Hz -> 23254 Hz -16.6 dB, 32000 + f folded -> 7266 Hz -26 dB); (b) at 48 kHz with "Equal at
+  440" on (the merge switched it on; Adlington stands at a1 = 409 Hz -> +128 cents, ratio 1.0773) the images of the
+  x4 copy's fundamental land at (48000 - 8740) x 1.0773 - 48000 = 5711 Hz (-25.6 dB), 13121 Hz, 2006 Hz - exactly
+  measured; with the retune off the same GUI render is clean. The `v.cubic` rule (cubic only for filled pipes played
+  from the plain sample) is from the first commit; copies and real pipes are LINEAR at any ratio - temperaments and the
+  random 4 cents give sidebands near the partials (-30 dB), a big retune moves them far away = "aliasing". Cubic kernels
+  are scalar (hermiteAt per frame), the 8-tap sinc 13 ns/frame: neither can take every voice. The proper cure (not
+  done, the user decides): retune at LOAD (resample each sample by its own tune-to-440 correction with the sinc
+  resampler, playback ratio 1) or copies at the route rate when the storage is lower. Done: the merge of the same organ
+  (shared stops) keeps the pitch. ORGAN_LOAD_CONFIGURATION takes the FILE's storage options (32 kHz for Adlington) - the
+  user's own GUI loads said 48 kHz; always check the "Load Configuration" log line before comparing.
   0.8.161: (1) `makeAntiAliasCopy` taps = 191 up to ratio 4, else 191 x ratio/4 (odd) in a std::vector - the fixed 191
   Blackman taps (transition ~0.029 c/s) aliased at ratio 16 (cutoff 0.027, stopband from 0.041 > the fold 0.031): the
   user's "+24 stop + +24 trsm = +4 octaves alias jako prase", +3 octaves fine. (2) MERGE GRID: `sharedStopNames`

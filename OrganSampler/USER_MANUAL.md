@@ -722,7 +722,11 @@ temperament, the global sound settings and the MIDI buttons stay yours. Two
 stops of one name in one division: the added one gets "(2)". Two organs
 rarely stand at one pitch (a1 = 440, 415, 465 Hz ...), so the merge switches
 Temperaments > *Equal at 440 Hz* on: every stop of the merged organ is tuned
-to 440 Hz and they play together in tune. Before anything
+to 440 Hz and they play together in tune. The same organ in a further volume
+(stops sharing folders with yours) keeps its pitch: nothing is retuned - a
+retune of a whole organ standing far from 440 Hz (Adlington at a1 = 409 Hz:
++128 cents) makes the bright filled pipes sound rough, see "Equal at 440 Hz"
+under Temperaments. Before anything
 is loaded the program sizes the added sample folders against the memory that
 is free now and refuses the merge when they would not fit (nothing is
 changed then). The merged organ is loaded but not saved: *Save Configuration*
@@ -1939,7 +1943,13 @@ diapasons (a1 = 435, 440, 442, 465 Hz ...), and an organ built from the stops
 of two such organs would be out of tune with itself. With every organ at 440 Hz
 the stops agree, and celeste beats and the global *Pitch* slider (Global
 sound, cents on top of everything) mean what they say. The voicing row's
-*Undulation* line reads "needs 440 Hz" until this is done.
+*Undulation* line reads "needs 440 Hz" until this is done. Leave it off for
+an organ that plays alone and stands far from 440 Hz (Adlington at a1 = 409
+Hz is 128 cents away): every pipe is then played 7.7 % faster, and the
+interpolation of the playback leaves faint images of the brightest partials
+(0.8.162: measured at -26 dB for a filled pipe four times the pitch of its
+source, heard as a rough, aliased top octave); within a few cents of the
+recorded pitch they stay beside the partials and out of earshot.
 
 ## 6.4 MIDI learn
 

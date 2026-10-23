@@ -12,6 +12,19 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.162] - 2026-10-23
+
+### Fixed
+- Merge of the same organ in volumes no longer switches "Equal at 440 Hz"
+  on: Adlington Vol. 1 over Vol. 0 stands at the same a1 = 409 Hz, and the
+  retune of every pipe by +128 cents made the images of the linear
+  interpolation audible on the bright filled pipes - heard as aliasing on
+  the top octave of a transposed Principal (a copy four times the pitch of
+  its source has its fundamental at 8.7 kHz; retuned by 7.7 % its image
+  lands at 5.7 kHz, -26 dB). Two different organs still get the retune.
+  Measured through the whole program path (a new recording hook) against the
+  engine alone: with the retune off the same pipe is clean.
+
 ## [0.8.161] - 2026-10-23
 
 ### Fixed

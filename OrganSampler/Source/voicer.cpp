@@ -1874,6 +1874,62 @@ void Voicer::rebuildUI(juce::Component& container, juce::Viewport& viewport)
                         break;
                     }
             }
+            // ORGAN_TEST_RECORD="<manual>|<key>|<velocity>|<seconds>|<out.wav>|<stop prefix>" (dev, 0.8.162):
+            // once the copies are built, every stop and transmission is switched off but the
+            // stops named like the prefix, the engine records its routes' output to the file
+            // while the key is played on that division and released (1.5 s of tail) - what
+            // the user hears, through the whole GUI path (device, voicing, settings).
+            static bool recordDone = false;
+            if (const char* rec = std::getenv("ORGAN_TEST_RECORD"); rec != nullptr && !recordDone && !compactCells.empty())
+            {
+                recordDone = true;
+                const auto parts = juce::StringArray::fromTokens(juce::String(rec), "|", "");
+                if (parts.size() >= 6)
+                {
+                    const int manual = parts[0].getIntValue(), key = parts[1].getIntValue(), velocity = juce::jlimit(1, 127, parts[2].getIntValue());
+                    const double seconds = parts[3].getDoubleValue();
+                    const juce::File file = juce::File(parts[4]);
+                    const juce::String prefix = parts[5];
+                    const bool noTune = parts.size() > 6 && parts[6] == "notune";   // |notune: the stop's tune-to-440 off, random detune 0
+                    SamplerEngine* eng = &engine;
+                    auto step = std::make_shared<std::function<void()>>();
+                    *step = [eng, manual, key, velocity, seconds, file, prefix, noTune, step]
+                    {
+                        if (eng->pendingBackgroundWorkers() > 0) { juce::Timer::callAfterDelay(500, [step] { if (*step) (*step)(); }); return; }
+                        int on = 0;
+                        for (auto* stop : eng->getStops())
+                        {
+                            const bool wanted = stop->name.startsWithIgnoreCase(prefix);
+                            eng->setStopEnabled(stop, wanted);
+                            if (wanted) ++on;
+                            if (wanted && noTune) { stop->tuneTo440 = false; stop->randomPitchErrorCents = 0.0f; }
+                            for (int i = 0; i < (int)stop->transmissions.size(); ++i) eng->setTransmissionEnabled(stop, i, false);
+                        }
+                        CrashHandler::note("ORGAN_TEST_RECORD: copies built, " + juce::String(on) + " stop(s) \"" + prefix + "\" on, recording " + file.getFullPathName()
+                            + ": key " + juce::String(key) + " on division " + juce::String(manual) + " at velocity " + juce::String(velocity) + " for " + juce::String(seconds, 1) + " s");
+                        juce::Timer::callAfterDelay(1000, [eng, manual, key, velocity, seconds, file, step]
+                        {
+                            const bool started = eng->startRecording(file);
+                            CrashHandler::note(juce::String("ORGAN_TEST_RECORD: recording ") + (started ? "started" : "FAILED to start"));
+                            juce::Timer::callAfterDelay(800, [eng, manual, key, velocity, seconds, file, step]
+                            {
+                                eng->noteOn(key, velocity, manual);
+                                juce::Timer::callAfterDelay((int)(seconds * 1000.0), [eng, manual, key, file, step]
+                                {
+                                    eng->noteOff(key, manual);
+                                    juce::Timer::callAfterDelay(1500, [eng, file, step]
+                                    {
+                                        eng->stopRecording();
+                                        CrashHandler::note("ORGAN_TEST_RECORD: done, " + juce::String(file.getSize()) + " bytes in " + file.getFullPathName());
+                                        juce::MessageManager::callAsync([step] { *step = nullptr; });
+                                    });
+                                });
+                            });
+                        });
+                    };
+                    (*step)();
+                }
+            }
             if (const char* png = std::getenv("ORGAN_TEST_SNAPSHOT"); png != nullptr && uiContainer != nullptr)
             {
                 const juce::Image image = uiContainer->createComponentSnapshot(uiContainer->getLocalBounds(), false, 1.0f);

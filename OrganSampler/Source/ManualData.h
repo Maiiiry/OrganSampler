@@ -732,7 +732,11 @@ static const char* const kManualText_part3 =
     "stops of one name in one division: the added one gets \"(2)\". Two organs\n"
     "rarely stand at one pitch (a1 = 440, 415, 465 Hz ...), so the merge switches\n"
     "Temperaments > *Equal at 440 Hz* on: every stop of the merged organ is tuned\n"
-    "to 440 Hz and they play together in tune. Before anything\n"
+    "to 440 Hz and they play together in tune. The same organ in a further volume\n"
+    "(stops sharing folders with yours) keeps its pitch: nothing is retuned - a\n"
+    "retune of a whole organ standing far from 440 Hz (Adlington at a1 = 409 Hz:\n"
+    "+128 cents) makes the bright filled pipes sound rough, see \"Equal at 440 Hz\"\n"
+    "under Temperaments. Before anything\n"
     "is loaded the program sizes the added sample folders against the memory that\n"
     "is free now and refuses the merge when they would not fit (nothing is\n"
     "changed then). The merged organ is loaded but not saved: *Save Configuration*\n"
@@ -804,12 +808,12 @@ static const char* const kManualText_part3 =
     "their folders - or *Open the Stop List*, where *Unload folder...* also\n"
     "offers *Replace \"...\" with another folder...* for every tree and removes a\n"
     "tree you no longer have. The notice goes when no tree of the division is\n"
+    ;
+static const char* const kManualText_part4 =
     "missing.\n"
     "\n"
     "Paths are stored with \"/\" and resolved on every platform; a configuration\n"
     "saved on Windows loads on Linux and macOS and the other way round.\n"
-    ;
-static const char* const kManualText_part4 =
     "\n"
     "**Voicing** (everything set in the voicing rows of the stops) is saved\n"
     "automatically and also with the configuration; *Save Voicing* and *Load\n"
@@ -1006,12 +1010,12 @@ static const char* const kManualText_part4 =
     "it moves the sliders; the rest of that division's column scrolls as usual.\n"
     "The button of a stop folder switches all its children with it, their buttons\n"
     "included; a child can still be switched alone to hear it by itself.\n"
+    ;
+static const char* const kManualText_part5 =
     "\n"
     "## 2.6 Two program windows\n"
     "\n"
     "*Configuration Editor > Console > Program windows* opens a second window\n"
-    ;
-static const char* const kManualText_part5 =
     "(empty at first). In the Configuration Editor's division sections, *Shown in\n"
     "window* moves a division to window 1 or 2; a division is in one window only.\n"
     "The second window's position is remembered; closing it returns to one window.\n"
@@ -1208,12 +1212,12 @@ static const char* const kManualText_part5 =
     "- **Taken from** - the source stop, its division and footage.\n"
     "- **Volume vs. parent stop** (-10 to +10 dB), the per-key volume and treble\n"
     "  sliders and the pipe on/off boxes of the transmission alone.\n"
+    ;
+static const char* const kManualText_part6 =
     "- **Formants (filled pipes)** for the pipes only this transmission asks for\n"
     "  (beyond the stop's compass).\n"
     "\n"
     "A pipe is one set of voices, no matter how many keys hold it: the same pipe\n"
-    ;
-static const char* const kManualText_part6 =
     "reached through the stop itself, through a transmission and through a coupler\n"
     "sounds once, and stops only when no route holds it any more. While several\n"
     "routes hold it, the loudest of them sets its volume and the highest *Treble\n"
@@ -1410,12 +1414,12 @@ static const char* const kManualText_part6 =
     "\n"
     "- *MIDI keyboard device* and *MIDI channel*. When another division listens to\n"
     "  the same device and channel a note \"Shared with ...\" appears (one key then\n"
+    ;
+static const char* const kManualText_part7 =
     "  plays all of them). A keyboard plugged in while the program runs is opened\n"
     "  at once (the activity log says so) and MIDI learn hears it; open the\n"
     "  Divisions dialog again to see it in the device list. One unplugged is let\n"
     "  go and comes back when plugged in again.\n"
-    ;
-static const char* const kManualText_part7 =
     "- *Ignore MIDI velocity (organ keys)*: every key is sent as full velocity.\n"
     "- *Bass octave layout*: Standard, Short octave, \"C D D# ...\", \"C D E ...\" for\n"
     "  historic bass octaves.\n"
@@ -1612,12 +1616,12 @@ static const char* const kManualText_part7 =
     "  separately from the ASIO routes; the processor's time is split, and the DSP\n"
     "  load reaches 100 % sooner than with ASIO alone.\n"
     "- **Different latencies.** ASIO and WASAPI answer at different speeds, so\n"
+    ;
+static const char* const kManualText_part8 =
     "  divisions on different drivers do not speak at the same moment after the\n"
     "  key is pressed. While playing this is confusing - though now and then it\n"
     "  imitates, by accident, the different delays of the actions of a real\n"
     "  organ's divisions.\n"
-    ;
-static const char* const kManualText_part8 =
     "\n"
     "The best layout for the highest polyphony is therefore: one ASIO driver, all\n"
     "routes on it, the output channels spread over its outputs.\n"
@@ -1814,12 +1818,12 @@ static const char* const kManualText_part8 =
     "- **The buffer size: do not chase the smallest one.** A small buffer\n"
     "  (64 or 128 samples) cuts the reachable polyphony dramatically, because\n"
     "  every block must be rendered in a fraction of the time. An organ does not\n"
+    ;
+static const char* const kManualText_part9 =
     "  need it: the action of a real organ has its own delay, and a latency of\n"
     "  about 10 ms (512 samples at 48 kHz) is absolutely fine for organ playing -\n"
     "  even 20 ms (1024 samples) is still perfectly comfortable. Choose the\n"
     "  larger buffer and take the polyphony.\n"
-    ;
-static const char* const kManualText_part9 =
     "- **Windows Audio.** All routes on one Windows Audio device share one stream\n"
     "  and one callback, rendered by the whole pool of *Render threads* - the\n"
     "  same layout as ASIO, with the 10 ms period of the Windows audio engine\n"
@@ -1961,7 +1965,13 @@ static const char* const kManualText_part9 =
     "of two such organs would be out of tune with itself. With every organ at 440 Hz\n"
     "the stops agree, and celeste beats and the global *Pitch* slider (Global\n"
     "sound, cents on top of everything) mean what they say. The voicing row's\n"
-    "*Undulation* line reads \"needs 440 Hz\" until this is done.\n"
+    "*Undulation* line reads \"needs 440 Hz\" until this is done. Leave it off for\n"
+    "an organ that plays alone and stands far from 440 Hz (Adlington at a1 = 409\n"
+    "Hz is 128 cents away): every pipe is then played 7.7 % faster, and the\n"
+    "interpolation of the playback leaves faint images of the brightest partials\n"
+    "(0.8.162: measured at -26 dB for a filled pipe four times the pitch of its\n"
+    "source, heard as a rough, aliased top octave); within a few cents of the\n"
+    "recorded pitch they stay beside the partials and out of earshot.\n"
     "\n"
     "## 6.4 MIDI learn\n"
     "\n"
@@ -2010,6 +2020,8 @@ static const char* const kManualText_part9 =
     "vocoder is an optional alternative for those who want it. Every method has\n"
     "its weakness; which one sounds best depends on the stop, the size of the shift\n"
     "and the ear. Listening tests with reeds (Trompete, Vox humana) show the\n"
+    ;
+static const char* const kManualText_part10 =
     "differences most clearly; a 16' extension of an 8' reed is the typical case.\n"
     "\n"
     "**Resampling (pitch and length change together).** The sample is played faster\n"
@@ -2020,8 +2032,6 @@ static const char* const kManualText_part9 =
     "transposed pipe sounds like a bigger or smaller pipe than it stands for. To\n"
     "soften that, a pipe resampled upwards automatically loses 0.1 dB of level and\n"
     "0.1 dB of treble per semitone (an octave up: -1.2 dB each), because a pipe\n"
-    ;
-static const char* const kManualText_part10 =
     "played faster comes out brighter and louder than a real pipe of that pitch.\n"
     "This compensation belongs to plain resampling only: the three other methods\n"
     "settle the loudness and the timbre of their copies when they build them, and\n"
@@ -2212,6 +2222,8 @@ static const char* const kManualText_part10 =
     "single core has no \"all - 1\". A hybrid processor (Intel 12th generation and\n"
     "later: performance and efficiency cores; Windows tells them apart) offers\n"
     "*Performance cores only* (0.8.140): a render worker on an efficiency core\n"
+    ;
+static const char* const kManualText_part11 =
     "renders several times slower and the device thread waits for it - the\n"
     "measurement's longest callback of an Ultra 7 notebook was 2.6 ms of which\n"
     "2.4 ms waiting for the lanes; the report says so for such a processor. The\n"
@@ -2222,8 +2234,6 @@ static const char* const kManualText_part10 =
     "never chosen in this editor on this computer (older versions let a portable\n"
     "file bring it in - the Rural Organ file left two-core laptops rendering on one\n"
     "thread) goes back to the default at the next start; a choice made here stays.\n"
-    ;
-static const char* const kManualText_part11 =
     "All physical cores means all of them on a two-core laptop as well. The render\n"
     "workers and the control thread run at audio priority on every system (Linux:\n"
     "SCHED_FIFO when the system allows it - the activity log says \"Render worker:\n"
@@ -2414,6 +2424,8 @@ static const char* const kManualText_part11 =
     "\n"
     "Everything in \"Getting the most polyphony\" (the auxiliary routes, the IR\n"
     "reverbs, the drivers) raises or lowers the number you will arrive at. Above\n"
+    ;
+static const char* const kManualText_part12 =
     "all, do not be afraid of a larger audio buffer: a latency of about 10 ms\n"
     "(512 samples at 48 kHz) is absolutely fine for organ playing, and even 20 ms\n"
     "is still perfectly comfortable, while chasing the smallest buffer cuts the\n"
@@ -2424,8 +2436,6 @@ static const char* const kManualText_part11 =
     "*Measure...* does the procedure above for you, with the loaded organ and its\n"
     "configured audio outputs - every route, auxiliary route, IR reverb and\n"
     "driver as it is. The button is greyed out until samples are loaded: a\n"
-    ;
-static const char* const kManualText_part12 =
     "measurement without the organ would not say anything about it. What\n"
     "happens:\n"
     "\n"
@@ -2616,6 +2626,8 @@ static const char* const kManualText_part12 =
     "engaged (2 to 100 %, default 20). Smaller footages count less. A lower value\n"
     "keeps a solo stop steady and lets the sag come with full registration.\n"
     "\n"
+    ;
+static const char* const kManualText_part13 =
     "### Wind: one pipe's share of the full sag\n"
     "\n"
     "The sag with one key held, relative to the sag with many keys held (default\n"
@@ -2626,8 +2638,6 @@ static const char* const kManualText_part12 =
     "The sag with two keys held (default 50 %); from three keys on the rest of the\n"
     "sag closes gradually. One and two pipes together shape how a single note, an\n"
     "interval and a chord differ.\n"
-    ;
-static const char* const kManualText_part13 =
     "\n"
     "### Wind: maximum wind model effect\n"
     "\n"
@@ -2818,6 +2828,8 @@ static const char* const kManualText_part13 =
     "without upward shifts). Real pipes are never touched.\n"
     "\n"
     "### Treble per key: shelf start frequency\n"
+    ;
+static const char* const kManualText_part14 =
     "\n"
     "The *Treble per key* sliders of the voicing raise or lower everything above\n"
     "this frequency (120 to 5000 Hz, default 1800): a high shelf whose transition\n"
@@ -2828,8 +2840,6 @@ static const char* const kManualText_part13 =
     "### Celeste beats: top of compass vs bottom\n"
     "\n"
     "Undulating (celeste) stops beat this many times faster at the top of their\n"
-    ;
-static const char* const kManualText_part14 =
     "compass than at the bottom (1 to 20, default 12); the a1 key always beats as\n"
     "set in the stop's voicing. Equal beats everywhere (1x) detune the bass most,\n"
     "as a real celeste tuned to constant beats would.\n"
@@ -3020,6 +3030,8 @@ static const char* const kManualText_part14 =
     "same perspective). Applies to the next folder load.\n"
     "\n"
     "## 8.6 Division sections (Pedal, Manual I ... Manual VII)\n"
+    ;
+static const char* const kManualText_part15 =
     "\n"
     "One collapsed section per division; the same settings as in the Divisions\n"
     "dialog (see \"Keyboard, MIDI and compass\", \"Swell, tremulant, wind\" and \"The\n"
@@ -3030,8 +3042,6 @@ static const char* const kManualText_part14 =
     "The folder trees loaded for this division, and the *Stop building...* button\n"
     "that opens the Stop List (see \"Folder trees and the pool\") at it.\n"
     "\n"
-    ;
-static const char* const kManualText_part15 =
     "### Shown in window\n"
     "\n"
     "With two program windows: the window this division is shown in. A division is\n"
@@ -3222,6 +3232,8 @@ static const char* const kManualText_part15 =
     "GitHub may first ask you to sign in or to make the account, and after that\n"
     "it sometimes lands on another page instead of the form. The message that\n"
     "stays open in OrganSampler has *Open the GitHub form* for that: press it\n"
+    ;
+static const char* const kManualText_part16 =
     "again, signed in, and the form opens filled in. The same link is in the\n"
     "report folder as `Report on GitHub.html` - a double-click opens it, even\n"
     "days later.\n"
@@ -3232,8 +3244,6 @@ static const char* const kManualText_part15 =
     "GitHub and every release is built there from it. *About & licences...* at the\n"
     "top of the Configuration Editor shows this manual, the program's licence and\n"
     "the licences of the software it contains: JUCE (AGPLv3), the Steinberg ASIO SDK (under its\n"
-    ;
-static const char* const kManualText_part16 =
     "GPLv3 option; ASIO is a trademark and software of Steinberg Media Technologies\n"
     "GmbH), Signalsmith Stretch and Signalsmith Linear (MIT). The same program is\n"
     "built for Windows, macOS and Linux; the macOS and Linux builds have had less\n"

@@ -535,6 +535,86 @@ namespace EngineSelfTest
         };
 
         { BlockStats s; renderBlocks(40, s); describe("Silence", s); }
+        // ORGAN_SELFTEST_RENDER="<stop name part>|<key>|<shift>|<out.wav>" (dev, 0.8.162): a
+        // transmission of that stop (division 0) with the shift into the last division,
+        // the key played there alone for 2 s and released (1 s of tail), the output
+        // written as a mono 48 kHz WAV; the copy of the filled pipe itself beside it
+        // (<out>.copy.wav) with its source pipe noted. The test ends there.
+        if (const char* env = std::getenv("ORGAN_SELFTEST_RENDER"))
+        {
+            const auto parts = juce::StringArray::fromTokens(juce::String(env), "|", "");
+            if (parts.size() >= 4)
+            {
+                Stop* target = nullptr;
+                for (auto* stop : engine.getStops()) if (stop->primaryManual == 0 && stop->name.containsIgnoreCase(parts[0])) { target = stop; break; }
+                if (target == nullptr) { report << "RENDER: no stop named like \"" << parts[0] << "\"\n"; return report; }
+                const int key = parts[1].getIntValue(), shift = parts[2].getIntValue();
+                const juce::File out(parts[3]);
+                // Optional: |<stop transposition (sampleOffset)>|<velocity> - the user's case of a
+                // stop transposed +24 with a transmission on top, played softly (a velocity layer).
+                const int sampleOffset = parts.size() > 4 ? parts[4].getIntValue() : 0;
+                const int velocity = parts.size() > 5 ? juce::jlimit(1, 127, parts[5].getIntValue()) : 127;
+                const int division = divisions > 1 ? divisions - 1 : 0;
+                // |late: the transposition applied AFTER the transmission exists (the GUI's
+                // order when the box is changed on a stop that has extensions).
+                const bool late = parts.size() > 6 && parts[6] == "late";
+                for (auto* stop : engine.getStops()) engine.setStopEnabled(stop, stop == target);
+                auto applyOffset = [&]
+                {
+                    if (sampleOffset == 0) return;
+                    engine.setStopSampleOffset(target, sampleOffset);
+                    for (int w = 0; w < 300000 && engine.pendingBackgroundWorkers() > 0; w += 20) juce::Thread::sleep(20);
+                    report << "RENDER: stop transposition " << juce::String(sampleOffset) << " applied (files " << juce::String(sampleOffset) << " above their keys)"
+                           << (late ? " after the transmission" : "") << "\n";
+                };
+                if (!late) applyOffset();
+                const int transmission = engine.addTransmission(target, division, shift);
+                engine.setTransmissionEnabled(target, transmission, true);
+                for (int w = 0; w < 300000 && engine.pendingBackgroundWorkers() > 0; w += 20) juce::Thread::sleep(20);
+                if (late) applyOffset();
+                const int pipe = key + shift;
+                report << "RENDER: " << target->name << " [" << target->perspective << "] transmission " << juce::String(shift) << " into division " << juce::String(division)
+                       << ", key " << juce::String(key) << " -> pipe " << juce::String(pipe);
+                if (pipe >= 0 && pipe < 128 && target->isFilled(pipe))
+                    report << " filled from pipe " << juce::String(pipe + (int)target->fillOffset[(size_t)pipe]) << " (fill offset " << juce::String((int)target->fillOffset[(size_t)pipe]) << ")";
+                else report << " (a real pipe)";
+                report << "\n";
+                auto writeWav = [](const juce::File& file, const std::vector<float>& audio, double rate)
+                {
+                    file.deleteFile();
+                    juce::WavAudioFormat format;
+                    std::unique_ptr<juce::AudioFormatWriter> writer(format.createWriterFor(new juce::FileOutputStream(file), rate, 1, 24, {}, 0));
+                    if (writer == nullptr) return;
+                    const float* channels[1]{ audio.data() };
+                    writer->writeFromFloatArrays(channels, 1, (int)audio.size());
+                };
+                std::vector<float> audio;
+                capture = &audio;
+                engine.noteOn(key, velocity, division);
+                BlockStats held; renderBlocks(375, held);   // 2 s
+                engine.noteOff(key, division);
+                BlockStats tail; renderBlocks(190, tail);   // 1 s
+                capture = nullptr;
+                writeWav(out, audio, 48000.0);
+                report << "RENDER: " << juce::String((int)audio.size()) << " frames written to " << out.getFullPathName() << ", peak " << juce::String(held.peak, 4)
+                       << ", voices " << juce::String(held.maxPolyphony) << "\n";
+                if (pipe >= 0 && pipe < 128)
+                    if (auto it = target->aliasFree.find(pipe); it != target->aliasFree.end() && !it->second.empty() && it->second[0] != nullptr)
+                    {
+                        const Sample& s = *it->second[0];
+                        std::vector<float> v((size_t)s.numFrames);
+                        std::vector<int16_t> scratch;
+                        if (s.storesFloat) { const float* d = s.channel32(0); for (int i = 0; i < (int)s.numFrames; ++i) v[(size_t)i] = d[i]; }
+                        else { const int16_t* d = s.read16(0, scratch); for (int i = 0; i < (int)s.numFrames; ++i) v[(size_t)i] = (float)d[i] / 32768.0f; }
+                        const auto copyFile = out.getSiblingFile(out.getFileNameWithoutExtension() + ".copy.wav");
+                        writeWav(copyFile, v, s.sampleRate);
+                        report << "RENDER: copy of pipe " << juce::String(pipe) << ": " << juce::String((int)s.numFrames) << " frames at " << juce::String(s.sampleRate, 0) << " Hz, "
+                               << juce::String((int)it->second.size()) << " copies (attack + releases), loops " << juce::String((int)s.loops.size()) << " -> " << copyFile.getFullPathName() << "\n";
+                    }
+                    else report << "RENDER: no copy for pipe " << juce::String(pipe) << "\n";
+                return report;
+            }
+        }
         {
             // Release overlap: one key of division 0 held for 320 ms and released;
             // the voices block by block afterwards. At the release the sustaining

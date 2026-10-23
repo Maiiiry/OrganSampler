@@ -628,11 +628,16 @@ void MainComponent::mergeConfiguration(juce::var added, const juce::File& addedF
     // Two organs rarely stand at one pitch (a1 = 440, 415, 465 Hz ...): every
     // stop of the merged organ is tuned to equal temperament at 440 Hz
     // (Temperaments > "Equal at 440 Hz"), so they play together in tune.
-    if (!(bool)baseRoot->getProperty("equalAt440"))
+    // Not for the same organ in volumes (0.8.162: a division with shared stops -
+    // Adlington Vol. 1 over Vol. 0 stands at the same a1 = 409 Hz; the retune to
+    // 440 Hz moved every pipe by +128 cents and the linear kernel's images of the
+    // bright filled pipes came out as "aliasing").
+    if (sharedStopNames.empty() && !(bool)baseRoot->getProperty("equalAt440"))
     {
         baseRoot->setProperty("equalAt440", true);
         done.add("every stop tuned to a1 = 440 Hz (Temperaments > Equal at 440 Hz switched on: two organs rarely stand at one pitch)");
     }
+    else if (!sharedStopNames.empty()) done.add("the same organ in volumes: its pitch stays as it is (no retune to 440 Hz)");
 
     const juce::String summary = "Merged \"" + addedName + "\" into " + (currentConfigurationName.isNotEmpty() ? "\"" + currentConfigurationName + "\"" : juce::String("the loaded organ"))
         + ": " + juce::String(stopsAdded) + " stop(s) added" + (stopsShared > 0 ? ", " + juce::String(stopsShared) + " shared (not added)" : juce::String())
