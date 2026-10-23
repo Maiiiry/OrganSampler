@@ -424,6 +424,44 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   Never verify this by the sound's pitch (the user: "je to podle jména souboru ... zřejmé z ODF"). Organs imported
   before 0.8.155 keep offset 0: load the definition again or type the column. Dev hook `ORGAN_TEST_OFFSET=
   "<manual>|<stop prefix>|<offset>"` (the voicing path); the grid dump prints "notes a..b files N" per stop.
+  0.8.160 (the user's batch after 0.8.159): (1) COMPONENTS: `componentOf` (SamplerEngine.cpp, twice in
+  `scanTreeAssignments` - the learning block and the assignment loop) = a single trailing L/l/R/r after a digit
+  ("quintaton16L") or a CAPITAL L/R after a small letter ("glockentonL") with the sibling of the other half present;
+  `FolderAssignment::component`, Stop List `FolderRef::morePaths` (the second half of the same perspective; json
+  "morePaths", cell text "+ half", changedDivisions/usedFolderKeys/placeOf/nested-tree prefix all include it), the
+  automatic-rules loop and `extendStopBuildWithTree` join the halves into the row, `deriveStopBuildFromEngine` puts a
+  second rank of one perspective into morePaths. 001313 fresh: one "glockenton 2/3'", one "quintaton 16'", AB/Re
+  learned. Never take "Mixtur4x"/"Zimbel3" for a component (no L/R). (2) Name rule: `stem()` in the displayParent test
+  strips l/r + digits + "'" so "HW_Bl.Flute2" over "02-direct-HW_Bl.Flute" gives the leaf alone (rar loads too).
+  (3) `chooseFromList` (AlertWindow + ComboBox, enterModalState, Load/Cancel) replaces the PopupMenu of
+  `loadIndexedIntoDivision`/`loadConfigurationFromArchives` ("Load which one": the popup vanished on a click outside
+  and loaded nothing). (4) HW import `ownerOfFolder` (HauptwerkOdf.cpp, before the `rankFolders.empty() &&
+  !borrowed.empty()` block): a stop whose rank folders are ALL owned by an earlier stop becomes `borrowed` of that owner
+  (an extension with its own key range) - Adlington "Bl. Flute Treble" is a trsm of "Bl. Flute Bass"; a folder is never
+  loaded twice. (5) MERGE from an archive: `resolveTree` and the pool entries in MainComponentMerge.cpp test
+  `SampleFiles::isDirectory` (juce::File::isDirectory is false inside a rar -> every tree {} -> "Nothing new to add");
+  Adlington Vol1 Surround ODF into the Demo config = 7 added, 6 shared, 1 new tree. (6) Stop List: `unloadAllTreesFromPool`
+  sets `reopenStopBuildManual`; `updateApplyState` no longer requires `treeInfos` non-empty (Remove empty stops after
+  Unload all was never applicable, so the empty rows came back with the next folder); `StopListWindow::closeButtonPressed`
+  asks Apply / Discard / Cancel through the public wrappers `StopListDialog::hasUnappliedChanges()` /
+  `applyChanges()` (the originals are private); the header's perspective x sits right after the label text
+  (GlyphArrangement width). (7) Auto-transposition in `loadRankSamples`: MEDIAN of (raw pitch - name footage) over the
+  pipes, |median| >= 2 semitones and >= 70 % agreement - Adlington stands at a1 = 409 Hz (a semitone low as a whole)
+  and got +1 on Principal 4 / Flute 4 with the per-pipe rounding. (8) Crash on a transposition change while playing
+  (crash-20261023-145122, renderVoiceSpans on freed samples): `Stop::reloading` atomic set in `reloadStopSamples` before
+  the kill, a second kill right before the swap, cleared after; the voice-start loop skips a reloading stop. Test hooks
+  used: ORGAN_LOAD_TREE="1|<001313>" + ORGAN_DUMP_GRID; ORGAN_LOAD_CONFIGURATION=<Demo ODF> + ORGAN_MERGE_CONFIGURATION=
+  <Surround ODF> (the merge hook accepts virtual archive paths); ORGAN_TEST_ARCHIVE keeps the window open - kill it.
+  Bellevue 1.35 rar (E:\sonus\HW2\Casavant\1.35_ostry, 5 volumes, 43 598 files, 39 GB): the index took 84 s on the
+  HDD; its definition is `OrganDefinitions/Bellevue, Casavant Surround.Organ_Hauptwerk_xml` (virtual path under
+  1.35_ostry); the `updates` folder's 1.12/1.13 rars hold the ODF only (42 MB) - a load from there finds no trees.
+  (9) #80 GRID vs JAMB: the ODF cuts `ImageSetInstance` names at 32 characters ("GO. Flute a cheminee 8 (NonPhoto")
+  - the matcher stripped "(...)" only when the name ENDED with ')', so 14 of Bellevue's 74 stops (the chamades, Flute
+  harmonique, Contretrombone 32, Quarte de nazard ...) had no cell and took the first free cells; now an unclosed "("
+  is cut too (`--hauptwerk` must say "Grid: 74 stop(s) placed"). Not a regression: 0.8.142 placed 60 of 74 from the
+  start. The zipper fold of a narrow division column (voicer rebuildUI step 3, first commit) is the other reason a
+  3-column pedal (x 1327/1506/1688) looks different in a 2-column division - documented, not changed.
+  /tmp-style check: %TEMP%\jamb.py <odf> lists the jamb images OK/NO against the stop names.
   0.8.159 ADLINGTON LESSONS (the user's seven complaints in one message): (1) the ODF had keyboards "Pedal" (25
   keys) AND "2. manual" (52 keys) on the division named "Pedal": `plan()` now gives a division to the keyboard
   with the MOST keys (`ownerOfDivision`), a pedal keyboard left without a division becomes the empty P. with its

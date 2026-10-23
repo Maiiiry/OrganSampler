@@ -321,10 +321,18 @@ The rules, one by one:
   releases of its parent folder; "rel" folders never form stops of their own.
   The label of the stop is built from the folder path (not from the bare
   folder name!), with slashes, underscores and similar characters left out.
-  The only exception: when the perspective folders (direct-, diffuse- ...)
-  are nested inside a folder whose name equals theirs with the prefix removed
-  (in the example above, "Octava4"), the label of the stop carries the name
-  "Octava 4'" once only. A bare footage number at the end of the folder name
+  The only exception: when a folder is nested inside a folder of the same
+  name - the perspective prefix, the footage and an L/R mark aside
+  (direct-Octava4 inside "Octava4" in the example above; "02-direct-HW_Bl.Flute"
+  inside "HW_Bl.Flute2") - the parent adds nothing and the label carries the
+  name once only ("Octava 4'"); this holds for folders read out of a RAR
+  archive as for unpacked ones. **Two components of one stop:** a stop
+  recorded as a left and a right half, the folders named alike with a single
+  L and R right after the footage or at the end of the name
+  ("AB_quintaton16L" + "AB_quintaton16R", "AB_glockentonL" + "AB_glockentonR"),
+  is ONE stop "quintaton 16'" whose two folders both play as its ranks (the
+  Stop List cell shows "+ half"); a rank count after a number ("Mixtur4x",
+  "Zimbel3") is no such mark. A bare footage number at the end of the folder name
   (Nasat3, Nasat_3, Nasat 3 ...) is shown with its foot mark ("Nasat 3'") on
   the stop label; a mutation written without spaces ("Nasard 223", "Terz
   135", "Larigot 113") is read as 2 2/3', 1 3/5', 1 1/3'. A folder name
@@ -466,9 +474,10 @@ as a folder, and reads the samples out of the archives.
   organ definition, the program offers to import it - the whole organ, read
   from the archives. *Load Configuration* takes `.rar` files as well - one,
   or several at once when an organ comes in several archives: the
-  configurations and definitions found inside are listed and the one you
-  pick is loaded straight from the archives (the others serve its sample
-  folders). *Merge another configuration* (right-click Load Configuration)
+  configurations and definitions found inside are listed in a dialog of its
+  own ("Load which one", in the middle of the screen, closed only by Load or
+  Cancel) and the one you pick is loaded straight from the archives (the
+  others serve its sample folders). *Merge another configuration* (right-click Load Configuration)
   takes archives the same way, so an organ can be put together archive after
   archive.
   Two steps happen, and they read different things. *Reading the archives*
@@ -614,8 +623,11 @@ catalog is hidden, whatever the organ before had shown (0.8.142). The
 stops take their places on the grid from the definition's jamb page - the
 page holding the most drawknobs ("Simple Jamb"): within every division,
 the drawknobs' columns and rows become the grid's columns and rows, the
-picture copied; a division laid out too wide or too tall to be ours stays
-in the table's order (0.8.142). An extension's button carries the
+picture copied (a drawknob whose name the definition cut short is found
+all the same); a division laid out too wide or too tall to be ours stays
+in the table's order (0.8.142). A division column narrower than the page's
+columns folds the rightmost column into its neighbour (left, right, left,
+right ...); widen the division's column to see the page's layout. An extension's button carries the
 definition's name of it ("P. tuba 4"), not the owner's name with the
 footage shifted. The general crescendo takes them too: a stage
 that draws a coupler's drawstop switches it on in that step. A stop
@@ -673,8 +685,11 @@ earlier ones into the numbered package; those files keep working where they
 are. The transpositions the definition implies (its pipe notes against the
 sample file names) are taken as they are, and every stop plays the keys of
 its own rows in the definition: a rank folder used by a bass stop and a
-treble stop is loaded whole and the keys outside each stop's rows are
-switched off in its voicing (an extension's too). A division played by
+treble stop is loaded ONCE, by the first stop, and the second stop becomes a
+transmission of it with the keys of its own rows (Adlington's "Bl. Flute
+Bass" and "Bl. Flute Treble"); the keys outside each stop's rows are
+switched off in its voicing (an extension's too). A folder is never loaded
+twice. A division played by
 several keyboards belongs to the keyboard with the most keys; a pedal
 keyboard that only pulls a manual's division down leaves P. empty (a note
 says so - couple it from that manual). It is loaded at once and saved
@@ -1074,7 +1089,8 @@ pitch information, the alias and the switches; the second line the sliders:
   line of the row shows that real footage of the files; the footage in
   the button's caption follows the transposition, and so do the stop's transmissions and
   extensions, which add their own transposition on top. A change loads the
-  stop's samples again on their keys at once (the fills follow). The same
+  stop's samples again on their keys at once (the fills follow; the keys
+  held fall silent first and the stop starts no voice while it reloads). The same
   setting is the Stop List column "Transp.". Each key's tooltip in the rows
   below names the file it plays.
   The program sets it by itself where it can: a Hauptwerk import takes it
@@ -1084,9 +1100,12 @@ pitch information, the alias and the switches; the second line the sliders:
   loaded on its own gets it from the samples' pitch against the footage
   written in the folder's name - "quintaton 16" whose files sound 8' on
   their numbers gets -12, and the activity log says so ("Transposition of
-  ..."). The value found is kept in the configuration; a folder without a
-  footage in its name is left at 0 - transpose it yourself. Clearing the
-  Stop List cell makes the program find it again at the next load.
+  ..."). Only a whole difference of two semitones or more, agreed by most
+  of the pipes, counts: an organ standing a semitone low or high as a whole
+  (a1 = 409 Hz) is a tuning, not a transposition, and stays at 0. The value
+  found is kept in the configuration; a folder without a footage in its name
+  is left at 0 - transpose it yourself. Clearing the Stop List cell makes the
+  program find it again at the next load.
 - **Alias** - the caption of the button. *Automatic* shows the folder name;
   type any text to show that instead (an alias without a footage gets the
   stop's footage appended, and a footage written in the alias follows the
@@ -1266,7 +1285,9 @@ folder that plays that perspective of the stop.
   missing tree's place and the stops built from it keep their samples.
 - **Unload folder...** removes one tree from the whole organ after saying how
   many stops lose their samples (their rows stay as empty stops). **Unload all
-  folder trees** empties the organ. The same menu offers **Replace "..." with
+  folder trees** empties the organ; the Stop List opens again with the empty
+  rows, *Remove empty stops* clears them and *Apply and reload* applies that
+  even though no tree is loaded. The same menu offers **Replace "..." with
   another folder...** for every tree: the tree is taken from another folder
   (a moved disk, a configuration from another computer), its rows keep their
   folders and the divisions that use it reload.
@@ -1313,8 +1334,8 @@ folder that plays that perspective of the stop.
   footage in its name shows the measured one (a mixture's first sounding
   harmonic). Aliases you typed stay. Applied with *Apply and reload*.
 - **Add perspective...** adds a column (a known perspective name or a new
-  one); the x in a column header removes it. "default" is the route of folders
-  without a perspective prefix.
+  one); the x right after the perspective's name in the column header
+  removes it. "default" is the route of folders without a perspective prefix.
 - **Swap divisions...** exchanges the whole stop lists of two divisions, as if
   their folders had been swapped (combinations and MIDI bindings follow).
   **Reset division...** forgets one division's table.
@@ -1338,7 +1359,9 @@ Stops whose folders are already loaded keep their samples and copies; only new
 folders are read and only missing copies are built. Folders left out of the
 table are removed from RAM. A stop that has transmissions cannot be removed or renamed
 without a warning: its transmissions die with it. The table travels with the
-configuration and is used at every later load.
+configuration and is used at every later load. Closing the window with
+changes not applied asks: *Apply and reload*, *Discard* or *Cancel* (back to
+the table) - nothing is lost by the close button alone.
 
 ## 4.4 What the loading dialog shows
 

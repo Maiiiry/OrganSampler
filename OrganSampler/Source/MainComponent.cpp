@@ -1776,7 +1776,7 @@ MainComponent::MainComponent()
     {
         const juce::File added(juce::String::fromUTF8(env));
         juce::Component::SafePointer<MainComponent> safeThis(this);
-        runWhenLoaded([safeThis, added] { if (safeThis != nullptr && added.existsAsFile()) { CrashHandler::note("ORGAN_MERGE_CONFIGURATION: " + added.getFullPathName()); safeThis->mergeConfigurationFile(added); } });
+        runWhenLoaded([safeThis, added] { if (safeThis != nullptr && SampleFiles::existsAsFile(added)) { CrashHandler::note("ORGAN_MERGE_CONFIGURATION: " + added.getFullPathName()); safeThis->mergeConfigurationFile(added); } });   // on the disk or in an archive (0.8.160)
     }
     // ORGAN_OPEN_UNPACK=1 opens the Unpack archive window 2 s after the start (screenshots).
     if (const char* env = std::getenv("ORGAN_OPEN_UNPACK"))
@@ -10166,15 +10166,29 @@ void MainComponent::loadConfigurationFromArchives(const std::vector<juce::File>&
             if (merge) safeThis->mergeConfigurationFile(chosen); else safeThis->loadConfigurationFile(chosen);
         };
         if (candidates.size() == 1) { go(candidates.front()); return; }
-        juce::PopupMenu menu;
-        menu.addSectionHeader(merge ? "Merge which one?" : "Load which one?");
-        for (int i = 0; i < captions.size(); ++i) menu.addItem(i + 1, captions[i]);
-        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(safeThis.getComponent()), [candidates, go](int result)
-        {
-            if (result <= 0 || result > (int)candidates.size()) return;
-            go(candidates[(size_t)result - 1]);
-        });
+        safeThis->chooseFromList(title, juce::String(archives.size() == 1 ? "The archive holds" : "The archives hold") + " several configurations and organ definitions. "
+            + (merge ? "Choose the one to merge into the loaded organ:" : "Choose the one to load:"), captions, merge ? "Merge" : "Load",
+            [candidates, go](int index) { if (index >= 0 && index < (int)candidates.size()) go(candidates[(size_t)index]); });
     });
+}
+
+void MainComponent::chooseFromList(const juce::String& title, const juce::String& message, const juce::StringArray& items, const juce::String& okText, std::function<void(int)> chosen)
+{
+    // A real window (0.8.160): centred over the program, modal, with its Cancel
+    // button - a popup menu stood tiny in the top-left corner and vanished on a
+    // click elsewhere, and nothing was loaded.
+    auto* window = new juce::AlertWindow(title, message, juce::MessageBoxIconType::QuestionIcon);
+    window->addComboBox("choice", items, "");
+    window->getComboBoxComponent("choice")->setSelectedItemIndex(0, juce::dontSendNotification);
+    window->addButton(okText, 1, juce::KeyPress(juce::KeyPress::returnKey));
+    window->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    juce::Component::SafePointer<juce::AlertWindow> box(window);
+    window->enterModalState(true, juce::ModalCallbackFunction::create([box, chosen](int result)
+    {
+        if (box == nullptr) return;
+        const int index = result == 1 ? box->getComboBoxComponent("choice")->getSelectedItemIndex() : -1;
+        if (chosen) chosen(index);
+    }), true);
 }
 
 void MainComponent::refreshArchiveSearchFolders(const juce::File& configurationFile)
@@ -10716,7 +10730,7 @@ void MainComponent::importHauptwerkOdf(const juce::File& odfFile, bool mergeInto
         std::map<juce::String, juce::String> automaticNameOfFolder;   // folder path (lower case) -> the scanned stop name
         for (const auto& tree : plan.allTrees)
             for (const auto& assignment : safeThis->engine.scanTreeAssignments(tree, false))
-                automaticNameOfFolder[assignment.folder.getFullPathName().toLowerCase()] = assignment.stopName;
+                automaticNameOfFolder[assignment.folder.getFullPathName().toLowerCase()] = assignment.stopName + (assignment.component.isNotEmpty() ? " " + assignment.component : juce::String());   // "quintaton 16 L" (0.8.160)
         std::map<int, std::pair<int, juce::String>> rowOfStop;   // ODF stop id -> division, row name
         // ODF stop id of an owner -> its extensions (ODF stop id, our division), in the
         // order they are made (= the order of the owner's transmissions): the crescendo
@@ -12962,7 +12976,12 @@ void MainComponent::dropNestedTrees()
                     for (auto& entry : config.stopBuild.entries)
                         for (auto& [perspective, ref] : entry.folders)
                         {
-                            if (ref.tree == inner) { ref.tree = outer; ref.relativePath = ref.relativePath.isEmpty() || ref.relativePath == "." ? prefix : prefix + "/" + ref.relativePath; }
+                            if (ref.tree == inner)
+                            {
+                                ref.tree = outer;
+                                ref.relativePath = ref.relativePath.isEmpty() || ref.relativePath == "." ? prefix : prefix + "/" + ref.relativePath;
+                                for (auto& more : ref.morePaths) more = prefix + "/" + more;
+                            }
                             if (ref.tree > inner) --ref.tree;
                         }
                     auto replacePath = [&](juce::String& path) { if (path.isNotEmpty() && juce::File(path) == innerFile) path = outerFile.getFullPathName(); };
@@ -13047,6 +13066,14 @@ std::shared_ptr<std::vector<SamplerEngine::FolderAssignment>> MainComponent::sto
             const auto folder = resolveStopBuildFolder(manual, ref);
             if (folder == juce::File()) continue;
             map->push_back({ folder, entry.name, perspective, true, false, manual, entry.sampleOffset, entry.sampleOffsetSet });
+            for (const auto& more : ref.morePaths)   // the other halves of a stereo stop: ranks of the same perspective (0.8.160)
+            {
+                ManualConfig::StopBuild::FolderRef half = ref;
+                half.relativePath = more;
+                half.morePaths.clear();
+                const auto halfFolder = resolveStopBuildFolder(manual, half);
+                if (halfFolder != juce::File()) map->push_back({ halfFolder, entry.name, perspective, true, false, manual, entry.sampleOffset, entry.sampleOffsetSet });
+            }
         }
     }
     return map;
@@ -13362,17 +13389,16 @@ void MainComponent::loadIndexedIntoDivision(const std::vector<juce::File>& folde
     {
         // Several definitions in the archives (0.8.159): the user picks one - never
         // the first one by itself - or loads the folders instead.
-        juce::PopupMenu menu;
-        menu.addSectionHeader("Import a Hauptwerk organ definition from the archives:");
-        for (size_t i = 0; i < definitions.size(); ++i) menu.addItem((int)i + 1, definitions[i].getFileNameWithoutExtension());
-        menu.addSeparator();
-        menu.addItem(1000, "Load the archives' folders into the division instead");
+        juce::StringArray items;
+        for (const auto& definition : definitions) items.add(definition.getFileNameWithoutExtension());
+        items.add("(load the archives' folders into the division instead)");
         juce::Component::SafePointer<MainComponent> safeThis(this);
-        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this), [safeThis, definitions, trees, manual](int result)
+        chooseFromList("Load folder", "The archives hold several Hauptwerk organ definitions. Import one of them (the whole organ, read from the archives), or load the folders?",
+            items, "Continue", [safeThis, definitions, trees, manual](int index)
         {
-            if (safeThis == nullptr || result <= 0) return;
-            if (result == 1000) { safeThis->loadTreesIntoDivision(trees, manual); return; }
-            if (result <= (int)definitions.size()) safeThis->importHauptwerkOdf(definitions[(size_t)result - 1]);
+            if (safeThis == nullptr || index < 0) return;
+            if (index >= (int)definitions.size()) { safeThis->loadTreesIntoDivision(trees, manual); return; }
+            safeThis->importHauptwerkOdf(definitions[(size_t)index]);
         });
         return;
     }
@@ -13447,6 +13473,7 @@ void MainComponent::unloadAllTreesFromPool()
     CrashHandler::note("All " + juce::String(count) + " folder tree(s) unloaded from the pool; divisions unloaded: " + juce::String((int)affected.size()));
     syncDivisionTreeLists();
     saveSettings();
+    if (!affected.empty() && reopenStopBuildManual < 0) reopenStopBuildManual = affected.front();   // the table opens again after the unload (0.8.160: it stayed closed)
     if (!affected.empty()) reloadDivisions(affected);
     else if (reopenStopBuildManual >= 0) { const int m = reopenStopBuildManual; reopenStopBuildManual = -1; showStopBuildingDialog(m); }
 }
@@ -13492,7 +13519,12 @@ MainComponent::ManualConfig::StopBuild MainComponent::deriveStopBuildFromEngine(
             ManualConfig::StopBuild::FolderRef ref;
             if (!refFor(rank->folder, ref)) return;
             const juce::String perspective = rank->perspective.isEmpty() ? juce::String("default") : rank->perspective;
-            if (entry.folders.count(perspective) != 0) return;   // one folder per perspective
+            if (auto found = entry.folders.find(perspective); found != entry.folders.end())
+            {
+                // A second rank of the perspective in the same tree: the other half of a stereo stop (0.8.160).
+                if (found->second.tree == ref.tree && !found->second.relativePath.equalsIgnoreCase(ref.relativePath)) found->second.morePaths.addIfNotAlreadyThere(ref.relativePath);
+                return;
+            }
             entry.folders[perspective] = ref;
             addPerspective(perspective);
         };
@@ -13516,6 +13548,10 @@ MainComponent::ManualConfig::StopBuild MainComponent::deriveStopBuildFromEngine(
                     for (auto& entry : build.entries)
                         if (stopBuildKey(entry.name) == stopBuildKey(assignment.stopName) && entry.folders.count(perspective) == 0)
                         { target = &entry; break; }
+                if (target == nullptr && assignment.component.isNotEmpty())   // the other half of a stereo stop joins the row's perspective (0.8.160)
+                    for (auto& entry : build.entries)
+                        if (stopBuildKey(entry.name) == stopBuildKey(assignment.stopName) && entry.folders.count(perspective) != 0 && entry.folders[perspective].tree == treeIndex)
+                        { entry.folders[perspective].morePaths.addIfNotAlreadyThere(slashes(assignment.folder.getRelativePathFrom(tree))); target = nullptr; goto nextAssignment; }
                 if (target == nullptr)
                 {
                     ManualConfig::StopBuild::Entry entry;
@@ -13525,6 +13561,7 @@ MainComponent::ManualConfig::StopBuild MainComponent::deriveStopBuildFromEngine(
                 }
                 target->folders[perspective] = { treeIndex, slashes(assignment.folder.getRelativePathFrom(tree)) };
                 addPerspective(perspective);
+                nextAssignment:;
             }
         }
     // "default" first, the perspectives in their natural order after it.
@@ -13554,6 +13591,14 @@ void MainComponent::extendStopBuildWithTree(int manual, const juce::File& tree, 
             for (auto& entry : build.entries)
                 if (stopBuildKey(entry.name) == stopBuildKey(assignment.stopName) && entry.folders.count(perspective) == 0)
                 { target = &entry; break; }
+        if (target == nullptr && assignment.component.isNotEmpty())   // the other half of a stereo stop joins the row's perspective (0.8.160)
+        {
+            bool joined = false;
+            for (auto& entry : build.entries)
+                if (stopBuildKey(entry.name) == stopBuildKey(assignment.stopName) && entry.folders.count(perspective) != 0 && entry.folders[perspective].tree == treeIndex)
+                { entry.folders[perspective].morePaths.addIfNotAlreadyThere(slashes(assignment.folder.getRelativePathFrom(tree))); joined = true; break; }
+            if (joined) continue;
+        }
         if (target == nullptr)
         {
             ManualConfig::StopBuild::Entry entry;
@@ -13912,7 +13957,10 @@ std::vector<MainComponent::ReadyStop> MainComponent::readyStopsNotIn(const std::
             if (entry.isTransmission()) continue;
             if (!entry.folders.empty() && (int)manual <= manualCount && !stopLoaded((int)manual, entry.name)) continue;
             for (const auto& [perspective, used] : entry.folders)
+            {
                 if (const auto place = placeOf(used); place.isNotEmpty()) usedPlaces.insert(place);
+                for (const auto& more : used.morePaths) { ManualConfig::StopBuild::FolderRef half = used; half.relativePath = more; half.morePaths.clear(); if (const auto place = placeOf(half); place.isNotEmpty()) usedPlaces.insert(place); }
+            }
         }
     auto folderUsed = [&](const ManualConfig::StopBuild::FolderRef& ref)
     {
@@ -14481,6 +14529,12 @@ juce::var MainComponent::stopBuildToVar(const ManualConfig::StopBuild& build)
             folder->setProperty("perspective", perspective);
             folder->setProperty("tree", ref.tree);
             folder->setProperty("path", slashes(ref.relativePath));
+            if (!ref.morePaths.isEmpty())   // the other halves of a stereo stop (0.8.160)
+            {
+                juce::Array<juce::var> more;
+                for (const auto& p : ref.morePaths) more.add(slashes(p));
+                folder->setProperty("morePaths", more);
+            }
             folders.add(juce::var(folder.get()));
         }
         item->setProperty("folders", folders);
@@ -14512,8 +14566,10 @@ MainComponent::ManualConfig::StopBuild MainComponent::stopBuildFromVar(const juc
                 for (const auto& folder : *folders)
                 {
                     const auto perspective = folder.getProperty("perspective", "default").toString();
-                    entry.folders[perspective.isEmpty() ? juce::String("default") : perspective] =
-                        { (int)folder.getProperty("tree", 0), slashes(folder.getProperty("path", "").toString()) };
+                    auto& ref = entry.folders[perspective.isEmpty() ? juce::String("default") : perspective];
+                    ref = { (int)folder.getProperty("tree", 0), slashes(folder.getProperty("path", "").toString()) };
+                    if (auto* more = folder.getProperty("morePaths", juce::var()).getArray())   // the other halves of a stereo stop (0.8.160)
+                        for (const auto& p : *more) if (p.toString().isNotEmpty()) ref.morePaths.addIfNotAlreadyThere(slashes(p.toString()));
                 }
             build.entries.push_back(entry);
         }
@@ -14542,6 +14598,9 @@ void MainComponent::showStopBuildingDialog(int)
     {
     public:
         using Build = ManualConfig::StopBuild;
+        // For the window's close button (0.8.160): unapplied changes, and the apply itself.
+        bool hasUnappliedChanges() const { return !changedDivisions().empty() || transmissionsChanged(); }
+        void applyChanges() { apply(); }
         enum : int { kDivisions = SamplerEngine::maxManuals };
 
         explicit StopListDialog(MainComponent& o) : owner(o)
@@ -14937,7 +14996,7 @@ void MainComponent::showStopBuildingDialog(int)
                 for (const auto& [perspective, ref] : a.folders)
                 {
                     const auto found = b.folders.find(perspective);
-                    if (found == b.folders.end() || found->second.tree != ref.tree || found->second.relativePath != ref.relativePath) return false;
+                    if (found == b.folders.end() || found->second.tree != ref.tree || found->second.relativePath != ref.relativePath || found->second.morePaths != ref.morePaths) return false;
                 }
                 return true;
             };
@@ -15033,7 +15092,9 @@ void MainComponent::showStopBuildingDialog(int)
         {
             // Apply is for the table only; transmissions act at once and need no reload.
             // The button looks like the others until something needs applying: then it turns orange.
-            const bool changes = !treeInfos.empty() && (!changedDivisions().empty() || transmissionsChanged());
+            // Also without any tree (0.8.160): after "Unload all folder trees" the rows
+            // removed with "Remove empty stops" must be applied too - the button stayed grey.
+            const bool changes = !changedDivisions().empty() || transmissionsChanged();
             applyButton.setEnabled(changes);
             if (changes) applyButton.setColour(juce::TextButton::buttonColourId, juce::Colours::darkorange);
             else applyButton.removeColour(juce::TextButton::buttonColourId);
@@ -15116,7 +15177,11 @@ void MainComponent::showStopBuildingDialog(int)
             std::set<juce::String> used;
             for (int manual = 0; manual < kDivisions; ++manual)
                 for (const auto& entry : drafts[(size_t)manual].entries)
-                    for (const auto& [perspective, ref] : entry.folders) used.insert(folderKey(resolve(manual, ref)));
+                    for (const auto& [perspective, ref] : entry.folders)
+                    {
+                        used.insert(folderKey(resolve(manual, ref)));
+                        for (const auto& more : ref.morePaths) { Build::FolderRef half = ref; half.relativePath = more; half.morePaths.clear(); used.insert(folderKey(resolve(manual, half))); }
+                    }
             return used;
         }
         int totalFolders() const
@@ -15232,7 +15297,8 @@ void MainComponent::showStopBuildingDialog(int)
             const auto found = entry.folders.find(perspective);
             if (found == entry.folders.end()) return "(none)";
             const auto& ref = found->second;
-            const auto relative = ref.relativePath.isEmpty() ? juce::String(".") : ref.relativePath;
+            juce::String relative = ref.relativePath.isEmpty() ? juce::String(".") : ref.relativePath;
+            for (const auto& more : ref.morePaths) relative << " + " << more.fromLastOccurrenceOf("/", false, false);   // the other halves of a stereo stop (0.8.160)
             juce::ignoreUnused(manual);
             const auto text = pool.size() > 1 && ref.tree >= 0 && ref.tree < (int)pool.size()
                 ? juce::File(pool[(size_t)ref.tree]).getFileName() + " > " + relative : relative;
@@ -15670,8 +15736,12 @@ void MainComponent::showStopBuildingDialog(int)
             offsetHeader.setBounds(x, 0, offsetWidth, headerHeight); x += offsetWidth;
             for (auto& header : headers)
             {
-                header.label->setBounds(x + 2, 0, cellWidth - freeWidth - 6, headerHeight);
-                header.remove->setBounds(x + cellWidth - freeWidth, 4, freeWidth - 4, headerHeight - 8);
+                // The name and its "x" together (0.8.160): the button right after the
+                // text, not at the far edge of the column.
+                const int textWidth = (int)std::ceil(juce::GlyphArrangement::getStringWidth(header.label->getFont(), header.label->getText())) + 8;
+                const int labelWidth = juce::jlimit(20, cellWidth - freeWidth - 6, textWidth);
+                header.label->setBounds(x + 2, 0, labelWidth, headerHeight);
+                header.remove->setBounds(x + 2 + labelWidth + 2, 4, freeWidth - 4, headerHeight - 8);
                 x += cellWidth;
             }
             int y = headerHeight;
@@ -16255,9 +16325,23 @@ void MainComponent::showStopBuildingDialog(int)
         StopListWindow(MainComponent& o, const juce::String& title)
             : juce::DialogWindow(title, juce::Colours::darkgrey, true, true), owner(o) {}
         float getDesktopScaleFactor() const override { return UIScale::factor(); }
+        StopListDialog* dialog = nullptr;
         void closeButtonPressed() override
         {
             MainComponent& o = owner;
+            // Unapplied changes in the table (0.8.160): asked about, never dropped in silence.
+            if (dialog != nullptr && dialog->hasUnappliedChanges())
+            {
+                juce::Component::SafePointer<StopListDialog> safeDialog(dialog);
+                juce::AlertWindow::showYesNoCancelBox(juce::MessageBoxIconType::QuestionIcon, "Stop List",
+                    "The table has changes that were not applied.\n\nApply and reload the changed divisions, or discard the changes?",
+                    "Apply and reload", "Discard", "Cancel", this, juce::ModalCallbackFunction::create([&o, safeDialog](int result)
+                    {
+                        if (result == 1) { if (safeDialog != nullptr) safeDialog->applyChanges(); return; }   // the apply closes the window itself
+                        if (result == 2) juce::MessageManager::callAsync([&o] { o.stopBuildWindow.reset(); });
+                    }));
+                return;
+            }
             juce::MessageManager::callAsync([&o] { o.stopBuildWindow.reset(); });
         }
     private:
@@ -16270,6 +16354,7 @@ void MainComponent::showStopBuildingDialog(int)
     const int defaultWidth = juce::jmax(1400, neededWidth);
     content->setSize(defaultWidth, 780);
     stopBuildWindow = std::make_unique<StopListWindow>(*this, "Stop List");
+    static_cast<StopListWindow*>(stopBuildWindow.get())->dialog = content;
     stopBuildWindow->setUsingNativeTitleBar(true);
     stopBuildWindow->setResizable(true, true);
     stopBuildWindow->setContentOwned(new ScrollableContent(content), true);

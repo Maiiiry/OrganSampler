@@ -958,6 +958,10 @@ HauptwerkOdf HauptwerkOdf::parse(const juce::File& file, const std::function<boo
         {
             juce::String base = d.name.trim();
             while (base.endsWithChar(')') && base.lastIndexOfChar('(') > 0) base = base.upToLastOccurrenceOf("(", false, false).trim();
+            // The definition cuts an image name at 32 characters ("GO. Flute a cheminee 8 (NonPhoto",
+            // 0.8.160, #80): an unclosed parenthesis goes too - 14 Bellevue stops had no cell and
+            // took the first free cells instead of their places on the jamb.
+            if (base.lastIndexOfChar('(') > 0 && base.indexOfChar(base.lastIndexOfChar('('), ')') < 0) base = base.upToLastOccurrenceOf("(", false, false).trim();
             const auto stop = stopByName.find(base.toLowerCase());
             if (stop == stopByName.end()) continue;
             auto& page = byPage[d.page];
@@ -1412,6 +1416,11 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
                     if (target >= 0 && target < (int)result.divisions.size()) stopOrder.push_back({ target, id });
                 }
     std::stable_sort(stopOrder.begin(), stopOrder.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    // A rank folder is loaded ONCE (0.8.160): a later stop whose ranks all lie in
+    // folders an earlier stop already plays (Adlington's "Bl. Flute Bass" and "Bl.
+    // Flute Treble": two ODF ranks, one folder) becomes a transmission of that
+    // stop with the keys of its own rows.
+    std::map<juce::String, int> ownerOfFolder;   // lower-case folder path -> ODF stop id
     for (const auto& [targetIndex, id] : stopOrder)
     {
         auto& division = result.divisions[(size_t)targetIndex];
@@ -1452,6 +1461,30 @@ HauptwerkOdf::Plan HauptwerkOdf::plan(const juce::File& hauptwerkRoot) const
             if (std::find(rankIds.begin(), rankIds.end(), use.rankId) != rankIds.end()) continue;
             rankFolders.push_back(rank->folder);
             rankIds.push_back(use.rankId);
+        }
+        if (!rankFolders.empty())
+        {
+            // Every folder of its own already played by an earlier stop: a second
+            // ODF rank on the same samples - the stop plays that stop's pipes.
+            int folderOwner = 0;
+            bool allOwned = true;
+            for (const auto& folder : rankFolders)
+            {
+                const auto found = ownerOfFolder.find(folder.getFullPathName().toLowerCase());
+                if (found == ownerOfFolder.end() || (folderOwner != 0 && found->second != folderOwner)) { allOwned = false; break; }
+                folderOwner = found->second;
+            }
+            if (allOwned && folderOwner > 0 && folderOwner != id)
+            {
+                int shift = 0;
+                for (const auto& use : stop.rankUses) if (usableRank(use.rankId) != nullptr) { shift = use.increment; break; }
+                borrowed.clear();
+                borrowed[folderOwner][shift] = divisionKeys;
+                rankFolders.clear();
+                rankIds.clear();
+                result.notes.add("\"" + stop.name + "\" plays the sample folders of \"" + stops.at(folderOwner).name + "\" (one folder, two ranks of the definition): loaded once, made a transmission");
+            }
+            else for (const auto& folder : rankFolders) ownerOfFolder.emplace(folder.getFullPathName().toLowerCase(), id);
         }
         if (rankFolders.empty() && !borrowed.empty())
         {

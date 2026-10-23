@@ -5269,6 +5269,7 @@ struct SamplerEngine::Impl
         std::array<int, kMaxRouteShifts> shifts{};
         for (auto* stop : owner.stops)
         {
+            if (stop->reloading.load(std::memory_order_acquire)) continue;   // its samples are being replaced (0.8.160)
             const int shiftCount = collectRouteShifts(stop, manualIndex, shifts);
             if (shiftCount == 0) continue;
             const int expressionManual = juce::jlimit(0, maxManuals - 1, stop->primaryManual);
@@ -10745,8 +10746,10 @@ std::vector<SamplerEngine::FolderAssignment> SamplerEngine::scanTreeAssignments(
         {
             const auto name = folder.getFileName();
             if (name.length() < 3) return {};
-            const juce::juce_wchar last = name.getLastCharacter();
-            if (!(last == 'L' || last == 'l' || last == 'R' || last == 'r') || !juce::CharacterFunctions::isDigit(name[name.length() - 2])) return {};
+            const juce::juce_wchar last = name.getLastCharacter(), before = name[name.length() - 2];
+            if (!(last == 'L' || last == 'l' || last == 'R' || last == 'r')) return {};
+            // After the footage ("quintaton16L"), or a capital after a small letter ("glockentonL").
+            if (!juce::CharacterFunctions::isDigit(before) && !((last == 'L' || last == 'R') && juce::CharacterFunctions::isLowerCase(before))) return {};
             const juce::String other = name.dropLastCharacters(1) + ((last == 'L' || last == 'l') ? "R" : "L");
             if (folderKeys.count(folder.getSiblingFile(other).getFullPathName().toLowerCase()) == 0
                 && folderKeys.count(folder.getSiblingFile(other.toLowerCase()).getFullPathName().toLowerCase()) == 0) return {};
@@ -10843,6 +10846,19 @@ std::vector<SamplerEngine::FolderAssignment> SamplerEngine::scanTreeAssignments(
     {
         return stripPerspectivePrefix(perspectives, name, matchedPerspective);
     };
+    // The L/R half mark of a folder (see the learning above): the same test.
+    auto componentOf = [&folderKeys](const juce::File& folder) -> juce::String
+    {
+        const auto name = folder.getFileName();
+        if (name.length() < 3) return {};
+        const juce::juce_wchar last = name.getLastCharacter(), before = name[name.length() - 2];
+        if (!(last == 'L' || last == 'l' || last == 'R' || last == 'r')) return {};
+        if (!juce::CharacterFunctions::isDigit(before) && !((last == 'L' || last == 'R') && juce::CharacterFunctions::isLowerCase(before))) return {};
+        const juce::String other = name.dropLastCharacters(1) + ((last == 'L' || last == 'l') ? "R" : "L");
+        if (folderKeys.count(folder.getSiblingFile(other).getFullPathName().toLowerCase()) == 0
+            && folderKeys.count(folder.getSiblingFile(other.toLowerCase()).getFullPathName().toLowerCase()) == 0) return {};
+        return juce::String::charToString(juce::CharacterFunctions::toUpperCase(last));
+    };
 
     std::vector<FolderAssignment> assignments;
     for (const juce::File& stopFolder : allFolders)
@@ -10889,18 +10905,37 @@ std::vector<SamplerEngine::FolderAssignment> SamplerEngine::scanTreeAssignments(
         {
             if (!patterned) perspective = "default";
             auto displayParent = stopFolder.getParentDirectory();
+            // The parent named like the folder itself - perspective prefixes, the
+            // footage and an L/R mark aside ("HW_Bl.Flute2" over "02-direct-HW_Bl.Flute",
+            // 0.8.160) - adds nothing to the name: the last folder names the stop.
+            auto stem = [](const juce::String& comparable)
+            {
+                juce::String s = comparable;
+                while (s.isNotEmpty() && (s.endsWithChar('l') || s.endsWithChar('r'))) s = s.dropLastCharacters(1);
+                while (s.isNotEmpty() && (juce::CharacterFunctions::isDigit(s.getLastCharacter()) || s.endsWithChar('\''))) s = s.dropLastCharacters(1);
+                return s;
+            };
             if (displayParent != topFolder
-                && comparableFolderName(stripPerspective(displayParent.getFileName(), nullptr))
-                    == comparableFolderName(leafName))
+                && (comparableFolderName(stripPerspective(displayParent.getFileName(), nullptr)) == comparableFolderName(leafName)
+                    || (stem(comparableFolderName(stripPerspective(displayParent.getFileName(), nullptr))).isNotEmpty()
+                        && stem(comparableFolderName(stripPerspective(displayParent.getFileName(), nullptr))) == stem(comparableFolderName(leafName)))))
                 displayParent = displayParent.getParentDirectory();
             auto relativeParent = displayFolderName(displayParent.getRelativePathFrom(topFolder)
                 .replaceCharacter('\\', '/').replace("/", " - "));
             leafName = StopNames::capitaliseAfterDivisionPrefix(displayFolderName(leafName));
             stopName = relativeParent == "." || relativeParent.isEmpty() ? leafName : relativeParent + " - " + leafName;
         }
+        // The L and R halves of a stereo stop (0.8.160, the user's rule): "quintaton16L"
+        // and "quintaton16R" are two components of ONE stop "quintaton 16" - both
+        // folders become ranks of it. Only a single L or R right after the footage
+        // with the other half beside it; "Mixtur4x" or "Zimbel3" say the rank count.
+        const juce::String component = componentOf(stopFolder);
+        if (component.isNotEmpty() && stopName.endsWithIgnoreCase(component)) stopName = stopName.dropLastCharacters(1).trimEnd();
         // Perspective folders of one stop name form one stop; a folder without a
         // perspective prefix is a stop of its own ("default" perspective).
-        assignments.push_back({ stopFolder, stopName, perspective, patterned });
+        FolderAssignment assignment{ stopFolder, stopName, perspective, patterned || component.isNotEmpty() };
+        assignment.component = component;
+        assignments.push_back(assignment);
     }
     return assignments;
 }
@@ -11638,20 +11673,27 @@ void SamplerEngine::loadRankSamples(Stop* rank)
     // Without a footage in the name, or without pitches, nothing moves.
     if (!rank->sampleOffsetSet && !rank->samplesUnloaded)
     {
-        std::map<int, int> counts;
-        int measured = 0;
+        // The median of (pitch - key) over the pipes, unrounded: an organ at a1 = 409 Hz
+        // (Adlington) sounds 1.2 semitones under its footage, which is its pitch, not
+        // a transposition - only a difference of two semitones or more (no two organ
+        // footages are a semitone apart) moves the files (0.8.160).
+        std::vector<double> raws;
         for (int key = 0; key < 128; ++key)
         {
             const auto& variants = rank->samplesByNote[(size_t)key];
             if (variants.empty() || variants[0] == nullptr || !std::isfinite(variants[0]->smplPitch)) continue;
-            ++counts[juce::roundToInt(variants[0]->smplPitch) - key];
-            ++measured;
+            raws.push_back((double)variants[0]->smplPitch - key);
         }
-        int sounding = 0, best = 0;
-        for (const auto& [offset, count] : counts) if (count > best) { best = count; sounding = offset; }
+        std::sort(raws.begin(), raws.end());
+        const int measured = (int)raws.size();
+        const double medianRaw = measured > 0 ? raws[(size_t)measured / 2] : 0.0;
+        int agreeing = 0;
+        for (const double raw : raws) if (std::abs(raw - medianRaw) < 1.0) ++agreeing;
         int named = 0;
         const bool nameKnown = footageFromName(displayFolderName(rank->folder.getFileName()), named) || footageFromName(rank->name, named);
-        if (nameKnown && measured >= 3 && best * 10 >= measured * 7 && sounding != named)
+        const int difference = juce::roundToInt(medianRaw - named);
+        const int sounding = named + difference;
+        if (nameKnown && measured >= 3 && agreeing * 10 >= measured * 7 && std::abs(difference) >= 2)
         {
             const int offset = juce::jlimit(-48, 48, rank->sampleOffset + (named - sounding));
             CrashHandler::note("Transposition of \"" + rank->name + "\" (" + rank->folder.getFileName() + "): the files sound at " + footageLabel(sounding - rank->sampleOffset)
@@ -11750,6 +11792,10 @@ void SamplerEngine::reloadStopSamples(Stop* stop, bool evenIfLoaded)
     if (stop == nullptr || (!stop->samplesUnloaded && !evenIfLoaded)) return;
     BuildPause buildLock(*this);   // a background build may still read the old samples (it stops at its next pipe)
     loadOutOfMemory.store(false, std::memory_order_relaxed);
+    // No new voice of this stop while its samples are decoded anew (0.8.160: the
+    // keys kept playing between the kill below and the swap, and those voices read
+    // the old samples when they were freed - the 0.8.159 crash in renderVoiceSpans).
+    stop->reloading.store(true, std::memory_order_release);
     if (evenIfLoaded)
     {
         // The stop sounds, maybe: its voices read the samples that are about to go
@@ -11778,6 +11824,8 @@ void SamplerEngine::reloadStopSamples(Stop* stop, bool evenIfLoaded)
     impl->suspend();
     {
         const juce::ScopedLock sl(controlLock);
+        impl->killAllVoices();   // whatever started meanwhile (0.8.160)
+        impl->resetAllVoicesUnsafe();
         for (auto& entry : staged)
         {
             Stop* live = entry.first;
@@ -11804,6 +11852,7 @@ void SamplerEngine::reloadStopSamples(Stop* stop, bool evenIfLoaded)
         computeTuning440(ranks);
         refillStopPipes(stop);
     }
+    stop->reloading.store(false, std::memory_order_release);
     impl->resume();
     buildAntiAliasCopies(stop);
     if (loadOutOfMemory.load(std::memory_order_relaxed))

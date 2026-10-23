@@ -12,6 +12,48 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.160] - 2026-10-23
+
+### Fixed
+- Two components of one stop: folders named alike with a single L and R
+  right after the footage or at the end of the name ("AB_quintaton16L" +
+  "AB_quintaton16R", "AB_glockentonL" + "AB_glockentonR") are ONE stop whose
+  two folders play as its ranks (the Stop List cell says "+ half"); a rank
+  count after a number ("Mixtur4x", "Zimbel3") is not such a mark. Before,
+  every half was a stop of its own and the Re perspective of such a set
+  could not be paired with them.
+- The stop name is the last folder's alone when its parent folder carries
+  the same name - the perspective prefix, the footage and an L/R mark aside
+  ("02-direct-HW_Bl.Flute" inside "HW_Bl.Flute2") - for folders read out of
+  RAR archives too.
+- "Load which one" (several configurations or definitions in the chosen
+  archives) is a dialog of its own in the middle of the screen, closed only
+  by Load or Cancel; the small list that vanished on a click beside it (and
+  loaded nothing) is gone.
+- Hauptwerk import: every stop takes its place on the grid from the jamb
+  page (#80). The definition cuts an image's name at 32 characters ("GO.
+  Flute a cheminee 8 (NonPhoto"), so 14 of Bellevue's 74 stops were not
+  found on the page and took the first free cells instead of their own.
+- Hauptwerk import: a sample folder two stops play directly (Adlington's
+  "Bl. Flute Bass" and "Bl. Flute Treble") is loaded once; the second stop
+  is a transmission of the first with the keys of its own rows.
+- Merge another configuration from a Hauptwerk definition or a
+  configuration inside a RAR archive found "nothing new to add": the sample
+  folders inside the archive were not taken for folders. Adlington Vol. 1
+  merged into the Demo adds its seven stops now.
+- Stop List: "Unload all folder trees" opens the table again (it stayed
+  closed); "Remove empty stops" can be applied without any tree loaded
+  (*Apply and reload* stayed grey, so the empty rows came back with the next
+  folder); closing the window with changes not applied asks Apply / Discard /
+  Cancel; the x that removes a perspective stands right after its name in
+  the column header, not at the far right.
+- Transposition found from the samples needs a difference of two semitones
+  or more, agreed by most of the pipes: an organ a semitone low as a whole
+  (a1 = 409 Hz, folder 002707) got +1 on Principal 4 and Flute 4.
+- No crash on a transposition change while the stop sounds: the voices are
+  killed and the stop starts no new voice until its samples are back (a
+  voice started between the kill and the swap read freed samples).
+
 ## [0.8.159] - 2026-10-23
 
 ### Fixed

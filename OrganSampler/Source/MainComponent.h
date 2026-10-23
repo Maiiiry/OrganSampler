@@ -324,7 +324,11 @@ private:
         // inactive the division is built by the automatic rules (folder names).
         struct StopBuild
         {
-            struct FolderRef { int tree = 0; juce::String relativePath; };   // tree 0 = folderPath, 1.. = extraFolderPaths
+            struct FolderRef
+            {
+                int tree = 0; juce::String relativePath;   // tree 0 = folderPath, 1.. = extraFolderPaths
+                juce::StringArray morePaths;               // further folders of the same perspective in the same tree: the L and R halves of a stereo stop (0.8.160)
+            };
             struct Entry
             {
                 juce::String name, alias;
@@ -408,6 +412,8 @@ private:
     void refreshArchiveSearchFolders(const juce::File& configurationFile);
     void registerArchiveFolder(const juce::File& folder);   // a folder of archives the user chose: remembered for the next start
     void loadConfigurationFromArchives(const std::vector<juce::File>& archives, bool merge);   // Load Configuration / Merge given .rar files: one configuration or definition inside them, chosen
+    // A choice out of a list in a proper window (centred, modal, Cancel): 'chosen' gets the index, -1 for Cancel (0.8.160).
+    void chooseFromList(const juce::String& title, const juce::String& message, const juce::StringArray& items, const juce::String& okText, std::function<void(int)> chosen);
     // A ready-made stop the loaded folder trees hold: its name and the folder of
     // every perspective, as a Stop List row would carry them.
     struct ReadyStop

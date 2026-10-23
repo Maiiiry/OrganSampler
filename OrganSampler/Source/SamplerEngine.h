@@ -405,6 +405,7 @@ struct Stop
     std::array<std::atomic<float>, 128> perNoteTone;
 
     bool isOneShot = false;                // plays each sample once through, whenever the key is released (chimes, harp)
+    std::atomic<bool> reloading{ false };  // its samples are being decoded anew (a transposition change): no voice starts on it meanwhile (0.8.160)
     int oneShotManual = -1;                // the voicing's own One-shot switch: -1 = by the One-shot Patterns, 0 off, 1 on (saved)
     int primaryManual = 0;                 // home division: P., I., II., III., IV., V.
     // Transmissions: additional stop buttons (in any division, the home division
@@ -755,6 +756,7 @@ public:
         // names the file of key 36 "024" - the offset is -12, the key = number - offset.
         int sampleOffset = 0;
         bool sampleOffsetSet = false;   // the row carries the offset (a definition or the user); unset: the loader finds it from the smpl pitches (0.8.158)
+        juce::String component;         // "L" / "R": one half of a stereo stop ("quintaton16L" beside "quintaton16R"), both ranks of one stop (0.8.160)
     };
     // 'replacing': divisions whose stops the commit replaces with the loaded
     // ones (their old stops stay until then and lend their samples and copies

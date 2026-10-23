@@ -121,6 +121,7 @@ public:
                         report << " EXTENSION of stop " << stop.extensionOfStopId << " (" << (odf.stops.count(stop.extensionOfStopId) > 0 ? odf.stops.at(stop.extensionOfStopId).name : juce::String("?"))
                                << ") shift " << stop.shift;
                     if (stop.gridColumn >= 0) report << " cell " << stop.gridColumn << "," << stop.gridRow;
+                    if (const auto p = odf.stopPositions.find(stop.stopId); p != odf.stopPositions.end()) report << " at " << p->second.x << "," << p->second.y;
                     if (!stop.children.empty()) report << " STOP FOLDER with " << (int)stop.children.size() << " children";
                     report << "\n";
                     for (const auto& child : stop.children)

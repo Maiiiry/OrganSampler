@@ -242,7 +242,7 @@ void MainComponent::mergeConfiguration(juce::var added, const juce::File& addedF
             candidates.add(dir.getChildFile(relative));
         }
         if (absolute.isNotEmpty() && juce::File::isAbsolutePath(absolute)) candidates.add(juce::File(absolute));
-        for (const auto& candidate : candidates) if (candidate.isDirectory()) return candidate;
+        for (const auto& candidate : candidates) if (SampleFiles::isDirectory(candidate)) return candidate;   // on the disk or inside a RAR archive (0.8.160)
         return {};
     };
     // The added pool (its stop building tables index it), resolved entry by entry.
@@ -252,7 +252,7 @@ void MainComponent::mergeConfiguration(juce::var added, const juce::File& addedF
         {
             const auto text = entry.toString();
             addedPool.push_back(juce::File::isAbsolutePath(text) && !(text.length() > 1 && text[1] == ':' && juce::File::getSeparatorChar() == '/')
-                ? (juce::File(text).isDirectory() ? juce::File(text) : resolveTree(text.fromLastOccurrenceOf("/", false, false), text))
+                ? (SampleFiles::isDirectory(juce::File(text)) ? juce::File(text) : resolveTree(text.fromLastOccurrenceOf("/", false, false), text))
                 : resolveTree(text, {}));
         }
     // The merged pool: the base's, then every new tree of the added one.

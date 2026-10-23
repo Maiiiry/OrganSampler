@@ -327,10 +327,18 @@ static const char* const kManualText_part1 =
     "  releases of its parent folder; \"rel\" folders never form stops of their own.\n"
     "  The label of the stop is built from the folder path (not from the bare\n"
     "  folder name!), with slashes, underscores and similar characters left out.\n"
-    "  The only exception: when the perspective folders (direct-, diffuse- ...)\n"
-    "  are nested inside a folder whose name equals theirs with the prefix removed\n"
-    "  (in the example above, \"Octava4\"), the label of the stop carries the name\n"
-    "  \"Octava 4'\" once only. A bare footage number at the end of the folder name\n"
+    "  The only exception: when a folder is nested inside a folder of the same\n"
+    "  name - the perspective prefix, the footage and an L/R mark aside\n"
+    "  (direct-Octava4 inside \"Octava4\" in the example above; \"02-direct-HW_Bl.Flute\"\n"
+    "  inside \"HW_Bl.Flute2\") - the parent adds nothing and the label carries the\n"
+    "  name once only (\"Octava 4'\"); this holds for folders read out of a RAR\n"
+    "  archive as for unpacked ones. **Two components of one stop:** a stop\n"
+    "  recorded as a left and a right half, the folders named alike with a single\n"
+    "  L and R right after the footage or at the end of the name\n"
+    "  (\"AB_quintaton16L\" + \"AB_quintaton16R\", \"AB_glockentonL\" + \"AB_glockentonR\"),\n"
+    "  is ONE stop \"quintaton 16'\" whose two folders both play as its ranks (the\n"
+    "  Stop List cell shows \"+ half\"); a rank count after a number (\"Mixtur4x\",\n"
+    "  \"Zimbel3\") is no such mark. A bare footage number at the end of the folder name\n"
     "  (Nasat3, Nasat_3, Nasat 3 ...) is shown with its foot mark (\"Nasat 3'\") on\n"
     "  the stop label; a mutation written without spaces (\"Nasard 223\", \"Terz\n"
     "  135\", \"Larigot 113\") is read as 2 2/3', 1 3/5', 1 1/3'. A folder name\n"
@@ -396,6 +404,8 @@ static const char* const kManualText_part1 =
     "    rel500\n"
     "        036-C.wav\n"
     "        037-C#.wav\n"
+    ;
+static const char* const kManualText_part2 =
     "        ...\n"
     "    rel1500\n"
     "        036-C.wav\n"
@@ -404,8 +414,6 @@ static const char* const kManualText_part1 =
     "        036-C.wav\n"
     "        ...\n"
     "```\n"
-    ;
-static const char* const kManualText_part2 =
     "\n"
     "  A set with one release per pipe has just the folder `rel`. A stop without any\n"
     "  release folder plays as well: when the key is let go the sound fades out\n"
@@ -474,9 +482,10 @@ static const char* const kManualText_part2 =
     "  organ definition, the program offers to import it - the whole organ, read\n"
     "  from the archives. *Load Configuration* takes `.rar` files as well - one,\n"
     "  or several at once when an organ comes in several archives: the\n"
-    "  configurations and definitions found inside are listed and the one you\n"
-    "  pick is loaded straight from the archives (the others serve its sample\n"
-    "  folders). *Merge another configuration* (right-click Load Configuration)\n"
+    "  configurations and definitions found inside are listed in a dialog of its\n"
+    "  own (\"Load which one\", in the middle of the screen, closed only by Load or\n"
+    "  Cancel) and the one you pick is loaded straight from the archives (the\n"
+    "  others serve its sample folders). *Merge another configuration* (right-click Load Configuration)\n"
     "  takes archives the same way, so an organ can be put together archive after\n"
     "  archive.\n"
     "  Two steps happen, and they read different things. *Reading the archives*\n"
@@ -597,6 +606,8 @@ static const char* const kManualText_part2 =
     "division; a FLOATING division - one no keyboard reaches without a coupler\n"
     "(Bellevue's \"Chamade\", played from every keyboard through \"Bom-Ped/Gt/Pos/Rec\n"
     "8\") - is placed stop by stop where the name says (\"GO. Trompette en chamade\n"
+    ;
+static const char* const kManualText_part3 =
     "8\" on the Great, \"Ped. Clairon en chamade\" on the Pedal, \"5. Tuba 16\" on V).\n"
     "A keyboard whose own division its keys reach only under a condition switch\n"
     "(Ashton: \"1. unison off\" conditions the link from the keys of 1. manual to\n"
@@ -606,8 +617,6 @@ static const char* const kManualText_part2 =
     "configuration. The couplers of the definition (0.8.138: its KeyAction rows -\n"
     "the keys of one keyboard playing another keyboard or a division, shifted by\n"
     "0, 12 or -12 semitones, or the top note only) become the couplers of ours\n"
-    ;
-static const char* const kManualText_part3 =
     "that exist for them - a keyboard pulling a higher division at 8', 16', 4' or\n"
     "as a melody coupler, itself at 16' and 4', I from II or III - and only those are\n"
     "shown on the console; a coupler of the definition OrganSampler has no\n"
@@ -624,8 +633,11 @@ static const char* const kManualText_part3 =
     "stops take their places on the grid from the definition's jamb page - the\n"
     "page holding the most drawknobs (\"Simple Jamb\"): within every division,\n"
     "the drawknobs' columns and rows become the grid's columns and rows, the\n"
-    "picture copied; a division laid out too wide or too tall to be ours stays\n"
-    "in the table's order (0.8.142). An extension's button carries the\n"
+    "picture copied (a drawknob whose name the definition cut short is found\n"
+    "all the same); a division laid out too wide or too tall to be ours stays\n"
+    "in the table's order (0.8.142). A division column narrower than the page's\n"
+    "columns folds the rightmost column into its neighbour (left, right, left,\n"
+    "right ...); widen the division's column to see the page's layout. An extension's button carries the\n"
     "definition's name of it (\"P. tuba 4\"), not the owner's name with the\n"
     "footage shifted. The general crescendo takes them too: a stage\n"
     "that draws a coupler's drawstop switches it on in that step. A stop\n"
@@ -683,8 +695,11 @@ static const char* const kManualText_part3 =
     "are. The transpositions the definition implies (its pipe notes against the\n"
     "sample file names) are taken as they are, and every stop plays the keys of\n"
     "its own rows in the definition: a rank folder used by a bass stop and a\n"
-    "treble stop is loaded whole and the keys outside each stop's rows are\n"
-    "switched off in its voicing (an extension's too). A division played by\n"
+    "treble stop is loaded ONCE, by the first stop, and the second stop becomes a\n"
+    "transmission of it with the keys of its own rows (Adlington's \"Bl. Flute\n"
+    "Bass\" and \"Bl. Flute Treble\"); the keys outside each stop's rows are\n"
+    "switched off in its voicing (an extension's too). A folder is never loaded\n"
+    "twice. A division played by\n"
     "several keyboards belongs to the keyboard with the most keys; a pedal\n"
     "keyboard that only pulls a manual's division down leaves P. empty (a note\n"
     "says so - couple it from that manual). It is loaded at once and saved\n"
@@ -793,6 +808,8 @@ static const char* const kManualText_part3 =
     "automatically and also with the configuration; *Save Voicing* and *Load\n"
     "Voicing* (hidden from the top bar by default) exchange it as a separate file.\n"
     "\n"
+    ;
+static const char* const kManualText_part4 =
     "A configuration holds only what the instrument uses now: the divisions in\n"
     "use, the audio routes that exist (the audio tabs of the Divisions dialog)\n"
     "and their settings. Nothing is kept for later. A division's own audio route\n"
@@ -808,8 +825,6 @@ static const char* const kManualText_part3 =
     "The *GLOBAL RESET* button of the top bar offers what to reset, all unticked:\n"
     "*Unload everything* empties the instrument completely (stops, folders,\n"
     "transmissions, couplers, patterns, MIDI, audio routing); the other options\n"
-    ;
-static const char* const kManualText_part4 =
     "(audio, MIDI, transmissions, patterns, couplers, the grid) reset only what is\n"
     "ticked and keep the loaded stops.\n"
     "\n"
@@ -995,6 +1010,8 @@ static const char* const kManualText_part4 =
     "The second window's position is remembered; closing it returns to one window.\n"
     "\n"
     "## 2.7 Screens and the size of the interface\n"
+    ;
+static const char* const kManualText_part5 =
     "\n"
     "Every size in the program is a design size for a 2560 x 1440 screen at the\n"
     "system's 100 %; the operating system's display scale applies on top. *Interface\n"
@@ -1010,8 +1027,6 @@ static const char* const kManualText_part4 =
     "\n"
     "---\n"
     "\n"
-    ;
-static const char* const kManualText_part5 =
     "# 3. Stops on the grid and their voicing\n"
     "\n"
     "## 3.1 Stop buttons\n"
@@ -1088,7 +1103,8 @@ static const char* const kManualText_part5 =
     "  line of the row shows that real footage of the files; the footage in\n"
     "  the button's caption follows the transposition, and so do the stop's transmissions and\n"
     "  extensions, which add their own transposition on top. A change loads the\n"
-    "  stop's samples again on their keys at once (the fills follow). The same\n"
+    "  stop's samples again on their keys at once (the fills follow; the keys\n"
+    "  held fall silent first and the stop starts no voice while it reloads). The same\n"
     "  setting is the Stop List column \"Transp.\". Each key's tooltip in the rows\n"
     "  below names the file it plays.\n"
     "  The program sets it by itself where it can: a Hauptwerk import takes it\n"
@@ -1098,9 +1114,12 @@ static const char* const kManualText_part5 =
     "  loaded on its own gets it from the samples' pitch against the footage\n"
     "  written in the folder's name - \"quintaton 16\" whose files sound 8' on\n"
     "  their numbers gets -12, and the activity log says so (\"Transposition of\n"
-    "  ...\"). The value found is kept in the configuration; a folder without a\n"
-    "  footage in its name is left at 0 - transpose it yourself. Clearing the\n"
-    "  Stop List cell makes the program find it again at the next load.\n"
+    "  ...\"). Only a whole difference of two semitones or more, agreed by most\n"
+    "  of the pipes, counts: an organ standing a semitone low or high as a whole\n"
+    "  (a1 = 409 Hz) is a tuning, not a transposition, and stays at 0. The value\n"
+    "  found is kept in the configuration; a folder without a footage in its name\n"
+    "  is left at 0 - transpose it yourself. Clearing the Stop List cell makes the\n"
+    "  program find it again at the next load.\n"
     "- **Alias** - the caption of the button. *Automatic* shows the folder name;\n"
     "  type any text to show that instead (an alias without a footage gets the\n"
     "  stop's footage appended, and a footage written in the alias follows the\n"
@@ -1193,6 +1212,8 @@ static const char* const kManualText_part5 =
     "routes hold it, the loudest of them sets its volume and the highest *Treble\n"
     "per key* setting among them sets its tone; when the loudest route lets go,\n"
     "the volume glides to the next loudest, and the tone follows in the same way.\n"
+    ;
+static const char* const kManualText_part6 =
     "The tuning is different: a pipe can be retuned differently in different\n"
     "transpositions (the pure intervals of the extensions, see above), and a\n"
     "sounding pipe cannot change its pitch. So the pipe keeps the tuning of the\n"
@@ -1212,8 +1233,6 @@ static const char* const kManualText_part5 =
     "  that layer's own level - a gentle stroke selects the recording of a gentle\n"
     "  stroke.\n"
     "- A stop **without velocity layers** softens the attack of a gentle stroke,\n"
-    ;
-static const char* const kManualText_part6 =
     "  in volume and in colour, over its first few tens of milliseconds: the note\n"
     "  starts with a short fade-in (*Key velocity: fade-in at the lowest\n"
     "  velocity*, default 40 ms at the lowest velocity) and with its treble cut\n"
@@ -1282,7 +1301,9 @@ static const char* const kManualText_part6 =
     "  missing tree's place and the stops built from it keep their samples.\n"
     "- **Unload folder...** removes one tree from the whole organ after saying how\n"
     "  many stops lose their samples (their rows stay as empty stops). **Unload all\n"
-    "  folder trees** empties the organ. The same menu offers **Replace \"...\" with\n"
+    "  folder trees** empties the organ; the Stop List opens again with the empty\n"
+    "  rows, *Remove empty stops* clears them and *Apply and reload* applies that\n"
+    "  even though no tree is loaded. The same menu offers **Replace \"...\" with\n"
     "  another folder...** for every tree: the tree is taken from another folder\n"
     "  (a moved disk, a configuration from another computer), its rows keep their\n"
     "  folders and the divisions that use it reload.\n"
@@ -1329,8 +1350,8 @@ static const char* const kManualText_part6 =
     "  footage in its name shows the measured one (a mixture's first sounding\n"
     "  harmonic). Aliases you typed stay. Applied with *Apply and reload*.\n"
     "- **Add perspective...** adds a column (a known perspective name or a new\n"
-    "  one); the x in a column header removes it. \"default\" is the route of folders\n"
-    "  without a perspective prefix.\n"
+    "  one); the x right after the perspective's name in the column header\n"
+    "  removes it. \"default\" is the route of folders without a perspective prefix.\n"
     "- **Swap divisions...** exchanges the whole stop lists of two divisions, as if\n"
     "  their folders had been swapped (combinations and MIDI bindings follow).\n"
     "  **Reset division...** forgets one division's table.\n"
@@ -1354,7 +1375,9 @@ static const char* const kManualText_part6 =
     "folders are read and only missing copies are built. Folders left out of the\n"
     "table are removed from RAM. A stop that has transmissions cannot be removed or renamed\n"
     "without a warning: its transmissions die with it. The table travels with the\n"
-    "configuration and is used at every later load.\n"
+    "configuration and is used at every later load. Closing the window with\n"
+    "changes not applied asks: *Apply and reload*, *Discard* or *Cancel* (back to\n"
+    "the table) - nothing is lost by the close button alone.\n"
     "\n"
     "## 4.4 What the loading dialog shows\n"
     "\n"
@@ -1391,6 +1414,8 @@ static const char* const kManualText_part6 =
     "  historic bass octaves.\n"
     "- *Compass*: two boxes for the lowest and the highest key of the division\n"
     "  (defaults: pedal 36 to 67, manuals 36 to 96). Keys outside are silent on\n"
+    ;
+static const char* const kManualText_part7 =
     "  every stop and transmission of the division; the per-key voicing sliders\n"
     "  cover exactly this range. An extension ends with the compass.\n"
     "- *MIDI transposition* (the last line of the MIDI column, default 0): the\n"
@@ -1414,8 +1439,6 @@ static const char* const kManualText_part6 =
     "every key stroke shakes the wind with a random strength, so nothing repeats\n"
     "mechanically.\n"
     "\n"
-    ;
-static const char* const kManualText_part7 =
     "## 5.3 The audio tabs\n"
     "\n"
     "Every perspective of the division has an audio tab (the default perspective,\n"
@@ -1593,6 +1616,8 @@ static const char* const kManualText_part7 =
     "routes on it, the output channels spread over its outputs.\n"
     "\n"
     "### Audio on Linux\n"
+    ;
+static const char* const kManualText_part8 =
     "\n"
     "**What Linux does with your sound cards.** Every current distribution runs\n"
     "the sound server PipeWire. It takes every sound card for itself and offers\n"
@@ -1616,8 +1641,6 @@ static const char* const kManualText_part7 =
     "  profile box.\n"
     "\n"
     "The desktop's own sounds then no longer go to that interface unless you\n"
-    ;
-static const char* const kManualText_part8 =
     "choose it as the system output; use the on-board chip for the desktop and\n"
     "the interface for the organ. After switching the profile the card appears\n"
     "under a new name (its own, \"Komplete Audio 6\" instead of \"Analog Stereo\n"
@@ -1795,6 +1818,8 @@ static const char* const kManualText_part8 =
     "  same layout as ASIO, with the 10 ms period of the Windows audio engine\n"
     "  (a buffer of 480 samples at 48 kHz) instead of the driver's buffer. Only\n"
     "  an Aggregated WASAPI route is rendered by its own thread (*Render threads\n"
+    ;
+static const char* const kManualText_part9 =
     "  for Aggregated WASAPI*).\n"
     "- **Mixed ASIO and Windows Audio.** Works; the ASIO workers leave processor\n"
     "  time to the WASAPI threads. But see \"Audio drivers: many sound cards at\n"
@@ -1818,8 +1843,6 @@ static const char* const kManualText_part8 =
     "render of all its routes, the note bookkeeping of attacks and releases, the\n"
     "copies to the device - as a share of the device's period, held at its peak\n"
     "for a moment. That is what decides about dropouts: at 100 % the next\n"
-    ;
-static const char* const kManualText_part9 =
     "callback is late. A value of several hundred percent means the audio thread\n"
     "was kept waiting by something else on the computer, not that the voices took\n"
     "that long; the activity log notes every such event.\n"
@@ -1997,6 +2020,8 @@ static const char* const kManualText_part9 =
     "settle the loudness and the timbre of their copies when they build them, and\n"
     "a pipe that still plays resampled while its copy is being built gets it until\n"
     "the copy is ready.\n"
+    ;
+static const char* const kManualText_part10 =
     "\n"
     "The three other methods build a copy of every filled pipe in the background\n"
     "(when the stop loads, when its compass or a transmission changes, when a\n"
@@ -2020,8 +2045,6 @@ static const char* const kManualText_part9 =
     "source's duration (*time stretch of the attack*, *time stretch of the\n"
     "release*). Upwards the attack is left as resampled (shorter), which the ear\n"
     "accepts. Weaknesses: downwards the time stretch frays the attack - the\n"
-    ;
-static const char* const kManualText_part10 =
     "speaking of the pipe becomes rough or choppy, worse the larger the shift; try\n"
     "a lower attack stretch for such a stop, or the pitch shift method without\n"
     "stretch.\n"
@@ -2199,6 +2222,8 @@ static const char* const kManualText_part10 =
     "SCHED_FIFO when the system allows it - the activity log says \"Render worker:\n"
     "SCHED_FIFO\" or \"REFUSED\" with what to allow; macOS: a time-constraint thread\n"
     "like CoreAudio's own), and on one or two cores the device thread yields the\n"
+    ;
+static const char* const kManualText_part11 =
     "core while it waits for a lane and the lanes take small chunks, so the second\n"
     "thread helps instead of holding the block up.\n"
     "\n"
@@ -2222,8 +2247,6 @@ static const char* const kManualText_part10 =
     "`ORGAN_KERNEL=scalar`, `sse2`, `avx2` or `neon` sets the Automatic choice for\n"
     "one start (a script measuring one after another); the editor's choice wins\n"
     "over it. The self-test (`--kerneltest`) checks every kernel of the CPU against\n"
-    ;
-static const char* const kManualText_part11 =
     "the scalar code and tells its speed; the activity log says which kernel runs\n"
     "(\"Render kernel: ...\").\n"
     "\n"
@@ -2401,6 +2424,8 @@ static const char* const kManualText_part11 =
     "\n"
     "1. The sound is turned down to -52 dB at once (everything is rendered as\n"
     "   usual; you hear the storm very quietly). The polyphony limit is out of the\n"
+    ;
+static const char* const kManualText_part12 =
     "   way (300 000) for the run, and so are *Attack minimum time* and *Attack\n"
     "   minimum delay*, which would hold the fast strikes back. The idle audio\n"
     "   devices are listened to for two seconds first. The progress window says\n"
@@ -2424,8 +2449,6 @@ static const char* const kManualText_part11 =
     "3. The target grows in steps of 2 000 voices (a tenth above 20 000). Every\n"
     "   target reached is held for four seconds and judged: clean means every\n"
     "   callback of the busiest device - the render of all its routes, the note\n"
-    ;
-static const char* const kManualText_part12 =
     "   bookkeeping, everything on that thread - stayed within 85 % of its period,\n"
     "   no single route exceeded its budget, and the driver never called late (a\n"
     "   callback more than half a period behind its time is a dropout). The first\n"
@@ -2603,6 +2626,8 @@ static const char* const kManualText_part12 =
     "\n"
     "The strength of the whole wind model, 0 to 100 % (default 100). The steady sag\n"
     "of held keys and engaged stops follows it directly; every key stroke shakes the\n"
+    ;
+static const char* const kManualText_part13 =
     "wind with a random 40 to 100 % of it, so repeated notes never sound mechanical.\n"
     "0 % switches the wind model off everywhere.\n"
     "\n"
@@ -2626,8 +2651,6 @@ static const char* const kManualText_part12 =
     "at velocity 127. Stops with velocity layers pick the layer instead and get no\n"
     "fade-in. With *Ignore MIDI velocity* on for a division there is never any. See\n"
     "\"Velocity layers\".\n"
-    ;
-static const char* const kManualText_part13 =
     "\n"
     "### Key velocity: treble cut on the attack at the lowest velocity\n"
     "\n"
@@ -2805,6 +2828,8 @@ static const char* const kManualText_part13 =
     "as a real celeste tuned to constant beats would.\n"
     "\n"
     "## 8.4 Console\n"
+    ;
+static const char* const kManualText_part14 =
     "\n"
     "### Interface size\n"
     "\n"
@@ -2828,8 +2853,6 @@ static const char* const kManualText_part13 =
     "\n"
     "### Program windows\n"
     "\n"
-    ;
-static const char* const kManualText_part14 =
     "*One window*, or *Two windows*: a second program window opens, and every\n"
     "division section below gets *Shown in window* to move a division there. The\n"
     "second window's position is remembered; closing it returns to one window.\n"
@@ -3007,6 +3030,8 @@ static const char* const kManualText_part14 =
     "With two program windows: the window this division is shown in. A division is\n"
     "in one window only; the divisions of each window share its width.\n"
     "\n"
+    ;
+static const char* const kManualText_part15 =
     "### MIDI keyboard device\n"
     "\n"
     "The MIDI input that plays this division. Several divisions may listen to the\n"
@@ -3030,8 +3055,6 @@ static const char* const kManualText_part14 =
     "How the lowest octave of the keyboard is laid out, for playing historic music\n"
     "on a historic layout: *Standard*; *Short octave* (the bottom E key sounds C,\n"
     "F# sounds D, G# sounds E, the keys C to D# are silent); *C D D# ...* (no C#);\n"
-    ;
-static const char* const kManualText_part15 =
     "*C D E ...* (no C# and no D#). The compass of the division is set on the same\n"
     "line of the Divisions dialog.\n"
     "\n"
@@ -3209,6 +3232,8 @@ static const char* const kManualText_part15 =
     "built for Windows, macOS and Linux; the macOS and Linux builds have had less\n"
     "playing time than the Windows build. What each build needs:\n"
     "\n"
+    ;
+static const char* const kManualText_part16 =
     "- **Windows:** `OrganSampler-windows.zip` - Windows 10 or 11, 64-bit. ASIO,\n"
     "  Windows Audio (WASAPI) and the aggregated WASAPI device.\n"
     "- **macOS:** `OrganSampler-macos.zip` runs on Apple silicon Macs with macOS\n"
@@ -3232,8 +3257,6 @@ static const char* const kManualText_part15 =
     "`settings.json` is the state of the program, `settings-<date>.json` the\n"
     "snapshot of each of the last seven days. If the program crashes at every\n"
     "start, move `settings.json` away (keep it for the report) and it starts\n"
-    ;
-static const char* const kManualText_part16 =
     "clean; a crash while an audio device was being opened is caught by the\n"
     "program itself: the next start opens that device with the default buffer\n"
     "and rate and says so.\n"
