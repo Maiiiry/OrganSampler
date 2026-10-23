@@ -12,6 +12,23 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.163] - 2026-10-23
+
+### Fixed
+- A large retune - "Equal at 440 Hz" on an organ standing far from 440 Hz
+  (Adlington at a1 = 409 Hz: +127 cents) or the global Pitch slider - no
+  longer leaves the images of the playback interpolation on the bright
+  pipes (heard as aliasing on the top octaves). The common part of the
+  retune (the global pitch and the organ's own pitch brought to 440) is
+  taken out of the voices and applied once to their mixed output with a
+  16-tap windowed-sinc resampler per route ("retune bus"); the voices play
+  at their recorded speed and only the few cents of temperament and
+  detune remain in them, as without the retune. Measured: the images at
+  5.7 and 13.1 kHz (-26 dB) of a filled pipe four times the pitch of its
+  source are gone, the pipe's own partials stay. A shift under 25 cents
+  takes no bus and plays exactly as before; the cost of a bus is one
+  resampling of the route's output, nothing per voice.
+
 ## [0.8.162] - 2026-10-23
 
 ### Fixed

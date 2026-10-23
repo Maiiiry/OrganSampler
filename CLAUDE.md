@@ -424,6 +424,25 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   Never verify this by the sound's pitch (the user: "je to podle jména souboru ... zřejmé z ODF"). Organs imported
   before 0.8.155 keep offset 0: load the definition again or type the column. Dev hook `ORGAN_TEST_OFFSET=
   "<manual>|<stop prefix>|<offset>"` (the voicing path); the grid dump prints "notes a..b files N" per stop.
+  0.8.163 RETUNE BUSES (the user chose "variant A", no retune at load, no regression): `Route::Bus` (kMaxBuses 3 per
+  route, kBusTaps 16, kBusPhases 128, kBusFifo 4 x kMaxBlockFrames + 32, kBusMinCents 25, kBusJoinCents 6). At every
+  voice start (attack and release) `commonRetuneCents(stop, rank)` = globalPitchCents + (tuneTo440 ? 1200 log2(440 /
+  measuredDiapasonHz) : 0); `busFor(route, cents)` joins a ready bus within 6 c or makes one (control thread: vectors
+  allocated, `buildBusTable`, then `ready`; never freed; all slots taken -> 0 = direct as before); `v.bus`, and the
+  voice's frame counts use route rate x bus ratio. `renderRoute`: with `anyBus` the active list is split into
+  `route.direct` + `bus.list` per block; `renderBus` renders the bus voices through the pool into the bus FIFO with a
+  BlockContext copy whose routeRate = rate x ratio (so inc = fs/(R r) x ratio(total) ~ 1 and every ms-based constant
+  stays real-time), the shelf applied there, then reads the FIFO at the ratio through the sinc into the route output
+  BEFORE separation/reverb/clip/recording. The pitch math of the voices is untouched (r cancels), only the kernel's
+  position stays near integer. Buses are logged "Retune bus N of route ...". Aux routes get their own bus
+  (`duplicateVoiceToAux(..., busCents)`). Verified: `--selftest` hook `|pitch=126.6` -> f0 x 1.0758, spectrum as the
+  direct render; GUI (ORGAN_TEST_RECORD with equalAt440 forced on in a temp copy of the config) x4 copy at 9416 Hz with
+  no images (before: 5711/13121/2006 Hz at -26..-39 dB), real pipe clean; kerneltest OK; a run without any retune
+  creates no bus and takes the old path verbatim. The user's remark: the images matter only for very high voices,
+  elsewhere masked - the bus covers all voices anyway at one resampling per route. NOTE: 32/36 kHz storage is NOT a
+  retune (ratio 0.667/0.75 comes from the sample rate, not from cents) - its images stay; that needs a kernel or copies
+  at the route rate (not done). The user's Adlington file meanwhile had equalAt440 false and Principal 4 at -24: a test
+  that reads his file must print the grid item line ("transposition N") before judging a pitch.
   0.8.162 "ALIASING" LESSON (the user: "+1 octave aliasing jako prase, regres"): measured, not guessed. Dev hooks:
   `ORGAN_SELFTEST_RENDER="<stop part>|<key>|<shift>|<out.wav>[|<stop transposition>|<velocity>|late]"` (EngineSelfTest.h,
   `--selftest <tree>` with ORGAN_SELFTEST_DIVISIONS=2: a transmission into the last division, the key rendered 2 s + 1 s

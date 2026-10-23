@@ -211,6 +211,18 @@ namespace
     constexpr int kTremBuckets = 128;
     constexpr double kFixedOne = 4294967296.0;    // 32.32 fixed point
     constexpr int kMaxBlockFrames = 1024;         // longest render block (RenderPool::kFrames)
+    // Retune buses (0.8.163): the COMMON part of a voice's retune - the global pitch
+    // and an organ's tune-to-440 diapason shift - is taken out of the voices and
+    // applied once to their mixed output with a windowed-sinc resampler. The
+    // voices of a bus render into its FIFO at the route rate x ratio, so their own
+    // increment stays near 1 and the linear kernel leaves no images; only a shift
+    // of kBusMinCents or more gets a bus, smaller ones (temperaments, the random
+    // detune) play exactly as before. A voice whose shift fits no bus (all slots
+    // taken by other values) plays as before too.
+    constexpr int kMaxBuses = 3;
+    constexpr int kBusTaps = 16, kBusPhases = 128;
+    constexpr int kBusFifo = 4 * kMaxBlockFrames + 2 * kBusTaps;
+    constexpr float kBusMinCents = 25.0f, kBusJoinCents = 6.0f;
 
     // Voice profiling (the polyphony measurement switches it on): where a lane's
     // time goes per voice and block - the voice header (commands, pitch, gains,
@@ -919,6 +931,7 @@ namespace
         uint8_t keyNote = 0;              // the key that plays it (temperament pitch class)
         uint8_t sampleNote = 0;           // the pipe whose sample is used (differs beyond the compass)
         int8_t shift = 0;                 // transposition of the route that started it
+        uint8_t bus = 0;                  // retune bus of its route (1..kMaxBuses) or 0: rendered straight into the route (0.8.163)
         bool cubic = false;               // filled pipe resampled by semitones: cubic interpolation
         bool preShifted = false;          // filled pipe playing a pitch-shifted copy at unity (its shiftCents lack the semitones)
         uint8_t windPitchVar = 0, windGainVar = 0, tremBucket = 0;
@@ -1159,6 +1172,27 @@ namespace
         uint32_t reverbGroupBlockId = 0;    // owner: the current block (one up per block)
         uint32_t reverbGroupSeenBlock = 0;  // every route: the owner's block it last handed over to
         juce::SpinLock reverbGroupLock;     // owner: the hand-over (one thread in practice; a lock all the same)
+
+        // Retune buses (see kMaxBuses): made by the control thread when a voice
+        // needs one (the vectors allocated then, before 'ready'), rendered by the
+        // route's thread. Never freed: a bus keeps its cents for the route's life.
+        struct Bus
+        {
+            std::atomic<bool> ready{ false };
+            float cents = 0.0f;
+            double ratio = 1.0;                     // input frames per output frame
+            std::vector<uint32_t> list;             // its voices of the current block (render thread)
+            std::vector<float> fifo[64];            // the bus's rendered frames per route channel
+            std::vector<float> wet;                 // the harmonic filter's input, 64 x kMaxBlockFrames
+            float shelfState[64][4]{};
+            std::vector<float> table;               // kBusPhases x kBusTaps windowed sinc
+            double readPos = 0.0;                   // the resampler's position in the FIFO
+            int fill = 0;                           // frames rendered into the FIFO
+            int idleBlocks = 0;
+        };
+        Bus buses[kMaxBuses];
+        std::vector<uint32_t> direct;               // the voices on no bus (render thread scratch, reserved with the first bus)
+        std::atomic<bool> anyBus{ false };
 
         juce::SpinLock renderLock;
         std::vector<uint32_t> active;               // owned by the render thread
@@ -3798,6 +3832,176 @@ struct SamplerEngine::Impl
         for (int i = 0; i < count; ++i) if (routes[(size_t)i].get() == r) return i;
         return -1;
     }
+    // The common retune of a voice of this rank: the global pitch and, with the
+    // stop tuned to 440 Hz, the rank's recorded diapason brought to 440 (the
+    // per-pipe rest of tuning440Cents stays in the voice).
+    float commonRetuneCents(const Stop* stop, const Stop* rank) const noexcept
+    {
+        float cents = globalPitchCents;
+        if (stop != nullptr && rank != nullptr && stop->tuneTo440 && rank->measuredDiapasonHz > 1.0f)
+            cents += (float)(1200.0 * std::log2(440.0 / (double)rank->measuredDiapasonHz));
+        return cents;
+    }
+    static void buildBusTable(Route::Bus& bus)
+    {
+        // Windowed sinc, 16 taps, 128 phases: the cutoff a little under the lower
+        // of the two Nyquists (reading faster than 1 folds the input's top).
+        const double cutoff = 0.5 * juce::jmin(1.0, 1.0 / juce::jmax(1.0e-6, bus.ratio)) * 0.92;   // cycles per input frame
+        bus.table.assign((size_t)kBusPhases * kBusTaps, 0.0f);
+        for (int p = 0; p < kBusPhases; ++p)
+        {
+            const double frac = (double)p / (double)kBusPhases;
+            double sum = 0.0;
+            float* h = bus.table.data() + (size_t)p * kBusTaps;
+            for (int t = 0; t < kBusTaps; ++t)
+            {
+                const double d = (double)(t - (kBusTaps / 2 - 1)) - frac;   // distance of tap t from the output position
+                const double x = 2.0 * juce::MathConstants<double>::pi * cutoff * d;
+                const double sinc = std::abs(x) < 1.0e-9 ? 1.0 : std::sin(x) / x;
+                const double w = (double)t + 1.0 - frac;   // Blackman over the 16 + 1 taps around the centre
+                const double window = 0.42 - 0.5 * std::cos(2.0 * juce::MathConstants<double>::pi * w / (kBusTaps + 1))
+                    + 0.08 * std::cos(4.0 * juce::MathConstants<double>::pi * w / (kBusTaps + 1));
+                h[t] = (float)(sinc * juce::jmax(0.0, window));
+                sum += h[t];
+            }
+            for (int t = 0; t < kBusTaps; ++t) h[t] = (float)(h[t] / juce::jmax(1.0e-9, sum));   // unity at DC
+        }
+    }
+    // The bus a voice with this common retune goes to on the route (0 = none,
+    // the voice renders straight into the route as ever). Control thread (voice
+    // starts) only: a new bus is filled in and allocated before it is 'ready'.
+    int busFor(Route& route, float cents)
+    {
+        if (std::abs(cents) < kBusMinCents) return 0;
+        for (int i = 0; i < kMaxBuses; ++i)
+        {
+            auto& b = route.buses[i];
+            if (b.ready.load(std::memory_order_acquire) && std::abs(b.cents - cents) <= kBusJoinCents) return i + 1;
+        }
+        for (int i = 0; i < kMaxBuses; ++i)
+        {
+            auto& b = route.buses[i];
+            if (b.ready.load(std::memory_order_acquire)) continue;
+            b.cents = cents;
+            b.ratio = std::pow(2.0, (double)cents / 1200.0);
+            b.list.reserve((size_t)poolSize);
+            for (auto& f : b.fifo) f.assign((size_t)kBusFifo, 0.0f);
+            b.wet.assign((size_t)64 * kMaxBlockFrames, 0.0f);
+            for (auto& s : b.shelfState) std::fill(s, s + 4, 0.0f);
+            buildBusTable(b);
+            b.readPos = (double)(kBusTaps / 2 + 1);   // history of zeros before the first frame
+            b.fill = kBusTaps / 2 + 1;
+            b.idleBlocks = 0;
+            if (route.direct.capacity() < (size_t)poolSize) route.direct.reserve((size_t)poolSize);
+            b.ready.store(true, std::memory_order_release);
+            route.anyBus.store(true, std::memory_order_release);
+            CrashHandler::note("Retune bus " + juce::String(i + 1) + " of route manual " + juce::String(route.manual) + " perspective " + route.perspective
+                + ": " + juce::String(cents, 1) + " cents (ratio " + juce::String(b.ratio, 5) + ") - its voices render at that rate and the bus is resampled once");
+            return i + 1;
+        }
+        return 0;
+    }
+    // One retune bus of the route for this block: its voices render into the
+    // FIFO at routeRate x ratio (so their increments stay near 1), then the FIFO
+    // is read at 'ratio' through the windowed sinc into the route's output.
+    void renderBus(Route::Bus& bus, const BlockContext& ctx, int n, float* const* outs, int usableOuts, float* sink, int laneLimit, int otherAudioThreads)
+    {
+        const int half = kBusTaps / 2;
+        if (bus.list.empty())
+        {
+            // Nothing sounds: the FIFO drains for two blocks (its tail), then rests.
+            if (++bus.idleBlocks > 2)
+            {
+                if (bus.fill != half + 1)
+                {
+                    for (int ci = 0; ci < ctx.outCount; ++ci)
+                    {
+                        const int ch = ctx.outChannels[ci];
+                        if (ch >= 0 && ch < usableOuts) juce::FloatVectorOperations::clear(bus.fifo[ch].data(), half + 1);
+                    }
+                    bus.readPos = (double)(half + 1);
+                    bus.fill = half + 1;
+                }
+                return;
+            }
+        }
+        else bus.idleBlocks = 0;
+        const double r = bus.ratio;
+        // Frames already read move out of the FIFO, the taps' history stays.
+        if (bus.readPos > 2.0 * kMaxBlockFrames)
+        {
+            const int drop = (int)bus.readPos - half - 1;
+            if (drop > 0 && drop < bus.fill)
+            {
+                for (int ci = 0; ci < ctx.outCount; ++ci)
+                {
+                    const int ch = ctx.outChannels[ci];
+                    if (ch < 0 || ch >= usableOuts) continue;
+                    float* f = bus.fifo[ch].data();
+                    std::memmove(f, f + drop, (size_t)(bus.fill - drop) * sizeof(float));
+                }
+                bus.readPos -= drop;
+                bus.fill -= drop;
+            }
+        }
+        const int needed = juce::jmin(kBusFifo, (int)std::ceil(bus.readPos + (double)n * r) + half + 2);
+        if (bus.fill < needed)
+        {
+            BlockContext busCtx = ctx;
+            busCtx.routeRate = ctx.routeRate * r;
+            butterworthLowpass(busCtx.routeRate, kShelfCornerHz, busCtx.shelfLp);
+            float* bouts[64]{};
+            float* bwets[64]{};
+            while (bus.fill < needed)
+            {
+                const int k = juce::jmin(RenderPool::kFrames, needed - bus.fill);
+                busCtx.numSamples = k;
+                for (int c = 0; c < usableOuts; ++c)
+                {
+                    bouts[c] = bus.fifo[c].data() + bus.fill;
+                    bwets[c] = bus.wet.data() + (size_t)c * kMaxBlockFrames;
+                }
+                for (int ci = 0; ci < ctx.outCount; ++ci)
+                {
+                    const int ch = ctx.outChannels[ci];
+                    if (ch < 0 || ch >= usableOuts) continue;
+                    juce::FloatVectorOperations::clear(bouts[ch], k);
+                    juce::FloatVectorOperations::clear(bwets[ch], k);
+                }
+                if (!bus.list.empty())
+                {
+                    pool->render(bus.list.data(), (int)bus.list.size(), voices.get(), busCtx, bouts, bwets, usableOuts, sink, laneLimit, otherAudioThreads);
+                    if (busCtx.shelfEnabled)
+                        for (int ci = 0; ci < ctx.outCount; ++ci)
+                        {
+                            const int ch = ctx.outChannels[ci];
+                            if (ch >= 0 && ch < usableOuts) applyShelfLowpass(bwets[ch], bouts[ch], k, busCtx.shelfLp, bus.shelfState[ch]);
+                        }
+                }
+                bus.fill += k;
+            }
+        }
+        for (int ci = 0; ci < ctx.outCount; ++ci)
+        {
+            const int ch = ctx.outChannels[ci];
+            if (ch < 0 || ch >= usableOuts) continue;
+            const float* f = bus.fifo[ch].data();
+            float* o = outs[ch];
+            double pos = bus.readPos;
+            for (int i = 0; i < n; ++i, pos += r)
+            {
+                const int idx = (int)pos;
+                if (idx + half >= bus.fill || idx < half - 1) break;
+                const int phase = juce::jmin(kBusPhases - 1, (int)((pos - (double)idx) * kBusPhases));
+                const float* h = bus.table.data() + (size_t)phase * kBusTaps;
+                const float* x = f + idx - (half - 1);
+                float acc = 0.0f;
+                for (int t = 0; t < kBusTaps; ++t) acc += x[t] * h[t];
+                o[i] += acc;
+            }
+        }
+        bus.readPos += (double)n * r;
+    }
     // Message thread or control lock holder only; may allocate.
     Route* ensureRoute(int manual, const juce::String& perspectiveIn)
     {
@@ -3860,7 +4064,7 @@ struct SamplerEngine::Impl
 
     // Publishes a copy of a just-prepared voice into the auxiliary route; the
     // sample-count fields follow the auxiliary device's rate.
-    void duplicateVoiceToAux(const Voice& v, int manual, double mainRate, double now)
+    void duplicateVoiceToAux(const Voice& v, int manual, double mainRate, double now, float busCents = 0.0f)
     {
         const int mainIndex = v.routeIndex;
         Route* aux = auxRouteFor(manual, mainIndex, now);
@@ -3869,11 +4073,13 @@ struct SamplerEngine::Impl
         uint32_t idx = 0;
         Voice* copy = allocVoice(idx);
         if (copy == nullptr) return;
-        const double auxRate = juce::jmax(1.0, aux->sampleRate.load(std::memory_order_relaxed));
+        const int auxBus = busFor(*aux, busCents);
+        const double auxRate = juce::jmax(1.0, aux->sampleRate.load(std::memory_order_relaxed)) * (auxBus > 0 ? aux->buses[auxBus - 1].ratio : 1.0);
         const double scale = auxRate / juce::jmax(1.0, mainRate);
         Voice& w = *copy;
         w.sample = v.sample; w.stop = v.stop; w.rank = v.rank;
         w.routeIndex = routeIndexOf(aux);
+        w.bus = (uint8_t)auxBus;
         w.sourceKey = v.sourceKey; w.manual = v.manual; w.note = v.note; w.keyNote = v.keyNote;
         w.sampleNote = v.sampleNote; w.shift = v.shift; w.cubic = v.cubic;
         w.windPitchVar = v.windPitchVar; w.windGainVar = v.windGainVar; w.tremBucket = v.tremBucket;
@@ -4576,7 +4782,7 @@ struct SamplerEngine::Impl
         v.windFrozen = false; v.frozenWindPitch = 0.0f; v.frozenWindGain = v.lastWindGain = v.initialWindGain = 1.0f;
         v.curWindGain.store(1.0f, std::memory_order_relaxed);
         std::fill(&v.shelfState[0][0], &v.shelfState[0][0] + 8, 0.0f); v.lastShelf = v.shelfSmoothed = 0.0f;
-        v.keyNote = v.sampleNote = 0; v.shift = 0; v.cubic = false;
+        v.keyNote = v.sampleNote = 0; v.shift = 0; v.cubic = false; v.bus = 0;
         v.shiftCents.store(0.0f, std::memory_order_relaxed);
         v.routeGainTarget.store(1.0f, std::memory_order_relaxed);
         v.routeGain = v.routeGainFrom = v.routeGainLastTarget = 1.0f;
@@ -5330,12 +5536,16 @@ struct SamplerEngine::Impl
                     uint32_t idx = 0;
                     Voice* voice = allocVoice(idx);
                     if (voice == nullptr) return;
-                    const double rate = juce::jmax(1.0, route.sampleRate.load(std::memory_order_relaxed));
+                    const float busCents = commonRetuneCents(stop, rank);
+                    const int bus = busFor(route, busCents);
+                    // On a bus the voice renders at the route rate x the bus ratio: its frame counts follow.
+                    const double rate = juce::jmax(1.0, route.sampleRate.load(std::memory_order_relaxed)) * (bus > 0 ? route.buses[bus - 1].ratio : 1.0);
                     Voice& v = *voice;
                     v.sample = sampleToPlay;
                     v.stop = stop;
                     v.rank = rank;
                     v.routeIndex = routeIndex;
+                    v.bus = (uint8_t)bus;
                     v.sourceKey = (int16_t)sourceKey;
                     v.manual = (int8_t)expressionManual;
                     v.note = (uint8_t)pipe;
@@ -5406,7 +5616,7 @@ struct SamplerEngine::Impl
                     const int degrees = juce::roundToInt((stop->tremulantOrdinal % 2) * 7.0f + (rankOrdinal + stop->groupChildOrdinal) * rankDrift);   // stops differ by at most 7 degrees; a stop folder's children drift apart like ranks (0.8.128)
                     v.tremBucket = (uint8_t)((((degrees % 360) + 360) % 360) * kTremBuckets / 360);
                     v.startFrozen = false;
-                    duplicateVoiceToAux(v, expressionManual, rate, nowMs());   // the division's downmix route
+                    duplicateVoiceToAux(v, expressionManual, rate, nowMs(), busCents);   // the division's downmix route
                     publishVoice(idx, route);
                     rank->speaking.set((size_t)pipe);
                 };
@@ -5604,12 +5814,15 @@ struct SamplerEngine::Impl
             uint32_t idx = 0;
             Voice* voice = allocVoice(idx);
             if (voice == nullptr) return;
-            const double rate = juce::jmax(1.0, route.sampleRate.load(std::memory_order_relaxed));
+            const float busCents = commonRetuneCents(stop, rank);
+            const int bus = busFor(route, busCents);
+            const double rate = juce::jmax(1.0, route.sampleRate.load(std::memory_order_relaxed)) * (bus > 0 ? route.buses[bus - 1].ratio : 1.0);
             Voice& v = *voice;
             v.sample = releaseSample;
             v.stop = stop;
             v.rank = rank;
             v.routeIndex = routeIndex;
+            v.bus = (uint8_t)bus;
             if (releasePreShifted)
             {
                 // A filled pipe's release copy: it starts past the trimmed milliseconds (the
@@ -5666,7 +5879,7 @@ struct SamplerEngine::Impl
                 const double lengthMs = 1000.0 * (double)releaseSample->numFrames / releaseSample->sampleRate;
                 startFade(v, (float)(lengthMs * cutPercent / 100.0), rate, false);
             }
-            duplicateVoiceToAux(v, expressionManual, rate, now);
+            duplicateVoiceToAux(v, expressionManual, rate, now, busCents);
             publishVoice(idx, route);
         };
         releaseRank(stop, 0);
@@ -6061,20 +6274,38 @@ struct SamplerEngine::Impl
         // Other device threads rendering now (counted with the load below): the
         // worker pool leaves them their CPUs.
         const int otherAudioThreads = juce::jmax(0, activeAudioThreads.load(std::memory_order_relaxed) - 1);
+        // Retune buses (0.8.163): the voices split into the route's own list and
+        // one list per bus; a route without a bus takes the path it always took.
+        const bool busing = route.anyBus.load(std::memory_order_acquire);
+        if (busing)
+        {
+            route.direct.clear();
+            for (auto& bus : route.buses) bus.list.clear();
+            for (const uint32_t idx : route.active)
+            {
+                const uint8_t b = voices[idx].bus;
+                if (b >= 1 && b <= kMaxBuses && route.buses[b - 1].ready.load(std::memory_order_relaxed)) route.buses[b - 1].list.push_back(idx);
+                else route.direct.push_back(idx);
+            }
+        }
+        const std::vector<uint32_t>& directList = busing ? route.direct : route.active;
 
         for (int offset = 0; offset < totalSamples; offset += RenderPool::kFrames)
         {
             const int n = juce::jmin(RenderPool::kFrames, totalSamples - offset);
             buildBlockContext(route, ctx, n, usableOuts, outputGain, now + 1000.0 * offset / ctx.routeRate);
             for (int c = 0; c < usableOuts; ++c) outs[c] = buffer.getWritePointer(c) + offset;
-            if (!route.active.empty())
+            if (busing)
+                for (auto& bus : route.buses)
+                    if (bus.ready.load(std::memory_order_relaxed)) renderBus(bus, ctx, n, outs, usableOuts, sink, laneLimit, otherAudioThreads);
+            if (!directList.empty())
             {
                 for (int ci = 0; ci < ctx.outCount; ++ci)
                 {
                     const int ch = ctx.outChannels[ci];
                     if (ch >= 0 && ch < usableOuts) juce::FloatVectorOperations::clear(wets[ch], n);
                 }
-                pool->render(route.active.data(), (int)route.active.size(), voices.get(), ctx, outs, wets, usableOuts, sink,
+                pool->render(directList.data(), (int)directList.size(), voices.get(), ctx, outs, wets, usableOuts, sink,
                     laneLimit, otherAudioThreads);
                 // The harmonic filter of the whole route: the voices' wet shares
                 // low-passed once per channel and added to the output (see LaneOutputs).

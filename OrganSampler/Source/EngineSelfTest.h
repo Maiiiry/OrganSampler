@@ -558,6 +558,13 @@ namespace EngineSelfTest
                 // |late: the transposition applied AFTER the transmission exists (the GUI's
                 // order when the box is changed on a stop that has extensions).
                 const bool late = parts.size() > 6 && parts[6] == "late";
+                // |pitch=<cents>: the global pitch (a retune bus beyond 25 cents, 0.8.163).
+                for (int i = 6; i < parts.size(); ++i)
+                    if (parts[i].startsWith("pitch="))
+                    {
+                        engine.setGlobalPitchCents(parts[i].fromFirstOccurrenceOf("=", false, false).getFloatValue());
+                        report << "RENDER: global pitch " << parts[i].fromFirstOccurrenceOf("=", false, false) << " cents\n";
+                    }
                 for (auto* stop : engine.getStops()) engine.setStopEnabled(stop, stop == target);
                 auto applyOffset = [&]
                 {
