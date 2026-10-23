@@ -12,6 +12,21 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.156] - 2026-10-23
+
+### Fixed
+- Changing "Files vs keys" while the stop sounded crashed the program (the
+  voices read the samples being replaced): every voice is stopped first, as
+  removing a stop does.
+- A folder with more keys than the division's keyboard (six octaves on a
+  five-octave manual) is voiced whole: the per-key rows of a stop cover the
+  compass and every key the folder holds, and a coupler reaches those keys -
+  the engine no longer silences a note beyond the compass (the compass
+  applies to the physical key alone, in the keyboard routing).
+- Every key's tooltip in the voicing names the sample file it plays, pipes of
+  their own included ("Files vs keys" made the number in the name and the key
+  two different things).
+
 ## [0.8.155] - 2026-10-22
 
 ### Added

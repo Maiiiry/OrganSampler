@@ -4998,8 +4998,9 @@ struct SamplerEngine::Impl
     // (an extension ends with the compass). Keys without a division are not limited.
     bool keyHeldInCompass(int note, int manualIndex) const noexcept
     {
-        if (note < 0 || note >= 128 || heldVelocity[(size_t)makeSourceKey(note, manualIndex)] < 0) return false;
-        return keyInCompass(note, manualIndex);
+        // 0.8.156: a held key counts wherever it lies - the keys a coupler holds
+        // beyond the compass sound now, so their pipes are held like any other.
+        return note >= 0 && note < 128 && heldVelocity[(size_t)makeSourceKey(note, manualIndex)] >= 0;
     }
     bool keyInCompass(int note, int manualIndex) const noexcept
     {
@@ -5228,7 +5229,9 @@ struct SamplerEngine::Impl
     void startNote(int midiNote, int velocity, int manualIndex, int sourceKey)
     {
         if (midiNote < 0 || midiNote >= 128) return;
-        if (!keyInCompass(midiNote, manualIndex)) return;   // outside the division's compass: silent
+        // No compass here (0.8.156): the keyboard's compass is the owner's business
+        // (a physical key outside it is not routed); a note a coupler puts beyond
+        // the compass plays the pipe the folder has there (six-octave folders).
         int engagedStopCount = 0;
         for (auto* candidate : owner.stops)
             if (stopAssignedToManual(candidate, manualIndex)) ++engagedStopCount;
@@ -11608,6 +11611,20 @@ void SamplerEngine::reloadStopSamples(Stop* stop, bool evenIfLoaded)
     if (stop == nullptr || (!stop->samplesUnloaded && !evenIfLoaded)) return;
     BuildPause buildLock(*this);   // a background build may still read the old samples (it stops at its next pipe)
     loadOutOfMemory.store(false, std::memory_order_relaxed);
+    if (evenIfLoaded)
+    {
+        // The stop sounds, maybe: its voices read the samples that are about to go
+        // (0.8.155 crashed in renderVoiceSpans when "Files vs keys" changed while a
+        // key was held). Every voice is killed first, as removing a stop does.
+        impl->clearMidi();
+        impl->suspend();
+        {
+            const juce::ScopedLock sl(controlLock);
+            impl->killAllVoices();
+            impl->resetAllVoicesUnsafe();
+        }
+        impl->resume();
+    }
     // Decode into detached stand-ins first, then swap the sample lists in while
     // the engine is suspended; the live Stop objects stay where they are.
     std::vector<std::pair<Stop*, std::unique_ptr<Stop>>> staged;

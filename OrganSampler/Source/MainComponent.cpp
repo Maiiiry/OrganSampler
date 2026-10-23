@@ -2575,6 +2575,13 @@ void MainComponent::recomputeCouplersForSource(int sourceManual, int changedNote
 void MainComponent::routeKeyboardNote(int manual, int note, int velocity, bool isOn)
 {
     if (manual < 0 || manual > manualCount || note < 0 || note >= 128) return;
+    // The keyboard's compass applies to the physical key alone (0.8.156): the engine
+    // no longer silences notes beyond it, so that a coupler reaches the pipes a
+    // folder holds past the keyboard (six-octave folders on a five-octave manual).
+    {
+        const auto& config = manualConfigs[(size_t)manual];
+        if (note < config.compassLow || note > config.compassHigh) return;
+    }
     const juce::ScopedLock lock(couplerLock);
     auto& held = physicallyHeldNotes[(size_t)manual];
     // The division's own pitch normally goes through its "Unison Off" entry of the
@@ -13545,7 +13552,7 @@ void MainComponent::applyStopGroups()
                 {
                     stop->groupMaster = master;
                     stop->groupMasterPtr = masterStop;
-                    stop->groupChildOrdinal = childOrdinal;
+                    stop->groupChildOrdinal = childOrdinal;   // the tremulant phase: the master 0, its children 1, 2 ... (x rank drift)
                 }
         }
     }

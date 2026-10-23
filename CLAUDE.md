@@ -3,6 +3,12 @@
 The user writes Czech; answer in Czech; append a closing report to `OrganSampler/CLAUDE_REPORTS.md`
 (the copy on the NTFS disk: `F:\JUCE_PROJEKTY\OrganSamplerC` = `/mnt/pracovni/JUCE_PROJEKTY/OrganSamplerC`).
 
+## Never change what you need not change
+- The user's rule (23 Oct 2026, "Nikdy neměň něco, co nemusíš!"): a fix touches the lines of the fault and nothing
+  else - no renaming, no "while I am here" rewrites, no new defaults, no changed texts or separators. When a change
+  outside the fault seems needed, say so first. The automatic stop name "A / B" (two perspectives with differently
+  named folders) dates from the first commit, not from a session - before blaming a session, `git blame` the line.
+
 ## Icons - do not touch without asking
 - The icon set is one per size and lives in git: `OrganSampler/Source/Icons/icon-{16,24,32,48,64,128,256}.png`
   (16-128 hand-tuned: outlines, the smallest with thick pipes; 256 the picture), `OrganSampler/Source/AppIcon.png`
@@ -389,6 +395,17 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   available" box of the user's Doesburg configuration (its routes are Windows Audio) for a screenshot on Wayland, where
   nothing else can click (no xdotool). Website 0.8.151: `site/assets/main.png` = the console with Doesburg Surround
   (the user: "jen na první okno", the Stop List / Divisions / Editor pictures stay; README.md keeps console-stralsund.png).
+  0.8.156: the engine's `startNote` no longer checks `keyInCompass` and `keyHeldInCompass` ignores the compass - the
+  compass is applied in `MainComponent::routeKeyboardNote` to the physical key only; coupled notes beyond the compass
+  play the folder's pipes (001313: files 024-096 on a 36-96 manual). The voicing rows of a stop span the compass
+  AND its own sample range (`makeStopRow`, `widestCompass`). `reloadStopSamples(stop, true)` kills every voice first
+  (crash 23 Oct 03:08: renderVoiceSpans on freed samples after a "Files vs keys" change while a key was held).
+  The key tooltips name the file for pipes of their own too. Tremulant rank drift of a stop folder: the master's
+  logical stop has `groupChildOrdinal` 0 and its children 1, 2 ... (applyStopGroups) - the phase code at the voice
+  start uses the LOGICAL stop's ordinal plus the perspective rank's ordinal, so a master with pipes of its own and
+  its child differ by one rank drift; nothing was changed there. The sample folder chooser is the OS's own dialog
+  (`FileChooser(..., true)`): its behaviour on "up" is Windows', not ours. Test configuration: D:\Hauptwerk\...\
+  OrganConfigurations\Pokusny.json (tree 001313: stop folders with own pipes, "Files vs keys" -12 on quintaton).
   0.8.155 FILES VS KEYS (#76): the number in a sample's file name is NOT always the key. Doesburg (Sonus Paradisi)
   names the file of key 36 "024" on 232 of 244 ranks (Caen, Beziers, Ashton: 0) - the ODF's `Pipe_SoundEngine01`
   NormalMIDINoteNumber (d) is the key, the Sample row's file name carries the number; our loader took the number as

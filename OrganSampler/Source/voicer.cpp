@@ -780,6 +780,28 @@ StopRow::StopRow(Stop* stop, SamplerEngine& engine, int noteMin, int noteMax, in
                 toneNameLabel->setTooltip(tip);
                 numLabel->setTooltip(tip);
             }
+            else
+            {
+                // A pipe of its own: the file it plays (0.8.156, "Files vs keys" made the
+                // number in the name and the key two different things).
+                juce::String file;
+                for (const auto* rank : rankSources)
+                {
+                    if (rank == nullptr || pipe < 0 || pipe >= 128) continue;
+                    for (const auto& sample : rank->samplesByNote[(size_t)pipe])
+                        if (sample != nullptr && sample->fileName.isNotEmpty()) { file = sample->fileName; break; }
+                    if (file.isNotEmpty()) break;
+                }
+                if (file.isNotEmpty())
+                {
+                    const juce::String tip = stop->displayName() + ", sample " + file + " on key " + juce::String(pipe);
+                    slider->setTooltip(tip);
+                    tone->setTooltip(tip);
+                    nameLabel->setTooltip(tip);
+                    toneNameLabel->setTooltip(tip);
+                    numLabel->setTooltip(tip);
+                }
+            }
             // An orange note name (the shade of every emphasised text): the sample
             // that sounds here has no loop in its smpl chunk.
             if (!stop->noteHasLoopInAnyRank(source))
@@ -2436,6 +2458,15 @@ void Voicer::layoutScreen(int screen, juce::Component& container, juce::Viewport
     {
         const auto compass = compassOf(manual);
         widestCompass = juce::jmax(widestCompass, compass.second - compass.first + 1);
+        // ... and the keys beyond it that a stop's folder holds (its rows show them).
+        for (auto* stop : engine.getStops())
+            if (stop != nullptr && stop->primaryManual == manual)
+            {
+                int first = compass.first, last = compass.second;
+                for (int note = 0; note < 128; ++note)
+                    if (stop->hasNoteInAnyRank(note)) { first = juce::jmin(first, note); last = juce::jmax(last, note); }
+                widestCompass = juce::jmax(widestCompass, last - first + 1);
+            }
     }
     const int voicingWidth = juce::jmax(topControlsWidth, margin * 2 + widestCompass * sliderWidth);
     const int wideWidth = juce::jmax(availableExpanded, voicingWidth);
@@ -2499,7 +2530,14 @@ void Voicer::layoutScreen(int screen, juce::Component& container, juce::Viewport
         const auto compass = compassOf(manual);
         auto makeStopRow = [&](Stop* stop, const juce::String& key, int transmissionIndex)
         {
-            auto row = std::make_unique<StopRow>(stop, engine, compass.first, compass.second, sliderWidth,
+            // The per-key rows of a stop cover the division's compass AND every key
+            // the folder holds a sample for (0.8.156: a six-octave folder on a
+            // five-octave keyboard - the couplers reach those keys, so they are voiced).
+            auto range = compass;
+            if (transmissionIndex < 0 && stop != nullptr)
+                for (int note = 0; note < 128; ++note)
+                    if (stop->hasNoteInAnyRank(note)) { range.first = juce::jmin(range.first, note); range.second = juce::jmax(range.second, note); }
+            auto row = std::make_unique<StopRow>(stop, engine, range.first, range.second, sliderWidth,
                 midiLearnCallback, [this](Stop* target)
                 { scrollTarget = target; if (uiContainer != nullptr && uiViewport != nullptr) rebuildUI(*uiContainer, *uiViewport); },
                 activeManualCount, stateChanged, transmissionIndex);
