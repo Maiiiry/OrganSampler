@@ -293,6 +293,12 @@ namespace EngineSelfTest
             engine.setRenderThreadCount(juce::String(env).getIntValue());
         if (const char* env = std::getenv("ORGAN_NO_SIMD"))
             engine.setSimdDisabled(juce::String(env).getIntValue() != 0);
+        // ORGAN_SINC_FROM_HZ=<Hz>: the sinc playback kernel from this sounding pitch up (0 = every pipe; 0.8.164).
+        if (const char* env = std::getenv("ORGAN_SINC_FROM_HZ"))
+        {
+            engine.setSincKernelFromHz(juce::String(env).getFloatValue());
+            report << "Sinc kernel from " << juce::String(engine.getSincKernelFromHz(), 0) << " Hz (ORGAN_SINC_FROM_HZ)\n";
+        }
         if (const char* env = std::getenv("ORGAN_NO_TONEFILTER"))
             if (juce::String(env).getIntValue() != 0) engine.setHarmonicFilterDb(0.0f, 0.0f, 0.0f);
         // ORGAN_SELFTEST_RELEASE_CUT=<percent>: release cutting (shorter releases, more polyphony).
@@ -560,11 +566,34 @@ namespace EngineSelfTest
                 const bool late = parts.size() > 6 && parts[6] == "late";
                 // |pitch=<cents>: the global pitch (a retune bus beyond 25 cents, 0.8.163).
                 for (int i = 6; i < parts.size(); ++i)
+                {
                     if (parts[i].startsWith("pitch="))
                     {
                         engine.setGlobalPitchCents(parts[i].fromFirstOccurrenceOf("=", false, false).getFloatValue());
                         report << "RENDER: global pitch " << parts[i].fromFirstOccurrenceOf("=", false, false) << " cents\n";
                     }
+                    // |sinc=<Hz>: the sinc playback kernel from this sounding fundamental up (0 = all, 20000 = none; 0.8.164).
+                    if (parts[i].startsWith("sinc="))
+                    {
+                        engine.setSincKernelFromHz(parts[i].fromFirstOccurrenceOf("=", false, false).getFloatValue());
+                        report << "RENDER: sinc kernel from " << parts[i].fromFirstOccurrenceOf("=", false, false) << " Hz\n";
+                    }
+                    // |pure: no random detune, no tremulant, no pipe coupling - the kernel alone.
+                    if (parts[i] == "pure")
+                    {
+                        engine.setStopRandomPitchError(target, 0.0f, false);
+                        for (int m = 0; m < divisions; ++m) engine.setManualTremulant(m, false, 4.4f, 8.0f, 260.0f);
+                        report << "RENDER: pure (no random detune, no tremulant, no coupling)\n";
+                    }
+                    // |temper=<cents>: every pitch class but A retuned by this (a temperament's worst case, stays in the voice).
+                    if (parts[i].startsWith("temper="))
+                    {
+                        const float c = parts[i].fromFirstOccurrenceOf("=", false, false).getFloatValue();
+                        std::array<float, 12> cents{}; for (int pc = 0; pc < 12; ++pc) cents[(size_t)pc] = pc == 9 ? 0.0f : c;
+                        engine.setTemperamentOffsets(cents);
+                        report << "RENDER: temperament offsets " << juce::String(c, 1) << " cents on every class but A\n";
+                    }
+                }
                 for (auto* stop : engine.getStops()) engine.setStopEnabled(stop, stop == target);
                 auto applyOffset = [&]
                 {

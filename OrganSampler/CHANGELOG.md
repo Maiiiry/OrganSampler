@@ -12,6 +12,26 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.164] - 2026-10-23
+
+### Added
+- **Full kernel from (sounding pitch)** (Configuration Editor > Engine,
+  default 3000 Hz, this computer's setting): every pipe whose sounding
+  fundamental lies at or above it plays through the 8-tap windowed-sinc
+  kernel for its whole length, loop splices included, instead of the
+  two-point linear one. The linear kernel leaves an image of a retuned high
+  tone below its fundamental - 48000 x (ratio - 1) Hz under it, -26 dB: a
+  foreign tone, heard when Equal at 440 Hz or a temperament retunes a high
+  pipe by 10-20 cents; the sinc puts it below -44 dB (measured on a pipe at
+  8.8 kHz retuned by 20 cents: the tone 511 Hz under it from -25 dB to
+  nothing). 0 gives the sinc to every pipe (three to five times the work per
+  voice - the kerneltest prints this CPU's figure -, for a computer with CPU
+  to spare), 20000 switches it off; the
+  slider is logarithmic so the low end is reachable. The sinc kernel is
+  vectorised (AVX2, SSE2, NEON; the kerneltest compares each with the
+  scalar one) and its phase table is interpolated, which also improves the
+  heads of the samples stored below the route's rate.
+
 ## [0.8.163] - 2026-10-23
 
 ### Fixed

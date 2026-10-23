@@ -932,6 +932,7 @@ namespace
         uint8_t sampleNote = 0;           // the pipe whose sample is used (differs beyond the compass)
         int8_t shift = 0;                 // transposition of the route that started it
         uint8_t bus = 0;                  // retune bus of its route (1..kMaxBuses) or 0: rendered straight into the route (0.8.163)
+        bool fullKernel = false;          // a high pipe (sounding fundamental >= sincKernelFromHz): the 8-tap sinc kernel for its whole length (0.8.164)
         bool cubic = false;               // filled pipe resampled by semitones: cubic interpolation
         bool preShifted = false;          // filled pipe playing a pitch-shifted copy at unity (its shiftCents lack the semitones)
         uint8_t windPitchVar = 0, windGainVar = 0, tremBucket = 0;
@@ -1473,13 +1474,21 @@ namespace
     };
     const PlaySincTable& playSincTable() { static const PlaySincTable table; return table; }
 
+    // The coefficients of a phase, interpolated between the two nearest rows
+    // (0.8.164): the nearest row alone (128 phases) stepped the position by up
+    // to 1/256 frame, a sawtooth error that put a sideband 48000 x (ratio - 1) Hz
+    // under a 9 kHz tone at -41 dB - the very tone the sinc is there to remove.
     template <typename T>
     inline float sincAt(const float (*table)[PlaySincTable::taps], const T* s, uint32_t idx, float frac) noexcept
     {
-        const float* h = table[(int)(frac * (float)(PlaySincTable::phases - 1) + 0.5f)];
+        const float fp = frac * (float)(PlaySincTable::phases - 1);
+        const int q = (int)fp;
+        const float w = fp - (float)q;
+        const float* h = table[q];
+        const float* h2 = table[q + 1 < PlaySincTable::phases ? q + 1 : q];
         const T* p = s + idx - 3;
         float acc = 0.0f;
-        for (int k = 0; k < PlaySincTable::taps; ++k) acc += (float)p[k] * h[k];
+        for (int k = 0; k < PlaySincTable::taps; ++k) acc += (float)p[k] * (h[k] + (h2[k] - h[k]) * w);
         return acc;
     }
 
@@ -2160,6 +2169,321 @@ namespace
        #endif
     }
 
+    //--------------------------------------------------------------------------
+    // The 8-tap sinc in SIMD (0.8.164): an output frame is eight taps (idx - 3 ..
+    // idx + 4) times the eight coefficients of its phase, summed. Scalar it was
+    // 13 ns a frame (0.8.148: Doesburg 45 400 -> 15 900 voices with every 32 kHz
+    // attack through it); vectorised it serves every high pipe (fullKernel).
+   #if ENGINE_HAS_AVX2_KERNELS
+    ENGINE_AVX2_FN inline __m256 avx2SincTaps(const int16_t* p) noexcept { return _mm256_cvtepi32_ps(_mm256_cvtepi16_epi32(_mm_loadu_si128((const __m128i*)p))); }
+    ENGINE_AVX2_FN inline __m256 avx2SincTaps(const float* p) noexcept { return _mm256_loadu_ps(p); }
+    ENGINE_AVX2_FN inline float avx2Sum8(__m256 v) noexcept
+    {
+        __m128 s = _mm_add_ps(_mm256_castps256_ps128(v), _mm256_extractf128_ps(v, 1));
+        s = _mm_add_ps(s, _mm_movehl_ps(s, s));
+        s = _mm_add_ss(s, _mm_shuffle_ps(s, s, 1));
+        return _mm_cvtss_f32(s);
+    }
+    // The eight coefficients of a position: the two nearest phase rows blended (see sincAt).
+    ENGINE_AVX2_FN inline __m256 avx2SincCoeffs(const float (*table)[PlaySincTable::taps], uint64_t p) noexcept
+    {
+        const float fp = fracOf(p) * (float)(PlaySincTable::phases - 1);
+        const int q = (int)fp;
+        const __m256 h = _mm256_loadu_ps(table[q]);
+        const __m256 h2 = _mm256_loadu_ps(table[q + 1 < PlaySincTable::phases ? q + 1 : q]);
+        return _mm256_add_ps(h, _mm256_mul_ps(_mm256_sub_ps(h2, h), _mm256_set1_ps(fp - (float)q)));
+    }
+    template <typename T>
+    ENGINE_AVX2_FN inline void kernelMonoSincAvx2(const T* s, float* out, int n, uint64_t& pos, int64_t& inc, int64_t incStep, float g, float gStep) noexcept
+    {
+        const auto& table = playSincTable().h;
+        for (int i = 0; i < n; ++i)
+        {
+            const uint32_t idx = (uint32_t)(pos >> 32);
+            out[i] += avx2Sum8(_mm256_mul_ps(avx2SincTaps(s + idx - 3), avx2SincCoeffs(table, pos))) * g;
+            g += gStep;
+            pos += (uint64_t)inc;
+            inc += incStep;
+        }
+        _mm256_zeroupper();
+    }
+    template <typename T>
+    ENGINE_AVX2_FN inline void kernelStereoSincAvx2(const T* s0, const T* s1, float* out0, float* out1, int n,
+        uint64_t& pos, int64_t& inc, int64_t incStep, float g, float gStep) noexcept
+    {
+        const auto& table = playSincTable().h;
+        for (int i = 0; i < n; ++i)
+        {
+            const uint32_t idx = (uint32_t)(pos >> 32);
+            const __m256 h = avx2SincCoeffs(table, pos);
+            out0[i] += avx2Sum8(_mm256_mul_ps(avx2SincTaps(s0 + idx - 3), h)) * g;
+            out1[i] += avx2Sum8(_mm256_mul_ps(avx2SincTaps(s1 + idx - 3), h)) * g;
+            g += gStep;
+            pos += (uint64_t)inc;
+            inc += incStep;
+        }
+        _mm256_zeroupper();
+    }
+   #endif
+   #if ENGINE_HAS_LANE4_KERNELS
+    inline Lane4::F lane4SincTaps(const int16_t* p) noexcept
+    {
+       #if ENGINE_X86
+        return _mm_cvtepi32_ps(_mm_srai_epi32(_mm_unpacklo_epi16(_mm_setzero_si128(), _mm_loadl_epi64((const __m128i*)p)), 16));
+       #else
+        return vcvtq_f32_s32(vmovl_s16(vld1_s16(p)));
+       #endif
+    }
+    inline Lane4::F lane4SincTaps(const float* p) noexcept { return Lane4::loadF(p); }
+    inline float lane4Sum(Lane4::F v) noexcept
+    {
+       #if ENGINE_X86
+        __m128 s = _mm_add_ps(v, _mm_movehl_ps(v, v));
+        s = _mm_add_ss(s, _mm_shuffle_ps(s, s, 1));
+        return _mm_cvtss_f32(s);
+       #else
+        return vaddvq_f32(v);
+       #endif
+    }
+    // The eight coefficients of a position as two lanes of four (the two nearest phase rows blended, see sincAt).
+    inline void lane4SincCoeffs(const float (*table)[PlaySincTable::taps], uint64_t p, Lane4::F& lo, Lane4::F& hi) noexcept
+    {
+        const float fp = fracOf(p) * (float)(PlaySincTable::phases - 1);
+        const int q = (int)fp;
+        const float* h = table[q];
+        const float* h2 = table[q + 1 < PlaySincTable::phases ? q + 1 : q];
+        const Lane4::F w = Lane4::splat(fp - (float)q);
+        const Lane4::F a = Lane4::loadF(h), b = Lane4::loadF(h + 4);
+        lo = Lane4::add(a, Lane4::mul(Lane4::sub(Lane4::loadF(h2), a), w));
+        hi = Lane4::add(b, Lane4::mul(Lane4::sub(Lane4::loadF(h2 + 4), b), w));
+    }
+    template <typename T>
+    inline float lane4SincAt(Lane4::F lo, Lane4::F hi, const T* p) noexcept
+    {
+        return lane4Sum(Lane4::add(Lane4::mul(lane4SincTaps(p), lo), Lane4::mul(lane4SincTaps(p + 4), hi)));
+    }
+    template <typename T>
+    inline void kernelMonoSincLane4(const T* s, float* out, int n, uint64_t& pos, int64_t& inc, int64_t incStep, float g, float gStep) noexcept
+    {
+        const auto& table = playSincTable().h;
+        for (int i = 0; i < n; ++i)
+        {
+            const uint32_t idx = (uint32_t)(pos >> 32);
+            Lane4::F lo, hi;
+            lane4SincCoeffs(table, pos, lo, hi);
+            out[i] += lane4SincAt(lo, hi, s + idx - 3) * g;
+            g += gStep;
+            pos += (uint64_t)inc;
+            inc += incStep;
+        }
+    }
+    template <typename T>
+    inline void kernelStereoSincLane4(const T* s0, const T* s1, float* out0, float* out1, int n,
+        uint64_t& pos, int64_t& inc, int64_t incStep, float g, float gStep) noexcept
+    {
+        const auto& table = playSincTable().h;
+        for (int i = 0; i < n; ++i)
+        {
+            const uint32_t idx = (uint32_t)(pos >> 32);
+            Lane4::F lo, hi;
+            lane4SincCoeffs(table, pos, lo, hi);
+            out0[i] += lane4SincAt(lo, hi, s0 + idx - 3) * g;
+            out1[i] += lane4SincAt(lo, hi, s1 + idx - 3) * g;
+            g += gStep;
+            pos += (uint64_t)inc;
+            inc += incStep;
+        }
+    }
+   #endif
+    // The loop splices of a high pipe through the sinc as well (0.8.164): a copy
+    // of a filled pipe spends up to 40 % of its loop in the crossfade (the setting),
+    // and a linear splice there left the image standing for that share.
+    template <typename T>
+    inline void kernelMonoXfSinc(const T* s, float* out, int n, uint64_t& pos, int64_t& inc,
+        int64_t incStep, float g, float gStep, int64_t headOffset, float t, float dt) noexcept
+    {
+        const auto& table = playSincTable().h;
+        for (int i = 0; i < n; ++i)
+        {
+            const float main = sincAt(table, s, (uint32_t)(pos >> 32), fracOf(pos));
+            const uint64_t hp = pos + (uint64_t)headOffset;
+            const float head = sincAt(table, s, (uint32_t)(hp >> 32), fracOf(hp));
+            const float tt = juce::jlimit(0.0f, 1.0f, t);
+            const float mix = tt * tt * (3.0f - 2.0f * tt);
+            out[i] += (main + (head - main) * mix) * g;
+            g += gStep; t += dt;
+            pos += (uint64_t)inc;
+            inc += incStep;
+        }
+    }
+    template <typename T>
+    inline void kernelStereoXfSinc(const T* s0, const T* s1, float* out0, float* out1, int n,
+        uint64_t& pos, int64_t& inc, int64_t incStep, float g, float gStep, int64_t headOffset, float t, float dt) noexcept
+    {
+        const auto& table = playSincTable().h;
+        for (int i = 0; i < n; ++i)
+        {
+            const uint32_t idx = (uint32_t)(pos >> 32);
+            const float frac = fracOf(pos);
+            const uint64_t hp = pos + (uint64_t)headOffset;
+            const uint32_t hidx = (uint32_t)(hp >> 32);
+            const float hfrac = fracOf(hp);
+            const float tt = juce::jlimit(0.0f, 1.0f, t);
+            const float mix = tt * tt * (3.0f - 2.0f * tt);
+            const float m0 = sincAt(table, s0, idx, frac), m1 = sincAt(table, s1, idx, frac);
+            const float h0 = sincAt(table, s0, hidx, hfrac), h1 = sincAt(table, s1, hidx, hfrac);
+            out0[i] += (m0 + (h0 - m0) * mix) * g;
+            out1[i] += (m1 + (h1 - m1) * mix) * g;
+            g += gStep; t += dt;
+            pos += (uint64_t)inc;
+            inc += incStep;
+        }
+    }
+   #if ENGINE_HAS_AVX2_KERNELS
+    template <typename T>
+    ENGINE_AVX2_FN inline float avx2SincAt(const float (*table)[PlaySincTable::taps], const T* s, uint64_t p) noexcept
+    {
+        return avx2Sum8(_mm256_mul_ps(avx2SincTaps(s + (uint32_t)(p >> 32) - 3), avx2SincCoeffs(table, p)));
+    }
+    template <typename T>
+    ENGINE_AVX2_FN inline void kernelMonoXfSincAvx2(const T* s, float* out, int n, uint64_t& pos, int64_t& inc,
+        int64_t incStep, float g, float gStep, int64_t headOffset, float t, float dt) noexcept
+    {
+        const auto& table = playSincTable().h;
+        for (int i = 0; i < n; ++i)
+        {
+            const float main = avx2SincAt(table, s, pos), head = avx2SincAt(table, s, pos + (uint64_t)headOffset);
+            const float tt = juce::jlimit(0.0f, 1.0f, t);
+            const float mix = tt * tt * (3.0f - 2.0f * tt);
+            out[i] += (main + (head - main) * mix) * g;
+            g += gStep; t += dt;
+            pos += (uint64_t)inc;
+            inc += incStep;
+        }
+        _mm256_zeroupper();
+    }
+    template <typename T>
+    ENGINE_AVX2_FN inline void kernelStereoXfSincAvx2(const T* s0, const T* s1, float* out0, float* out1, int n,
+        uint64_t& pos, int64_t& inc, int64_t incStep, float g, float gStep, int64_t headOffset, float t, float dt) noexcept
+    {
+        const auto& table = playSincTable().h;
+        for (int i = 0; i < n; ++i)
+        {
+            const uint64_t hp = pos + (uint64_t)headOffset;
+            const float tt = juce::jlimit(0.0f, 1.0f, t);
+            const float mix = tt * tt * (3.0f - 2.0f * tt);
+            const float m0 = avx2SincAt(table, s0, pos), m1 = avx2SincAt(table, s1, pos);
+            const float h0 = avx2SincAt(table, s0, hp), h1 = avx2SincAt(table, s1, hp);
+            out0[i] += (m0 + (h0 - m0) * mix) * g;
+            out1[i] += (m1 + (h1 - m1) * mix) * g;
+            g += gStep; t += dt;
+            pos += (uint64_t)inc;
+            inc += incStep;
+        }
+        _mm256_zeroupper();
+    }
+   #endif
+   #if ENGINE_HAS_LANE4_KERNELS
+    template <typename T>
+    inline float lane4SincAtPos(const float (*table)[PlaySincTable::taps], const T* s, uint64_t p) noexcept
+    {
+        Lane4::F lo, hi;
+        lane4SincCoeffs(table, p, lo, hi);
+        return lane4SincAt(lo, hi, s + (uint32_t)(p >> 32) - 3);
+    }
+    template <typename T>
+    inline void kernelMonoXfSincLane4(const T* s, float* out, int n, uint64_t& pos, int64_t& inc,
+        int64_t incStep, float g, float gStep, int64_t headOffset, float t, float dt) noexcept
+    {
+        const auto& table = playSincTable().h;
+        for (int i = 0; i < n; ++i)
+        {
+            const float main = lane4SincAtPos(table, s, pos), head = lane4SincAtPos(table, s, pos + (uint64_t)headOffset);
+            const float tt = juce::jlimit(0.0f, 1.0f, t);
+            const float mix = tt * tt * (3.0f - 2.0f * tt);
+            out[i] += (main + (head - main) * mix) * g;
+            g += gStep; t += dt;
+            pos += (uint64_t)inc;
+            inc += incStep;
+        }
+    }
+    template <typename T>
+    inline void kernelStereoXfSincLane4(const T* s0, const T* s1, float* out0, float* out1, int n,
+        uint64_t& pos, int64_t& inc, int64_t incStep, float g, float gStep, int64_t headOffset, float t, float dt) noexcept
+    {
+        const auto& table = playSincTable().h;
+        for (int i = 0; i < n; ++i)
+        {
+            const uint64_t hp = pos + (uint64_t)headOffset;
+            const float tt = juce::jlimit(0.0f, 1.0f, t);
+            const float mix = tt * tt * (3.0f - 2.0f * tt);
+            const float m0 = lane4SincAtPos(table, s0, pos), m1 = lane4SincAtPos(table, s1, pos);
+            const float h0 = lane4SincAtPos(table, s0, hp), h1 = lane4SincAtPos(table, s1, hp);
+            out0[i] += (m0 + (h0 - m0) * mix) * g;
+            out1[i] += (m1 + (h1 - m1) * mix) * g;
+            g += gStep; t += dt;
+            pos += (uint64_t)inc;
+            inc += incStep;
+        }
+    }
+   #endif
+    template <typename T>
+    inline void dispatchMonoXfSinc(const T* s, float* out, int n, uint64_t& pos, int64_t& inc,
+        int64_t incStep, float g, float gStep, int64_t headOffset, float t, float dt, KernelKind kernel) noexcept
+    {
+        if (kernel == KernelScalar) { kernelMonoXfSinc<T>(s, out, n, pos, inc, incStep, g, gStep, headOffset, t, dt); return; }
+       #if ENGINE_HAS_AVX2_KERNELS
+        if (kernel == KernelAvx2) { kernelMonoXfSincAvx2<T>(s, out, n, pos, inc, incStep, g, gStep, headOffset, t, dt); return; }
+       #endif
+       #if ENGINE_HAS_LANE4_KERNELS
+        kernelMonoXfSincLane4<T>(s, out, n, pos, inc, incStep, g, gStep, headOffset, t, dt);
+       #else
+        kernelMonoXfSinc<T>(s, out, n, pos, inc, incStep, g, gStep, headOffset, t, dt);
+       #endif
+    }
+    template <typename T>
+    inline void dispatchStereoXfSinc(const T* s0, const T* s1, float* out0, float* out1, int n, uint64_t& pos,
+        int64_t& inc, int64_t incStep, float g, float gStep, int64_t headOffset, float t, float dt, KernelKind kernel) noexcept
+    {
+        if (kernel == KernelScalar) { kernelStereoXfSinc<T>(s0, s1, out0, out1, n, pos, inc, incStep, g, gStep, headOffset, t, dt); return; }
+       #if ENGINE_HAS_AVX2_KERNELS
+        if (kernel == KernelAvx2) { kernelStereoXfSincAvx2<T>(s0, s1, out0, out1, n, pos, inc, incStep, g, gStep, headOffset, t, dt); return; }
+       #endif
+       #if ENGINE_HAS_LANE4_KERNELS
+        kernelStereoXfSincLane4<T>(s0, s1, out0, out1, n, pos, inc, incStep, g, gStep, headOffset, t, dt);
+       #else
+        kernelStereoXfSinc<T>(s0, s1, out0, out1, n, pos, inc, incStep, g, gStep, headOffset, t, dt);
+       #endif
+    }
+    template <typename T>
+    inline void dispatchMonoSinc(const T* s, float* out, int n, uint64_t& pos, int64_t& inc,
+        int64_t incStep, float g, float gStep, KernelKind kernel) noexcept
+    {
+        if (kernel == KernelScalar) { kernelMonoSinc<T>(s, out, n, pos, inc, incStep, g, gStep); return; }
+       #if ENGINE_HAS_AVX2_KERNELS
+        if (kernel == KernelAvx2) { kernelMonoSincAvx2<T>(s, out, n, pos, inc, incStep, g, gStep); return; }
+       #endif
+       #if ENGINE_HAS_LANE4_KERNELS
+        kernelMonoSincLane4<T>(s, out, n, pos, inc, incStep, g, gStep);
+       #else
+        kernelMonoSinc<T>(s, out, n, pos, inc, incStep, g, gStep);
+       #endif
+    }
+    template <typename T>
+    inline void dispatchStereoSinc(const T* s0, const T* s1, float* out0, float* out1, int n, uint64_t& pos,
+        int64_t& inc, int64_t incStep, float g, float gStep, KernelKind kernel) noexcept
+    {
+        if (kernel == KernelScalar) { kernelStereoSinc<T>(s0, s1, out0, out1, n, pos, inc, incStep, g, gStep); return; }
+       #if ENGINE_HAS_AVX2_KERNELS
+        if (kernel == KernelAvx2) { kernelStereoSincAvx2<T>(s0, s1, out0, out1, n, pos, inc, incStep, g, gStep); return; }
+       #endif
+       #if ENGINE_HAS_LANE4_KERNELS
+        kernelStereoSincLane4<T>(s0, s1, out0, out1, n, pos, inc, incStep, g, gStep);
+       #else
+        kernelStereoSinc<T>(s0, s1, out0, out1, n, pos, inc, incStep, g, gStep);
+       #endif
+    }
+
     inline void startFade(Voice& v, float ms, double rate, bool kill) noexcept
     {
         const uint32_t frames = (uint32_t)juce::jmax(1.0, ms * 0.001 * rate);
@@ -2502,7 +2826,13 @@ namespace
             const float k0 = shelfActive ? shelf0 + (shelf1 - shelf0) * blockFrac0 : 0.0f;
             const float k1 = shelfActive ? shelf0 + (shelf1 - shelf0) * blockFrac1 : 0.0f;
             const float kStep = shelfActive ? (k1 - k0) / (float)span : 0.0f;
-            const bool sinc = lowRate && !blend && !v.cubic && sampleChans <= 2 && v.pos < sincEndF && (v.pos >> 32) >= 4;
+            // The sinc: the head of a low-rate sample (0.8.147), or the whole of a high
+            // pipe's (0.8.164, fullKernel); the taps reach idx - 3 .. idx + 4 (the guard
+            // frames of every sample cover the end).
+            const bool sinc = ((lowRate && v.pos < sincEndF) || v.fullKernel) && !blend && !v.cubic && sampleChans <= 2 && (v.pos >> 32) >= 4;
+            // A high pipe's loop splice through the sinc too (both reads need 3 frames before them).
+            const bool sincXf = blend && v.fullKernel && !v.cubic && sampleChans <= 2 && (v.pos >> 32) >= 4
+                && ((v.pos + (uint64_t)headOffset) >> 32) >= 4;
             const bool viaTmp = shelfActive && (blend || v.cubic || sinc);
             float* o0 = out0 + produced;
             float* o1 = out1 + produced;
@@ -2513,8 +2843,8 @@ namespace
             }
             if (sinc)
             {
-                if (sampleChans == 1) kernelMonoSinc<T>(src0, o0, span, pos, inc, incStepF, g0, gStep);
-                else kernelStereoSinc<T>(src0, src1, o0, o1, span, pos, inc, incStepF, g0, gStep);
+                if (sampleChans == 1) dispatchMonoSinc<T>(src0, o0, span, pos, inc, incStepF, g0, gStep, kernel);
+                else dispatchStereoSinc<T>(src0, src1, o0, o1, span, pos, inc, incStepF, g0, gStep, kernel);
                 v.pos = pos + posBase;
             }
             else if (v.cubic && sampleChans <= 2)
@@ -2534,14 +2864,16 @@ namespace
             }
             else if (sampleChans == 1)
             {
-                if (blend) kernelMonoXf<T>(src0, o0, span, pos, inc, incStepF, g0, gStep, headOffset, bt, bdt);
+                if (blend && sincXf) dispatchMonoXfSinc<T>(src0, o0, span, pos, inc, incStepF, g0, gStep, headOffset, bt, bdt, kernel);
+                else if (blend) kernelMonoXf<T>(src0, o0, span, pos, inc, incStepF, g0, gStep, headOffset, bt, bdt);
                 else if (shelfActive) dispatchMonoShelf<T>(src0, o0, wet0 + produced, span, pos, inc, incStepF, g0, gStep, k0, kStep, kernel);
                 else dispatchMono<T>(src0, o0, span, pos, inc, incStepF, g0, gStep, kernel);
                 v.pos = pos + posBase;
             }
             else if (sampleChans == 2)
             {
-                if (blend) kernelStereoXf<T>(src0, src1, o0, o1, span, pos, inc, incStepF, g0, gStep, headOffset, bt, bdt);
+                if (blend && sincXf) dispatchStereoXfSinc<T>(src0, src1, o0, o1, span, pos, inc, incStepF, g0, gStep, headOffset, bt, bdt, kernel);
+                else if (blend) kernelStereoXf<T>(src0, src1, o0, o1, span, pos, inc, incStepF, g0, gStep, headOffset, bt, bdt);
                 else if (shelfActive) dispatchStereoShelf<T>(src0, src1, o0, o1, wet0 + produced, wet1 + produced, span, pos, inc, incStepF, g0, gStep, k0, kStep, kernel);
                 else dispatchStereo<T>(src0, src1, o0, o1, span, pos, inc, incStepF, g0, gStep, kernel);
                 v.pos = pos + posBase;
@@ -3832,6 +4164,18 @@ struct SamplerEngine::Impl
         for (int i = 0; i < count; ++i) if (routes[(size_t)i].get() == r) return i;
         return -1;
     }
+    // A high pipe gets the 8-tap sinc playback kernel for its whole length
+    // (0.8.164): its sounding fundamental (the pipe, its rank's footage and the
+    // transposition - what fadeScale counts with) against the setting.
+    bool wantsFullKernel(const Stop* rank, int pipe) const noexcept
+    {
+        const float fromHz = owner.sincKernelFromHz.load(std::memory_order_relaxed);
+        if (fromHz >= 20000.0f) return false;
+        if (fromHz <= 0.0f) return true;
+        const int sounding = pipe + (rank != nullptr && rank->footageKnown ? rank->footageSemitones + rank->sampleOffset : 0);
+        const double hz = 440.0 * std::pow(2.0, ((double)sounding - 69.0) / 12.0);
+        return hz >= (double)fromHz;
+    }
     // The common retune of a voice of this rank: the global pitch and, with the
     // stop tuned to 440 Hz, the rank's recorded diapason brought to 440 (the
     // per-pipe rest of tuning440Cents stays in the voice).
@@ -4081,7 +4425,7 @@ struct SamplerEngine::Impl
         w.routeIndex = routeIndexOf(aux);
         w.bus = (uint8_t)auxBus;
         w.sourceKey = v.sourceKey; w.manual = v.manual; w.note = v.note; w.keyNote = v.keyNote;
-        w.sampleNote = v.sampleNote; w.shift = v.shift; w.cubic = v.cubic;
+        w.sampleNote = v.sampleNote; w.shift = v.shift; w.cubic = v.cubic; w.fullKernel = v.fullKernel;
         w.windPitchVar = v.windPitchVar; w.windGainVar = v.windGainVar; w.tremBucket = v.tremBucket;
         w.detachedRelease = v.detachedRelease; w.loopEnabled = v.loopEnabled; w.couplingUsed = v.couplingUsed;
         w.startFrozen = v.startFrozen;
@@ -4782,7 +5126,7 @@ struct SamplerEngine::Impl
         v.windFrozen = false; v.frozenWindPitch = 0.0f; v.frozenWindGain = v.lastWindGain = v.initialWindGain = 1.0f;
         v.curWindGain.store(1.0f, std::memory_order_relaxed);
         std::fill(&v.shelfState[0][0], &v.shelfState[0][0] + 8, 0.0f); v.lastShelf = v.shelfSmoothed = 0.0f;
-        v.keyNote = v.sampleNote = 0; v.shift = 0; v.cubic = false; v.bus = 0;
+        v.keyNote = v.sampleNote = 0; v.shift = 0; v.cubic = false; v.bus = 0; v.fullKernel = false;
         v.shiftCents.store(0.0f, std::memory_order_relaxed);
         v.routeGainTarget.store(1.0f, std::memory_order_relaxed);
         v.routeGain = v.routeGainFrom = v.routeGainLastTarget = 1.0f;
@@ -5557,6 +5901,7 @@ struct SamplerEngine::Impl
                     v.shiftCents.store(transpositionCents(stop, rank, shift, pipe, sampleNote) - (preShifted ? 100.0f * (float)(pipe - sampleNote) : 0.0f),
                         std::memory_order_relaxed);
                     v.cubic = quality >= 1 && sampleNote != pipe && !preShifted;
+                    v.fullKernel = wantsFullKernel(rank, pipe);
                     v.routeGainTarget.store(routeGain, std::memory_order_relaxed);
                     v.toneTarget.store(pipeRouteTone(stop, pipe), std::memory_order_relaxed);
                     v.toneStartHz = SamplerEngine::toneStartHzFor(rank, sampleNote, owner.toneStartHz.load(std::memory_order_relaxed));
@@ -5847,6 +6192,7 @@ struct SamplerEngine::Impl
             if (releasePreShifted) { v.fillGain = 1.0f; v.toneOffset = 0.0f; }   // a copy: no resampling compensation
             else setFillCompensation(v, pipe, sampleNote);
             v.cubic = owner.transposeQuality.load(std::memory_order_relaxed) >= 1 && sampleNote != pipe && !releasePreShifted;
+            v.fullKernel = wantsFullKernel(rank, pipe);
             v.preShifted = releasePreShifted;
             v.detachedRelease = true;
             v.loopEnabled = false;
@@ -6945,10 +7291,31 @@ juce::String SamplerEngine::runKernelSelfCheck()
                 kernelStereoShelf(c0, c1, sa0.data(), sa1.data(), wa0.data(), wa1.data(), n, posE, incE, incStep, g, gStep, k0, kStep);
                 dispatchStereoShelf(c0, c1, sb0.data(), sb1.data(), wb0.data(), wb1.data(), n, posF, incF, incStep, g, gStep, k0, kStep, kind);
                 if (posE != posF || incE != incF) positionsEqual = false;
+                // The 8-tap sinc kernels (0.8.164): SIMD against scalar, mono and stereo.
+                std::vector<float> xa0((size_t)n, 0.25f), xa1((size_t)n, -0.5f), xb0(xa0), xb1(xa1), xm0(xa0), xm1(xa0);
+                uint64_t posG = (uint64_t)(17.31 * kFixedOne), posH = posG, posI = posG, posJ = posG;
+                int64_t incG = inc, incH = inc, incI = inc, incJ = inc;
+                kernelStereoSinc(c0, c1, xa0.data(), xa1.data(), n, posG, incG, incStep, g, gStep);
+                dispatchStereoSinc(c0, c1, xb0.data(), xb1.data(), n, posH, incH, incStep, g, gStep, kind);
+                kernelMonoSinc(c0, xm0.data(), n, posI, incI, incStep, g, gStep);
+                dispatchMonoSinc(c0, xm1.data(), n, posJ, incJ, incStep, g, gStep, kind);
+                if (posG != posH || posI != posJ || incG != incH || incI != incJ) positionsEqual = false;
+                // ... and their loop splices (a head read 4000 frames back, the mix ramping 0.2 -> 0.9).
+                std::vector<float> ya0((size_t)n, 0.25f), ya1((size_t)n, -0.5f), yb0(ya0), yb1(ya1), ym0(ya0), ym1(ya0);
+                uint64_t posK = (uint64_t)(4517.31 * kFixedOne), posL = posK, posM = posK, posN = posK;
+                int64_t incK = inc, incL = inc, incM = inc, incN = inc;
+                const int64_t headOff = -(int64_t)((uint64_t)4000 << 32);
+                kernelStereoXfSinc(c0, c1, ya0.data(), ya1.data(), n, posK, incK, incStep, g, gStep, headOff, 0.2f, 0.7f / (float)n);
+                dispatchStereoXfSinc(c0, c1, yb0.data(), yb1.data(), n, posL, incL, incStep, g, gStep, headOff, 0.2f, 0.7f / (float)n, kind);
+                kernelMonoXfSinc(c0, ym0.data(), n, posM, incM, incStep, g, gStep, headOff, 0.2f, 0.7f / (float)n);
+                dispatchMonoXfSinc(c0, ym1.data(), n, posN, incN, incStep, g, gStep, headOff, 0.2f, 0.7f / (float)n, kind);
+                if (posK != posL || posM != posN || incK != incL || incM != incN) positionsEqual = false;
                 float maxDiff = 0.0f, maxLevel = 1.0e-9f;
                 for (int i = 0; i < n; ++i)
                 {
                     maxDiff = juce::jmax(maxDiff, std::abs(a0[(size_t)i] - b0[(size_t)i]), std::abs(a1[(size_t)i] - b1[(size_t)i]), std::abs(m0[(size_t)i] - m1[(size_t)i]));
+                    maxDiff = juce::jmax(maxDiff, std::abs(xa0[(size_t)i] - xb0[(size_t)i]), std::abs(xa1[(size_t)i] - xb1[(size_t)i]), std::abs(xm0[(size_t)i] - xm1[(size_t)i]));
+                    maxDiff = juce::jmax(maxDiff, std::abs(ya0[(size_t)i] - yb0[(size_t)i]), std::abs(ya1[(size_t)i] - yb1[(size_t)i]), std::abs(ym0[(size_t)i] - ym1[(size_t)i]));
                     maxDiff = juce::jmax(maxDiff, std::abs(sa0[(size_t)i] - sb0[(size_t)i]), std::abs(sa1[(size_t)i] - sb1[(size_t)i]));
                     maxDiff = juce::jmax(maxDiff, std::abs(wa0[(size_t)i] - wb0[(size_t)i]), std::abs(wa1[(size_t)i] - wb1[(size_t)i]));
                     maxDiff = juce::jmax(maxDiff, std::abs((sa0[(size_t)i] + wa0[(size_t)i]) - a0[(size_t)i]), std::abs((sa1[(size_t)i] + wa1[(size_t)i]) - a1[(size_t)i]));
@@ -6967,6 +7334,27 @@ juce::String SamplerEngine::runKernelSelfCheck()
     }
     const auto bench = benchmarkKernel(n, 256 << 20);
     result << bench.describe() << "\n";
+    {
+        // The sinc kernel's price against the linear one (0.8.164): the same mono
+        // 16-bit signal from the cache, ratio 1.0116 (a 20-cent retune), the
+        // best kernel of this CPU; what "Full kernel from" costs per voice.
+        const KernelKind best = bestKernel();
+        constexpr int reps = 3000;
+        const int64_t inc = (int64_t)(1.0116 * kFixedOne);
+        std::vector<float> o((size_t)n, 0.0f);
+        auto timeIt = [&](auto&& fn)
+        {
+            const int64_t t0 = juce::Time::getHighResolutionTicks();
+            for (int r = 0; r < reps; ++r) { uint64_t pos = (uint64_t)(17.31 * kFixedOne); int64_t i2 = inc; fn(pos, i2); }
+            const double seconds = (double)(juce::Time::getHighResolutionTicks() - t0) / (double)juce::Time::getHighResolutionTicksPerSecond();
+            return 1.0e9 * seconds / ((double)reps * (double)n);
+        };
+        const double linearNs = timeIt([&](uint64_t& pos, int64_t& i2) { dispatchMono(s0.data(), o.data(), n, pos, i2, (int64_t)0, 0.7f, 0.0f, best); });
+        const double sincNs = timeIt([&](uint64_t& pos, int64_t& i2) { dispatchMonoSinc(s0.data(), o.data(), n, pos, i2, (int64_t)0, 0.7f, 0.0f, best); });
+        result << "Sinc kernel (" << kernelName(best) << "): " << juce::String(sincNs, 2) << " ns per voice and frame against "
+               << juce::String(linearNs, 2) << " for the linear kernel (" << juce::String(sincNs / juce::jmax(1.0e-9, linearNs), 1)
+               << " x; the price of \"Full kernel from\" per pipe above it).\n";
+    }
     {
         // Packed samples (0.8.145): a stereo sample with two loops - a silent
         // stretch, a full-scale step and a quiet tail among the blocks - packed

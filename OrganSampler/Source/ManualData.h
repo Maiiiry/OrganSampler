@@ -1966,9 +1966,10 @@ static const char* const kManualText_part9 =
     "(an organ far from 440 Hz - Adlington at a1 = 409 Hz is 128 cents away -\n"
     "or a big global Pitch) is not played by speeding every pipe up: the common\n"
     "part of it is applied once to the mixed output of every route with a proper\n"
-    "resampler (0.8.163), so the pipes keep their recorded speed and the top\n"
-    "octaves stay as clean as without the retune; only the few cents of\n"
-    "temperament and detune stay in the pipes themselves.\n"
+    "resampler (0.8.163), so the pipes keep their recorded speed; only the\n"
+    "cents of temperament and detune stay in the pipes themselves, and the high\n"
+    "pipes play those through the full kernel (Engine > *Full kernel from*,\n"
+    "0.8.164), so no foreign tone appears under a retuned top octave.\n"
     "\n"
     "## 6.4 MIDI learn\n"
     "\n"
@@ -2019,9 +2020,9 @@ static const char* const kManualText_part9 =
     "and the ear. Listening tests with reeds (Trompete, Vox humana) show the\n"
     "differences most clearly; a 16' extension of an 8' reed is the typical case.\n"
     "\n"
-    "**Resampling (pitch and length change together).** The sample is played faster\n"
     ;
 static const char* const kManualText_part10 =
+    "**Resampling (pitch and length change together).** The sample is played faster\n"
     "or slower at every key press, like a tape. Every harmonic exact, nothing added,\n"
     "nothing to build: it plays at once. Weaknesses: an octave down lasts twice as\n"
     "long - the attack speaks slowly, the room decays for twice the time, two\n"
@@ -2221,9 +2222,9 @@ static const char* const kManualText_part10 =
     "*Performance cores only* (0.8.140): a render worker on an efficiency core\n"
     "renders several times slower and the device thread waits for it - the\n"
     "measurement's longest callback of an Ultra 7 notebook was 2.6 ms of which\n"
-    "2.4 ms waiting for the lanes; the report says so for such a processor. The\n"
     ;
 static const char* const kManualText_part11 =
+    "2.4 ms waiting for the lanes; the report says so for such a processor. The\n"
     "setting belongs to the computer, never to an\n"
     "organ: a portable configuration carries none, and one of an older version that\n"
     "does is ignored (this computer's own setting stays). The default is every\n"
@@ -2261,6 +2262,23 @@ static const char* const kManualText_part11 =
     "over it. The self-test (`--kerneltest`) checks every kernel of the CPU against\n"
     "the scalar code and tells its speed; the activity log says which kernel runs\n"
     "(\"Render kernel: ...\").\n"
+    "\n"
+    "### Full kernel from (sounding pitch)\n"
+    "\n"
+    "Every pipe whose sounding fundamental lies at or above this frequency plays\n"
+    "through the 8-tap windowed-sinc kernel instead of the two-point linear one,\n"
+    "for its whole length, loop splices included. The linear kernel leaves an\n"
+    "image of a retuned high tone *below* its fundamental, 48000 x (ratio - 1)\n"
+    "Hz under it at about -26 dB: a pipe at 9 kHz retuned by 20 cents (a\n"
+    "temperament, Equal at 440 Hz) gets a foreign tone 560 Hz under it. Low\n"
+    "pipes hide it (their image is 50 dB down and sits beside the partials), the\n"
+    "top octaves do not. The sinc kernel puts it below -44 dB. The default\n"
+    "3000 Hz (2/3' at c1) covers the top octaves of the 2' and 1' stops and the\n"
+    "mixtures at a few per cent of extra work; 0 gives the sinc to every pipe\n"
+    "(three to five times the work per voice, the kerneltest prints the figure\n"
+    "of this CPU - for a computer with CPU to spare),\n"
+    "20000 switches it off. The slider is logarithmic, so the low end is easy to\n"
+    "reach. Takes effect for the next notes, no reload; this computer's setting.\n"
     "\n"
     "### Currently active\n"
     "\n"
@@ -2406,6 +2424,8 @@ static const char* const kManualText_part11 =
     "limit found is what the computer renders cleanly whatever the stops. By hand:\n"
     "\n"
     "1. Engage a large number of stops with long releases (a full registration of\n"
+    ;
+static const char* const kManualText_part12 =
     "   wet samples).\n"
     "2. Bash the keys: play many quick staccato notes over many keys at once\n"
     "   (palm smearing - repeated fast strokes with the flat hands over the\n"
@@ -2424,8 +2444,6 @@ static const char* const kManualText_part11 =
     "all, do not be afraid of a larger audio buffer: a latency of about 10 ms\n"
     "(512 samples at 48 kHz) is absolutely fine for organ playing, and even 20 ms\n"
     "is still perfectly comfortable, while chasing the smallest buffer cuts the\n"
-    ;
-static const char* const kManualText_part12 =
     "reachable polyphony dramatically.\n"
     "\n"
     "### Measure the maximum polyphony\n"
@@ -2608,6 +2626,8 @@ static const char* const kManualText_part12 =
     "### Wind: harmonic filter\n"
     "\n"
     "The same shelf following the wind sag: this much high-frequency loss at the\n"
+    ;
+static const char* const kManualText_part13 =
     "full sag (default 2 dB). Big chords starve the wind, and a starved pipe is\n"
     "duller as well as flatter.\n"
     "\n"
@@ -2626,8 +2646,6 @@ static const char* const kManualText_part12 =
     "### Wind: one pipe's share of the full sag\n"
     "\n"
     "The sag with one key held, relative to the sag with many keys held (default\n"
-    ;
-static const char* const kManualText_part13 =
     "50 %).\n"
     "\n"
     "### Wind: two pipes' share of the full sag\n"
@@ -2810,6 +2828,8 @@ static const char* const kManualText_part13 =
     "\n"
     "Where the cache files live. By default `FilledPipesCache` in the\n"
     "application-data folder, usually on the system drive; the row then says\n"
+    ;
+static const char* const kManualText_part14 =
     "\"(default)\". *Choose...* opens a folder dialog: pick a folder on a big drive\n"
     "(beside the samples, say). The files built so far are moved there at once, so\n"
     "nothing has to be rebuilt. The folder is remembered in the settings.\n"
@@ -2828,8 +2848,6 @@ static const char* const kManualText_part13 =
     "\n"
     "The *Treble per key* sliders of the voicing raise or lower everything above\n"
     "this frequency (120 to 5000 Hz, default 1800): a high shelf whose transition\n"
-    ;
-static const char* const kManualText_part14 =
     "band runs from here to about twice this frequency. A pipe whose recorded\n"
     "fundamental lies higher starts its shelf at that fundamental instead. The\n"
     "velocity treble cut uses the same frequency.\n"
@@ -3012,6 +3030,8 @@ static const char* const kManualText_part14 =
     "\"tr\"/\"trem\" appended is skipped by every tree scan besides (see \"Folders to\n"
     "skip\" in chapter 2). A pattern without a star matches anywhere, a\n"
     "star at the start anchors it to the end of the name, a star at the end to its\n"
+    ;
+static const char* const kManualText_part15 =
     "start; underscores count. Applies to the next folder load.\n"
     "\n"
     "### Perspective prefixes\n"
@@ -3030,8 +3050,6 @@ static const char* const kManualText_part14 =
     "\n"
     "One collapsed section per division; the same settings as in the Divisions\n"
     "dialog (see \"Keyboard, MIDI and compass\", \"Swell, tremulant, wind\" and \"The\n"
-    ;
-static const char* const kManualText_part15 =
     "audio tabs\").\n"
     "\n"
     "### Stops and sample folders\n"
@@ -3214,6 +3232,8 @@ static const char* const kManualText_part15 =
     "with *Add screenshot files...*. Then the GitHub bug report opens in your\n"
     "browser with its fields filled in from the dialog: drag `logs.zip` into\n"
     "\"Logs\" (the first field of the form) and the pictures into \"Screenshots\",\n"
+    ;
+static const char* const kManualText_part16 =
     "check the text, submit. The report folder itself opens in the file manager\n"
     "beside it, and the program's own message sits at the bottom of the screen,\n"
     "out of the way. The program puts the browser on the left half of the screen\n"
@@ -3232,8 +3252,6 @@ static const char* const kManualText_part15 =
     "again, signed in, and the form opens filled in. The same link is in the\n"
     "report folder as `Report on GitHub.html` - a double-click opens it, even\n"
     "days later.\n"
-    ;
-static const char* const kManualText_part16 =
     "\n"
     "## 8.8 Free software, licences, platforms\n"
     "\n"

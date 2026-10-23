@@ -836,6 +836,13 @@ public:
     // held through several routes takes the highest tone setting.
     void setToneStartHz(float hz) noexcept { toneStartHz.store(juce::jlimit(120.0f, 5000.0f, hz), std::memory_order_relaxed); }
     float getToneStartHz() const noexcept { return toneStartHz.load(std::memory_order_relaxed); }
+    // The full (8-tap windowed sinc) playback kernel for every voice whose
+    // sounding fundamental is at or above this (0.8.164): the linear kernel
+    // leaves an image of a retuned high tone below its fundamental (a foreign
+    // tone, 48000 x (ratio - 1) Hz under it, -26 dB); the sinc puts it 50 dB
+    // down. 0 = every voice, 20000 or more = never (the linear kernel as before).
+    void setSincKernelFromHz(float hz) noexcept { sincKernelFromHz.store(juce::jlimit(0.0f, 20000.0f, hz), std::memory_order_relaxed); }
+    float getSincKernelFromHz() const noexcept { return sincKernelFromHz.load(std::memory_order_relaxed); }
     void setStopNoteTone(Stop* stop, int note, float db);
     void setTransmissionKeyTone(Stop* stop, int index, int key, float db);
     // Start frequency of the tone shelf for a pipe's sample: the global start, or
@@ -1436,6 +1443,7 @@ private:
     std::atomic<float> windOneStopShare{ 0.2f }, windOnePipeShare{ 0.5f }, windTwoPipesShare{ 0.5f };
     std::atomic<float> releaseCutPercent{ 100.0f };
     std::atomic<float> toneStartHz{ 1800.0f };   // per-key tone shelf: start of the transition band
+    std::atomic<float> sincKernelFromHz{ 3000.0f };   // the sinc playback kernel from this sounding fundamental up (0.8.164)
     std::atomic<float> windMaxEffect{ 1.0f };    // wind model strength 0..1
     std::atomic<int> fillGroupSize{ 12 };
     std::atomic<int> transposeQuality{ 2 };

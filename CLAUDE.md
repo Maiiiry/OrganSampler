@@ -424,6 +424,26 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   Never verify this by the sound's pitch (the user: "je to podle jména souboru ... zřejmé z ODF"). Organs imported
   before 0.8.155 keep offset 0: load the definition again or type the column. Dev hook `ORGAN_TEST_OFFSET=
   "<manual>|<stop prefix>|<offset>"` (the voicing path); the grid dump prints "notes a..b files N" per stop.
+  0.8.164 FULL KERNEL FOR HIGH PIPES (the user: the foreign tone BELOW a retuned high tone is not a beat; "440 on
+  is essential"; the slider must reach very low for people with CPU to spare): `Voice::fullKernel` set at every voice
+  start by `wantsFullKernel(rank, pipe)` (sounding Hz from pipe + footageSemitones + sampleOffset, like fadeScale,
+  against `sincKernelFromHz`: 0 = all, >= 20000 = none, default 3000; engine atomic, MainComponent member, machine-
+  specific key "sincKernelFromHz", editor slider "Full kernel from (sounding pitch)" with `addSlider(...,
+  skewMidpoint 2000)`). In renderVoiceSpans `sinc = ((lowRate && pos < sincEndF) || v.fullKernel) && !blend ...` and
+  `sincXf = blend && v.fullKernel ...` (both reads need idx >= 4) -> `dispatchMonoSinc/StereoSinc` and
+  `dispatchMonoXfSinc/StereoXfSinc` by KernelKind: scalar (`kernelMonoSinc`, `kernelMonoXfSinc`), AVX2
+  (`avx2SincTaps` 8 taps from idx-3, `avx2SincCoeffs` = the two nearest phase rows blended, `avx2Sum8`), Lane4
+  SSE2/NEON (`lane4SincTaps` int16 via unpack/srai or vmovl, `lane4SincCoeffs`, `lane4Sum`). PHASE INTERPOLATION is
+  essential: the nearest of 128 rows alone steps the position by up to 1/256 frame = a sawtooth at 48000 x (ratio-1) Hz
+  -> a sideband at exactly the undertone's place at -41 dB; blending the rows takes it below -44 dB (`sincAt` does it
+  for the scalar/lowRate path too). The LOOP SPLICES must go through the sinc as well: a copy spends up to 40 % of its
+  loop in the crossfade (transposeLoopCrossfadePct) and linear splices kept the image for that share. Measured
+  (self-test hook `|pitch=20|sinc=20000|pure` vs `sinc=3000`, HW_Principal4 x4 copy at 8.8 kHz, ratio 1.0116): the
+  undertone 511 Hz under f0 -25.4 dB -> gone (< -44 dB); what stays (+-1.5 % sidebands, -28..-34 dB) is in the
+  recording at ratio 1 too. The kerneltest compares SIMD sinc and XfSinc with the scalar ones (mono/stereo, 7 ratios).
+  Hook options added: `|sinc=<Hz>`, `|temper=<cents>` (setTemperamentOffsets; NOTE mode 2 voices use selectedCents,
+  so it did nothing on Adlington - use `pitch=` under 25 c to emulate a residual), `|pure`; env ORGAN_SINC_FROM_HZ for
+  the full self-test (cost). The user's remark holds: only very high voices show it, elsewhere masked.
   SELF-TEST "Swap divisions ... WRONG" (seen in 0.8.162 and 0.8.163 and ONCE BEFORE, commit ee789c5): a fault of the
   TEST, never of the engine - with one loaded division the routes of division 1 had no device key after the swap (a
   route without a device gets no voices since 0.8.126), so "key 60 on division 1 -> 0 voices". Fixed for good in

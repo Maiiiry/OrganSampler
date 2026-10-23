@@ -10310,7 +10310,7 @@ namespace
             "divisionScreen", "dialogBounds", "uiScalePercent", "copyCacheFolder", "copyCacheEnabled",
             "renderThreads", "renderThreadPreset", "renderThreadsWasapi", "showUnusableAudioDevices", "configEditorCollapsed", "configurationFile",
             "loadLastConfigurationAtStartup", "maxPolyphony", "measurementShareLimit", "irProcessing", "irLightAuto", "unpackArchiveShownOnce", "renderThreadPresetChosen",
-            "renderKernel" };   // 0.8.146: sampleStorageFloat, resampleOnLoad, storageSampleRate, releaseHalfRate, compressSamples travel with the organ (askLoadOptions)
+            "renderKernel", "sincKernelFromHz" };   // 0.8.146: sampleStorageFloat, resampleOnLoad, storageSampleRate, releaseHalfRate, compressSamples travel with the organ (askLoadOptions)
         return keys;
     }
 }
@@ -16700,6 +16700,8 @@ void MainComponent::loadSettings()
         for (int i = 0; i < SamplerEngine::maxManuals && i < screens->size(); ++i) divisionScreen[(size_t)i] = juce::jlimit(0, 1, (int)screens->getReference(i));
     windMaxEffect = juce::jlimit(0.0f, 1.0f, (float)(double)parsed.getProperty("windMaxEffect", 1.0));
     toneStartHz = juce::jlimit(120.0f, 5000.0f, (float)(double)parsed.getProperty("toneStartHz", 1800.0));
+    sincKernelFromHz = juce::jlimit(0.0f, 20000.0f, (float)(double)parsed.getProperty("sincKernelFromHz", 3000.0));
+    engine.setSincKernelFromHz(sincKernelFromHz);
     harmonicSwellDb = juce::jlimit(0.0f, 12.0f, (float)(double)parsed.getProperty("harmonicSwellDb", 8.0));
     harmonicWindDb = juce::jlimit(0.0f, 12.0f, (float)(double)parsed.getProperty("harmonicWindDb", 2.0));
     harmonicTremulantDb = juce::jlimit(0.0f, 12.0f, (float)(double)parsed.getProperty("harmonicTremulantDb", 4.0));
@@ -17203,6 +17205,7 @@ void MainComponent::saveSettings()
     }
     obj->setProperty("windMaxEffect", windMaxEffect);
     obj->setProperty("toneStartHz", toneStartHz);
+    obj->setProperty("sincKernelFromHz", sincKernelFromHz);
     obj->setProperty("harmonicSwellDb", harmonicSwellDb);
     obj->setProperty("harmonicWindDb", harmonicWindDb);
     obj->setProperty("harmonicTremulantDb", harmonicTremulantDb);
@@ -21736,10 +21739,11 @@ void MainComponent::showConfigurationEditor()
         void addSlider(const juce::String& text, double minimum, double maximum, double step,
             const juce::String& suffix, double value, double defaultValue,
             std::function<void(double)> onChange, const juce::String& tooltip = {},
-            const juce::String& helpSection = {}, bool enabled = true)
+            const juce::String& helpSection = {}, bool enabled = true, double skewMidpoint = 0.0)
         {
             auto slider = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight);
             slider->setRange(minimum, maximum, step);
+            if (skewMidpoint > minimum && skewMidpoint < maximum) slider->setSkewFactorFromMidPoint(skewMidpoint);   // a logarithmic feel (0.8.164)
             slider->setTextValueSuffix(suffix);
             slider->setTextBoxStyle(juce::Slider::TextBoxRight, false, 90, 22);
             slider->setValue(value, juce::dontSendNotification);
@@ -21963,6 +21967,17 @@ void MainComponent::showConfigurationEditor()
                    "run the polyphony measurement with each. Takes effect at once, no reload.");
                 addInfo("Currently active", juce::String(engine.getRenderWorkerCount() + 1) + " render threads, "
                     + juce::String(engine.currentKernelName()) + " interpolation kernel");
+                // The sinc playback kernel for high pipes (0.8.164): a slider over the whole
+                // audible range, logarithmic in feel (the midpoint at 2 kHz) so the low
+                // end is reachable - a computer with CPU to spare may give it to every pipe.
+                addSlider("Full kernel from (sounding pitch)", 0.0, 20000.0, 10.0, " Hz", o.sincKernelFromHz, 3000.0,
+                    [&o](double value) { o.sincKernelFromHz = juce::jlimit(0.0f, 20000.0f, (float)value); o.engine.setSincKernelFromHz(o.sincKernelFromHz); o.saveSettings(); },
+                    "Every pipe whose sounding fundamental lies at or above this plays through the 8-tap windowed-sinc kernel instead of the "
+                    "two-point linear one. The linear kernel leaves an image of a retuned high tone BELOW its fundamental (48000 x (ratio - 1) Hz "
+                    "under it, -26 dB: a foreign tone, heard when a temperament or Equal at 440 Hz retunes a high pipe by 10-20 cents); the "
+                    "sinc puts it 50 dB down. 3000 Hz (2/3' at c1) covers the top octaves of the 2' and 1' stops and the mixtures; 0 gives it "
+                    "to every pipe (three to five times the work per voice - for a computer with CPU to spare); 20000 switches it off. "
+                    "Takes effect for the next notes, no reload.", {}, true, 2000.0);
             }
 #if JUCE_WINDOWS
             {

@@ -934,6 +934,7 @@ private:
     float releaseCutPercent = 100.0f;
     float windMaxEffect = 1.0f;      // wind model strength 0..1 (each key stroke uses a random 40..100 % of it)
     float toneStartHz = 1800.0f;     // per-key tone shelf: start of the transition band
+    float sincKernelFromHz = 3000.0f;   // the sinc playback kernel for pipes sounding from here up (0.8.164; 0 = all, 20000 = none); machine-specific
     void applyAdvancedAudioSettings();
     // Harmonic filter depth (dB at full attenuation) following swell, wind and tremulant; 0 = off.
     float harmonicSwellDb = 8.0f, harmonicWindDb = 2.0f, harmonicTremulantDb = 4.0f;   // harmonic filter depths

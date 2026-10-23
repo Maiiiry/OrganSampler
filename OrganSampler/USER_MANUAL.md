@@ -1944,9 +1944,10 @@ sound, cents on top of everything) mean what they say. The voicing row's
 (an organ far from 440 Hz - Adlington at a1 = 409 Hz is 128 cents away -
 or a big global Pitch) is not played by speeding every pipe up: the common
 part of it is applied once to the mixed output of every route with a proper
-resampler (0.8.163), so the pipes keep their recorded speed and the top
-octaves stay as clean as without the retune; only the few cents of
-temperament and detune stay in the pipes themselves.
+resampler (0.8.163), so the pipes keep their recorded speed; only the
+cents of temperament and detune stay in the pipes themselves, and the high
+pipes play those through the full kernel (Engine > *Full kernel from*,
+0.8.164), so no foreign tone appears under a retuned top octave.
 
 ## 6.4 MIDI learn
 
@@ -2235,6 +2236,23 @@ one start (a script measuring one after another); the editor's choice wins
 over it. The self-test (`--kerneltest`) checks every kernel of the CPU against
 the scalar code and tells its speed; the activity log says which kernel runs
 ("Render kernel: ...").
+
+### Full kernel from (sounding pitch)
+
+Every pipe whose sounding fundamental lies at or above this frequency plays
+through the 8-tap windowed-sinc kernel instead of the two-point linear one,
+for its whole length, loop splices included. The linear kernel leaves an
+image of a retuned high tone *below* its fundamental, 48000 x (ratio - 1)
+Hz under it at about -26 dB: a pipe at 9 kHz retuned by 20 cents (a
+temperament, Equal at 440 Hz) gets a foreign tone 560 Hz under it. Low
+pipes hide it (their image is 50 dB down and sits beside the partials), the
+top octaves do not. The sinc kernel puts it below -44 dB. The default
+3000 Hz (2/3' at c1) covers the top octaves of the 2' and 1' stops and the
+mixtures at a few per cent of extra work; 0 gives the sinc to every pipe
+(three to five times the work per voice, the kerneltest prints the figure
+of this CPU - for a computer with CPU to spare),
+20000 switches it off. The slider is logarithmic, so the low end is easy to
+reach. Takes effect for the next notes, no reload; this computer's setting.
 
 ### Currently active
 
