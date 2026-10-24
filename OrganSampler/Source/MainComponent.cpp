@@ -1746,6 +1746,28 @@ MainComponent::MainComponent()
             });
         }
     }
+    // ORGAN_TEST_CLICK="<button text>|<button text>..." (tests, 0.8.173): the named buttons
+    // of the console clicked 3 s after start, one every 2 s - a dialog opened without a
+    // mouse (the Wayland desktop has no xdotool; the 0.8.172 regression of the launchAsync
+    // dialogs is what this is for).
+    if (const char* env = std::getenv("ORGAN_TEST_CLICK"))
+    {
+        const auto names = juce::StringArray::fromTokens(juce::String::fromUTF8(env), "|", "");
+        juce::Component::SafePointer<MainComponent> safeThis(this);
+        for (int i = 0; i < names.size(); ++i)
+            juce::Timer::callAfterDelay(3000 + 2000 * i, [safeThis, name = names[i]]
+            {
+                if (safeThis == nullptr) return;
+                for (int c = 0; c < safeThis->getNumChildComponents(); ++c)
+                    if (auto* button = dynamic_cast<juce::Button*>(safeThis->getChildComponent(c)); button != nullptr && button->getButtonText() == name)
+                    {
+                        CrashHandler::note("ORGAN_TEST_CLICK: " + name);
+                        button->triggerClick();
+                        return;
+                    }
+                CrashHandler::note("ORGAN_TEST_CLICK: no button \"" + name + "\"");
+            });
+    }
     // ORGAN_OPEN_LOAD_FOLDER=<division> (tests): the Load folder window 2 s after start.
     if (const char* env = std::getenv("ORGAN_OPEN_LOAD_FOLDER"))
     {
