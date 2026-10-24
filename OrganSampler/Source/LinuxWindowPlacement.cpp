@@ -259,6 +259,20 @@ bool LinuxWindowPlacement::placeSideBySide(const std::string& folderName, Box le
     if (!kwinNote.empty()) note += "; " + kwinNote;
     return fileManager != 0 || browser != 0;
 }
+
+bool LinuxWindowPlacement::windowSize(unsigned long window, int& width, int& height)
+{
+    Display* display = XOpenDisplay(nullptr);
+    if (display == nullptr || window == 0) return false;
+    Window root = 0; int x = 0, y = 0; unsigned int w = 0, h = 0, border = 0, depth = 0;
+    const bool ok = XGetGeometry(display, (Drawable)window, &root, &x, &y, &w, &h, &border, &depth) != 0;
+    XCloseDisplay(display);
+    if (!ok) return false;
+    width = (int)w;
+    height = (int)h;
+    return true;
+}
 #else
 bool LinuxWindowPlacement::placeSideBySide(const std::string&, Box, Box, Box, std::string&) { return false; }
+bool LinuxWindowPlacement::windowSize(unsigned long, int&, int&) { return false; }
 #endif

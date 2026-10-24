@@ -450,9 +450,18 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   (juce::ImageComponent with AppIcon.png over the content, JUCE_LINUX only, hidden by Timer::callAfterDelay 1500 ms
   through a SafePointer, `resized()` keeps it full-size): whatever size the compositor maps the window at, it shows
   our picture - its hide timer must start at the cover's FIRST PAINT (StartCover::paint, 0.8.168): a timer from the
-  construction ran out before the loop painted at all (0.8.167 screenshots: black window, then the console). On this
-  KDE Wayland desktop the window first shows BLACK (unpainted buffer) for ~1 s at 0,0, then the console; the black
-  phase cannot be painted over by anything of ours. The splash and the pre-visible placeMainWindow were removed again. Commits from ~/OrganSamplerC-linux (the NTFS checkout edited,
+  construction ran out before the loop painted at all (0.8.167 screenshots: black window, then the console). THE REAL
+  CAUSE (0.8.169, activity log "Main window: ... frame -8 -31 17 40 -> 8 60 1 1"): JUCE creates every X window 1 x 1
+  (`xCreateWindow(..., 0, 0, 1, 1)`) and the window manager applies the size asked for a moment later (KWin on Wayland:
+  up to 2 s while the organ loads); the saved MAXIMISED state (`window.setFullScreen(true)` in `placeMainWindow`) makes
+  JUCE's Linux peer read the geometry back at once (`LinuxComponentPeer::setFullScreen`: `getWindowBounds` right after
+  `setMaximised`) and SET it as the bounds -> a 1 x 1 window with a 17 x 40 frame at 0,0 ("the very small window with
+  strange content"), and `fitWindowOnScreen` then shrank it to 1 x 1 at 8,60 from the same read-back. Fixed: on Linux
+  the maximise waits (50 ms polls, 3 s at most) until `LinuxWindowPlacement::windowSize` (XGetGeometry on its own
+  display connection, physical pixels) reports >= 40 px, logged "Main window: maximised once the window system gave it
+  W x H px"; `fitWindowOnScreen` breaks on a client < 40 px ("not sized by the window system yet") after the `wanted`
+  rule - the KDE "miniature Configuration Editor" (0.8.146) was this read-back too. The splash and the pre-visible
+  placeMainWindow were removed again (0.8.168); the cover stays. Commits from ~/OrganSamplerC-linux (the NTFS checkout edited,
   files copied over); NO Projucer resave on Linux - do it on Windows next (the VS2026 files lag 0.8.165).
   0.8.164 FULL KERNEL FOR HIGH PIPES (the user: the foreign tone BELOW a retuned high tone is not a beat; "440 on
   is essential"; the slider must reach very low for people with CPU to spare): `Voice::fullKernel` set at every voice

@@ -12,6 +12,20 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.169] - 2026-10-24
+
+### Fixed
+- Linux: the main window no longer comes up as a 1 x 1 pixel window with a
+  frame in the top-left corner for the first second or two (#78, "a very small
+  window with strange content"). JUCE creates every X window 1 x 1 pixel and
+  the window manager applies the size asked for a moment later; a saved
+  maximised state read that 1 x 1 back at once and made it the window's size,
+  and the on-screen fit then "corrected" the window to the same 1 x 1. The
+  maximise now waits until the window system reports the window's size, and
+  the fit never corrects a window from a read-back of a few pixels (the
+  "miniature Configuration Editor" seen on a KDE desktop came from the same
+  read-back).
+
 ## [0.8.168] - 2026-10-24
 
 ### Fixed

@@ -19,4 +19,9 @@ namespace LinuxWindowPlacement
     // box: where the program's own "Report a problem" box belongs (width 0 = leave it);
     // KDE on Wayland places a new window where it likes, the KWin script puts it back.
     bool placeSideBySide(const std::string& folderNameUtf8, Box left, Box right, Box box, std::string& note);
+    // The size the window system has really given a window (XGetGeometry of the
+    // X window itself, physical pixels): JUCE creates every window 1 x 1 pixel
+    // and the window manager applies the size asked for a moment later (0.8.169).
+    // Returns false when it cannot be read.
+    bool windowSize(unsigned long window, int& width, int& height);
 }
