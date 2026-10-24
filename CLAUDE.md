@@ -460,9 +460,25 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   the maximise waits (50 ms polls, 3 s at most) until `LinuxWindowPlacement::windowSize` (XGetGeometry on its own
   display connection, physical pixels) reports >= 40 px, logged "Main window: maximised once the window system gave it
   W x H px"; `fitWindowOnScreen` breaks on a client < 40 px ("not sized by the window system yet") after the `wanted`
-  rule - the KDE "miniature Configuration Editor" (0.8.146) was this read-back too. The splash and the pre-visible
-  placeMainWindow were removed again (0.8.168); the cover stays. Commits from ~/OrganSamplerC-linux (the NTFS checkout edited,
+  rule - the KDE "miniature Configuration Editor" (0.8.146) was this read-back too. 0.8.169's start screenshots then
+  still showed KWin's smallest frame (~135 x 170 px, our icon in its title bar) at 0,0 for ~2 s: the X window WAS
+  900 x 600 (the log says so) but nothing of ours had been painted - a Wayland compositor shows a window from its
+  first painted buffer on, before that a placeholder - and the first paint came only with the maximise's
+  ConfigureNotify ~2 s later (the user: "jiné programy to takhle nemají"). 0.8.170: Main.cpp on JUCE_LINUX does
+  `addToDesktop()` (the X window exists unmapped), `placeMainWindow` (bounds; a saved maximised state as the
+  `_NET_WM_STATE` property via `LinuxWindowPlacement::hintMaximised` - a maximise REQUEST works on mapped windows
+  only, the property is what the WM reads at map time), `setVisible(true)`, then `MainComponent::showMainWindow`:
+  polls `windowSize` (10 ms, <= 800 ms) until the WM sized it (>= 80 % of the screen when maximised), lets JUCE
+  adopt the state (`setFullScreen(true)` - its read-back is right now), `repaint()` +
+  `peer->performAnyPendingRepaintsNow()` (paints at once: `getNumPaintsPendingForWindow` counts XShm completions
+  only, 0 before the first paint), logged "Main window: shown, the window system gave it W x H px after N ms, painted
+  now". `StartCover::paint` logs "Start picture first painted at W x H px" once. Windows/macOS keep setVisible +
+  placeMainWindow + setFullScreen as before. The cover stays. Commits from ~/OrganSamplerC-linux (the NTFS checkout edited,
   files copied over); NO Projucer resave on Linux - do it on Windows next (the VS2026 files lag 0.8.165).
+  `OrganSampler/CLAUDE_REPORTS.md` is GITIGNORED (local only, never committed): a `git add` naming it fails, and a
+  chained `add && commit; ... && git tag` then tagged the OLD commit (v0.8.169 first landed on 83e888a: the run
+  cancelled, the tag deleted and re-pushed on 5685fd9). Never chain the tag after the commit in one command: tag in
+  a separate step after `git log -1` shows the new commit, on Linux as on Windows.
   0.8.164 FULL KERNEL FOR HIGH PIPES (the user: the foreign tone BELOW a retuned high tone is not a beat; "440 on
   is essential"; the slider must reach very low for people with CPU to spare): `Voice::fullKernel` set at every voice
   start by `wantsFullKernel(rank, pipe)` (sounding Hz from pipe + footageSemitones + sampleOffset, like fadeScale,

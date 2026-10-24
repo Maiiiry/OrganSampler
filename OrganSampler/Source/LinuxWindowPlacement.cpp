@@ -272,7 +272,19 @@ bool LinuxWindowPlacement::windowSize(unsigned long window, int& width, int& hei
     height = (int)h;
     return true;
 }
+
+void LinuxWindowPlacement::hintMaximised(unsigned long window)
+{
+    Display* display = XOpenDisplay(nullptr);
+    if (display == nullptr || window == 0) return;
+    const Atom state = XInternAtom(display, "_NET_WM_STATE", False);
+    Atom atoms[2] = { XInternAtom(display, "_NET_WM_STATE_MAXIMIZED_VERT", False), XInternAtom(display, "_NET_WM_STATE_MAXIMIZED_HORZ", False) };
+    XChangeProperty(display, (Window)window, state, XA_ATOM, 32, PropModeReplace, (unsigned char*)atoms, 2);
+    XFlush(display);
+    XCloseDisplay(display);
+}
 #else
 bool LinuxWindowPlacement::placeSideBySide(const std::string&, Box, Box, Box, std::string&) { return false; }
 bool LinuxWindowPlacement::windowSize(unsigned long, int&, int&) { return false; }
+void LinuxWindowPlacement::hintMaximised(unsigned long) {}
 #endif

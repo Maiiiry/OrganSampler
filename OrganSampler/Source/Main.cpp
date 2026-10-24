@@ -299,10 +299,22 @@ public:
             setResizable (true, true);
             centreWithSize (getWidth(), getHeight());
            #endif
+           #if JUCE_LINUX
+            // The X window first (unshown): its place and the saved maximised state
+            // go onto it before the window manager maps it, and the first paint
+            // follows the map at once (showMainWindow) - a Wayland compositor shows
+            // a window from its first painted buffer on, and showed KWin's smallest
+            // frame in the top-left corner until then (#78, 0.8.170).
+            addToDesktop();
+            if (auto* main = dynamic_cast<MainComponent*>(getContentComponent())) main->placeMainWindow(*this);
+            setVisible (true);
+            if (auto* main = dynamic_cast<MainComponent*>(getContentComponent())) main->showMainWindow(*this);
+           #else
             setVisible (true);
             // Where the user left it last time (or centred), with the title bar on
             // the screen: placed after the window exists, so its frame size is known.
             if (auto* main = dynamic_cast<MainComponent*>(getContentComponent())) main->placeMainWindow(*this);
+           #endif
         }
 
         // The interface size (UIScale.h): the window's content is drawn and laid out at this scale.
@@ -320,6 +332,7 @@ public:
                 juce::ImageComponent::paint (g);
                 if (painted) return;
                 painted = true;
+                CrashHandler::note("Start picture first painted at " + juce::String(getWidth()) + " x " + juce::String(getHeight()) + " px");
                 juce::Timer::callAfterDelay (1500, [safe = juce::Component::SafePointer<juce::Component> (this)] { if (safe != nullptr) safe->setVisible (false); });
             }
         };

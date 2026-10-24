@@ -17564,33 +17564,56 @@ void MainComponent::placeMainWindow(juce::ResizableWindow& window)
     fitWindowOnScreenSoon(juce::Component::SafePointer<juce::Component>(&window), "Main window");
     if (!savedWindowMaximised) return;
    #if JUCE_LINUX
-    // JUCE's Linux peer maximises by reading the X window's geometry back at once
-    // and setting it as the window's bounds - but JUCE creates every X window
-    // 1 x 1 pixel and the window manager applies the size asked for only a moment
-    // later (KWin on Wayland: up to a second or two while the organ loads), so the
-    // read-back gave 1 x 1 and the window stood as a 1 x 1 pixel window with a
-    // frame in the top-left corner (#78, "a very small window with strange
-    // content") until the maximise arrived. The maximise waits (50 ms steps, 3 s at
-    // most) until the window system reports a size of ours. 0.8.169.
-    auto poll = std::make_shared<std::function<void()>>();
-    *poll = [window = juce::Component::SafePointer<juce::ResizableWindow>(&window), poll, tries = 0]() mutable
-    {
-        if (window == nullptr) return;
-        int w = 0, h = 0;
-        const bool placed = window->getPeer() != nullptr
-            && LinuxWindowPlacement::windowSize((unsigned long)(juce::pointer_sized_uint)window->getPeer()->getNativeHandle(), w, h)
-            && w >= 40 && h >= 40;
-        if (!placed && ++tries < 60) { juce::Timer::callAfterDelay(50, [poll] { (*poll)(); }); return; }
-        CrashHandler::note("Main window: maximised " + (placed ? "once the window system gave it " + juce::String(w) + " x " + juce::String(h) + " px"
-            : juce::String("without the window system's size (") + juce::String(w) + " x " + juce::String(h) + " px after 3 s)"));
-        window->setFullScreen(true);
-        juce::MessageManager::callAsync([keep = poll] { *keep = nullptr; });
-    };
-    (*poll)();
+    // Called BEFORE the window is shown on Linux (Main.cpp: addToDesktop first).
+    // JUCE's Linux peer maximises a shown window by a request to the window
+    // manager and reads the geometry back at once - but JUCE creates every X
+    // window 1 x 1 pixel and the window manager applies the size asked for only a
+    // moment later, so the read-back gave 1 x 1 and the window stood as a 1 x 1
+    // pixel window with a frame in the top-left corner (#78, 0.8.169). The
+    // maximised state goes onto the unmapped window as the _NET_WM_STATE property
+    // the window manager reads when it maps the window (0.8.170); showMainWindow
+    // waits for the geometry and lets JUCE adopt it.
+    if (auto* peer = window.getPeer())
+        LinuxWindowPlacement::hintMaximised((unsigned long)(juce::pointer_sized_uint)peer->getNativeHandle());
    #else
     window.setFullScreen(true);
    #endif
 }
+
+#if JUCE_LINUX
+void MainComponent::showMainWindow(juce::ResizableWindow& window)
+{
+    // Right after setVisible(true) on Linux (0.8.170). A Wayland compositor shows
+    // a window from its first painted buffer on: until then KWin showed a
+    // placeholder of its smallest frame in the top-left corner for the two seconds
+    // the message thread spent before the first paint. So the first paint is done
+    // here, as soon as the window manager has sized the window: its geometry is
+    // polled (10 ms steps, 800 ms at most) until it is a size of ours - with a
+    // saved maximised state until it is at least 80 % of the screen -, then JUCE
+    // adopts the state (setFullScreen reads the geometry back, correct now) and
+    // the window is painted before anything else runs.
+    auto* peer = window.getPeer();
+    if (peer == nullptr) return;
+    const auto handle = (unsigned long)(juce::pointer_sized_uint)peer->getNativeHandle();
+    const auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
+    const int screenWidth = display != nullptr ? juce::roundToInt(display->totalArea.getWidth() * display->scale) : 1920;
+    const auto started = juce::Time::getMillisecondCounter();
+    int w = 0, h = 0, waited = 0;
+    bool sized = false;
+    for (;;)
+    {
+        sized = LinuxWindowPlacement::windowSize(handle, w, h) && w >= 40 && h >= 40 && (!savedWindowMaximised || w >= screenWidth * 8 / 10);
+        waited = (int)(juce::Time::getMillisecondCounter() - started);
+        if (sized || waited > 800) break;
+        juce::Thread::sleep(10);
+    }
+    if (savedWindowMaximised) window.setFullScreen(true);
+    window.repaint();
+    peer->performAnyPendingRepaintsNow();
+    CrashHandler::note("Main window: shown, the window system gave it " + juce::String(w) + " x " + juce::String(h) + " px after " + juce::String(waited) + " ms"
+        + (sized ? "" : " (not the size expected)") + ", painted now" + (savedWindowMaximised ? ", maximised" : ""));
+}
+#endif
 
 void MainComponent::showManualSection(const juce::String& section, const juce::String& fallbackSection)
 {

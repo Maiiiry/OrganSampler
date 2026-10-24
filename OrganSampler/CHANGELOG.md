@@ -12,6 +12,19 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.170] - 2026-10-24
+
+### Fixed
+- Linux: the main window appears at its place and size, painted, and a saved
+  maximised state is applied by the window manager as it maps the window. A
+  Wayland compositor shows a window from its first painted buffer on; until
+  then it showed a placeholder of the smallest frame in the top-left corner
+  (0.8.169 cured the 1 x 1 size, the placeholder stayed for the two seconds
+  until the first paint) and the window jumped from its saved size to the
+  maximised one. Now the maximised state is set on the window before it is
+  shown, and the first paint follows the window manager's sizing at once.
+  The log notes when the start picture was first painted.
+
 ## [0.8.169] - 2026-10-24
 
 ### Fixed

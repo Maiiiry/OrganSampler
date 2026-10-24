@@ -53,6 +53,9 @@ public:
     void askToKeepChanges(const juce::String& title, const juce::String& continueVerb, std::function<void()> proceed);
     // Places the main window where it was last time (or maximised / centred); called by MainWindow.
     void placeMainWindow(juce::ResizableWindow& window);
+   #if JUCE_LINUX
+    void showMainWindow(juce::ResizableWindow& window);   // right after setVisible(true): the first paint at once (0.8.170)
+   #endif
     void setUiScalePercent(int percent);   // the interface size (UIScale.h): applied to every open window, saved
 
 private:

@@ -24,4 +24,8 @@ namespace LinuxWindowPlacement
     // and the window manager applies the size asked for a moment later (0.8.169).
     // Returns false when it cannot be read.
     bool windowSize(unsigned long window, int& width, int& height);
+    // The maximised state as the _NET_WM_STATE property of a window not yet shown:
+    // the window manager maps it maximised (a request to maximise works on shown
+    // windows only, and JUCE's read-back right after it saw the 1 x 1 window). 0.8.170.
+    void hintMaximised(unsigned long window);
 }
