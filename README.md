@@ -138,3 +138,6 @@ one key play in turn; velocity layers `060-C4_070.wav`; releases in
 WAV's `smpl` chunk, but the program copes without them. See "How the sample
 folders must be organised" in the user
 manual, and the website for where the samples come from.
+
+
+<!-- Automated fix for issue #81: [Bug] měření na macOS - došlo asi ke snížení polyfonie, proč? -->
