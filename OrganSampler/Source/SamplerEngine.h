@@ -464,6 +464,13 @@ struct Stop
     // n + fillOffset[n]. See SamplerEngine::computeFilledPipes.
     std::bitset<128> filled;
     std::array<int8_t, 128> fillOffset{};
+    // Pipes whose recorded pitch lies beyond the retune limit (0.8.165): a faulty
+    // sample (Adlington's 035 and 037 of UW_Flute4 are a third low) - never
+    // played, filled from the neighbours like a missing pipe. rawTuningCents keeps
+    // the unclamped deviation of every measured note, so a new limit can be
+    // applied without the analysis.
+    std::bitset<128> faultyPipes;
+    std::array<float, 128> rawTuningCents{};
     // Pipes switched off in the voicing (checkbox under the key): never played,
     // never filled, an extension's anti-alias copies freed (a cornet must not
     // grow an extension). Kept on the logical stop; ranks follow it.
@@ -843,6 +850,11 @@ public:
     // down. 0 = every voice, 20000 or more = never (the linear kernel as before).
     void setSincKernelFromHz(float hz) noexcept { sincKernelFromHz.store(juce::jlimit(0.0f, 20000.0f, hz), std::memory_order_relaxed); }
     float getSincKernelFromHz() const noexcept { return sincKernelFromHz.load(std::memory_order_relaxed); }
+    // The retune limit per pipe (0.8.165): a pipe whose recorded pitch lies further
+    // than this from its key (cents) is a faulty sample - switched off and filled
+    // from its neighbours; within it the pipe is retuned (a1 = 440 Hz, temperament).
+    void setRetuneLimitCents(float cents);
+    float getRetuneLimitCents() const noexcept { return retuneLimitCents.load(std::memory_order_relaxed); }
     void setStopNoteTone(Stop* stop, int note, float db);
     void setTransmissionKeyTone(Stop* stop, int index, int key, float db);
     // Start frequency of the tone shelf for a pipe's sample: the global start, or
@@ -1444,6 +1456,7 @@ private:
     std::atomic<float> releaseCutPercent{ 100.0f };
     std::atomic<float> toneStartHz{ 1800.0f };   // per-key tone shelf: start of the transition band
     std::atomic<float> sincKernelFromHz{ 3000.0f };   // the sinc playback kernel from this sounding fundamental up (0.8.164)
+    std::atomic<float> retuneLimitCents{ 200.0f };    // a pipe further off its key than this is faulty: off, filled from the neighbours (0.8.165)
     std::atomic<float> windMaxEffect{ 1.0f };    // wind model strength 0..1
     std::atomic<int> fillGroupSize{ 12 };
     std::atomic<int> transposeQuality{ 2 };

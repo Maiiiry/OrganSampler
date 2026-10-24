@@ -12,6 +12,25 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.165] - 2026-10-24
+
+### Added
+- **Retune limit per pipe** (Configuration Editor > Advanced global audio,
+  default 200 cents, travels with the organ): a pipe whose recorded pitch
+  (its smpl chunk) lies further from its key than this is a faulty sample,
+  not a tuning - it is switched off and played from its neighbours like a
+  missing pipe; within the limit the pipe is retuned as before. Adlington's
+  "Ch. Flute" has its 035 and 037 recorded a major third low (the files are
+  wrong, the smpl chunk is honest): until now they played a third low, or a
+  whole tone low with a1 = 440 Hz on, because the correction was silently
+  clamped at 200 cents. The key's tooltip in the voicing names the faulty
+  sample, how far off it sounds, the limit and the neighbour that plays.
+- Linux: the first thing on the screen at the start is our picture (a splash
+  that removes itself after two seconds) - a Wayland compositor mapped the
+  main window in the top-left corner at its first, tiny size before the
+  program placed it, and that tiny window with its unfinished content was
+  what showed first (#78, the scrambled window icon stays to be found).
+
 ## [0.8.164] - 2026-10-23
 
 ### Added

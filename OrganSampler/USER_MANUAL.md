@@ -2683,6 +2683,20 @@ sound better, so a last group smaller than the setting takes the outermost real
 pipes with the smallest shift possible. Changing it refills every stop and
 rebuilds the copies. See "What a filled pipe is".
 
+### Retune limit per pipe
+
+How far a pipe's recorded pitch (its smpl chunk) may lie from its key before
+the pipe counts as a faulty sample. Within the limit the pipe is retuned to
+its key when a1 = 440 Hz or a temperament asks for it; beyond it the pipe is
+switched off and played from its neighbours like a missing pipe, and the
+key's tooltip in the voicing says so ("Faulty pipe: its own sample 035-B.wav
+sounds 400 cents off its key, beyond the retune limit - switched off and
+taken from the neighbour"). A pipe a third off is a wrong file, not a
+tuning: Adlington's "Ch. Flute" has its 035 and 037 recorded a major third
+low. 200 cents (a whole tone) by default; the setting travels with the
+organ and takes effect at once (the fills and the copies of the stops are
+rebuilt).
+
 ### Filled pipes: transposition method
 
 How a pipe beyond the compass (or in a gap) gets its pitch from a neighbour's

@@ -424,6 +424,21 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   Never verify this by the sound's pitch (the user: "je to podle jména souboru ... zřejmé z ODF"). Organs imported
   before 0.8.155 keep offset 0: load the definition again or type the column. Dev hook `ORGAN_TEST_OFFSET=
   "<manual>|<stop prefix>|<offset>"` (the voicing path); the grid dump prints "notes a..b files N" per stop.
+  0.8.165 RETUNE LIMIT (Linux session; the user: both - a limit in the configuration, and beyond it the pipe off and
+  filled from the neighbour, the voicing tooltip must admit it): measured first (/tmp/pitchcheck.py: audio f0 vs smpl):
+  Adlington UW_Flute4 035-B audio 91 Hz = MIDI 41.7, 037-C# 102 Hz = 43.7, the smpl chunks HONEST, the neighbours 036/038
+  right - the files are a major third low, and the old ±200 c clamp in computeTuning440 half-corrected them with 440 on.
+  Now `Stop::faultyPipes` + `rawTuningCents[128]` (set in computeTuning440 against `retuneLimitCents`, default 200,
+  `setRetuneLimitCents` re-applies from the raw values + refillAllStops + copies, like setFillGroupSize),
+  `computeFilledPipes` uses a local `has()` = hasNote && !faulty (every former rank->hasNote inside it, the KeepExisting
+  struct too) so a faulty pipe is a gap filled from the neighbours; the voicing key tooltip (voicer.cpp, the filled
+  branch) appends "Faulty pipe: its own sample X sounds N cents off ... taken from the neighbour". Setting
+  "retuneLimitCents" (configuration, NOT machine-specific), slider "Retune limit per pipe" in Advanced global audio
+  after "Missing pipes". LINUX FIRST WINDOW (#78): screenshots at start (spectacle -b -n -o, 0.4 s apart) show the
+  MAIN window itself mapped by KWin at 0,0 at a tiny size for ~1 s before placeMainWindow - Main.cpp now shows a
+  `juce::SplashScreen` with AppIcon.png (384 px) before the MainWindow on JUCE_LINUX, deleteAfterDelay 2 s; the
+  scrambled 48 px window icon of #78 is still open. Commits from ~/OrganSamplerC-linux (the NTFS checkout edited,
+  files copied over); NO Projucer resave on Linux - do it on Windows next (the VS2026 files lag 0.8.165).
   0.8.164 FULL KERNEL FOR HIGH PIPES (the user: the foreign tone BELOW a retuned high tone is not a beat; "440 on
   is essential"; the slider must reach very low for people with CPU to spare): `Voice::fullKernel` set at every voice
   start by `wantsFullKernel(rank, pipe)` (sounding Hz from pipe + footageSemitones + sampleOffset, like fadeScale,

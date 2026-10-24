@@ -212,6 +212,18 @@ public:
         // A stall of the message thread (a frozen window) goes to the activity
         // log with the thread's stack, so it can be traced afterwards.
         stallWatchdog = std::make_unique<CrashHandler::StallWatchdog>();
+       #if JUCE_LINUX
+        // The first thing on the screen (0.8.165, #78): a Wayland compositor maps
+        // the main window in the top-left corner at its first, tiny size before
+        // placeMainWindow sets its place and size - for that moment our picture
+        // shows instead (a splash that removes itself two seconds after the start).
+        {
+            const auto picture = juce::ImageCache::getFromMemory(BinaryData::AppIcon_png, BinaryData::AppIcon_pngSize);
+            if (picture.isValid())
+                (new juce::SplashScreen("OrganSampler", picture.rescaled(384, 384, juce::Graphics::highResamplingQuality), true))
+                    ->deleteAfterDelay(juce::RelativeTime::seconds(2.0), false);
+        }
+       #endif
         mainWindow.reset(new MainWindow(getApplicationName()));
     }
 

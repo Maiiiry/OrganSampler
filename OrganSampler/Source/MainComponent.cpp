@@ -16655,6 +16655,8 @@ void MainComponent::loadSettings()
     }
     fillGroupSize = juce::jlimit(1, 12, (int)parsed.getProperty("fillGroupSize", 12));
     engine.setFillGroupSize(fillGroupSize);
+    retuneLimitCents = juce::jlimit(10.0f, 1200.0f, (float)(double)parsed.getProperty("retuneLimitCents", 200.0));
+    engine.setRetuneLimitCents(retuneLimitCents);
     transposeQuality = juce::jlimit(0, 2, (int)parsed.getProperty("transposeQuality", 2));
     engine.setTransposeQuality(transposeQuality);
     // 0.8.17: "transposeReleaseLengthPct" replaces the shortening rule ("transposeReleaseShortenPct");
@@ -17167,6 +17169,7 @@ void MainComponent::saveSettings()
         obj->setProperty("showGlobalSliders", anyGlobalSliderShown());   // read by older builds
     }
     obj->setProperty("fillGroupSize", fillGroupSize);
+    obj->setProperty("retuneLimitCents", retuneLimitCents);
     obj->setProperty("transposeQuality", transposeQuality);
     obj->setProperty("transposeMethod", transposeMethod);
     obj->setProperty("transposeReleaseLengthPct", transposeReleaseLengthPct);
@@ -22215,6 +22218,12 @@ void MainComponent::showConfigurationEditor()
                 "filled from the nearest real pipes: this many adjacent pipes are taken as a group and transposed by the "
                 "group's width, the group repeats for further pipes. 12 = every missing pipe is the octave transposition "
                 "of a real one; 1 = the edge pipe serves alone.");
+            addSlider("Retune limit per pipe", 10.0, 1200.0, 10.0, " cents", o.retuneLimitCents, 200.0,
+                [&o](double value) { o.retuneLimitCents = juce::jlimit(10.0f, 1200.0f, (float)value); o.engine.setRetuneLimitCents(o.retuneLimitCents); o.saveSettings(); },
+                "How far a pipe's recorded pitch (its smpl chunk) may lie from its key before the pipe counts as a faulty sample. Within "
+                "the limit the pipe is retuned to its key (a1 = 440 Hz, the temperament); beyond it the pipe is switched off and played "
+                "from its neighbours like a missing pipe (the key's tooltip in the voicing says so) - a pipe a third off is a wrong file, "
+                "not a tuning. 200 cents (a whole tone) by default; the setting travels with the organ.");
             addCombo("Filled pipes: transposition method",
                 { "Resampling", "Pitch shift (resampling + timbre correction)",
                   "Pitch shift + time stretch (attack and release)",

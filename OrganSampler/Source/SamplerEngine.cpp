@@ -230,6 +230,7 @@ namespace
     // the interpolation kernels, and the tone/shelf post-processing. Thread-local
     // sums, folded into the pool's statistics after every chunk. Off: one load.
     std::atomic<bool> gVoiceProfiling{ false };
+    std::atomic<float> gRetuneLimitCents{ 200.0f };   // the retune limit (0.8.165) for the static tuning analysis; set with SamplerEngine::retuneLimitCents
     struct VoiceProfile { int64_t header = 0, spans = 0, kernel = 0, post = 0, unpack = 0; int64_t voices = 0; };
     thread_local VoiceProfile tlVoiceProfile;
 
@@ -8091,6 +8092,32 @@ void SamplerEngine::setFillGroupSize(int pipes)
     for (auto* stop : stops) buildAntiAliasCopies(stop, true);
 }
 
+void SamplerEngine::setRetuneLimitCents(float cents)
+{
+    cents = juce::jlimit(10.0f, 1200.0f, cents);
+    if (std::abs(retuneLimitCents.exchange(cents, std::memory_order_acq_rel) - cents) < 0.01f) return;
+    gRetuneLimitCents.store(cents, std::memory_order_relaxed);
+    {
+        const juce::ScopedLock sl(controlLock);
+        // Every rank's faulty pipes and clamped corrections from the raw deviations, then the fills afresh.
+        auto apply = [cents](Stop* rank)
+        {
+            rank->faultyPipes.reset();
+            for (int note = 0; note < 128; ++note)
+            {
+                if (!rank->hasNote(note) || !rank->tuningInfoAvailable) continue;
+                const float raw = rank->rawTuningCents[(size_t)note];
+                if (raw == 0.0f && rank->tuning440Cents[(size_t)note] != 0.0f) continue;   // a note without pitch data keeps the diapason shift
+                if (std::abs(raw) > cents) rank->faultyPipes.set((size_t)note);
+                rank->tuning440Cents[(size_t)note] = juce::jlimit(-cents, cents, raw);
+            }
+        };
+        for (auto* stop : stops) { apply(stop); for (auto& rank : stop->ranks) apply(rank.get()); }
+        refillAllStops();
+    }
+    for (auto* stop : stops) buildAntiAliasCopies(stop, true);
+}
+
 void SamplerEngine::refillAllStops()
 {
     for (auto* stop : stops) refillStopPipes(stop, false);   // the group size changed: every fill afresh
@@ -10156,6 +10183,8 @@ void SamplerEngine::computeFilledPipes(Stop* rank, int groupSize, int needLow, i
     // map get the rule. A change of the group size starts afresh.
     const std::bitset<128> before = rank->filled;
     const std::array<int8_t, 128> beforeOffset = rank->fillOffset;
+    // A faulty pipe (its sample beyond the retune limit, 0.8.165) is a missing one here.
+    auto has = [rank](int n) { return rank->hasNote(n) && !(n >= 0 && n < 128 && rank->faultyPipes.test((size_t)n)); };
     rank->filled.reset();
     rank->fillOffset.fill(0);
     struct KeepExisting
@@ -10168,12 +10197,12 @@ void SamplerEngine::computeFilledPipes(Stop* rank, int groupSize, int needLow, i
             {
                 if (!rank->filled.test((size_t)pipe) || !before.test((size_t)pipe)) continue;
                 const int source = pipe + beforeOffset[(size_t)pipe];
-                if (source >= 0 && source < 128 && source != pipe && rank->hasNote(source)) rank->fillOffset[(size_t)pipe] = beforeOffset[(size_t)pipe];
+                if (source >= 0 && source < 128 && source != pipe && rank->hasNote(source) && !rank->faultyPipes.test((size_t)source)) rank->fillOffset[(size_t)pipe] = beforeOffset[(size_t)pipe];
             }
         }
     } keepExistingFills{ rank, keepExisting, before, beforeOffset };
     std::vector<int> real;
-    for (int note = 0; note < 128; ++note) if (rank->hasNote(note)) real.push_back(note);
+    for (int note = 0; note < 128; ++note) if (has(note)) real.push_back(note);
     if (real.empty()) return;
     const int count = (int)real.size();
     const int lowest = real.front(), highest = real.back();
@@ -10181,18 +10210,18 @@ void SamplerEngine::computeFilledPipes(Stop* rank, int groupSize, int needLow, i
     needHigh = juce::jlimit(needLow, 127, needHigh);
     auto realAtOrBelow = [&](int note)
     {
-        for (int n = juce::jmin(127, note); n >= 0; --n) if (rank->hasNote(n)) return n;
+        for (int n = juce::jmin(127, note); n >= 0; --n) if (has(n)) return n;
         return -1;
     };
     auto realAtOrAbove = [&](int note)
     {
-        for (int n = juce::jmax(0, note); n < 128; ++n) if (rank->hasNote(n)) return n;
+        for (int n = juce::jmax(0, note); n < 128; ++n) if (has(n)) return n;
         return -1;
     };
     auto assign = [&](int pipe, int source)
     {
         if (disabledPipes != nullptr && disabledPipes->test((size_t)pipe)) return;   // switched off: stays silent
-        if (source < 0 || source > 127 || !rank->hasNote(source) || source == pipe) return;
+        if (source < 0 || source > 127 || !has(source) || source == pipe) return;
         rank->filled.set((size_t)pipe);
         rank->fillOffset[(size_t)pipe] = (int8_t)juce::jlimit(-127, 127, source - pipe);
     };
@@ -10218,7 +10247,7 @@ void SamplerEngine::computeFilledPipes(Stop* rank, int groupSize, int needLow, i
         for (int pipe = lowest - 1; pipe >= needLow; --pipe)
         {
             int source = pipe + shiftFor(lowest - pipe, n, g);
-            if (!rank->hasNote(source)) source = realAtOrAbove(source);   // a gap right at the edge
+            if (!has(source)) source = realAtOrAbove(source);   // a gap right at the edge
             assign(pipe, source);
         }
     }
@@ -10229,7 +10258,7 @@ void SamplerEngine::computeFilledPipes(Stop* rank, int groupSize, int needLow, i
         for (int pipe = highest + 1; pipe <= needHigh; ++pipe)
         {
             int source = pipe - shiftFor(pipe - highest, n, g);
-            if (!rank->hasNote(source)) source = realAtOrBelow(source);
+            if (!has(source)) source = realAtOrBelow(source);
             assign(pipe, source);
         }
     }
@@ -10250,13 +10279,13 @@ void SamplerEngine::computeFilledPipes(Stop* rank, int groupSize, int needLow, i
         for (int pipe = a; pipe < a + lower; ++pipe)
         {
             int source = pipe - shiftFor(pipe - a + 1, lower, gl);
-            if (!rank->hasNote(source)) source = realAtOrBelow(source);
+            if (!has(source)) source = realAtOrBelow(source);
             assign(pipe, source);
         }
         for (int pipe = a + lower; pipe <= b; ++pipe)
         {
             int source = pipe + shiftFor(b - pipe + 1, upper, gu);
-            if (!rank->hasNote(source)) source = realAtOrAbove(source);
+            if (!has(source)) source = realAtOrAbove(source);
             assign(pipe, source);
         }
     }
@@ -12935,9 +12964,19 @@ void SamplerEngine::computeTuning440(const std::vector<Stop*>& ranksOfOrgan)
         // Notes without pitch data get the rank's diapason shift; measured notes
         // go exactly to (key + offset) in equal temperament at a1 = 440 Hz.
         for (auto& cents : rank->tuning440Cents) cents = (float)juce::jlimit(-200.0, 200.0, -rankDiapason * 100.0);
+        // The retune limit (0.8.165): a note further off than it is a faulty sample
+        // (never played, filled from the neighbours - computeFilledPipes); the
+        // correction is clamped to the limit, the raw deviation kept for a new limit.
+        const double limit = (double)gRetuneLimitCents.load(std::memory_order_relaxed);
+        rank->faultyPipes.reset();
+        rank->rawTuningCents.fill(0.0f);
         for (size_t i = 0; i < rd.notes.size(); ++i)
-            rank->tuning440Cents[(size_t)rd.notes[i].note] =
-                (float)juce::jlimit(-200.0, 200.0, -(rd.notes[i].raw - offsets[i]) * 100.0);
+        {
+            const double cents = -(rd.notes[i].raw - offsets[i]) * 100.0;
+            rank->rawTuningCents[(size_t)rd.notes[i].note] = (float)cents;
+            if (std::abs(cents) > limit) rank->faultyPipes.set((size_t)rd.notes[i].note);
+            rank->tuning440Cents[(size_t)rd.notes[i].note] = (float)juce::jlimit(-limit, limit, cents);
+        }
         // Footage of the rank: the most common offset (mixtures with breaks
         // report their lowest, most frequent rank).
         {

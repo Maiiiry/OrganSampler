@@ -787,6 +787,17 @@ StopRow::StopRow(Stop* stop, SamplerEngine& engine, int noteMin, int noteMax, in
                 juce::String tip = stop->displayName() + ", sample " + (file.isNotEmpty() ? file : "of pipe " + juce::String(source)) + ", "
                     + (shift > 0 ? "+" : "") + juce::String(shift) + " st";
                 if (sourceKey >= noteMin && sourceKey <= noteMax) tip << " (from key " << sourceKey << ")";
+                // A faulty pipe (0.8.165): its own sample lies beyond the retune limit, so it
+                // was switched off and this neighbour's sample plays instead - said here.
+                if (filledRank != nullptr && pipe >= 0 && pipe < 128 && filledRank->faultyPipes.test((size_t)pipe))
+                {
+                    juce::String own;
+                    for (const auto& sample : filledRank->samplesByNote[(size_t)pipe])
+                        if (sample != nullptr && sample->fileName.isNotEmpty()) { own = sample->fileName; break; }
+                    tip << ". Faulty pipe: its own sample " << (own.isNotEmpty() ? own : juce::String("here")) << " sounds "
+                        << juce::String(-filledRank->rawTuningCents[(size_t)pipe], 0) << " cents off its key, beyond the retune limit ("
+                        << juce::String(engine.getRetuneLimitCents(), 0) << " cents, Configuration Editor) - switched off and taken from the neighbour";
+                }
                 slider->setTooltip(tip);
                 tone->setTooltip(tip);
                 nameLabel->setTooltip(tip);
