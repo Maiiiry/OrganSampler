@@ -291,7 +291,6 @@ public:
             startCover.setInterceptsMouseClicks (false, false);
             addAndMakeVisible (startCover);
             startCover.setBounds (getLocalBounds());
-            juce::Timer::callAfterDelay (1500, [safe = juce::Component::SafePointer<MainWindow> (this)] { if (safe != nullptr) safe->startCover.setVisible (false); });
            #endif
 
            #if JUCE_IOS || JUCE_ANDROID
@@ -310,7 +309,21 @@ public:
         float getDesktopScaleFactor() const override { return UIScale::factor(); }
        #if JUCE_LINUX
         void resized() override { DocumentWindow::resized(); startCover.setBounds (getLocalBounds()); }
-        juce::ImageComponent startCover;
+        // The picture hides a second and a half after it was first PAINTED: the window
+        // is built a second or more before the message loop paints anything, and a
+        // timer from the construction (0.8.167) ran out before the picture was seen.
+        struct StartCover final : public juce::ImageComponent
+        {
+            bool painted = false;
+            void paint (juce::Graphics& g) override
+            {
+                juce::ImageComponent::paint (g);
+                if (painted) return;
+                painted = true;
+                juce::Timer::callAfterDelay (1500, [safe = juce::Component::SafePointer<juce::Component> (this)] { if (safe != nullptr) safe->setVisible (false); });
+            }
+        };
+        StartCover startCover;
        #endif
 
         void closeButtonPressed() override

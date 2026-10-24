@@ -449,7 +449,10 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   for ~1 s, and NO splash ever visible on KDE Wayland even with 4 s). What works: `MainWindow::startCover`
   (juce::ImageComponent with AppIcon.png over the content, JUCE_LINUX only, hidden by Timer::callAfterDelay 1500 ms
   through a SafePointer, `resized()` keeps it full-size): whatever size the compositor maps the window at, it shows
-  our picture. The splash and the pre-visible placeMainWindow were removed again. Commits from ~/OrganSamplerC-linux (the NTFS checkout edited,
+  our picture - its hide timer must start at the cover's FIRST PAINT (StartCover::paint, 0.8.168): a timer from the
+  construction ran out before the loop painted at all (0.8.167 screenshots: black window, then the console). On this
+  KDE Wayland desktop the window first shows BLACK (unpainted buffer) for ~1 s at 0,0, then the console; the black
+  phase cannot be painted over by anything of ours. The splash and the pre-visible placeMainWindow were removed again. Commits from ~/OrganSamplerC-linux (the NTFS checkout edited,
   files copied over); NO Projucer resave on Linux - do it on Windows next (the VS2026 files lag 0.8.165).
   0.8.164 FULL KERNEL FOR HIGH PIPES (the user: the foreign tone BELOW a retuned high tone is not a beat; "440 on
   is essential"; the slider must reach very low for people with CPU to spare): `Voice::fullKernel` set at every voice
