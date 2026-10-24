@@ -966,8 +966,11 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   DDR4; the Ryzen also carried 15 routes (2x the fixed cost per period). A like-for-like run (same organ, routes,
   buffer) is still missing.
 - Linux window icon at start-up "rozsypana" (scrambled) since 0.8.136 (`Main.cpp` sends `icon48_png` to `setIcon`).
-  Before: upside down for a moment while loading but crisp. Find why the 48 px image is scrambled through JUCE's X11
-  `_NET_WM_ICON` path (format/stride?) - NEVER a rescaled icon.
+  Before: upside down for a moment while loading but crisp. FINDING 0.8.171: in this JUCE `DocumentWindow::setIcon`
+  only stores `titleBarIcon` (the JUCE-drawn title bar) and NO JUCE code calls `ComponentPeer::setIcon`, so our
+  `setIcon` never reaches `_NET_WM_ICON`; the title-bar icon seen on KDE comes from the desktop entry (WM_CLASS) -
+  look there (the installer's ~/.local/share/pixmaps/organsampler.png, 48 px) before blaming JUCE's X11 path. NEVER a
+  rescaled icon.
 - Device-thread peaks (0.8.138 reports): #34 Ultra 7 155H (P+E cores): longest route callback 2616 us of which WAITING
   FOR THE LANES 2412 us - a worker on an E core (or preempted) holds the poster; try lanes on P cores only / smaller
   chunks at the end of a job. #35 Ryzen Windows: longest 1270 us of which OWN RENDER 1071 - the poster takes chunks
