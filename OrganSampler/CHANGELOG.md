@@ -12,6 +12,19 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.173] - 2026-10-24
+
+### Fixed
+- Linux (Wayland): the Couplers, Perspective patterns, Ignored patterns,
+  One-shot patterns and long-message dialogs opened and vanished at once in
+  0.8.172 - the placement hid the whole dialog for a moment, and a hidden modal
+  dialog is dismissed by JUCE. Only the window itself is now unmapped and
+  mapped again, the dialog stays.
+
+### Changed
+- The golden sheen (0.8.172) sweeps every 2.5 s, over one button at a time,
+  Stop List and Load Configuration in turn.
+
 ## [0.8.172] - 2026-10-24
 
 ### Fixed

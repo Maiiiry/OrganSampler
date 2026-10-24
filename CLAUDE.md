@@ -496,7 +496,14 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   `faultyPipes`) makes the key "filled" (green thumb + the Faulty pipe tooltip); the retune-limit and fill-group
   sliders call `voicer->rebuildUI`. (4) `HintSheen` (UIControls.h): a transparent child of MainComponent over the two
   buttons' union, a golden band sweeping once every 7 s (25 ms ticks), `addMouseListener(&hintSheen, true)` on
-  MainComponent ends it at the first click (a Component is a MouseListener already - no second base). Commits from ~/OrganSamplerC-linux (the NTFS checkout edited,
+  MainComponent ends it at the first click (a Component is a MouseListener already - no second base).
+  0.8.173 REGRESSION LESSON (the user: Couplers / Perspective / Ignored / One-shot patterns "nothing happens"): those
+  dialogs are `DialogWindow::LaunchOptions::launchAsync()` = `enterModalState(true, nullptr, deleteWhenDismissed =
+  true)`, and `ModalComponentManager::ModalItem::componentVisibilityChanged` CANCELS the modal state when the
+  component stops showing -> the 0.8.172 remap in placeDialog (`window.setVisible(false)` ... `(true)`) dismissed and
+  deleted every such dialog on Wayland. NEVER hide a JUCE window to remap it: unmap the PEER (`peer->setVisible
+  (false/true)` = XUnmapWindow/XMapWindow) - the component stays visible and modal. Same in createAlertWindow. The
+  sheen: `current` index, one button per sweep in turn, 2.5 s between sweeps (the user: "mnohem častěji, zvlášť"). Commits from ~/OrganSamplerC-linux (the NTFS checkout edited,
   files copied over); NO Projucer resave on Linux - do it on Windows next (the VS2026 files lag 0.8.165).
   `OrganSampler/CLAUDE_REPORTS.md` is GITIGNORED (local only, never committed): a `git add` naming it fails, and a
   chained `add && commit; ... && git tag` then tagged the OLD commit (v0.8.169 first landed on 83e888a: the run

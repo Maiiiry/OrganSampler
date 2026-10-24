@@ -5635,14 +5635,18 @@ void MainComponent::placeDialog(juce::Component& window, const juce::String& key
     // went where the compositor liked, on the primary display (0.8.172). As a
     // transient of the main window it is mapped centred on the main window, on
     // its display; the window was mapped at its birth, so it is mapped again.
+    // The X window alone is unmapped and mapped again (the peer), never the JUCE
+    // component: hiding a modal window cancels its modal state and a dialog of
+    // launchAsync is then deleted (0.8.172: Couplers, the pattern lists, One-shot
+    // patterns, the long messages opened and vanished at once on Wayland).
     if (LinuxWindowPlacement::waylandSession())
-        if (auto* top = getTopLevelComponent(); top != nullptr && top != this && top->getPeer() != nullptr && window.getPeer() != nullptr)
+        if (auto* top = getTopLevelComponent(); top != nullptr && top != this && top->getPeer() != nullptr && window.getPeer() != nullptr && window.isVisible())
         {
-            const bool wasVisible = window.isVisible();
-            window.setVisible(false);
-            LinuxWindowPlacement::setTransientFor((unsigned long)(juce::pointer_sized_uint)window.getPeer()->getNativeHandle(),
+            auto* peer = window.getPeer();
+            peer->setVisible(false);
+            LinuxWindowPlacement::setTransientFor((unsigned long)(juce::pointer_sized_uint)peer->getNativeHandle(),
                                                   (unsigned long)(juce::pointer_sized_uint)top->getPeer()->getNativeHandle());
-            window.setVisible(wasVisible);
+            peer->setVisible(true);
         }
    #endif
     trackedDialogs.erase(std::remove_if(trackedDialogs.begin(), trackedDialogs.end(),

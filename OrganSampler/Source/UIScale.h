@@ -137,12 +137,15 @@ namespace UIScale
             // a client puts its window and placed the box where it liked. As a
             // transient of the main window it is centred on it, on its display - the
             // hint must be there before the map, and the box was mapped at its birth.
-            if (dialogAnchor != nullptr && dialogAnchor->getPeer() != nullptr && aw->getPeer() != nullptr)
+            // The X window alone (the peer) is unmapped and mapped again, never the
+            // JUCE component: a hidden modal component loses its modal state.
+            if (dialogAnchor != nullptr && dialogAnchor->getPeer() != nullptr && aw->getPeer() != nullptr && aw->isVisible())
             {
-                aw->setVisible(false);
-                LinuxWindowPlacement::setTransientFor((unsigned long)(juce::pointer_sized_uint)aw->getPeer()->getNativeHandle(),
+                auto* peer = aw->getPeer();
+                peer->setVisible(false);
+                LinuxWindowPlacement::setTransientFor((unsigned long)(juce::pointer_sized_uint)peer->getNativeHandle(),
                                                       (unsigned long)(juce::pointer_sized_uint)dialogAnchor->getPeer()->getNativeHandle());
-                aw->setVisible(true);
+                peer->setVisible(true);
             }
            #endif
             if (numButtons == 1)

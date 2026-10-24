@@ -258,7 +258,7 @@ class HintSheen final : public juce::Component, private juce::Timer   // a Compo
 {
 public:
     HintSheen() { setInterceptsMouseClicks(false, false); }
-    void follow(std::vector<juce::Component*> buttons) { targets = std::move(buttons); startTimer(2500); }
+    void follow(std::vector<juce::Component*> buttons) { targets = std::move(buttons); startTimer(2000); }
     void stop()
     {
         stopTimer();
@@ -268,10 +268,10 @@ public:
     void mouseDown(const juce::MouseEvent&) override { stop(); }
     void paint(juce::Graphics& g) override
     {
-        if (phase < 0.0f) return;
-        for (auto* button : targets)
+        if (phase < 0.0f || targets.empty()) return;
+        // One button at a time, the buttons in turn (0.8.173).
+        if (auto* button = targets[current % targets.size()]; button != nullptr && button->isShowing())
         {
-            if (button == nullptr || !button->isShowing()) continue;
             const auto r = getLocalArea(button, button->getLocalBounds()).toFloat();
             const float band = r.getHeight() * 1.2f;
             const float x = r.getX() - band + (r.getWidth() + 2.0f * band) * phase;   // the band sweeps left to right
@@ -285,7 +285,7 @@ private:
     void timerCallback() override
     {
         if (phase < 0.0f) { phase = 0.0f; startTimer(25); }
-        else if ((phase += 0.03f) > 1.0f) { phase = -1.0f; startTimer(7000); }
+        else if ((phase += 0.03f) > 1.0f) { phase = -1.0f; ++current; startTimer(2500); }
         if (auto* parent = getParentComponent())
         {
             juce::Rectangle<int> area;
@@ -297,5 +297,6 @@ private:
         repaint();
     }
     std::vector<juce::Component*> targets;
+    size_t current = 0;    // the button of this sweep
     float phase = -1.0f;   // < 0 between the sweeps
 };
