@@ -212,25 +212,7 @@ public:
         // A stall of the message thread (a frozen window) goes to the activity
         // log with the thread's stack, so it can be traced afterwards.
         stallWatchdog = std::make_unique<CrashHandler::StallWatchdog>();
-       #if JUCE_LINUX
-        // The first thing on the screen (0.8.165, #78): a Wayland compositor maps
-        // the main window in the top-left corner at its first, tiny size before
-        // placeMainWindow sets its place and size - for that moment our picture
-        // shows instead (a splash that removes itself two seconds after the start).
-        juce::Component::SafePointer<juce::SplashScreen> splash;
-        {
-            const auto picture = juce::ImageCache::getFromMemory(BinaryData::AppIcon_png, BinaryData::AppIcon_pngSize);
-            if (picture.isValid()) splash = new juce::SplashScreen("OrganSampler", picture.rescaled(384, 384, juce::Graphics::highResamplingQuality), true);
-        }
-       #endif
         mainWindow.reset(new MainWindow(getApplicationName()));
-       #if JUCE_LINUX
-        // The splash counts its time from its creation, and building the main window
-        // takes a second or two before the message loop paints anything: 0.8.165
-        // deleted it before it was ever shown. Four seconds from the start leave it
-        // a moment beside the finished main window.
-        if (splash != nullptr) splash->deleteAfterDelay(juce::RelativeTime::seconds(4.0), false);
-       #endif
     }
 
     void shutdown() override
@@ -298,6 +280,19 @@ public:
             setIcon (juce::ImageCache::getFromMemory (BinaryData::AppIcon_png, BinaryData::AppIcon_pngSize));
            #endif
             setContentOwned (new MainComponent(), true);
+           #if JUCE_LINUX
+            // Our picture over the console for the first moment (0.8.167, #78): a
+            // Wayland compositor shows the window small in the corner for a second
+            // before it is placed, and a separate splash window never appeared
+            // there at all - so the picture lies inside the window itself, whatever
+            // its size, and goes away once the window stands where it belongs.
+            startCover.setImage (juce::ImageCache::getFromMemory (BinaryData::AppIcon_png, BinaryData::AppIcon_pngSize));
+            startCover.setImagePlacement (juce::RectanglePlacement::centred);
+            startCover.setInterceptsMouseClicks (false, false);
+            addAndMakeVisible (startCover);
+            startCover.setBounds (getLocalBounds());
+            juce::Timer::callAfterDelay (1500, [safe = juce::Component::SafePointer<MainWindow> (this)] { if (safe != nullptr) safe->startCover.setVisible (false); });
+           #endif
 
            #if JUCE_IOS || JUCE_ANDROID
             setFullScreen (true);
@@ -305,13 +300,6 @@ public:
             setResizable (true, true);
             centreWithSize (getWidth(), getHeight());
            #endif
-           #if JUCE_LINUX
-            // Placed once BEFORE it shows (0.8.166): a Wayland compositor maps the
-            // window at the size it has at that moment, and that was the tiny
-            // default - a thumbnail of the console in the corner for a second (#78).
-            if (auto* main = dynamic_cast<MainComponent*>(getContentComponent())) main->placeMainWindow(*this);
-           #endif
-
             setVisible (true);
             // Where the user left it last time (or centred), with the title bar on
             // the screen: placed after the window exists, so its frame size is known.
@@ -320,6 +308,10 @@ public:
 
         // The interface size (UIScale.h): the window's content is drawn and laid out at this scale.
         float getDesktopScaleFactor() const override { return UIScale::factor(); }
+       #if JUCE_LINUX
+        void resized() override { DocumentWindow::resized(); startCover.setBounds (getLocalBounds()); }
+        juce::ImageComponent startCover;
+       #endif
 
         void closeButtonPressed() override
         {

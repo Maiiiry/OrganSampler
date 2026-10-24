@@ -445,7 +445,11 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   splash was deleted unseen - 4 s now, called after the MainWindow exists (SafePointer). (3) The start screenshots
   showed the main window mapped tiny (130 x 165 px, a thumbnail of the console) at 0,0 and, on the right screen, a
   mirrored stale-buffer glitch for one frame: `placeMainWindow` is now called once BEFORE setVisible on JUCE_LINUX as
-  well (the default frame guess serves), so the first mapped size is the real one. Commits from ~/OrganSamplerC-linux (the NTFS checkout edited,
+  well - BUT neither helped (0.8.167 screenshots: still a ~160 x 240 px window at 0,0 with a thumbnail of the console
+  for ~1 s, and NO splash ever visible on KDE Wayland even with 4 s). What works: `MainWindow::startCover`
+  (juce::ImageComponent with AppIcon.png over the content, JUCE_LINUX only, hidden by Timer::callAfterDelay 1500 ms
+  through a SafePointer, `resized()` keeps it full-size): whatever size the compositor maps the window at, it shows
+  our picture. The splash and the pre-visible placeMainWindow were removed again. Commits from ~/OrganSamplerC-linux (the NTFS checkout edited,
   files copied over); NO Projucer resave on Linux - do it on Windows next (the VS2026 files lag 0.8.165).
   0.8.164 FULL KERNEL FOR HIGH PIPES (the user: the foreign tone BELOW a retuned high tone is not a beat; "440 on
   is essential"; the slider must reach very low for people with CPU to spare): `Voice::fullKernel` set at every voice

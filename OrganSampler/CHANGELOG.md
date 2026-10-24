@@ -12,6 +12,16 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.167] - 2026-10-24
+
+### Fixed
+- Linux: the first window at the start carries our picture. A separate splash
+  window (0.8.165/0.8.166) never appeared on a Wayland desktop, and placing
+  the main window before it shows did not change the tiny size the compositor
+  maps it at: the picture of the pipes now lies inside the main window
+  itself, over the console, for the first second and a half - whatever size
+  the window has at that moment, it shows the picture, not a squashed console.
+
 ## [0.8.166] - 2026-10-24
 
 ### Fixed
