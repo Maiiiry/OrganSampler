@@ -12,6 +12,20 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.166] - 2026-10-24
+
+### Fixed
+- A faulty pipe (beyond the retune limit, 0.8.165) still played its own
+  sample: the voice took a pipe with a sample for real before looking at the
+  fill map. Now it plays the neighbour's sample it was filled from
+  (Adlington's "Ch. Flute" 037 from 038, verified: 103 Hz before, the
+  neighbour's pitch now).
+- Linux: the start splash of 0.8.165 was never seen - it counted its two
+  seconds from its creation and the main window took longer to build; it
+  now stays four seconds from the start. The main window is placed once
+  before it shows, so the compositor maps it at its real size instead of
+  the tiny default (the thumbnail of the console in the corner).
+
 ## [0.8.165] - 2026-10-24
 
 ### Added

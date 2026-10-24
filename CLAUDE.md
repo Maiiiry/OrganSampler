@@ -437,7 +437,15 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   after "Missing pipes". LINUX FIRST WINDOW (#78): screenshots at start (spectacle -b -n -o, 0.4 s apart) show the
   MAIN window itself mapped by KWin at 0,0 at a tiny size for ~1 s before placeMainWindow - Main.cpp now shows a
   `juce::SplashScreen` with AppIcon.png (384 px) before the MainWindow on JUCE_LINUX, deleteAfterDelay 2 s; the
-  scrambled 48 px window icon of #78 is still open. Commits from ~/OrganSamplerC-linux (the NTFS checkout edited,
+  scrambled 48 px window icon of #78 is still open. 0.8.166 LESSONS: (1) `Stop::sourceNoteFor` returned a pipe with a
+  sample of its own BEFORE looking at the fill map - the faulty pipe kept playing its own sample (key 37 rendered 103 Hz)
+  although the report said "filled from 38"; now `hasNote && !faulty` first. The self-test's compass is 36-96, so key 35
+  lies outside it and is not filled there (the GUI uses the organ's 35-86). (2) `juce::SplashScreen::deleteAfterDelay`
+  counts from the splash's CREATION; MainWindow/MainComponent take 1-2 s to build before the loop paints, so a 2 s
+  splash was deleted unseen - 4 s now, called after the MainWindow exists (SafePointer). (3) The start screenshots
+  showed the main window mapped tiny (130 x 165 px, a thumbnail of the console) at 0,0 and, on the right screen, a
+  mirrored stale-buffer glitch for one frame: `placeMainWindow` is now called once BEFORE setVisible on JUCE_LINUX as
+  well (the default frame guess serves), so the first mapped size is the real one. Commits from ~/OrganSamplerC-linux (the NTFS checkout edited,
   files copied over); NO Projucer resave on Linux - do it on Windows next (the VS2026 files lag 0.8.165).
   0.8.164 FULL KERNEL FOR HIGH PIPES (the user: the foreign tone BELOW a retuned high tone is not a beat; "440 on
   is essential"; the slider must reach very low for people with CPU to spare): `Voice::fullKernel` set at every voice

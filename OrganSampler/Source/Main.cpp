@@ -217,14 +217,20 @@ public:
         // the main window in the top-left corner at its first, tiny size before
         // placeMainWindow sets its place and size - for that moment our picture
         // shows instead (a splash that removes itself two seconds after the start).
+        juce::Component::SafePointer<juce::SplashScreen> splash;
         {
             const auto picture = juce::ImageCache::getFromMemory(BinaryData::AppIcon_png, BinaryData::AppIcon_pngSize);
-            if (picture.isValid())
-                (new juce::SplashScreen("OrganSampler", picture.rescaled(384, 384, juce::Graphics::highResamplingQuality), true))
-                    ->deleteAfterDelay(juce::RelativeTime::seconds(2.0), false);
+            if (picture.isValid()) splash = new juce::SplashScreen("OrganSampler", picture.rescaled(384, 384, juce::Graphics::highResamplingQuality), true);
         }
        #endif
         mainWindow.reset(new MainWindow(getApplicationName()));
+       #if JUCE_LINUX
+        // The splash counts its time from its creation, and building the main window
+        // takes a second or two before the message loop paints anything: 0.8.165
+        // deleted it before it was ever shown. Four seconds from the start leave it
+        // a moment beside the finished main window.
+        if (splash != nullptr) splash->deleteAfterDelay(juce::RelativeTime::seconds(4.0), false);
+       #endif
     }
 
     void shutdown() override
@@ -298,6 +304,12 @@ public:
            #else
             setResizable (true, true);
             centreWithSize (getWidth(), getHeight());
+           #endif
+           #if JUCE_LINUX
+            // Placed once BEFORE it shows (0.8.166): a Wayland compositor maps the
+            // window at the size it has at that moment, and that was the tiny
+            // default - a thumbnail of the console in the corner for a second (#78).
+            if (auto* main = dynamic_cast<MainComponent*>(getContentComponent())) main->placeMainWindow(*this);
            #endif
 
             setVisible (true);

@@ -486,7 +486,8 @@ struct Stop
     // The pipe whose samples play for 'note': the note itself, its fill source, or -1.
     int sourceNoteFor(int note) const noexcept
     {
-        if (hasNote(note)) return note;
+        // A faulty pipe (0.8.166) has a sample of its own but plays its neighbour's.
+        if (hasNote(note) && !(note >= 0 && note < 128 && faultyPipes.test((size_t)note))) return note;
         if (isFilled(note)) return note + fillOffset[(size_t)note];
         return -1;
     }
