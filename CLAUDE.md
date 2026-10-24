@@ -473,7 +473,17 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   `peer->performAnyPendingRepaintsNow()` (paints at once: `getNumPaintsPendingForWindow` counts XShm completions
   only, 0 before the first paint), logged "Main window: shown, the window system gave it W x H px after N ms, painted
   now". `StartCover::paint` logs "Start picture first painted at W x H px" once. Windows/macOS keep setVisible +
-  placeMainWindow + setFullScreen as before. The cover stays. Commits from ~/OrganSamplerC-linux (the NTFS checkout edited,
+  placeMainWindow + setFullScreen as before. The cover stays. 0.8.170's screenshots STILL showed the
+  placeholder for ~3 s although "painted now" was logged 62 ms after the map: (1) `DocumentWindow`'s constructor has
+  `addToDesktop = true` and a Component is VISIBLE by birth, so `Component::addToDesktop` -> `peer->setVisible(true)`
+  MAPS the 1 x 1 X window in the constructor - the tiny window exists from the first moment, our `addToDesktop()` /
+  `setVisible(true)` were no-ops; (2) `XWindowSystem::blitToWindow` has no XFlush: the XShmPutImage waited in Xlib's
+  buffer until the loop ran again (~2 s, the device opening). 0.8.171: the DocumentWindow is built with
+  `addToDesktop = false` on JUCE_LINUX, then `setVisible(false); addToDesktop(); placeMainWindow; setVisible(true);
+  showMainWindow`, and showMainWindow ends with `peer->toFront(false)` (`XWindowSystem::toFront` ends with XSync =
+  the flush; `setIcon` flushes too). `DocumentWindow::setIcon` only stores `titleBarIcon` for the JUCE-drawn title
+  bar - no JUCE code ever calls `peer->setIcon`, the Linux title-bar icon comes from the desktop entry (WM_CLASS).
+  `fitWindowOnScreen` leaves a maximised window alone (`ResizableWindow::isFullScreen()`, read from the peer). Commits from ~/OrganSamplerC-linux (the NTFS checkout edited,
   files copied over); NO Projucer resave on Linux - do it on Windows next (the VS2026 files lag 0.8.165).
   `OrganSampler/CLAUDE_REPORTS.md` is GITIGNORED (local only, never committed): a `git add` naming it fails, and a
   chained `add && commit; ... && git tag` then tagged the OLD commit (v0.8.169 first landed on 83e888a: the run

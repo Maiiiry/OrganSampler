@@ -266,7 +266,16 @@ public:
             : DocumentWindow (name,
                               juce::Desktop::getInstance().getDefaultLookAndFeel()
                                                           .findColour (juce::ResizableWindow::backgroundColourId),
-                              DocumentWindow::allButtons)
+                              DocumentWindow::allButtons
+                             #if JUCE_LINUX
+                              // Not on the desktop yet: a component is visible by birth, so
+                              // DocumentWindow's own addToDesktop MAPS the 1 x 1 pixel X window
+                              // JUCE creates - KWin showed it as its smallest frame in the
+                              // top-left corner from the first moment of the start (#78). The
+                              // window is put on the desktop unshown below. 0.8.171.
+                              , false
+                             #endif
+                              )
         {
             setUsingNativeTitleBar (true);
             // The program's icon on the window (title bar, task bar, dock): the
@@ -305,6 +314,7 @@ public:
             // follows the map at once (showMainWindow) - a Wayland compositor shows
             // a window from its first painted buffer on, and showed KWin's smallest
             // frame in the top-left corner until then (#78, 0.8.170).
+            setVisible (false);
             addToDesktop();
             if (auto* main = dynamic_cast<MainComponent*>(getContentComponent())) main->placeMainWindow(*this);
             setVisible (true);

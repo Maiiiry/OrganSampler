@@ -12,6 +12,18 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.171] - 2026-10-24
+
+### Fixed
+- Linux: no small window in the top-left corner at the start any more. The
+  window was mapped by the window class itself at its creation, 1 x 1 pixel,
+  long before it had its size or anything to show (0.8.169 and 0.8.170 cured
+  what followed, not this), and the first paint of 0.8.170 reached the
+  compositor only when the message loop ran again. The window is now created
+  off the desktop, put there unshown with its place and its saved maximised
+  state, shown, painted and flushed at once. A maximised window is left to
+  the window system by the on-screen fit (it flapped between two sizes).
+
 ## [0.8.170] - 2026-10-24
 
 ### Fixed

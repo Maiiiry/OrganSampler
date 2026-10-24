@@ -5528,6 +5528,10 @@ namespace
         {
             auto* peer = window.getPeer();
             if (peer == nullptr) { if (attempt == 0) log << "no peer"; break; }
+            // A maximised window is the window system's: its frame covers the screen
+            // by design, and a correction made it flap between the two sizes (0.8.171).
+            if (auto* resizable = dynamic_cast<juce::ResizableWindow*>(&window); resizable != nullptr && resizable->isFullScreen())
+            { if (attempt == 0) log << "maximised, left to the window system"; break; }
             const auto client = peer->getBounds();
             const auto frameSize = peer->getFrameSizeIfPresent();
             const juce::BorderSize<int> frame = frameSize ? *frameSize : juce::BorderSize<int>(31, 8, 8, 8);
@@ -17610,6 +17614,11 @@ void MainComponent::showMainWindow(juce::ResizableWindow& window)
     if (savedWindowMaximised) window.setFullScreen(true);
     window.repaint();
     peer->performAnyPendingRepaintsNow();
+    // The blit sits in Xlib's output buffer until the connection is flushed, and
+    // the message loop flushes it only when it runs again - two seconds later at
+    // the start (0.8.170's screenshots: painted at once, shown late). toFront ends
+    // with XSync (XWindowSystem::toFront), so the compositor gets the buffer now.
+    peer->toFront(false);
     CrashHandler::note("Main window: shown, the window system gave it " + juce::String(w) + " x " + juce::String(h) + " px after " + juce::String(waited) + " ms"
         + (sized ? "" : " (not the size expected)") + ", painted now" + (savedWindowMaximised ? ", maximised" : ""));
 }
