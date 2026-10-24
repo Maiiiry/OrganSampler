@@ -28,4 +28,9 @@ namespace LinuxWindowPlacement
     // the window manager maps it maximised (a request to maximise works on shown
     // windows only, and JUCE's read-back right after it saw the 1 x 1 window). 0.8.170.
     void hintMaximised(unsigned long window);
+    // WM_TRANSIENT_FOR: the window manager keeps the window over its parent and
+    // places it centred on the parent (on the parent's display) when it maps it;
+    // set before the map. 0.8.172.
+    void setTransientFor(unsigned long window, unsigned long parent);
+    bool waylandSession();   // XDG_SESSION_TYPE = wayland: a client's own placement of its window is ignored
 }

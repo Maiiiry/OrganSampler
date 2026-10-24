@@ -710,7 +710,14 @@ StopRow::StopRow(Stop* stop, SamplerEngine& engine, int noteMin, int noteMax, in
         auto* thisTransmission = transmission();
         const bool pipeOff = thisTransmission != nullptr ? thisTransmission->keyDisabled.test((size_t)note)
             : (pipe >= 0 && pipe < 128 && stop->isPipeDisabled(pipe));
-        const bool hasSample = pipe >= 0 && pipe < 128 && stop->hasNoteInAnyRank(pipe);
+        // A faulty pipe (beyond the retune limit, 0.8.165) is switched off and plays
+        // its neighbour's sample: shown as a filled key, not as a pipe of its own
+        // (0.8.172: the dot stayed blue and the tooltip named the own sample).
+        bool faulty = false;
+        if (pipe >= 0 && pipe < 128)
+            for (const auto* rank : rankSources)
+                if (rank != nullptr && rank->faultyPipes.test((size_t)pipe)) { faulty = true; break; }
+        const bool hasSample = pipe >= 0 && pipe < 128 && stop->hasNoteInAnyRank(pipe) && !faulty;
         const bool filled = !hasSample && pipe >= 0 && pipe < 128 && stop->isFilledInAnyRank(pipe);
         // A pipe switched off is greyed out like a pipe that does not exist,
         // whether it is a real pipe or an extension.

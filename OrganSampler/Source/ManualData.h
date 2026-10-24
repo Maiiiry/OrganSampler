@@ -2718,8 +2718,9 @@ static const char* const kManualText_part13 =
     "How far a pipe's recorded pitch (its smpl chunk) may lie from its key before\n"
     "the pipe counts as a faulty sample. Within the limit the pipe is retuned to\n"
     "its key when a1 = 440 Hz or a temperament asks for it; beyond it the pipe is\n"
-    "switched off and played from its neighbours like a missing pipe, and the\n"
-    "key's tooltip in the voicing says so (\"Faulty pipe: its own sample 035-B.wav\n"
+    "switched off and played from its neighbours like a missing pipe: the key's\n"
+    "thumb in the voicing turns green like a filled key's and its tooltip says so\n"
+    "(\"Faulty pipe: its own sample 035-B.wav\n"
     "sounds 400 cents off its key, beyond the retune limit - switched off and\n"
     "taken from the neighbour\"). A pipe a third off is a wrong file, not a\n"
     "tuning: Adlington's \"Ch. Flute\" has its 035 and 037 recorded a major third\n"
@@ -2827,9 +2828,9 @@ static const char* const kManualText_part13 =
     "\n"
     "The row shows the size of the cache and the folder it lives in. *Empty the\n"
     "cache* deletes every cached file at once - to get the disk space back, or\n"
-    "after you have replaced your sample folders. The copies are built again, and\n"
     ;
 static const char* const kManualText_part14 =
+    "after you have replaced your sample folders. The copies are built again, and\n"
     "cached again, the next time they are needed; nothing else is lost.\n"
     "\n"
     "### Filled pipes cache: files of stops not loaded now\n"
@@ -3029,9 +3030,9 @@ static const char* const kManualText_part14 =
     "### One-shot stops (folder contains)\n"
     "\n"
     "Folders whose name matches one of these patterns hold samples that play once\n"
-    "without looping (chiff, percussion, bells). Defaults: \"Chiff\", \"Chimes\",\n"
     ;
 static const char* const kManualText_part15 =
+    "without looping (chiff, percussion, bells). Defaults: \"Chiff\", \"Chimes\",\n"
     "\"Tubular\", \"Celesta\", \"Harp\", \"Glockenspiel\" (a Hauptwerk import adds the\n"
     "folders of every stop the definition plays without release samples). The patterns\n"
     "match like those of *Ignored folders (folder contains)* (a star at the start\n"
@@ -3231,9 +3232,9 @@ static const char* const kManualText_part15 =
     "window answers nothing for eight seconds the log records where it was waiting.\n"
     "That folder is what a report needs - and *Report a problem...* sends it for\n"
     "you.\n"
-    "\n"
     ;
 static const char* const kManualText_part16 =
+    "\n"
     "### Report a problem\n"
     "\n"
     "*Report a problem...* at the top of the Configuration Editor opens a dialog\n"

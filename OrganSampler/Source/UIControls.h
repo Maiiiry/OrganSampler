@@ -249,3 +249,53 @@ public:
 private:
     bool acceptedLeftPress = false;
 };
+
+// A golden sheen that sweeps over a few buttons now and then after the start,
+// until the first click anywhere in the window: a newcomer's eye is led to
+// Stop List and Load Configuration (0.8.172). A transparent layer over the
+// buttons' area that takes no mouse; a mouse listener of the window stops it.
+class HintSheen final : public juce::Component, private juce::Timer   // a Component is a MouseListener already
+{
+public:
+    HintSheen() { setInterceptsMouseClicks(false, false); }
+    void follow(std::vector<juce::Component*> buttons) { targets = std::move(buttons); startTimer(2500); }
+    void stop()
+    {
+        stopTimer();
+        setVisible(false);
+        if (auto* parent = getParentComponent()) parent->removeMouseListener(this);
+    }
+    void mouseDown(const juce::MouseEvent&) override { stop(); }
+    void paint(juce::Graphics& g) override
+    {
+        if (phase < 0.0f) return;
+        for (auto* button : targets)
+        {
+            if (button == nullptr || !button->isShowing()) continue;
+            const auto r = getLocalArea(button, button->getLocalBounds()).toFloat();
+            const float band = r.getHeight() * 1.2f;
+            const float x = r.getX() - band + (r.getWidth() + 2.0f * band) * phase;   // the band sweeps left to right
+            juce::ColourGradient gradient(juce::Colours::transparentWhite, x - band, r.getY(), juce::Colours::transparentWhite, x + band, r.getBottom(), false);
+            gradient.addColour(0.5, juce::Colour(0xffffd36b).withAlpha(0.3f));
+            g.setGradientFill(gradient);
+            g.fillRoundedRectangle(r, 4.0f);
+        }
+    }
+private:
+    void timerCallback() override
+    {
+        if (phase < 0.0f) { phase = 0.0f; startTimer(25); }
+        else if ((phase += 0.03f) > 1.0f) { phase = -1.0f; startTimer(7000); }
+        if (auto* parent = getParentComponent())
+        {
+            juce::Rectangle<int> area;
+            for (auto* button : targets)
+                if (button != nullptr && button->isShowing()) area = area.getUnion(parent->getLocalArea(button, button->getLocalBounds()));
+            setBounds(area);
+            toFront(false);
+        }
+        repaint();
+    }
+    std::vector<juce::Component*> targets;
+    float phase = -1.0f;   // < 0 between the sweeps
+};

@@ -289,6 +289,7 @@ public:
             setIcon (juce::ImageCache::getFromMemory (BinaryData::AppIcon_png, BinaryData::AppIcon_pngSize));
            #endif
             setContentOwned (new MainComponent(), true);
+            UIScale::dialogAnchor = this;   // message boxes are centred on this window (UIScale.h, 0.8.172)
            #if JUCE_LINUX
             // Our picture over the console for the first moment (0.8.167, #78): a
             // Wayland compositor shows the window small in the corner for a second

@@ -483,7 +483,20 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   showMainWindow`, and showMainWindow ends with `peer->toFront(false)` (`XWindowSystem::toFront` ends with XSync =
   the flush; `setIcon` flushes too). `DocumentWindow::setIcon` only stores `titleBarIcon` for the JUCE-drawn title
   bar - no JUCE code ever calls `peer->setIcon`, the Linux title-bar icon comes from the desktop entry (WM_CLASS).
-  `fitWindowOnScreen` leaves a maximised window alone (`ResizableWindow::isFullScreen()`, read from the peer). Commits from ~/OrganSamplerC-linux (the NTFS checkout edited,
+  `fitWindowOnScreen` leaves a maximised window alone (`ResizableWindow::isFullScreen()`, read from the peer).
+  0.8.172: (1) `SampleFiles::indexOfLocked` walks an archive with gMutex RELEASED (`gWalking` keys; the message
+  thread gets nullptr for a key being walked, other threads wait 50 ms steps) - `locate()` on the message thread
+  (`updateMissingTreeNotices` every second) blocked on the mutex for the whole cold walk and the "Reading the
+  archives" window froze with its count. (2) `UIScale::dialogAnchor` (SafePointer, set to the MainWindow in Main.cpp):
+  `createAlertWindow` gives every box without an associated component the main window (JUCE's
+  `centreAroundComponent(nullptr)` = the PRIMARY display); on Linux the box is unmapped, `LinuxWindowPlacement::
+  setTransientFor(box, main)` (WM_TRANSIENT_FOR, own X connection) and mapped again - KWin (Wayland and X11) centres
+  a transient on its parent at map time; `placeDialog` does the same for its windows on a WAYLAND session only
+  (`waylandSession()`; X11 honours the remembered position). (3) voicer.cpp key rows: `faulty` (any rank's
+  `faultyPipes`) makes the key "filled" (green thumb + the Faulty pipe tooltip); the retune-limit and fill-group
+  sliders call `voicer->rebuildUI`. (4) `HintSheen` (UIControls.h): a transparent child of MainComponent over the two
+  buttons' union, a golden band sweeping once every 7 s (25 ms ticks), `addMouseListener(&hintSheen, true)` on
+  MainComponent ends it at the first click (a Component is a MouseListener already - no second base). Commits from ~/OrganSamplerC-linux (the NTFS checkout edited,
   files copied over); NO Projucer resave on Linux - do it on Windows next (the VS2026 files lag 0.8.165).
   `OrganSampler/CLAUDE_REPORTS.md` is GITIGNORED (local only, never committed): a `git add` naming it fails, and a
   chained `add && commit; ... && git tag` then tagged the OLD commit (v0.8.169 first landed on 83e888a: the run

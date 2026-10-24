@@ -114,6 +114,7 @@ namespace
     std::mutex gMutex;
     std::atomic<int> gIndexingFiles{ -1 };   // the walk's progress: files found so far (-1 = no walk running)
     juce::String gIndexingName;             // the archive being walked (set under gMutex before the walk)
+    juce::StringArray gWalking;             // archives being walked right now (keys; under gMutex) - the walk runs with the mutex released
     std::map<juce::String, std::shared_ptr<ArchiveIndex>> gIndexes;      // lower-case first-volume path -> index
     std::map<juce::String, std::vector<juce::File>> gArchivesOfFolder;   // lower-case disk folder -> its first volumes (scanned once)
     std::vector<juce::File> gSearchFolders;   // folders whose archives serve paths elsewhere (0.8.158)
@@ -586,6 +587,17 @@ namespace
         const auto key = lower(first.getFullPathName());
         auto found = gIndexes.find(key);
         if (found != gIndexes.end()) return found->second;
+        // Being walked by another thread (0.8.172): the message thread never waits
+        // for a walk (minutes on a cold disk - the "Reading the archives" window
+        // stood frozen with its count, the whole program with it), it gets "no index"
+        // for now; any other thread waits for the result.
+        if (gWalking.contains(key))
+        {
+            if (auto* mm = juce::MessageManager::getInstanceWithoutCreating(); mm != nullptr && mm->isThisTheMessageThread()) return nullptr;
+            while (gWalking.contains(key)) { gMutex.unlock(); juce::Thread::sleep(50); gMutex.lock(); }
+            found = gIndexes.find(key);
+            return found != gIndexes.end() ? found->second : nullptr;
+        }
         auto index = std::make_shared<ArchiveIndex>();
         index->first = first;
         index->volumes = SampleFiles::volumesOf(first);
@@ -598,7 +610,14 @@ namespace
             index->volumes = SampleFiles::volumesOf(first);
             gIndexingName = first.getFileName();
             gIndexingFiles.store(0, std::memory_order_relaxed);
+            // The walk itself without the mutex: it is called under gMutex (every
+            // caller holds it), and the message thread's own lookups (the missing-tree
+            // check once a second, the pool) blocked on it for the whole walk.
+            gWalking.add(key);
+            gMutex.unlock();
             buildIndex(*index);
+            gMutex.lock();
+            gWalking.removeString(key);
             gIndexingFiles.store(-1, std::memory_order_relaxed);
             if (index->valid) writeCachedIndex(*index);
         }

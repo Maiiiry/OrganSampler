@@ -1,6 +1,9 @@
 #pragma once
 
 #include <JuceHeader.h>
+#if JUCE_LINUX
+ #include "LinuxWindowPlacement.h"
+#endif
 #include <atomic>
 #include <cmath>
 
@@ -29,6 +32,10 @@
 //==============================================================================
 namespace UIScale
 {
+    // The main window: every message box without a component of its own is
+    // centred on it (set by Main.cpp when the window exists). 0.8.172.
+    inline juce::Component::SafePointer<juce::Component> dialogAnchor;
+
     constexpr int minPercent = 50, maxPercent = 300;
     constexpr int estimateFloorPercent = 70;   // small laptop screens: rather scroll than shrink below this
 
@@ -119,8 +126,25 @@ namespace UIScale
             const juce::String& button1, const juce::String& button2, const juce::String& button3,
             juce::MessageBoxIconType iconType, int numButtons, juce::Component* associatedComponent) override
         {
+            // Every box without a component of its own is centred on the main window
+            // (0.8.172): JUCE centres it on the PRIMARY display otherwise, while the
+            // program may stand on the second one.
+            if (associatedComponent == nullptr && dialogAnchor != nullptr && dialogAnchor->isShowing()) associatedComponent = dialogAnchor.getComponent();
             // The same buttons and shortcuts as juce::LookAndFeel_V2::createAlertWindow.
             auto* aw = new AlertWindowScaled(title, message, iconType, associatedComponent);
+           #if JUCE_LINUX
+            // The window manager's own placement: a KDE Wayland desktop ignores where
+            // a client puts its window and placed the box where it liked. As a
+            // transient of the main window it is centred on it, on its display - the
+            // hint must be there before the map, and the box was mapped at its birth.
+            if (dialogAnchor != nullptr && dialogAnchor->getPeer() != nullptr && aw->getPeer() != nullptr)
+            {
+                aw->setVisible(false);
+                LinuxWindowPlacement::setTransientFor((unsigned long)(juce::pointer_sized_uint)aw->getPeer()->getNativeHandle(),
+                                                      (unsigned long)(juce::pointer_sized_uint)dialogAnchor->getPeer()->getNativeHandle());
+                aw->setVisible(true);
+            }
+           #endif
             if (numButtons == 1)
             {
                 aw->addButton(button1, 0, juce::KeyPress(juce::KeyPress::escapeKey), juce::KeyPress(juce::KeyPress::returnKey));

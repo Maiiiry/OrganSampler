@@ -12,6 +12,28 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.172] - 2026-10-24
+
+### Fixed
+- Reading an archive the first time (a cold disk, minutes): the "Reading the
+  archives" window and the whole program stood frozen, the count of files
+  found never moved - the walk held the archive lock the window thread needed
+  for its own lookups. The walk now runs outside the lock; the window thread
+  gets "no index yet" for that archive meanwhile, other threads wait.
+- Every message box without a window of its own is centred on the main window,
+  on its display (JUCE centred it on the primary display while the program
+  stood on the second one). Linux: the boxes and the dialogs are transients of
+  the main window, so a KDE Wayland desktop - which places windows itself -
+  puts them centred on the main window too.
+- Voicing: a faulty pipe (beyond the retune limit) is shown as a filled key -
+  green thumb, the tooltip naming the neighbour's sample and the fault - and
+  the open rows follow the "Retune limit per pipe" and "Missing pipes" sliders
+  at once (the thumb stayed blue, the tooltip named the own sample).
+
+### Added
+- A golden sheen sweeps over "Stop List" and "Load Configuration" now and then
+  after the start, until the first click anywhere in the window.
+
 ## [0.8.171] - 2026-10-24
 
 ### Fixed

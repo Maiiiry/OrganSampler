@@ -89,6 +89,7 @@ private:
     LeftOnlyTextButton temperamentsButton{ "Temperaments" };
     LeftOnlyTextButton configurationEditorButton{ "Configuration Editor" };
     LeftOnlyTextButton stopListButton{ "Stop List" };   // the table of every division's stops, folders and transmissions
+    HintSheen hintSheen;   // the golden sheen over Stop List and Load Configuration until the first click (UIControls.h)
     LeftOnlyTextButton shutdownButton{ "Shut down PC" };   // saves, quits and shuts the computer down (hidden by default)
     LeftOnlyTextButton unpackArchiveButton{ "Unpack archive" };   // RAR sample archives unpacked by libarchive (hidden by default)
     void unpackArchiveDialog();

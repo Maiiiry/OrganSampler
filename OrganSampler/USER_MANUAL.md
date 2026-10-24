@@ -2688,8 +2688,9 @@ rebuilds the copies. See "What a filled pipe is".
 How far a pipe's recorded pitch (its smpl chunk) may lie from its key before
 the pipe counts as a faulty sample. Within the limit the pipe is retuned to
 its key when a1 = 440 Hz or a temperament asks for it; beyond it the pipe is
-switched off and played from its neighbours like a missing pipe, and the
-key's tooltip in the voicing says so ("Faulty pipe: its own sample 035-B.wav
+switched off and played from its neighbours like a missing pipe: the key's
+thumb in the voicing turns green like a filled key's and its tooltip says so
+("Faulty pipe: its own sample 035-B.wav
 sounds 400 cents off its key, beyond the retune limit - switched off and
 taken from the neighbour"). A pipe a third off is a wrong file, not a
 tuning: Adlington's "Ch. Flute" has its 035 and 037 recorded a major third

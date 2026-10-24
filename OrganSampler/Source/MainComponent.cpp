@@ -978,6 +978,9 @@ MainComponent::MainComponent()
     stopListButton.setTooltip("The stop list of the whole organ: every division's stops, their sample folders per "
         "perspective, transmissions and stop folders; loads and unloads sample folders.");
     stopListButton.onClick = [this] { showStopBuildingDialog(-1); };
+    addAndMakeVisible(hintSheen);
+    hintSheen.follow({ &stopListButton, &loadConfigurationButton });
+    addMouseListener(&hintSheen, true);   // the first click anywhere in the window ends the sheen
     // "Waiting for audio devices ..." box: shown while a saved device is awaited at start-up.
     addChildComponent(waitingForAudioLabel);
     waitingForAudioLabel.setJustificationType(juce::Justification::centred);
@@ -5627,6 +5630,21 @@ void MainComponent::placeDialog(juce::Component& window, const juce::String& key
         }
         window.setBounds(bounds);
     }
+   #if JUCE_LINUX
+    // A Wayland desktop (KDE) ignores where a client puts its window: the dialog
+    // went where the compositor liked, on the primary display (0.8.172). As a
+    // transient of the main window it is mapped centred on the main window, on
+    // its display; the window was mapped at its birth, so it is mapped again.
+    if (LinuxWindowPlacement::waylandSession())
+        if (auto* top = getTopLevelComponent(); top != nullptr && top != this && top->getPeer() != nullptr && window.getPeer() != nullptr)
+        {
+            const bool wasVisible = window.isVisible();
+            window.setVisible(false);
+            LinuxWindowPlacement::setTransientFor((unsigned long)(juce::pointer_sized_uint)window.getPeer()->getNativeHandle(),
+                                                  (unsigned long)(juce::pointer_sized_uint)top->getPeer()->getNativeHandle());
+            window.setVisible(wasVisible);
+        }
+   #endif
     trackedDialogs.erase(std::remove_if(trackedDialogs.begin(), trackedDialogs.end(),
         [&](const auto& entry) { return entry.first == key || entry.second == nullptr; }), trackedDialogs.end());
     trackedDialogs.emplace_back(key, juce::Component::SafePointer<juce::Component>(&window));
@@ -22278,13 +22296,20 @@ void MainComponent::showConfigurationEditor()
                     o.fillGroupSize = juce::jlimit(1, 12, juce::roundToInt(value));
                     o.engine.setFillGroupSize(o.fillGroupSize);
                     o.saveSettings();
+                    if (o.voicer) o.voicer->rebuildUI(o.stopsContent, o.stopsViewport);   // the fills of the open rows change (0.8.172)
                 },
                 "Pipes a rank does not have (beyond its compass, gaps inside it, the extra octave of an extension) are "
                 "filled from the nearest real pipes: this many adjacent pipes are taken as a group and transposed by the "
                 "group's width, the group repeats for further pipes. 12 = every missing pipe is the octave transposition "
                 "of a real one; 1 = the edge pipe serves alone.");
             addSlider("Retune limit per pipe", 10.0, 1200.0, 10.0, " cents", o.retuneLimitCents, 200.0,
-                [&o](double value) { o.retuneLimitCents = juce::jlimit(10.0f, 1200.0f, (float)value); o.engine.setRetuneLimitCents(o.retuneLimitCents); o.saveSettings(); },
+                [&o](double value)
+                {
+                    o.retuneLimitCents = juce::jlimit(10.0f, 1200.0f, (float)value);
+                    o.engine.setRetuneLimitCents(o.retuneLimitCents);
+                    o.saveSettings();
+                    if (o.voicer) o.voicer->rebuildUI(o.stopsContent, o.stopsViewport);   // faulty pipes come and go with the limit: the open rows show it (0.8.172)
+                },
                 "How far a pipe's recorded pitch (its smpl chunk) may lie from its key before the pipe counts as a faulty sample. Within "
                 "the limit the pipe is retuned to its key (a1 = 440 Hz, the temperament); beyond it the pipe is switched off and played "
                 "from its neighbours like a missing pipe (the key's tooltip in the voicing says so) - a pipe a third off is a wrong file, "

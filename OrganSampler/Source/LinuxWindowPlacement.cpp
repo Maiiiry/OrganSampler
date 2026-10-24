@@ -283,8 +283,25 @@ void LinuxWindowPlacement::hintMaximised(unsigned long window)
     XFlush(display);
     XCloseDisplay(display);
 }
+
+void LinuxWindowPlacement::setTransientFor(unsigned long window, unsigned long parent)
+{
+    Display* display = XOpenDisplay(nullptr);
+    if (display == nullptr || window == 0 || parent == 0) return;
+    XSetTransientForHint(display, (Window)window, (Window)parent);
+    XFlush(display);
+    XCloseDisplay(display);
+}
+
+bool LinuxWindowPlacement::waylandSession()
+{
+    const char* session = getenv("XDG_SESSION_TYPE");
+    return session != nullptr && std::string(session) == "wayland";
+}
 #else
 bool LinuxWindowPlacement::placeSideBySide(const std::string&, Box, Box, Box, std::string&) { return false; }
 bool LinuxWindowPlacement::windowSize(unsigned long, int&, int&) { return false; }
 void LinuxWindowPlacement::hintMaximised(unsigned long) {}
+void LinuxWindowPlacement::setTransientFor(unsigned long, unsigned long) {}
+bool LinuxWindowPlacement::waylandSession() { return false; }
 #endif
