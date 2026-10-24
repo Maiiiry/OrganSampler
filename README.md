@@ -40,15 +40,16 @@ reaches and sets its limit itself.
    glibc 2.38 or newer - Ubuntu 24.04, Mint 22, Debian 13, Fedora 39 and newer).
 2. **An organ to play:** download
    [**RuralOrgan.rar**](https://github.com/zurek-jiri/OrganSampler/releases/download/rural-organ-0.8/RuralOrgan.rar)
-   (about 950 MB) - the **Rural Organ** demo: a small village organ, three
+   (about 700 MB) - the **Rural Organ** demo: a small village organ, three
    divisions, 24 stops, **dry recordings with IR reverb**, with its
-   sample folders and a portable configuration. Unpack it, start
-   OrganSampler, *Load Configuration*, choose `Rural Organ.json`. It plays
+   sample folders and a portable configuration. Start OrganSampler,
+   *Load Configuration*, choose `RuralOrgan.rar` itself - the samples are
+   read from the archive (or unpack it and choose `Rural Organ.json`). It plays
    through your default sound device at once; a message says what to set
    up next. Details: [`configurations/rural-organ`](configurations/rural-organ/README.md).
 3. **More organs:** OrganSampler ships no other samples. Sample folders in
    wave format from [**Sonus Paradisi**](https://www.sonusparadisi.cz/en/organs.html)
-   work with OrganSampler as they are - and their
+   work with OrganSampler as they are, straight from their RAR archives too - and their
    [Free stuff](https://www.sonusparadisi.cz/en/free-stuff.html) page has
    free instruments and impulse responses. Ready-made configurations for
    them: [`configurations/INDEX.md`](configurations/INDEX.md) (how to use and

@@ -12,6 +12,16 @@ The version lives in one place per artefact and must be changed together:
 and the `JUCE_APP_VERSION` defines in `OrganSampler_App.vcxproj`. The window
 title shows the version. Released executables are named `OrganSampler_<version>.exe`.
 
+## [0.8.174] - 2026-10-24
+
+### Changed
+- The website, the README, the release notes and the demo's README say what
+  the program does today: RAR archives are read in place (Load Configuration
+  opens the `.rar` itself, no unpacking), up to 500 000 voices, the RAM
+  savings of the load box. The manual's measurement ceiling is 500 000.
+- Test hook `ORGAN_TEST_CLICK` (the named console buttons clicked after the
+  start, for dialog tests on a desktop without input synthesis).
+
 ## [0.8.173] - 2026-10-24
 
 ### Fixed

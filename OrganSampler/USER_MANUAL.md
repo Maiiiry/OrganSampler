@@ -2428,7 +2428,7 @@ happens:
 
 1. The sound is turned down to -52 dB at once (everything is rendered as
    usual; you hear the storm very quietly). The polyphony limit is out of the
-   way (300 000) for the run, and so are *Attack minimum time* and *Attack
+   way (500 000) for the run, and so are *Attack minimum time* and *Attack
    minimum delay*, which would hold the fast strikes back. The idle audio
    devices are listened to for two seconds first. The progress window says
    what is under test at its top - the number of stops, the routes by driver

@@ -2456,7 +2456,7 @@ static const char* const kManualText_part12 =
     "\n"
     "1. The sound is turned down to -52 dB at once (everything is rendered as\n"
     "   usual; you hear the storm very quietly). The polyphony limit is out of the\n"
-    "   way (300 000) for the run, and so are *Attack minimum time* and *Attack\n"
+    "   way (500 000) for the run, and so are *Attack minimum time* and *Attack\n"
     "   minimum delay*, which would hold the fast strikes back. The idle audio\n"
     "   devices are listened to for two seconds first. The progress window says\n"
     "   what is under test at its top - the number of stops, the routes by driver\n"

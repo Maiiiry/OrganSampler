@@ -503,7 +503,14 @@ The user writes Czech; answer in Czech; append a closing report to `OrganSampler
   component stops showing -> the 0.8.172 remap in placeDialog (`window.setVisible(false)` ... `(true)`) dismissed and
   deleted every such dialog on Wayland. NEVER hide a JUCE window to remap it: unmap the PEER (`peer->setVisible
   (false/true)` = XUnmapWindow/XMapWindow) - the component stays visible and modal. Same in createAlertWindow. The
-  sheen: `current` index, one button per sweep in turn, 2.5 s between sweeps (the user: "mnohem častěji, zvlášť"). Commits from ~/OrganSamplerC-linux (the NTFS checkout edited,
+  sheen: `current` index, one button per sweep in turn, 2.5 s between sweeps (the user: "mnohem častěji, zvlášť").
+  Dev hook `ORGAN_TEST_CLICK="<button text>|..."` (MainComponent.cpp, with the other hooks): the named console
+  buttons `triggerClick()`ed 3 s after the start, 2 s apart (Wayland has no xdotool; /tmp/test_click.sh) - verified
+  0.8.173: "Couplers..." opens centred on the main window and stays. 0.8.174 TEXTS: the website (site/index.html),
+  README.md, the release body in build.yml, configurations/README.md and the Rural Organ README said "unpack it -
+  Unpack archive button" and "300 000 voices" long after 0.8.157 (RAR read in place: Load Configuration opens the
+  .rar) and 0.8.146 (500 000); the README said 950 MB for a 725 MB demo. When a feature changes what the user DOES
+  (loading, unpacking, limits), grep the site, README, build.yml body and configurations/*README* in the same session. Commits from ~/OrganSamplerC-linux (the NTFS checkout edited,
   files copied over); NO Projucer resave on Linux - do it on Windows next (the VS2026 files lag 0.8.165).
   `OrganSampler/CLAUDE_REPORTS.md` is GITIGNORED (local only, never committed): a `git add` naming it fails, and a
   chained `add && commit; ... && git tag` then tagged the OLD commit (v0.8.169 first landed on 83e888a: the run

@@ -19424,7 +19424,7 @@ struct MainComponent::PolyphonyMeasurement
     // The stimulus grows, not the limit (a limit below what the organ produces
     // would only measure the stealing of voices): keys struck on every division
     // per level, then the same at twice the rate. The limit is out of the way
-    // (the ceiling, 300 000) while measuring; the result is the most voices reached cleanly.
+    // (the ceiling, 500 000) while measuring; the result is the most voices reached cleanly.
     // A regulator, not a fixed list: the target polyphony grows step by step and
     // the stimulus (keys struck on every division, then the rate) is raised
     // whenever the voices stop rising below the target - a dry set needs many
